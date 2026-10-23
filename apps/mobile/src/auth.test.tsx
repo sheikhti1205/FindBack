@@ -19,8 +19,10 @@ const hoisted = vi.hoisted(() => ({
   onAuthStateChange: vi.fn(),
   beginAccountSwitch: vi.fn(),
   stopPush: vi.fn(async () => {}),
+  startPush: vi.fn(async (_owner: { accountId: string; isCurrent: () => boolean }) => {}),
   fetchMe: vi.fn(() => new Promise(() => {})),
   authCallback: null as ((event: string, session: unknown) => void) | null,
+  storedSession: false,
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -40,6 +42,7 @@ vi.mock("./services/auth", () => ({
 }));
 
 vi.mock("./services/supabaseClient", () => ({
+  hasStoredAuthSession: () => hoisted.storedSession,
   getSupabase: () => ({
     auth: {
       onAuthStateChange: (cb: (event: string, session: unknown) => void) => {
@@ -63,7 +66,7 @@ vi.mock("./services/realtime", () => ({
 }));
 
 vi.mock("./services/pushRuntime", () => ({
-  startPushNotifications: vi.fn(async () => {}),
+  startPushNotifications: (owner: { accountId: string; isCurrent: () => boolean }) => hoisted.startPush(owner),
   stopPushNotifications: () => hoisted.stopPush(),
 }));
 
@@ -77,6 +80,8 @@ import { aiCredentials } from "./services/aiCredentials";
 import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
 import { RequireAuth } from "./components/Guards";
 import { storage } from "./services/storage";
+import { ApiError } from "./services/session";
+import { clearSessionExpired, sessionExpiredPending } from "./services/sessionExpiry";
 
 const USER_A: PublicUser = {
   id: "f08-alice",
@@ -113,6 +118,8 @@ function probeHarness(capture: { current: { logout: () => Promise<void>; user: P
 }
 
 beforeEach(() => {
+  hoisted.storedSession = false;
+  clearSessionExpired();
   storage.removeItem("findback.auth.deletedAccountCleanup");
   hoisted.stopPush.mockResolvedValue(undefined);
   hoisted.apiLogout.mockResolvedValue(undefined);
@@ -132,6 +139,54 @@ afterEach(async () => {
 });
 
 describe("F08 AuthProvider logout purges AI provider credentials", () => {
+  it("passes a live account guard to push, invalidated synchronously by the SDK", async () => {
+    hoisted.startPush.mockClear();
+    const capture = { current: null } as Parameters<typeof probeHarness>[0];
+    const Harness = probeHarness(capture);
+    render(<Harness />);
+    await waitFor(() => expect(hoisted.startPush).toHaveBeenCalled());
+    const owner = hoisted.startPush.mock.calls.at(-1)![0];
+    expect(owner.accountId).toBe(USER_A.id);
+    expect(owner.isCurrent()).toBe(true);
+    act(() => hoisted.authCallback!("SIGNED_OUT", null));
+    expect(owner.isCurrent()).toBe(false);
+  });
+  it("persists a real boot expiry but not a cold guest launch", async () => {
+    hoisted.storedSession = true;
+    hoisted.restoreSession.mockRejectedValue(new ApiError("Session expired", 401));
+    const capture = { current: null } as Parameters<typeof probeHarness>[0];
+    const Harness = probeHarness(capture);
+    const first = render(<Harness />);
+    await waitFor(() => expect(sessionExpiredPending()).toBe(true));
+    first.unmount();
+    clearSessionExpired();
+    hoisted.storedSession = false;
+    render(<Harness />);
+    await waitFor(() => expect(hoisted.restoreSession).toHaveBeenCalledTimes(2));
+    expect(sessionExpiredPending()).toBe(false);
+  });
+
+  it("records an unexpected SDK sign-out, then clears the reason on sign-in", async () => {
+    const capture = { current: null } as Parameters<typeof probeHarness>[0];
+    const Harness = probeHarness(capture);
+    render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    act(() => hoisted.authCallback!("SIGNED_OUT", null));
+    expect(sessionExpiredPending()).toBe(true);
+    act(() => hoisted.authCallback!("SIGNED_IN", { user: { id: USER_A.id }, access_token: "test-only" }));
+    expect(sessionExpiredPending()).toBe(false);
+  });
+
+  it("does not call an ordinary user-requested sign-out an expiry", async () => {
+    const capture = { current: null } as Parameters<typeof probeHarness>[0];
+    const Harness = probeHarness(capture);
+    render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    hoisted.apiLogout.mockImplementationOnce(async () => { hoisted.authCallback!("SIGNED_OUT", null); });
+    await act(async () => { await capture.current!.logout(); });
+    expect(sessionExpiredPending()).toBe(false);
+  });
+
   it("purges the account's persisted + session keys and leaves the sibling's keys untouched", async () => {
     await aiCredentials.connect(USER_A.id, ALICE_SAVED, {
       remember: true,

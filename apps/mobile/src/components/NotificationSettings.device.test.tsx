@@ -2,6 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "A" } }) }));
+
 const { permissionMock, startMock, openSettingsMock } = vi.hoisted(() => ({
   permissionMock: vi.fn(),
   startMock: vi.fn(),
@@ -52,7 +54,8 @@ describe("NotificationSettings device permission", () => {
 
     fireEvent.click(button);
     await waitFor(() => expect(startMock).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText(/device notifications are on/i)).toBeTruthy();
+    expect(startMock).toHaveBeenCalledWith({ requestPermission: true, isCurrent: expect.any(Function) });
+    expect(await screen.findByText("Notifications are allowed in your phone settings.")).toBeTruthy();
   });
 
   it("offers the OS settings recovery path after a denial", async () => {

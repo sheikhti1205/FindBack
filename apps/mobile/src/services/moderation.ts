@@ -146,6 +146,21 @@ export interface ModerationDecision {
   createdAt: string;
 }
 
+/** The current decision generation that owns a case (owner policy 2026-10-23). */
+export interface ModerationDecisionSummary {
+  action: ModerationAction;
+  generation: number;
+  decidedAt: string;
+  reopenedAt: string | null;
+}
+
+/** A consumer re-evaluation request that reopened the case. */
+export interface ModerationReopenRequest {
+  appealId: string;
+  message: string;
+  submittedAt: string;
+}
+
 /** The moderator's target reader: the live row, its reports, its decisions. */
 export interface ModerationTarget {
   targetType: ReportTargetType;
@@ -154,6 +169,10 @@ export interface ModerationTarget {
   target: Record<string, unknown> | null;
   reports: ModerationCaseReport[];
   decisions: ModerationDecision[];
+  /** The current decision owner state, or null before the first decision. */
+  decision?: ModerationDecisionSummary | null;
+  /** The open re-evaluation request, or null when the case is not reopened. */
+  reopen?: ModerationReopenRequest | null;
 }
 
 /** One outcome for the author ("your post was hidden"), never who or why. */
@@ -206,9 +225,11 @@ export interface ApplyModerationInput {
  *
  * `42501` is "you may not do this" (403), `28000` is "you are not signed in"
  * (401), `22023` is a bad request (400) and `P0002` is the one neutral "target
- * unavailable" (404). `P0001` carries two stable tokens: a refused report is
- * REPORT_LIMIT_REACHED (429, come back later) and a second open appeal is
- * APPEAL_ALREADY_OPEN (409, already done). Anything else — a missing function
+ * unavailable" (404). `P0001` carries stable tokens: a refused report is
+ * REPORT_LIMIT_REACHED (429, come back later), a second open appeal is
+ * APPEAL_ALREADY_OPEN (409, already done) and a second moderator acting on a
+ * final decision is MODERATION_DECISION_FINAL (409, the original decider must
+ * change it or the author must ask for re-evaluation). Anything else — a missing function
  * before the migration is applied, a transport failure, a schema mismatch — is
  * a server trouble (500), because reporting it as "bad request" would tell the
  * caller their own request was wrong.
@@ -221,6 +242,7 @@ function moderationError(message: string, code?: string): ApiError {
   if (code === "P0001") {
     if (message === "REPORT_LIMIT_REACHED") return new ApiError(message, 429, message);
     if (message === "APPEAL_ALREADY_OPEN") return new ApiError(message, 409, message);
+    if (message === "MODERATION_DECISION_FINAL") return new ApiError(message, 409, message);
   }
   return new ApiError(message, 500, code);
 }
@@ -392,11 +414,37 @@ export async function fetchModerationTarget(
   const reports = Array.isArray(payload.reports) ? payload.reports : [];
   const decisions = Array.isArray(payload.outcomes) ? payload.outcomes : [];
 
+  const decisionPayload = asRecord(payload.decision);
+  const reopenPayload = asRecord(payload.reopen);
+  const decisionAction =
+    decisionPayload && isAction(decisionPayload.action) ? decisionPayload.action : null;
+  const decisionDecidedAt = decisionPayload ? text(decisionPayload.decided_at) : null;
+  const reopenAppealId = reopenPayload ? text(reopenPayload.appeal_id) : null;
+  const reopenMessage = reopenPayload ? text(reopenPayload.message) : null;
+  const reopenSubmittedAt = reopenPayload ? text(reopenPayload.submitted_at) : null;
+
   return {
     targetType,
     targetId: text(payload.target_id) ?? targetId.trim(),
     targetExists: payload.target_exists === true,
     target: asRecord(payload.target),
+    decision:
+      decisionAction && decisionDecidedAt
+        ? {
+            action: decisionAction,
+            generation: count(decisionPayload?.generation),
+            decidedAt: decisionDecidedAt,
+            reopenedAt: decisionPayload ? text(decisionPayload.reopened_at) : null,
+          }
+        : null,
+    reopen:
+      reopenAppealId && reopenMessage && reopenSubmittedAt
+        ? {
+            appealId: reopenAppealId,
+            message: reopenMessage,
+            submittedAt: reopenSubmittedAt,
+          }
+        : null,
     reports: reports
       .map(asRecord)
       .filter((row): row is Record<string, unknown> => row !== null)

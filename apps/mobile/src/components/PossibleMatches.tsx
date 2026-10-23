@@ -10,10 +10,20 @@ import { loadAiPreferences } from "../services/ai/aiPreferences";
 import { applyMatchesEngineToRuntime } from "../screens/AiModels";
 import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
-import type { MatchCandidate } from "../services/similarity";
+import { MATCH_RESULT_LIMIT, type MatchCandidate, type PossibleMatch } from "../services/similarity";
 
-interface PossibleMatchesProps {
+export interface PossibleMatchesProps {
   post: PostItem;
+  /**
+   * Confirmation seam for the recovery lane.
+   *
+   * The card does NOT perform the confirmation itself: it owns no recovery
+   * service, no RPC and no write. The wiring lane passes a handler that
+   * performs the real write; the card then offers "Confirm match" on every
+   * suggestion. Without a handler the surface says plainly that confirming
+   * is not available here rather than offering a button that cannot work.
+   */
+  onConfirmMatch?: (match: PossibleMatch) => void;
 }
 
 function MatchPhoto({ post }: { post: MatchCandidate }) {
@@ -27,7 +37,7 @@ function MatchPhoto({ post }: { post: MatchCandidate }) {
   );
 }
 
-export function PossibleMatches({ post }: PossibleMatchesProps) {
+export function PossibleMatches({ post, onConfirmMatch }: PossibleMatchesProps) {
   const [result, setResult] = useState<PossibleMatchesResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -135,11 +145,17 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
     );
   }
 
-  const visibleMatches = result.matches.slice(0, 3);
+  const visibleMatches = result.matches.slice(0, MATCH_RESULT_LIMIT);
   const lightboxMatch =
     (lightboxId !== null
       ? visibleMatches.find((m) => m.post.id === lightboxId && m.post.photoUrl)
       : undefined) ?? null;
+
+  // State the actual count, without suggesting a calibrated quality threshold.
+  const suggestionSummary =
+    visibleMatches.length < MATCH_RESULT_LIMIT
+      ? `${visibleMatches.length} possible match${visibleMatches.length === 1 ? "" : "es"} to review. Up to ${MATCH_RESULT_LIMIT} are shown.`
+      : `Showing up to ${MATCH_RESULT_LIMIT} possible matches.`;
 
   return (
     <section className="min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
@@ -147,7 +163,7 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
         Possible matches
       </h2>
       <p className="mb-3 text-xs text-on-surface-variant">
-        Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}.
+        Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}. {suggestionSummary}
       </p>
       <ul className="fb-scroll-row flex gap-3" role="list">
         {visibleMatches.map((match, index) => (
@@ -195,11 +211,26 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
                 )}
               </div>
               {match.reasons.length > 0 && (
-                <p className="text-xs text-on-surface-variant">
-                  Why: {match.reasons.join(", ")}
-                </p>
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-xs font-medium text-on-surface-variant">Why it might match</p>
+                  <ul className="list-disc pl-3 text-xs leading-snug text-on-surface-variant">
+                    {match.reasons.map((reason) => (
+                      <li key={reason} className="break-words">{reason}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
               </Link>
+              {onConfirmMatch && (
+                <button
+                  type="button"
+                  onClick={() => onConfirmMatch(match)}
+                  aria-label={`Confirm match: ${match.post.title}`}
+                  className="min-h-[40px] w-full rounded-m3-sm border border-outline-variant px-2 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
+                >
+                  Confirm match
+                </button>
+              )}
             </div>
           </motion.li>
         ))}
@@ -207,6 +238,11 @@ export function PossibleMatches({ post }: PossibleMatchesProps) {
       <p className="mt-3 text-xs text-on-surface-variant" role="note">
         These are text-similarity suggestions, not confirmed matches.
       </p>
+      {!onConfirmMatch && (
+        <p className="mt-1 text-xs text-on-surface-variant">
+          Confirming a match isn’t available here. Open a report to check the photos and details.
+        </p>
+      )}
       {lightboxMatch?.post.photoUrl && (
         <PhotoLightbox
           photo={{ id: lightboxMatch.post.id, previewUrl: lightboxMatch.post.photoUrl }}

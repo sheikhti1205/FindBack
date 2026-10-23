@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { deepStrictEqual } from "node:assert";
-import { rankMatches, rankingMetrics, averageRankingMetrics, MIN_COSINE_CUTOFF, CATEGORY_BONUS } from "../../apps/mobile/src/services/similarity.ts";
+import { rankMatches, rankingMetrics, averageRankingMetrics, MIN_COSINE_CUTOFF, CATEGORY_BONUS, MATCH_RESULT_LIMIT } from "../../apps/mobile/src/services/similarity.ts";
 
 const source = new URL("./matching-ranking-fixtures.v1.json", import.meta.url);
 const fixture = JSON.parse(readFileSync(source, "utf8"));
@@ -23,7 +23,7 @@ const report = {
   benchmark: fixture.version,
   evidenceKind: fixture.evidenceKind,
   fixturePath: "tools/" + fileURLToPath(source).split("/tools/")[1],
-  policy: { rawCosineCutoff: MIN_COSINE_CUTOFF, categoryBonus: CATEGORY_BONUS, maxResults: 3 },
+  policy: { rawCosineCutoff: MIN_COSINE_CUTOFF, categoryBonus: CATEGORY_BONUS, maxResults: MATCH_RESULT_LIMIT },
   count: rows.length,
   metrics: averageRankingMetrics(rows.map((r) => r.metrics)),
   rows,

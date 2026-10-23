@@ -23,6 +23,7 @@ vi.mock("../../services/auth", () => servicesMock);
 vi.mock("../../utils/pendingReportLink", () => pendingMock);
 
 import { checkUsername } from "../../services/auth";
+import { clearSessionExpired, markSessionExpired } from "../../services/sessionExpiry";
 import { AuthGateway } from "../../screens/AuthGateway";
 import { SignIn } from "../../screens/SignIn";
 import { Register } from "../../screens/Register";
@@ -305,8 +306,7 @@ function SeedProbe() {
   return <p>Seed email: {seed?.email ?? "none"}</p>;
 }
 
-describe("AuthGateway Google entry (W0-C S3, appended)", () => {
-  it("shows Continue with Google above the email form with an or divider", () => {
+describe("AuthGateway Google entry (W0-C S3, appended)", () => {  it("shows Continue with Google above the email form with an or divider", () => {
     configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
     try {
       renderGateway();
@@ -406,5 +406,40 @@ describe("AuthGateway Google entry (W0-C S3, appended)", () => {
       __resetGoogleSignInSeams();
       delete (authMock as unknown as { setUser?: unknown }).setUser;
     }
+  });
+});
+
+// ── Session expiry: the sign-in screen explains WHY the user is here. ──
+describe("AuthGateway session expiry notice", () => {
+  afterEach(() => {
+    clearSessionExpired();
+  });
+
+  it("explains a real expiry in one plain sentence", async () => {
+    markSessionExpired();
+    renderGateway();
+
+    const notice = await screen.findByText("Your session expired. Sign in again.");
+    expect(notice).toBeTruthy();
+    // A plain sentence: no provider jargon, no stack detail, no ids.
+    expect(notice.textContent).not.toMatch(/token|jwt|401|supabase/i);
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
+  it("shows no expiry notice on a cold first launch", () => {
+    renderGateway();
+
+    expect(screen.queryByText("Your session expired. Sign in again.")).toBeNull();
+  });
+
+  it("keeps the reason across a reload of the sign-in screen", async () => {
+    markSessionExpired();
+    const first = renderGateway();
+    expect(await screen.findByText("Your session expired. Sign in again.")).toBeTruthy();
+    first.unmount();
+
+    // A reload re-reads the persisted reason.
+    renderGateway();
+    expect(await screen.findByText("Your session expired. Sign in again.")).toBeTruthy();
   });
 });

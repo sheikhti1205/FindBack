@@ -17,6 +17,7 @@
 6. **Device feedback outranks host assumptions.** A physical-device defect reopens the relevant host-complete item. Reproduce, root-cause, fix-forward, and add regression coverage; never dismiss it because tests were green.
 7. **Reuse canonical systems.** One photo viewer, one avatar renderer, one reaction model, one auth/session owner, one theme system, one media-preparation pipeline. Repair shared ownership instead of cloning it.
 8. **Consumer first.** Hide diagnostics, internal model IDs, schema terms, capability jargon, privacy implementation detail, and developer state from ordinary users unless they explicitly open Advanced/Diagnostics.
+9. **Resource discipline (owner order 2026-10-20).** Parallel subagents are allowed; parallel heavy commands are not. Run every npm/npx/vitest/tsc/eslint/gradle/build/Playwright command through `~/.config/opencode/bin/heavy-run` (machine-wide `heavy.lock`, vitest pools capped at 3, heap capped, niced); at most one heavy command machine-wide across all sessions; device proofs and heavy gates never overlap; children never fan out their own subagents; check `uptime`/`free -g` before launching. This machine has ~11 GiB RAM and 18 cores, and an unthrottled `vitest run <one file>` has already driven load past 24 and rebooted it.
 
 ## Mandatory OpenCode skills
 

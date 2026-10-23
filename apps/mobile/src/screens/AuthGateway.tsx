@@ -5,8 +5,10 @@ import { useAuth } from "../auth";
 import { registerBackInterceptor } from "../components/backNavigation";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
+import { announce } from "../components/LiveRegion";
 import { motionDurations, motionEasings } from "../components/uiMotion";
 import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { clearSessionExpired, SESSION_EXPIRED_MESSAGE, sessionExpiredPending } from "../services/sessionExpiry";
 import { AuthShell } from "../components/auth/AuthShell";
 import {
   GoogleSignInButton,
@@ -54,6 +56,11 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
   // entries start unconfirmed so their form stays directly editable.
   const [emailConfirmed, setEmailConfirmed] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
+  /**
+   * A real session expiry is explained in one plain sentence. The flag is
+   * persisted, so a reload keeps the reason; a plain sign-out never sets it.
+   */
+  const [sessionExpired] = useState(() => sessionExpiredPending());
 
   // Stage-aware Android back: walk gateway stages before system navigation.
   const stateRef = useRef({ stage, emailConfirmed });
@@ -74,6 +81,17 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
       }),
     [],
   );
+
+  // A session exists again: the expiry has been dealt with.
+  useEffect(() => {
+    if (user) clearSessionExpired();
+  }, [user]);
+
+  // The notice is announced as well as shown: the sign-in screen has no
+  // live-region host of its own, so the visible status line carries it.
+  useEffect(() => {
+    if (sessionExpired) announce(SESSION_EXPIRED_MESSAGE);
+  }, [sessionExpired]);
 
   if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
 
@@ -119,6 +137,14 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
       }
       illustration={stage === "email"}
     >
+      {sessionExpired ? (
+        <p
+          role="status"
+          className="rounded-m3-sm border border-outline-variant bg-surface-container-low px-3 py-2 text-sm text-on-surface"
+        >
+          {SESSION_EXPIRED_MESSAGE}
+        </p>
+      ) : null}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={stage}

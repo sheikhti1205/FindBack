@@ -5,6 +5,7 @@ import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../service
 import { fetchFeed } from "../services/posts";
 import { UserAvatar } from "../components/UserAvatar";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
+import { SafetyActions } from "../components/SafetyActions";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
 
 /** "Joined January 2026" from an ISO timestamp; tolerant of bad input. */
@@ -95,12 +96,15 @@ export function PublicProfile() {
         <>
           <section
             aria-label="Public profile"
-            className="flex min-w-0 items-center gap-3 py-2"
+            className="flex min-w-0 flex-col gap-3 py-2"
           >
-            <UserAvatar avatarUrl={profile.avatarUrl} username={profile.username} size={48} />
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-start">
-            {profile.displayName && <p className="truncate text-base font-semibold">{profile.displayName}</p>}
-            <p className="truncate text-sm text-on-surface-variant">@{profile.username}</p>
+            <div className="flex w-full items-start justify-between gap-3">
+              <UserAvatar avatarUrl={profile.avatarUrl} username={profile.username} size={48} />
+              <SafetyActions reportPerson person={{ userId: profile.id, name: profile.displayName || profile.username }} />
+            </div>
+            <div className="flex w-full min-w-0 flex-col gap-0.5 text-start">
+            {profile.displayName && <p className="break-words text-base font-semibold">{profile.displayName}</p>}
+            <p className="break-all text-sm text-on-surface-variant">@{profile.username}</p>
             <p className="text-xs text-on-surface-variant">{formatJoined(profile.createdAt)}</p>
             {(profile.emailVerified || profile.phoneVerified) && (
               <p className="flex flex-wrap gap-2">
@@ -108,9 +112,9 @@ export function PublicProfile() {
                 {profile.phoneVerified && <StatusPill tone="neutral">Phone verified</StatusPill>}
               </p>
             )}
-            {profile.bio && <p className="text-sm text-on-surface">{profile.bio}</p>}
+            {profile.bio && <p className="break-words text-sm text-on-surface">{profile.bio}</p>}
             {profile.locationLabel && (
-              <p className="text-sm text-on-surface-variant">{profile.locationLabel}</p>
+              <p className="break-words text-sm text-on-surface-variant">{profile.locationLabel}</p>
             )}
             </div>
           </section>

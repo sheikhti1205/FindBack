@@ -230,6 +230,7 @@ describe("the server's refusals stay the answers they are", () => {
     { code: "P0002", message: "Report target unavailable", status: 404 },
     { code: "P0001", message: "REPORT_LIMIT_REACHED", status: 429 },
     { code: "P0001", message: "APPEAL_ALREADY_OPEN", status: 409 },
+    { code: "P0001", message: "MODERATION_DECISION_FINAL", status: 409 },
     { code: "PGRST202", message: "Could not find the function", status: 500 },
   ];
 
@@ -378,6 +379,17 @@ describe("the case detail", () => {
           { action: "HIDE", reason: "HARASSMENT", created_at: "2026-10-22T11:00:00.000Z" },
           { action: "NOT_AN_ACTION", reason: "OTHER", created_at: "x" },
         ],
+        decision: {
+          action: "PUBLISH",
+          generation: 2,
+          decided_at: "2026-10-22T11:30:00.000Z",
+          reopened_at: "2026-10-22T12:00:00.000Z",
+        },
+        reopen: {
+          appeal_id: "appeal-1",
+          message: "  Please look at this again.  ",
+          submitted_at: "2026-10-22T12:00:00.000Z",
+        },
       },
       error: null,
     });
@@ -393,6 +405,17 @@ describe("the case detail", () => {
       targetId: "p1",
       targetExists: true,
       target: { target_type: "POST", id: "p1", moderation_visibility: "HIDDEN" },
+      decision: {
+        action: "PUBLISH",
+        generation: 2,
+        decidedAt: "2026-10-22T11:30:00.000Z",
+        reopenedAt: "2026-10-22T12:00:00.000Z",
+      },
+      reopen: {
+        appealId: "appeal-1",
+        message: "Please look at this again.",
+        submittedAt: "2026-10-22T12:00:00.000Z",
+      },
       reports: [
         {
           id: "r1",

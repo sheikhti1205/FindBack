@@ -1,0 +1,573 @@
+{
+  "fixtureVersion": "matching-reasons-eval-v1",
+  "evidenceKind": "hand-labelled lost/found pairs with SYNTHETIC mapped base scores; the on-device text embedding is NOT exercised, so these numbers measure the ranker and the reason derivation, never real-world matching quality",
+  "createdAt": "2026-10-23",
+  "fixtureSize": 12,
+  "caseCount": 12,
+  "labelledCaseCount": 11,
+  "scope": {
+    "measured": [
+      "the pre-bonus cutoff that decides which scored candidates are suggested",
+      "the transparent category/date/location bonuses",
+      "the result cap that decides how many suggestions are shown",
+      "consumer reason derivation and support by the comparison"
+    ],
+    "notMeasured": [
+      "text-embedding quality: the fixture's base scores are hand-labelled synthetic inputs, not vectors from an on-device model",
+      "on-device behaviour of any model",
+      "the real-world false-positive rate on live reports",
+      "visual matching: this build has no image-embedding capability to measure"
+    ],
+    "precisionDefinition": "precision@k = labelled relevant candidates inside the top k / min(k, suggestions returned)",
+    "recallDefinition": "recall@k = labelled relevant candidates inside the top k / labelled relevant candidates; averaged over the cases that carry at least one relevant candidate"
+  },
+  "claim": {
+    "statement": "No matching-quality claim is made. These numbers show that the ranker and the reason derivation behave as specified on the labelled cases of this fixture. They say nothing about how well the app matches real reports, because the base scores they start from are hand-written.",
+    "fixtureTooSmallForAQualityClaim": true,
+    "smallestUsefulNextStep": "Label real lost/found pairs on the target device, capture the native embeddings that the app actually produces, and re-run this harness over those vectors. Until that exists, the ranking policy and the device-calibration TODO stay open."
+  },
+  "metrics": {
+    "precisionAt1": 0.9166666666666666,
+    "precisionAt3": 0.47222222222222215,
+    "precisionAt5": 0.4611111111111111,
+    "recallAt1": 0.9090909090909091,
+    "recallAt3": 0.9545454545454546,
+    "recallAt5": 0.9545454545454546,
+    "reciprocalRank": 1,
+    "recallCaseCount": 11
+  },
+  "reasonSupport": {
+    "reasonsEmitted": 65,
+    "reasonsSupported": 65,
+    "supportRate": 1,
+    "unsupported": [],
+    "matchesTotal": 29,
+    "matchesBelowReasonMinimum": 15,
+    "reasonCountHistogram": {
+      "0": 1,
+      "1": 5,
+      "2": 9,
+      "3": 14
+    }
+  },
+  "reasonLabels": {
+    "labelledCases": 11,
+    "expectedSignals": 24,
+    "matchedSignals": 24,
+    "agreement": 1
+  },
+  "rows": [
+    {
+      "id": "umbrella-library-window",
+      "relevantIds": [
+        "found-umbrella"
+      ],
+      "rankedIds": [
+        "found-umbrella",
+        "found-jacket",
+        "found-staff"
+      ],
+      "returned": 3,
+      "precisionAt1": 1,
+      "precisionAt3": 0.3333333333333333,
+      "precisionAt5": 0.3333333333333333,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 6,
+      "reasonsSupported": 6,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 2,
+      "reasonCounts": [
+        3,
+        2,
+        1
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date",
+          "category"
+        ],
+        "derived": [
+          "location",
+          "date",
+          "category"
+        ],
+        "matched": [
+          "location",
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "keys-cafe",
+      "relevantIds": [
+        "found-keys"
+      ],
+      "rankedIds": [
+        "found-keys",
+        "found-keys-far",
+        "found-cup"
+      ],
+      "returned": 3,
+      "precisionAt1": 1,
+      "precisionAt3": 0.3333333333333333,
+      "precisionAt5": 0.3333333333333333,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 8,
+      "reasonsSupported": 8,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 1,
+      "reasonCounts": [
+        3,
+        3,
+        2
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date",
+          "category"
+        ],
+        "derived": [
+          "location",
+          "date",
+          "category"
+        ],
+        "matched": [
+          "location",
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "phone-market",
+      "relevantIds": [
+        "found-phone"
+      ],
+      "rankedIds": [
+        "found-phone",
+        "found-laptop"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 3,
+      "reasonsSupported": 3,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 2,
+      "reasonCounts": [
+        2,
+        1
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date"
+        ],
+        "derived": [
+          "location",
+          "date"
+        ],
+        "matched": [
+          "location",
+          "date"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "cat-collar",
+      "relevantIds": [
+        "found-cat"
+      ],
+      "rankedIds": [
+        "found-cat",
+        "found-dog"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 2,
+      "reasonsSupported": 2,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 2,
+      "reasonCounts": [
+        1,
+        1
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "category"
+        ],
+        "derived": [
+          "category"
+        ],
+        "matched": [
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "no-relevant-candidate",
+      "relevantIds": [],
+      "rankedIds": [
+        "c1",
+        "c2"
+      ],
+      "returned": 2,
+      "precisionAt1": 0,
+      "precisionAt3": 0,
+      "precisionAt5": 0,
+      "recallAt1": 0,
+      "recallAt3": 0,
+      "recallAt5": 0,
+      "reciprocalRank": 0,
+      "reasonsEmitted": 6,
+      "reasonsSupported": 6,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 0,
+      "reasonCounts": [
+        3,
+        3
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": null
+    },
+    {
+      "id": "far-in-time",
+      "relevantIds": [
+        "found-helmet"
+      ],
+      "rankedIds": [
+        "found-helmet",
+        "found-blue-helmet"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 5,
+      "reasonsSupported": 5,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 1,
+      "reasonCounts": [
+        2,
+        3
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "category"
+        ],
+        "derived": [
+          "location",
+          "category"
+        ],
+        "matched": [
+          "location",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "far-in-place",
+      "relevantIds": [
+        "found-wallet"
+      ],
+      "rankedIds": [
+        "found-wallet",
+        "found-wallet-x"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 5,
+      "reasonsSupported": 5,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 1,
+      "reasonCounts": [
+        2,
+        3
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "date",
+          "category"
+        ],
+        "derived": [
+          "date",
+          "category"
+        ],
+        "matched": [
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "two-relevant",
+      "relevantIds": [
+        "found-bottle",
+        "found-bottle-2"
+      ],
+      "rankedIds": [
+        "found-bottle",
+        "found-bottle-2",
+        "found-towel"
+      ],
+      "returned": 3,
+      "precisionAt1": 1,
+      "precisionAt3": 0.6666666666666666,
+      "precisionAt5": 0.6666666666666666,
+      "recallAt1": 0.5,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 8,
+      "reasonsSupported": 8,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 1,
+      "reasonCounts": [
+        3,
+        3,
+        2
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date",
+          "category"
+        ],
+        "derived": [
+          "location",
+          "date",
+          "category"
+        ],
+        "matched": [
+          "location",
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "title-only",
+      "relevantIds": [
+        "found-notebook"
+      ],
+      "rankedIds": [
+        "found-notebook",
+        "found-backpack"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 1,
+      "reasonsSupported": 1,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 2,
+      "reasonCounts": [
+        1,
+        0
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "category"
+        ],
+        "derived": [
+          "category"
+        ],
+        "matched": [
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "label-match-no-coordinates",
+      "relevantIds": [
+        "found-charger"
+      ],
+      "rankedIds": [
+        "found-charger",
+        "found-powerbank"
+      ],
+      "returned": 2,
+      "precisionAt1": 1,
+      "precisionAt3": 0.5,
+      "precisionAt5": 0.5,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 4,
+      "reasonsSupported": 4,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 2,
+      "reasonCounts": [
+        2,
+        2
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "date",
+          "category"
+        ],
+        "derived": [
+          "date",
+          "category"
+        ],
+        "matched": [
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "category-mismatch-still-relevant",
+      "relevantIds": [
+        "found-ring"
+      ],
+      "rankedIds": [
+        "found-ring"
+      ],
+      "returned": 1,
+      "precisionAt1": 1,
+      "precisionAt3": 1,
+      "precisionAt5": 1,
+      "recallAt1": 1,
+      "recallAt3": 1,
+      "recallAt5": 1,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 2,
+      "reasonsSupported": 2,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 1,
+      "reasonCounts": [
+        2
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date"
+        ],
+        "derived": [
+          "location",
+          "date"
+        ],
+        "matched": [
+          "location",
+          "date"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "six-candidates-one-relevant-outside-the-cap",
+      "relevantIds": [
+        "sneakers-1",
+        "sneakers-6"
+      ],
+      "rankedIds": [
+        "sneakers-1",
+        "sneakers-2",
+        "sneakers-3",
+        "sneakers-4",
+        "sneakers-5"
+      ],
+      "returned": 5,
+      "precisionAt1": 1,
+      "precisionAt3": 0.3333333333333333,
+      "precisionAt5": 0.2,
+      "recallAt1": 0.5,
+      "recallAt3": 0.5,
+      "recallAt5": 0.5,
+      "reciprocalRank": 1,
+      "reasonsEmitted": 15,
+      "reasonsSupported": 15,
+      "reasonSupportRate": 1,
+      "matchesBelowReasonMinimum": 0,
+      "reasonCounts": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "unsupportedReasons": [],
+      "reasonLabels": {
+        "expected": [
+          "location",
+          "date",
+          "category"
+        ],
+        "derived": [
+          "location",
+          "date",
+          "category"
+        ],
+        "matched": [
+          "location",
+          "date",
+          "category"
+        ],
+        "missing": []
+      }
+    }
+  ],
+  "fixturePath": "tools/bench/matching-reasons-fixtures.v1.json",
+  "policy": {
+    "rawCosineCutoff": 0,
+    "maxResults": 5,
+    "minimumReasons": 3
+  }
+}

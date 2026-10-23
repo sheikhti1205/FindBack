@@ -4,9 +4,15 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
 
-const { fetchPublicProfileMock, fetchFeedMock } = vi.hoisted(() => ({
+const { fetchPublicProfileMock, fetchFeedMock, authState, submitReport } = vi.hoisted(() => ({
   fetchPublicProfileMock: vi.fn(),
   fetchFeedMock: vi.fn(),
+  authState: { user: { id: "reader" } as { id: string } | null },
+  submitReport: vi.fn(),
+}));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
+vi.mock("../services/moderation", async (original) => ({
+  ...await original<typeof import("../services/moderation")>(), submitReport,
 }));
 
 vi.mock("../services/profile", async (importOriginal) => {
@@ -67,11 +73,34 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  authState.user = { id: "reader" };
+  submitReport.mockResolvedValue({ reportId: "receipt" });
   fetchPublicProfileMock.mockResolvedValue(profile);
   fetchFeedMock.mockResolvedValue({ items: [post], nextCursor: null, total: 1 });
 });
 
 describe("PublicProfile", () => {
+  it("reports the loaded user through the profile overflow and canonical sheet", async () => {
+    renderRoute();
+    fireEvent.click(await screen.findByRole("button", { name: "More profile actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Report user" }));
+    fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await screen.findByTestId("report-receipt");
+    expect(submitReport).toHaveBeenCalledWith({ targetType: "USER", targetId: "u2", reason: "HARASSMENT", detail: null });
+  });
+
+  it("does not offer profile safety actions for self or guests", async () => {
+    authState.user = null;
+    const view = renderRoute();
+    await screen.findByText("Owner Name");
+    expect(screen.queryByRole("button", { name: "More profile actions" })).toBeNull();
+    view.unmount();
+    authState.user = { id: "u2" };
+    renderRoute();
+    await screen.findByText("Owner Name");
+    expect(screen.queryByRole("button", { name: "More profile actions" })).toBeNull();
+  });
   it("loads the profile by the route handle", async () => {
     renderRoute("owner");
     await waitFor(() => expect(fetchPublicProfileMock).toHaveBeenCalledWith("owner"));

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "./session";
 import {
   ADMIN_ONLY_CAPABILITIES,
   ALL_CAPABILITIES,
   CAPABILITY_LABELS,
   MODERATOR_CAPABILITIES,
   bootstrapAdmin,
+  bootstrapRefusalMessage,
   capabilityLabel,
+  fetchBootstrapClaimStatus,
   fetchMyRole,
   grantRole,
   listRoleAssignments,
@@ -390,6 +393,17 @@ describe("the admin-only management calls", () => {
 });
 
 describe("bootstrapAdmin", () => {
+  it("does not claim success without the server's true result", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: null });
+    await expect(bootstrapAdmin()).rejects.toMatchObject({ code: "UNEXPECTED_SHAPE" });
+  });
+
+  it("keeps only deliberate refusal sentences out of generic error handling", () => {
+    expect(bootstrapRefusalMessage(new ApiError("An admin already exists", 403, "42501")))
+      .toBe("An admin already exists");
+    expect(bootstrapRefusalMessage(new ApiError("permission denied for function findback_bootstrap_admin", 403, "42501"))).toBeNull();
+    expect(bootstrapRefusalMessage(new ApiError("An admin already exists", 500, "PGRST202"))).toBeNull();
+  });
   it("calls the one-time claim", async () => {
     clientMock.rpc.mockResolvedValue({ data: true, error: null });
 
@@ -405,5 +419,109 @@ describe("bootstrapAdmin", () => {
     });
 
     await expect(bootstrapAdmin()).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("keeps the server's own sentence on the error, so the screen can show it", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "An admin already exists", code: "42501" },
+    });
+
+    // The sentence is the answer the owner must read. It must survive the
+    // error untouched, or the screen would have to invent one.
+    await expect(bootstrapAdmin()).rejects.toMatchObject({
+      status: 403,
+      message: "An admin already exists",
+    });
+  });
+
+  it("keeps the sentence even when it arrives in the details", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "", details: "Confirm your email address before claiming the admin role", code: "42501" },
+    });
+
+    await expect(bootstrapAdmin()).rejects.toMatchObject({
+      status: 403,
+      message: "Confirm your email address before claiming the admin role",
+    });
+  });
+});
+
+describe("fetchBootstrapClaimStatus", () => {
+  it("fails closed on an internally contradictory status", async () => {
+    clientMock.rpc.mockResolvedValue({ data: {
+      can_claim: true, reason: null, already_admin: false, has_admin: true,
+    }, error: null });
+    expect((await fetchBootstrapClaimStatus()).canClaim).toBe(false);
+  });
+  it("reads the server's answer about this account", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: { can_claim: true, reason: null, already_admin: false, has_admin: false },
+      error: null,
+    });
+
+    const status = await fetchBootstrapClaimStatus();
+
+    expect(status).toEqual({
+      canClaim: true,
+      reason: null,
+      alreadyAdmin: false,
+      hasAdmin: false,
+    });
+    expect(lastCall("findback_bootstrap_claim_status").args).toEqual({});
+  });
+
+  it("keeps the server's refusal sentence whole", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: {
+        can_claim: false,
+        reason: "This account is not in the admin bootstrap list",
+        already_admin: false,
+        has_admin: false,
+      },
+      error: null,
+    });
+
+    expect((await fetchBootstrapClaimStatus()).reason).toBe(
+      "This account is not in the admin bootstrap list",
+    );
+  });
+
+  it("never rounds a garbled answer up to a yes", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: { can_claim: "true", reason: 7, already_admin: "yes", has_admin: 1 },
+      error: null,
+    });
+
+    expect(await fetchBootstrapClaimStatus()).toEqual({
+      canClaim: false,
+      reason: null,
+      alreadyAdmin: false,
+      hasAdmin: false,
+    });
+  });
+
+  it("treats an unreadable answer as no claim at all", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: null });
+
+    expect(await fetchBootstrapClaimStatus()).toEqual({
+      canClaim: false,
+      reason: null,
+      alreadyAdmin: false,
+      hasAdmin: false,
+    });
+  });
+
+  it("surfaces a refusal as a real answer, not as a transport failure", async () => {
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: { message: "Not authenticated", code: "28000" },
+    });
+
+    await expect(fetchBootstrapClaimStatus()).rejects.toMatchObject({
+      status: 500,
+      message: "Not authenticated",
+    });
   });
 });

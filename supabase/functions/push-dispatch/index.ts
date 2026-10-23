@@ -287,6 +287,38 @@ export function shouldPruneToken(status: number, body: string): boolean {
   );
 }
 
+/**
+ * The configuration this function needs to send anything. Names only: a value
+ * is never echoed, logged or returned.
+ */
+export const REQUIRED_DISPATCH_CONFIG = [
+  "SUPABASE_URL",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "FCM_PROJECT_ID",
+  "PUBLIC_SHARE_ORIGIN",
+  "FIREBASE_SERVICE_ACCOUNT_JSON",
+] as const;
+
+/** The names of the configuration that is absent. Empty means "fully set up". */
+export function missingDispatchConfig(env: Record<string, string | undefined>): string[] {
+  return REQUIRED_DISPATCH_CONFIG.filter((name) => !env[name]?.trim());
+}
+
+/**
+ * A misconfigured dispatcher fails loudly, in a way an operator can see in the
+ * function log, and it never looks like a successful run: the response names
+ * the missing configuration and reports that nothing was sent.
+ */
+export function configurationFailure(missing: string[]): Response {
+  console.error(
+    `push-dispatch: not configured — missing ${missing.join(", ")}. No notifications were sent.`,
+  );
+  return Response.json(
+    { error: "dispatch not configured", missing, scanned: 0, sent: 0 },
+    { status: 503 },
+  );
+}
+
 async function getAccessToken(serviceAccount: {
   client_email: string;
   private_key: string;
@@ -374,7 +406,7 @@ async function sendMessage(
 export default {
   async fetch(req: Request): Promise<Response> {
     const secret = Deno.env.get("PUSH_DISPATCH_SECRET");
-    if (!secret) return Response.json({ error: "dispatch not configured" }, { status: 503 });
+    if (!secret?.trim()) return configurationFailure(["PUSH_DISPATCH_SECRET"]);
     if (!isAuthorized(req.headers.get("x-findback-dispatch-secret"), secret)) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
@@ -385,11 +417,18 @@ export default {
     const projectId = Deno.env.get("FCM_PROJECT_ID");
     const origin = Deno.env.get("PUBLIC_SHARE_ORIGIN");
     const senderJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT_JSON");
-    if (!supabaseUrl || !serviceKey || !projectId || !origin || !senderJson) {
-      return Response.json({ error: "dispatch not configured" }, { status: 503 });
-    }
+    const missing = missingDispatchConfig({
+      SUPABASE_URL: supabaseUrl,
+      SUPABASE_SERVICE_ROLE_KEY: serviceKey,
+      FCM_PROJECT_ID: projectId,
+      PUBLIC_SHARE_ORIGIN: origin,
+      FIREBASE_SERVICE_ACCOUNT_JSON: senderJson,
+    });
+    // A missing credential is a loud, named failure — never a green no-op and
+    // never a result that looks like a successful send.
+    if (missing.length > 0) return configurationFailure(missing);
 
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const admin = createClient(supabaseUrl!, serviceKey!, { auth: { persistSession: false } });
     const { data: pending, error: readError } = await admin
       .from("notifications")
       .select("id, user_id, type, post_id, comment_id, created_at, reaction_kind")
@@ -397,7 +436,10 @@ export default {
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);
-    if (readError) return Response.json({ error: "read failed" }, { status: 500 });
+    if (readError) {
+      console.error("push-dispatch: could not read pending notifications. No notifications were sent.");
+      return Response.json({ error: "read failed", scanned: 0, sent: 0 }, { status: 500 });
+    }
 
     const notifications = (pending ?? []) as DispatchNotification[];
     if (notifications.length === 0) return Response.json({ scanned: 0, sent: 0, pruned: 0, failed: 0 });
@@ -416,9 +458,13 @@ export default {
 
     let accessToken = "";
     try {
-      accessToken = await getAccessToken(JSON.parse(senderJson));
+      accessToken = await getAccessToken(JSON.parse(senderJson!));
     } catch {
-      return Response.json({ error: "fcm auth failed" }, { status: 502 });
+      console.error("push-dispatch: FIREBASE_SERVICE_ACCOUNT_JSON is invalid or FCM authentication failed. No notifications were sent.");
+      return Response.json(
+        { error: "fcm auth failed", scanned: notifications.length, sent: 0 },
+        { status: 502 },
+      );
     }
 
     // One single-use reply token per COMMENT notification, shared by that user's
@@ -448,9 +494,9 @@ export default {
     const outcomes: SendOutcome[] = [];
     for (const delivery of deliveries) {
       const result = await sendMessage(
-        projectId,
+        projectId!,
         accessToken,
-        buildFcmMessage(delivery, origin, replyTokens.get(delivery.notificationId)),
+        buildFcmMessage(delivery, origin!, replyTokens.get(delivery.notificationId)),
       );
       outcomes.push({ notificationId: delivery.notificationId, ok: result.ok, prune: result.prune });
       if (result.ok) sent += 1;

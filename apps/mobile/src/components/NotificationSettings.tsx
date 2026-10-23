@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useAuth } from "../auth";
 import { AtSign, BellRing, Heart, MessageCircle, PackageCheck } from "lucide-react";
 import { PreferenceSwitchRow, SettingsGroup } from "./settings";
 import {
@@ -10,6 +11,7 @@ import {
 import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
 import { friendlyError } from "../utils/friendlyErrors";
+import { announce } from "./LiveRegion";
 
 interface ToggleDef {
   key: keyof NotificationPreferences;
@@ -52,27 +54,49 @@ const GROUPS: Array<{ title: string; description: string; toggles: ToggleDef[] }
 
 /** Per-user push/notification preferences. Saved on each change (optimistic). */
 export function NotificationSettings() {
+  const { user } = useAuth();
+  return user ? <AccountNotificationSettings key={user.id} /> : null;
+}
+
+interface SettingsLifetime { active: boolean }
+
+/** Account-keyed UI lifetime only; auth/session ownership stays in useAuth. */
+function AccountNotificationSettings() {
+  const lifetime = useRef<SettingsLifetime>({ active: false });
+  useLayoutEffect(() => {
+    const owner = { active: true };
+    lifetime.current = owner;
+    // Invalidate before passive effects/microtasks can publish for a new account.
+    // A new object on replay also fences StrictMode's first effect generation.
+    return () => { owner.active = false; };
+  }, []);
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permission, setPermission] = useState<PushPermissionState | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * Whether this device still holds a live push registration. `null` means
+   * unknown — the screen must not claim either state.
+   */
+  const [deviceRegistered, setDeviceRegistered] = useState<boolean | null>(null);
 
   useEffect(() => {
+    const owner = lifetime.current;
     let cancelled = false;
     fetchNotificationPreferences()
       .then((next) => {
-        if (!cancelled) setPrefs(next);
+        if (owner.active && !cancelled) setPrefs(next);
       })
       .catch((err) => {
-        if (!cancelled) setError(friendlyError(err).message);
+        if (owner.active && !cancelled) setError(friendlyError(err).message);
       });
     pushController()
       .permission()
       .then((state) => {
-        if (!cancelled) setPermission(state);
+        if (owner.active && !cancelled) setPermission(state);
       })
       .catch(() => {
-        if (!cancelled) setPermission(null);
+        if (owner.active && !cancelled) setPermission(null);
       });
     return () => {
       cancelled = true;
@@ -80,27 +104,93 @@ export function NotificationSettings() {
   }, []);
 
   const enableDeviceNotifications = useCallback(async () => {
+    const owner = lifetime.current;
+    if (!owner.active) return;
     setBusy(true);
     try {
-      const state = await pushController().start();
+      const state = await pushController().start({ requestPermission: true, isCurrent: () => owner.active });
+      if (!owner.active) return;
       setPermission(state);
     } catch {
-      setPermission("denied");
+      if (!owner.active) return;
+      const message = "Couldn't turn on alerts for this phone. Please try again.";
+      setError(message);
+      announce(message);
     } finally {
-      setBusy(false);
+      if (owner.active) setBusy(false);
     }
   }, []);
 
   const openSystemSettings = useCallback(async () => {
+    const owner = lifetime.current;
+    if (!owner.active) return;
     try {
       await pushController().openSettings();
     } catch {
-      /* recovery path is best-effort */
+      if (!owner.active) return;
+      const message = "Couldn't open notification settings. Open them in your phone's Settings app.";
+      setError(message);
+      announce(message);
     }
   }, []);
 
+  /**
+   * The master switch is the user's "no push on this phone" decision, so it
+   * also releases this device's push registration through the canonical push
+   * path. Both outcomes are reported honestly: a registration that could not
+   * be released is never presented as released, and nothing here prompts for
+   * the OS permission behind the user's back.
+   */
+  const applyDevicePush = useCallback(
+    async (enabled: boolean, owner: SettingsLifetime) => {
+      if (!owner.active) return;
+      if (!enabled) {
+        try {
+          const result = await pushController().stop();
+          if (!owner.active) return;
+          if (result.unregistered) {
+            setDeviceRegistered(false);
+            announce("This phone is no longer registered for push notifications.");
+          } else {
+            setDeviceRegistered(true);
+            setError("Push notifications are off, but this phone is still registered. Try again.");
+            announce("Push notifications are off, but this phone is still registered.");
+          }
+        } catch {
+          if (!owner.active) return;
+          setDeviceRegistered(null);
+          setError("Push notifications are off, but this phone could not be released. Try again.");
+          announce("Push notifications are off, but this phone could not be released.");
+        }
+        return;
+      }
+      // Turning it back on must not prompt: the OS permission is only
+      // requested from the explicit button below, so the device is registered
+      // again only when the permission is already granted.
+      if (permission !== "granted") {
+        setDeviceRegistered(null);
+        return;
+      }
+      try {
+        const state = await pushController().start({ requestPermission: false, isCurrent: () => owner.active });
+        if (!owner.active) return;
+        setPermission(state);
+        setDeviceRegistered(null);
+      } catch {
+        if (!owner.active) return;
+        setDeviceRegistered(null);
+        setError("Push notifications are on, but this phone could not be registered. Try again.");
+        announce("Push notifications are on, but this phone could not be registered.");
+      }
+    },
+    [permission],
+  );
+
   const toggle = useCallback(
     async (key: keyof NotificationPreferences, value: boolean) => {
+      const owner = lifetime.current;
+      if (busy || !owner.active) return;
+      setBusy(true);
       const previous = prefs ?? DEFAULT_NOTIFICATION_PREFERENCES;
       const next = { ...previous, [key]: value };
       setPrefs(next);
@@ -108,11 +198,17 @@ export function NotificationSettings() {
       try {
         await saveNotificationPreferences(next);
       } catch (err) {
+        if (!owner.active) return;
         setPrefs(previous);
         setError(friendlyError(err).message);
+        setBusy(false);
+        return;
       }
+      if (!owner.active) return;
+      if (key === "pushEnabled") await applyDevicePush(value, owner);
+      if (owner.active) setBusy(false);
     },
-    [prefs],
+    [prefs, applyDevicePush, busy],
   );
 
   if (error && !prefs) {
@@ -136,7 +232,7 @@ export function NotificationSettings() {
       icon={icon}
       iconTone="notifications"
       checked={prefs[key]}
-      disabled={disabled}
+      disabled={disabled || busy}
       onChange={(value) => void toggle(key, value)}
     />
   );
@@ -145,8 +241,27 @@ export function NotificationSettings() {
     <div className="flex flex-col gap-1 py-2">
       {permission && permission !== "unsupported" ? (
         <section className="mb-1 rounded-m3-xs border border-outline-variant p-3" aria-label="Device notifications">
-          {permission === "granted" ? (
-            <p className="text-xs text-on-surface-variant">Device notifications are on for this phone.</p>
+          {pushOff ? (
+            <>
+              <p className="text-sm font-medium text-on-surface">Push notifications are off</p>
+              <p className="mt-1 text-xs text-on-surface-variant">
+                {deviceRegistered === false
+                  ? "This phone is no longer registered for alerts."
+                  : "FindBack won't send push notifications to this phone."}
+              </p>
+              {permission === "granted" ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void openSystemSettings()}
+                  className="mt-2 inline-flex min-h-[44px] items-center rounded-full bg-on-surface px-4 text-sm font-medium text-surface disabled:opacity-60"
+                >
+                  Open notification settings
+                </button>
+              ) : null}
+            </>
+          ) : permission === "granted" ? (
+            <p className="text-xs text-on-surface-variant">Notifications are allowed in your phone settings.</p>
           ) : (
             <>
               <p className="text-sm font-medium text-on-surface">Turn on device notifications?</p>
@@ -180,7 +295,12 @@ export function NotificationSettings() {
         </SettingsGroup>
       ))}
       {error ? (
-        <p role="alert" className="px-1 pt-1 text-xs text-error">{error}</p>
+        <div>
+          <p role="alert" className="px-1 pt-1 text-xs text-error">{error}</p>
+          {pushOff && deviceRegistered !== false ? <button type="button" disabled={busy}
+            className="min-h-[44px] px-2 text-sm underline"
+            onClick={() => void toggle("pushEnabled", false)}>Retry turning off alerts</button> : null}
+        </div>
       ) : null}
     </div>
   );

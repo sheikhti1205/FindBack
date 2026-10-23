@@ -3,6 +3,45 @@ import type { Category } from "@findback/shared";
 /** Bonus applied when the candidate shares the same category as the target. */
 export const CATEGORY_BONUS = 0.15;
 
+/**
+ * Maximum number of suggestions a match list may carry.
+ *
+ * The server pool is wider (`MATCH_CANDIDATE_LIMIT` candidates are compared);
+ * this is how many of them are SHOWN. It is a display cap, not a quality
+ * claim: a list that only produced three suggestions shows three, and the
+ * surface says so in words that read as a similarity result rather than a
+ * truncation.
+ */
+export const MATCH_RESULT_LIMIT = 5;
+
+/**
+ * Consumer reasons. At most `MATCH_REASON_MAX` are shown, and
+ * `MATCH_REASON_MIN` is a TARGET, not a quota: a pair whose comparison
+ * supports fewer than three distinct facts shows fewer reasons. Filler
+ * reasons are never invented to reach a count.
+ */
+export const MATCH_REASON_MAX = 5;
+export const MATCH_REASON_MIN = 3;
+
+/**
+ * Only category equality, date proximity and coordinate proximity contribute
+ * independently attributable bonuses today. No title/description or visual
+ * explanation is inferred from a combined text vector or a photo URL.
+ */
+export type MatchReasonSignal =
+  | "location"
+  | "date"
+  | "category";
+
+/**
+ * One consumer-facing reason: the signal it came from and the plain-language
+ * sentence shown. No scores, no percentages, no model terms, no ids.
+ */
+export interface MatchReason {
+  readonly signal: MatchReasonSignal;
+  readonly text: string;
+}
+
 /** Maximum bonus for date proximity (same day). */
 const DATE_BONUS_MAX = 0.10;
 /** Date proximity decays over this many days. */
@@ -29,7 +68,12 @@ export interface MatchCandidate {
   photoUrl?: string | null;
 }
 
-/** A ranked possible match with score and human-readable reasons. */
+/** A ranked possible match with score and human-readable reasons.
+ *
+ * `reasons` holds CONSUMER copy only: plain sentences derived from the
+ * comparison (see `deriveMatchReasons`). No scores, no percentages, no model
+ * terms, no ids — the numbers about a match live in `score`, which the
+ * surface never shows as a percentage. */
 export interface PossibleMatch {
   post: MatchCandidate;
   score: number;
@@ -71,18 +115,23 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * c;
 }
 
+/**
+ * Days between two report dates, or null when either date is missing or
+ * unparseable. Shared by the date BONUS and the date REASON so the two can
+ * never disagree about how far apart two reports are.
+ */
+function dateDistanceDays(a: string | null, b: string | null): number | null {
+  if (!a || !b) return null;
+  const first = new Date(a);
+  const second = new Date(b);
+  if (isNaN(first.getTime()) || isNaN(second.getTime())) return null;
+  return Math.abs(first.getTime() - second.getTime()) / (1000 * 60 * 60 * 24);
+}
+
 /** Computes date proximity bonus (0 to DATE_BONUS_MAX). */
 function dateProximityBonus(targetDate: string | null, candidateDate: string | null): number {
-  if (!targetDate || !candidateDate) return 0;
-
-  const target = new Date(targetDate);
-  const candidate = new Date(candidateDate);
-
-  if (isNaN(target.getTime()) || isNaN(candidate.getTime())) return 0;
-
-  const diffMs = Math.abs(target.getTime() - candidate.getTime());
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-
+  const diffDays = dateDistanceDays(targetDate, candidateDate);
+  if (diffDays === null) return 0;
   if (diffDays >= DATE_DECAY_DAYS) return 0;
 
   // Linear decay from full bonus at 0 days to 0 at DATE_DECAY_DAYS
@@ -119,15 +168,37 @@ function locationProximityBonus(
  * regression fixtures do not fulfill this requirement. See docs/bench. */
 export const MIN_COSINE_CUTOFF = 0.0;
 
+/** Reasons mirror bonuses that actually fired. Combined text embeddings do not
+ * attribute title vs description similarity; photos are presentation-only. */
+export function deriveMatchReasons(target: MatchCandidate, candidate: MatchCandidate): MatchReason[] {
+  const reasons: MatchReason[] = [];
+  const locationBonus = locationProximityBonus(target.locationLat, target.locationLng, candidate.locationLat, candidate.locationLng);
+  if (locationBonus > 0) reasons.push({ signal: "location", text: locationBonus === LOCATION_BONUS_MAX ? "Within 5 km" : "Within 20 km" });
+  const days = dateDistanceDays(target.eventDate, candidate.eventDate);
+  if (dateProximityBonus(target.eventDate, candidate.eventDate) > 0 && days !== null) {
+    reasons.push({ signal: "date", text: days === 0 ? "Same event date" : days < 1 ? "Events less than a day apart" : days === Math.floor(days) ? `Events ${days} day${days === 1 ? "" : "s"} apart` : "Events within 30 days" });
+  }
+  if (target.category === candidate.category) reasons.push({ signal: "category", text: "Same category" });
+  return reasons;
+}
+
+/** Checks emitted wording against the actual comparison, not an LLM. */
+export function isReasonSupported(reason: MatchReason, target: MatchCandidate, candidate: MatchCandidate): boolean {
+  return deriveMatchReasons(target, candidate).some(
+    (derived) => derived.signal === reason.signal && derived.text === reason.text,
+  );
+}
+
 /** Ranks candidates by base score plus transparent bonuses.
  * Drops candidates whose mapped base score is below the cutoff (or all
- * candidates if no cutoff). Returns at most 3 matches, sorted by score desc
- * then id asc. */
+ * candidates if no cutoff). Returns at most `limit` matches (default
+ * `MATCH_RESULT_LIMIT`), sorted by score desc then id asc. */
 export function rankMatches(
   target: MatchCandidate,
   candidates: MatchCandidate[],
   baseScores: Map<string, number>,
   cosineCutoff?: number,
+  limit: number = MATCH_RESULT_LIMIT,
 ): PossibleMatch[] {
   const cutoffMapped = cosineCutoff != null ? (cosineCutoff + 1) / 2 : 0;
 
@@ -137,27 +208,23 @@ export function rankMatches(
       const baseScore = baseScores.get(candidate.id) ?? 0;
       const clampedBase = Math.max(0, Math.min(1, baseScore));
 
-      const reasons: string[] = [];
       let bonus = 0;
 
       // Category bonus
       if (target.category === candidate.category) {
         bonus += CATEGORY_BONUS;
-        reasons.push("same category");
       }
 
       // Date proximity bonus
       const dateBonus = dateProximityBonus(target.eventDate, candidate.eventDate);
       if (dateBonus > 0) {
         bonus += dateBonus;
-        reasons.push("similar date");
       }
 
       // Location proximity bonus
       const locationBonus = locationProximityBonus(target.locationLat, target.locationLng, candidate.locationLat, candidate.locationLng);
       if (locationBonus > 0) {
         bonus += locationBonus;
-        reasons.push("close location");
       }
 
       const finalScore = Math.max(0, Math.min(1, clampedBase + bonus));
@@ -165,14 +232,16 @@ export function rankMatches(
       return {
         post: candidate,
         score: finalScore,
-        reasons,
+        // The consumer reasons are DERIVED from the same comparison, never
+        // written by hand, so the explanation and the score cannot drift.
+        reasons: deriveMatchReasons(target, candidate).map((reason) => reason.text),
       };
     })
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return a.post.id.localeCompare(b.post.id);
     })
-    .slice(0, 3);
+    .slice(0, Math.max(0, limit));
 
   return ranked;
 }

@@ -30,6 +30,10 @@ describe("settingsIndex", () => {
         "/settings/media",
         "/settings/notifications",
         "/settings/privacy",
+        "/settings/privacy/blocked",
+        "/settings/privacy/reports",
+        "/settings/returns",
+        "/settings/feedback",
         // The three consumer documents. They postdate the 2026-10-03 route map
         // this test was written against, like the local-intelligence rows.
         "/settings/terms",
@@ -44,6 +48,16 @@ describe("settingsIndex", () => {
     expect(searchSettings("terms").map((r) => r.id)).toContain("terms");
     expect(searchSettings("guidelines").map((r) => r.id)).toContain("community-guidelines");
     expect(searchSettings("privacy policy").map((r) => r.id)).toContain("privacy-policy");
+  });
+
+  it("finds consumer safety and trust destinations without advertising restricted setup", () => {
+    expect(searchSettings("blocked").map((r) => r.route)).toContain("/settings/privacy/blocked");
+    expect(searchSettings("safety reports").map((r) => r.route)).toContain("/settings/privacy/reports");
+    expect(searchSettings("rating").map((r) => r.route)).toContain("/settings/returns");
+    expect(searchSettings("feedback").map((r) => r.route)).toContain("/settings/feedback");
+    expect(SETTINGS_INDEX.some((r) => typeof r.route === "string" && (
+      r.route === "/settings/administrator" || r.route.startsWith("/settings/team") || r.route.startsWith("/settings/moderation")
+    ))).toBe(false);
   });
 
   it("matches alias terms from settings_search_index.csv", () => {

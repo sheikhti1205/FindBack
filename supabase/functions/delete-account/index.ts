@@ -24,6 +24,14 @@
  * exactly what was removed (`storageRemoved`, `profileDeleted`,
  * `authDeleted`) so partial progress is never presented as complete.
  *
+ * PRE-FLIGHT: the last admin cannot delete the account. The database trigger
+ * (`20261023030000_last_admin_deletion_guard.sql`) refuses that deletion at
+ * the profile-row delete — but by then the storage fence is committed and
+ * every photo, avatar and comment attachment is already swept, and the fence
+ * has no un-fence path. So the function asks the database FIRST, before any
+ * destructive step, and answers 409 with the server's own sentence. The
+ * trigger stays as the client-independent backstop.
+ *
  * Required function environment (set with `supabase secrets set`):
  * - `SUPABASE_URL`, `SUPABASE_SECRET_KEYS` — injected by the runtime.
  *
@@ -99,11 +107,39 @@ export interface DeletionAuth {
 }
 
 export interface DeletionClients {
-  beginDeletion(uid: string): Promise<void>;
+  /** Atomic admission, not a read check. Never sweep without a valid receipt. */
+  beginDeletion(uid: string): Promise<DeletionAdmission>;
   storage: { from(bucket: string): StorageAdmin };
   from(table: string): TableAdmin;
   auth: DeletionAuth;
 }
+
+export type DeletionAdmission =
+  | { status: "admitted"; user_id: string; admission_id: string }
+  | { status: "blocked"; user_id: string; code: "LAST_ADMIN_DELETION_BLOCKED" };
+
+function validateAdmission(data: unknown, uid: string): DeletionAdmission {
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("admission unavailable");
+  const r = data as Record<string, unknown>;
+  if (r.user_id !== uid || Object.keys(r).length !== 3) throw new Error("admission unavailable");
+  if (r.status === "blocked" && r.code === "LAST_ADMIN_DELETION_BLOCKED") {
+    return { status: "blocked", user_id: uid, code: "LAST_ADMIN_DELETION_BLOCKED" };
+  }
+  if (r.status === "admitted" && typeof r.admission_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r.admission_id)) {
+    return { status: "admitted", user_id: uid, admission_id: r.admission_id };
+  }
+  throw new Error("admission unavailable");
+}
+
+/**
+ * The refusal the database guard raises, byte-for-byte. The database owns the
+ * rule (public.findback_is_last_admin); this copy is the sentence the
+ * function hands back, and the static guard
+ * (supabase/tests/last_admin_deletion_guard_parity.test.mjs) asserts the two
+ * copies are identical so they cannot drift apart.
+ */
+export const LAST_ADMIN_DELETION_REFUSAL =
+  "This is the only admin account. Promote another admin before deleting this one.";
 
 export interface PurgeResult {
   storageRemoved: number;
@@ -218,8 +254,30 @@ export async function handleDelete(
   const { data, error } = verified;
   const uid = data?.user?.id ?? null;
   if (error || !uid) return { status: 401, body: { error: "invalid session" } };
-  try { await clients.beginDeletion(uid); }
-  catch { return { status: 503, body: { error: "account deletion could not start" } }; }
+
+  // Admission atomically decides, removes privileges, audits and fences.
+  // A lost acknowledgement may follow a commit: retry the same reservation,
+  // never infer permission from a timeout or malformed response.
+  let admission: DeletionAdmission;
+  try {
+    admission = validateAdmission(await clients.beginDeletion(uid), uid);
+  } catch {
+    return { status: 503, body: { error: "account deletion admission could not be confirmed" } };
+  }
+  if (admission.status === "blocked") {
+    return {
+      status: 409,
+      body: {
+        error: LAST_ADMIN_DELETION_REFUSAL,
+        code: "LAST_ADMIN_DELETION_BLOCKED",
+        uid,
+        storageRemoved: 0,
+        profileDeleted: false,
+        authDeleted: false,
+      },
+    };
+  }
+
   let storageRemoved = 0;
   try {
     ({ storageRemoved } = await purgeUserData(clients, uid));
@@ -229,13 +287,13 @@ export async function handleDelete(
       typeof (err as { storageRemoved?: unknown } | null)?.storageRemoved === "number"
         ? (err as { storageRemoved: number }).storageRemoved
         : 0;
-    return { status: 502, body: { error: message, uid, storageRemoved: progress, profileDeleted: false, authDeleted: false } };
+    return { status: 502, body: { error: message, code: "ACCOUNT_DELETION_PENDING", uid, storageRemoved: progress, profileDeleted: false, authDeleted: false } };
   }
   try {
     await deleteAuthUser(clients, uid);
   } catch (err) {
     const message = err instanceof Error ? err.message : "auth delete failed";
-    return { status: 502, body: { error: message, uid, storageRemoved, profileDeleted: true, authDeleted: false } };
+    return { status: 502, body: { error: message, code: "ACCOUNT_DELETION_PENDING", uid, storageRemoved, profileDeleted: true, authDeleted: false } };
   }
   return { status: 200, body: { uid, storageRemoved, profileDeleted: true, authDeleted: true } };
 }
@@ -257,8 +315,12 @@ function jsonResponse(response: DeleteResponse): Response {
 export function deletionClients(client: SupabaseClient): DeletionClients {
   return {
     beginDeletion: async (uid) => {
-      const { error } = await client.rpc("findback_begin_account_deletion", { p_user_id: uid });
+      const { data, error } = await client.rpc("findback_begin_account_deletion", { p_user_id: uid });
+      if (error?.code === "42501" && error.details === "LAST_ADMIN_DELETION_BLOCKED" && error.message === LAST_ADMIN_DELETION_REFUSAL) {
+        return { status: "blocked", user_id: uid, code: "LAST_ADMIN_DELETION_BLOCKED" };
+      }
       if (error) throw new Error("account deletion fence unavailable");
+      return validateAdmission(data, uid);
     },
     auth: { getUser: (jwt) => client.auth.getUser(jwt), admin: { deleteUser: (uid) => client.auth.admin.deleteUser(uid) } },
     storage: { from: (bucket) => ({

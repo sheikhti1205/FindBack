@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Star, Tag, ThumbsDown, Trash2, X } from "lucide-react";
+import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Star, Tag, ThumbsDown, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -28,6 +28,8 @@ import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { ReportShareButton } from "../components/ReportShareButton";
+import { SafetyActions } from "../components/SafetyActions";
+import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
 import { PostActionRow } from "../components/PostActionRow";
 import { SavePostButton } from "../components/SavePostButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -961,16 +963,17 @@ export function PostDetail() {
           >
             <CornerDownRight size={13} aria-hidden /> Reply
           </button>
-          {canDelete && (
-            <button
-              type="button"
-              onClick={() => void onDeleteComment(c.id)}
-              aria-label={`Delete comment by ${c.author.username}`}
-              className="inline-flex min-h-[44px] items-center gap-1 rounded-full px-1.5 text-xs text-on-surface-variant hover:text-error"
-            >
-              <Trash2 size={13} aria-hidden /> Delete
-            </button>
-          )}
+          <CommentSafetyMenu
+            key={`${user?.id ?? "guest"}:${c.id}`}
+            commentId={c.id}
+            authorId={c.author.id}
+            authorName={c.author.username}
+            viewerId={user?.id ?? null}
+            canDelete={canDelete}
+            onDelete={() => {
+              if (window.confirm("Delete this comment?")) void onDeleteComment(c.id);
+            }}
+          />
           <CommentLikeButton
             comment={c}
             summary={commentSummaryFor(c)}
@@ -1020,7 +1023,8 @@ export function PostDetail() {
         >
         {/* Primary info card */}
         <section aria-label="Report summary" className="flex flex-col gap-2">
-          <div>
+          <div className="flex min-w-0 items-start gap-2">
+            <div className="min-w-0 flex-1">
             {/* Shared-element pair for the card title (see PostCardContent). */}
             <motion.h1
               className="break-words text-2xl font-semibold leading-tight tracking-tight"
@@ -1030,12 +1034,14 @@ export function PostDetail() {
             >
               {post.title}
             </motion.h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-on-surface-variant">
-              <span className="font-medium text-on-surface">@{post.author.username}</span>
-              <span className="fb-category-chip"><Tag size={14} aria-hidden /> <span>{post.category}</span></span>
             </div>
-            {post.locationLabel && <p className="mt-2 flex items-center gap-1.5 text-sm text-on-surface-variant"><MapPin size={16} aria-hidden className="shrink-0" />{post.locationLabel}</p>}
+            <SafetyActions content={{ targetType: "POST", targetId: post.id }} person={{ userId: post.author.id, name: post.author.displayName || post.author.username }} />
           </div>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-sm text-on-surface-variant">
+            <span className="min-w-0 max-w-full break-all font-medium text-on-surface">@{post.author.username}</span>
+            <span className="fb-category-chip"><Tag size={14} aria-hidden /> <span>{post.category}</span></span>
+          </div>
+          {post.locationLabel && <p className="mt-2 flex min-w-0 items-center gap-1.5 break-words text-sm text-on-surface-variant"><MapPin size={16} aria-hidden className="shrink-0" /><span className="min-w-0 break-words">{post.locationLabel}</span></p>}
         </section>
 
         <DetailHeroGallery

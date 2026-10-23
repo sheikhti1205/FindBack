@@ -4,17 +4,19 @@ import { MemoryRouter } from "react-router";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockLogout, mockFetchPrefs, mockPermission, mockFetchMyRole } = vi.hoisted(() => ({
+const { mockLogout, mockFetchPrefs, mockPermission, mockFetchMyRole, mockBootstrapStatus, viewer } = vi.hoisted(() => ({
+  viewer: { id: "u1" },
   mockLogout: vi.fn(),
   mockFetchPrefs: vi.fn(),
   mockPermission: vi.fn(),
   mockFetchMyRole: vi.fn(),
+  mockBootstrapStatus: vi.fn(),
 }));
 
 vi.mock("../auth", () => ({
   useAuth: () => ({
     user: {
-      id: "u1",
+      id: viewer.id,
       username: "tester",
       displayName: "Test Person",
       email: "tester@example.com",
@@ -61,6 +63,7 @@ vi.mock("../services/pushRuntime", () => ({
 // flag. The service is mocked, not the network.
 vi.mock("../services/roles", () => ({
   fetchMyRole: (...args: unknown[]) => mockFetchMyRole(...args),
+  fetchBootstrapClaimStatus: (...args: unknown[]) => mockBootstrapStatus(...args),
 }));
 
 import {
@@ -76,12 +79,14 @@ import { Settings } from "./Settings";
 afterEach(cleanup);
 
 beforeEach(() => {
+  viewer.id = "u1";
   vi.clearAllMocks();
   mockFetchPrefs.mockResolvedValue({ pushEnabled: true, likes: true, comments: true, mentions: true, status: true });
   mockPermission.mockResolvedValue("granted");
   mockLogout.mockResolvedValue(undefined);
   // An ordinary account by default: no role, no capabilities.
   mockFetchMyRole.mockResolvedValue({ role: null, isAdmin: false, capabilities: [] });
+  mockBootstrapStatus.mockResolvedValue({ canClaim: false, reason: "An admin already exists", alreadyAdmin: false, hasAdmin: true });
 });
 
 function renderSettings() {
@@ -133,6 +138,29 @@ describe("summary helpers", () => {
 });
 
 describe("Settings home", () => {
+  it("offers recovered items and feedback without needing a staff role", () => {
+    renderSettings();
+    expect(screen.getByRole("link", { name: /Recovered items/i }).getAttribute("href")).toBe("/settings/returns");
+    expect(screen.getByRole("link", { name: /Send feedback/i }).getAttribute("href")).toBe("/settings/feedback");
+  });
+
+  it("exposes administrator setup only after caller eligibility resolves true", async () => {
+    let resolve!: (value: unknown) => void;
+    mockBootstrapStatus.mockReturnValue(new Promise((done) => { resolve = done; }));
+    renderSettings();
+    expect(screen.queryByRole("link", { name: /Become the administrator/i })).toBeNull();
+    resolve({ canClaim: true, reason: null, alreadyAdmin: false, hasAdmin: false });
+    const entry = await screen.findByRole("link", { name: /Become the administrator/i });
+    expect(entry.getAttribute("href")).toBe("/settings/administrator");
+  });
+
+  it("does not advertise administrator setup to ordinary accounts", async () => {
+    renderSettings();
+    await waitFor(() => expect(mockBootstrapStatus).toHaveBeenCalled());
+    expect(screen.queryByRole("region", { name: "Administrator" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Become the administrator/i })).toBeNull();
+  });
+
   it("renders one h1, the profile header, the search field, and the exact group structure", () => {
     renderSettings();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
@@ -302,10 +330,50 @@ describe("Settings home", () => {
 /**
  * The staff console entry (CONTRACT-ROLES-ADMIN-2026-10-22.md §A2.5).
  *
- * The entry is offered only to an account the SERVER says is an admin or a
- * moderator. An ordinary reader never sees it.
+ * Team administration is ADMIN-only; review access is a separate capability.
  */
 describe("the staff console entry", () => {
+  it("drops previous staff entries immediately when the signed-in account changes", async () => {
+    let resolveOld!: (value: unknown) => void;
+    const admin = { role: "ADMIN", isAdmin: true, capabilities: [] };
+    mockFetchMyRole.mockResolvedValueOnce(admin)
+      .mockReturnValueOnce(new Promise((done) => { resolveOld = done; }))
+      .mockResolvedValueOnce({ role: null, isAdmin: false, capabilities: [] });
+    const { rerender } = render(<MemoryRouter><Settings /></MemoryRouter>);
+    await screen.findByRole("link", { name: "Review reports" });
+    viewer.id = "u2";
+    rerender(<MemoryRouter><Settings /></MemoryRouter>);
+    expect(screen.queryByRole("link", { name: "Review reports" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalledTimes(2));
+    viewer.id = "u3";
+    rerender(<MemoryRouter><Settings /></MemoryRouter>);
+    resolveOld(admin);
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalledTimes(3));
+    expect(screen.queryByRole("link", { name: "Review reports" })).toBeNull();
+  });
+
+  it("offers review to a permitted moderator without exposing team administration", async () => {
+    mockFetchMyRole.mockResolvedValue({ role: "MODERATOR", isAdmin: false, capabilities: ["reports_review"] });
+    renderSettings();
+    const row = await screen.findByRole("link", { name: "Review reports" });
+    expect(row.getAttribute("href")).toBe("/settings/moderation/queue");
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+  });
+
+  it("does not offer report review to a moderator without that capability", async () => {
+    mockFetchMyRole.mockResolvedValue({ role: "MODERATOR", isAdmin: false, capabilities: ["feedback_review"] });
+    renderSettings();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: "Review reports" })).toBeNull();
+  });
+
+  it("offers report review to ADMIN even without an enumerated capability list", async () => {
+    mockFetchMyRole.mockResolvedValue({ role: "ADMIN", isAdmin: true, capabilities: [] });
+    renderSettings();
+    expect(await screen.findByRole("link", { name: "Review reports" })).toBeTruthy();
+  });
+
   it("is hidden from an ordinary reader", async () => {
     renderSettings();
     await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());

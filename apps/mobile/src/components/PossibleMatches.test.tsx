@@ -13,34 +13,74 @@ const post = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrell
 afterEach(cleanup);
 
 describe("PossibleMatches", () => {
-  it("lists at most three suggestions and links them with the id", async () => {
-    findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
-      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Central Library" }, score: 0.8, reasons: ["same category"] },
+  it("lists up to five suggestions and links them with the id", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 6, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Central Library" }, score: 0.8, reasons: ["Same location"] },
       { post: { id: "found-2", title: "Umbrella near café", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: [] },
       { post: { id: "found-3", title: "Dark umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.6, reasons: [] },
       { post: { id: "found-4", title: "Spare umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.5, reasons: [] },
+      { post: { id: "found-5", title: "Grey umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.4, reasons: [] },
+      { post: { id: "found-6", title: "Sixth umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.3, reasons: [] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    expect(await screen.findAllByRole("link")).toHaveLength(3);
+    expect(await screen.findAllByRole("link")).toHaveLength(5);
     expect(screen.getAllByRole("link")[0]!.getAttribute("href")).toBe("/posts/found-1");
     expect(screen.getByText("Black umbrella at library")).toBeTruthy();
     expect(screen.getByText(/Central Library/)).toBeTruthy();
     expect(screen.getByText(/not confirmed matches/i)).toBeTruthy();
     expect(screen.queryByText(/probability/i)).toBeNull();
+    // The sixth suggestion is left out by the cap, and the copy says so as a
+    // similarity result rather than as a truncation.
+    expect(screen.getByText(/up to 5 possible matches/i)).toBeTruthy();
   });
 
-  it("shows the candidate photo and reasons without presenting similarity as a percentage", async () => {
+  it("shows the candidate photo and the reasons without presenting similarity as a percentage", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
-      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Library", photoUrl: "https://example.com/umbrella.jpg" }, score: 0.8, reasons: ["Similar date", "Similar text"] },
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Library", photoUrl: "https://example.com/umbrella.jpg" }, score: 0.8, reasons: ["Reported on the same day", "Similar title", "Same category"] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     const image = await screen.findByRole("img", { name: /black umbrella/i });
     expect(image.getAttribute("src")).toBe("https://example.com/umbrella.jpg");
-    expect(screen.getByText(/Similar date, Similar text/i)).toBeTruthy();
+    expect(screen.getByText("Reported on the same day")).toBeTruthy();
+    expect(screen.getByText("Similar title")).toBeTruthy();
+    expect(screen.getByText("Same category")).toBeTruthy();
     expect(screen.queryByText(/80%|match probability/i)).toBeNull();
     fireEvent.error(image);
     expect(screen.getByText("Photo unavailable")).toBeTruthy();
     expect(screen.getByRole("link").getAttribute("href")).toBe("/posts/found-1");
+  });
+
+  it("says how many reports were compared and how many looked similar enough", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 12, matches: [
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    expect(await screen.findByText(/compared 12 recent reports/i)).toBeTruthy();
+    expect(screen.getByText(/1 possible match to review/i)).toBeTruthy();
+  });
+
+  it("offers the confirm action only when the recovery lane supplies a handler", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: ["Similar title"] },
+    ] });
+    const onConfirmMatch = vi.fn();
+    render(<MemoryRouter><PossibleMatches post={post} onConfirmMatch={onConfirmMatch} /></MemoryRouter>);
+    const button = await screen.findByRole("button", { name: /confirm match: black umbrella/i });
+    fireEvent.click(button);
+    expect(onConfirmMatch).toHaveBeenCalledTimes(1);
+    expect(onConfirmMatch.mock.calls[0]![0]).toMatchObject({ post: { id: "found-1" } });
+    // With a handler there is nothing to apologise for.
+    expect(screen.queryByText(/isn.t available here/i)).toBeNull();
+  });
+
+  it("says plainly that confirming is not available when no handler is supplied", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: ["Similar title"] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    await screen.findByText("Black umbrella");
+    expect(screen.queryByRole("button", { name: /confirm match/i })).toBeNull();
+    expect(screen.getByText(/confirming a match isn.t available here/i)).toBeTruthy();
   });
 
   it("reruns matching when category/date/location change, not just title/description", async () => {
@@ -91,7 +131,7 @@ describe("PossibleMatches", () => {
 
   it("brings rows in as matching finishes and leaves them steady afterwards", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
-      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Central Library" }, score: 0.8, reasons: ["same category"] },
+      { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: "2026-09-11", locationLabel: "Central Library" }, score: 0.8, reasons: ["Same category"] },
       { post: { id: "found-2", title: "Umbrella near café", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: [] },
       { post: { id: "found-3", title: "Dark umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.6, reasons: [] },
     ] });
@@ -118,7 +158,7 @@ describe("PossibleMatches", () => {
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     const count = await screen.findByText(/compared 4 recent reports/i);
-    expect(count.textContent).toBe("Compared 4 recent reports.");
+    expect(count.textContent).toBe("Compared 4 recent reports. 1 possible match to review. Up to 5 are shown.");
     // The count line is deliberately untouched by Motion.
     expect(count.style.opacity).toBe("");
     expect(count.style.transform).toBe("");

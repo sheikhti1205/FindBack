@@ -53,13 +53,13 @@ describe("findPossibleMatches", () => {
     expect(fetchCandidates).toHaveBeenCalledWith("lost-1");
   });
 
-  it("embeds the target and candidates in one batch and caps at three", async () => {
-    const candidates = ["a", "b", "c", "d"].map((id) => rawPost(id));
-    const embed = vi.fn().mockResolvedValue([[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]]);
+  it("embeds the target and candidates in one batch and caps the suggestions at five", async () => {
+    const candidates = ["a", "b", "c", "d", "e", "f"].map((id) => rawPost(id));
+    const embed = vi.fn().mockResolvedValue([[1, 0], [1, 0], [1, 0], [1, 0], [1, 0], [1, 0], [1, 0]]);
     const result = await findPossibleMatches(target, { fetchCandidates: vi.fn().mockResolvedValue(candidates), embed });
     expect(embed).toHaveBeenCalledTimes(1);
-    expect(result.matches).toHaveLength(3);
-    expect(result.candidatesConsidered).toBe(4);
+    expect(result.matches).toHaveLength(5);
+    expect(result.candidatesConsidered).toBe(6);
     expect(result.available).toBe(true);
   });
 

@@ -90,14 +90,31 @@ export function useFocusTrap(
       previousRef.current = previouslyFocused;
     }
 
+    const isUnavailable = (element: HTMLElement): boolean =>
+      element.matches(':disabled, input[type="hidden"]') ||
+      element.closest('[hidden], [inert], [aria-hidden="true"]') !== null;
     const getFocusable = (): HTMLElement[] =>
-      Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+        .filter((element) => !isUnavailable(element));
 
     const focusFirst = (): void => {
       const focusable = getFocusable();
       if (focusable.length > 0) focusable[0]!.focus();
       else container.focus();
     };
+
+    // Async forms disable/remove their focused submit control. Browsers can
+    // then leave focus on body (jsdom instead retains the disabled element).
+    // Recover without waiting for another keystroke; covered layers must not
+    // fight an inner dialog, nor steal valid input focus on ordinary updates.
+    const recoverFocus = (): void => {
+      if (!isTopModalLayer(layerIdRef.current!)) return;
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !container.contains(active) || isUnavailable(active)) {
+        focusFirst();
+      }
+    };
+    const observer = new MutationObserver(recoverFocus);
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
@@ -116,7 +133,11 @@ export function useFocusTrap(
       if (!isTopModalLayer(layerIdRef.current!)) return;
 
       const focusable = getFocusable();
-      if (focusable.length === 0) return;
+      if (focusable.length === 0) {
+        event.preventDefault();
+        container.focus();
+        return;
+      }
 
       const first = focusable[0]!;
       const last = focusable[focusable.length - 1]!;
@@ -140,8 +161,15 @@ export function useFocusTrap(
     pushModalLayer(layerIdRef.current!);
     document.addEventListener("keydown", handleKeyDown);
     focusFirst();
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["disabled", "hidden", "inert", "aria-hidden", "tabindex"],
+    });
 
     return () => {
+      observer.disconnect();
       popModalLayer(layerIdRef.current!);
       document.removeEventListener("keydown", handleKeyDown);
       // Use caller's ref if provided, otherwise use internal ref

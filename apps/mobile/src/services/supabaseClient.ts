@@ -51,6 +51,16 @@ export function validateSupabaseConfig(url: string, key: string): { url: string;
 
 let client: SupabaseClient | null = null;
 let authPersistence: ReturnType<typeof createAccountScopedAuthStorage> | null = null;
+function sessionStorageKey(url: string): string {
+  return `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
+}
+
+/** Presence only; read before SDK startup can discard an expired session. */
+export function hasStoredAuthSession(): boolean {
+  try {
+    return storage.getItem(sessionStorageKey(__SUPABASE_URL__)) !== null;
+  } catch { return false; }
+}
 
 /**
  * Lazily create the Supabase client. Config is validated on first use (not at
@@ -59,7 +69,7 @@ let authPersistence: ReturnType<typeof createAccountScopedAuthStorage> | null = 
 export function getSupabase(): SupabaseClient {
   if (client) return client;
   const { url, key } = validateSupabaseConfig(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__);
-  const storageKey = `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
+  const storageKey = sessionStorageKey(url);
   authPersistence = createAccountScopedAuthStorage(storage, storageKey);
   client = createClient(url, key, {
     auth: {

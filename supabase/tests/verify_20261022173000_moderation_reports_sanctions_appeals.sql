@@ -708,8 +708,17 @@ begin
 end;
 $$;
 
+--      RE-ANCHORED by the CF-060 B2a moderation-privacy precondition
+--      (20261022172000). The precondition revokes
+--      `select (moderation_visibility) on public.item_posts` from
+--      `authenticated`, so this probe can no longer read the atom from the base
+--      table — that read IS the oracle the precondition closes. The assertion
+--      is unchanged in meaning and now reads the atom through the privileged
+--      moderator surface (`findback_moderation_target`, a definer gated on
+--      `reports_review`), which is the surface this probe's caller already
+--      uses one line above.
 select 'B11 the refused actions changed nothing' as probe
-where (select moderation_visibility from public.item_posts where id = 'p-report-hide') = 'PUBLISHED';
+where (public.findback_moderation_target('POST', 'p-report-hide')->'target'->>'moderation_visibility') = 'PUBLISHED';
 
 -- B12. HIDE with content_hide, and NO_ACTION with reports_review.
 do $$
@@ -808,6 +817,24 @@ where not exists (
 
 -- B15. The admin passes every action, and the closed vocabulary plus the
 --      sanction mapping still refuse the malformed calls.
+--
+--      Owner policy 2026-10-23 (20261023120000): the HIDE by e007 is FINAL.
+--      The admin cannot reverse it. The AUTHOR asks for re-evaluation first,
+--      which reopens the case; only then may another moderator decide again.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000e001', true);
+
+do $$
+begin
+  if public.findback_submit_appeal(
+       'MODERATION_ACTION', current_setting('probe.hide_audit', true), 'Please reconsider the hide.'
+     ) is null then
+    raise exception 'B15p FAILED: the author could not ask for re-evaluation';
+  end if;
+  raise notice 'B15p ok: the author reopened the decided case';
+end;
+$$;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000e008', true);
 
@@ -825,11 +852,12 @@ begin
   perform set_config('probe.ban_audit', v_ban, true);
 
   v_publish := public.findback_apply_moderation(
-    'POST', 'p-report-hide', 'PUBLISH', 'HARASSMENT', 'Restored on appeal', null, null
+    'POST', 'p-report-hide', 'PUBLISH', 'HARASSMENT', 'Restored after re-evaluation', null, null
   );
   if v_publish is null then
     raise exception 'B15 FAILED: the admin publish returned no audit id';
   end if;
+  perform set_config('probe.publish_audit', v_publish, true);
 
   raise notice 'B15 ok: the admin ban and publish were applied';
 end;
@@ -1016,7 +1044,7 @@ declare
   v_id text;
 begin
   v_id := public.findback_submit_appeal(
-    'MODERATION_ACTION', current_setting('probe.hide_audit', true), 'My post met the rules.'
+    'MODERATION_ACTION', current_setting('probe.publish_audit', true), 'My post met the rules.'
   );
   if v_id is null then
     raise exception 'B19e FAILED: the post author could not appeal the action on their post';
@@ -1242,12 +1270,20 @@ where exists (
      and a.id = current_setting('probe.appeal_sanction', true)
 );
 
-select 'B23 the two appeals are the two subjects asked for' as probe
-where 2 = (select count(*) from public.appeals)
+select 'B23 the three appeals are the three subjects asked for' as probe
+where 3 = (select count(*) from public.appeals)
   and exists (
     select 1 from public.appeals a
      where a.subject_kind = 'MODERATION_ACTION'
        and a.subject_id = current_setting('probe.hide_audit', true)
+       and a.moderation_action_id = a.subject_id
+       and a.appellant_user_id = '00000000-0000-4000-8000-00000000e001'
+       and a.status = 'SUBMITTED'
+  )
+  and exists (
+    select 1 from public.appeals a
+     where a.subject_kind = 'MODERATION_ACTION'
+       and a.subject_id = current_setting('probe.publish_audit', true)
        and a.moderation_action_id = a.subject_id
        and a.appellant_user_id = '00000000-0000-4000-8000-00000000e001'
        and a.status = 'SUBMITTED'

@@ -59,8 +59,18 @@ async function defaultFetchCandidates(targetId: string): Promise<PostItem[]> {
 }
 
 /** Finds possible matches for a target post by comparing against the most recent relevant open reports.
- * Embeds target and candidates in a single batch, ranks with transparent bonuses, returns top 3.
- * On embed failure, returns an unavailability object instead of throwing. */
+ * Embeds target and candidates in a single batch, ranks with transparent bonuses, returns the
+ * top suggestions (see `MATCH_RESULT_LIMIT`).
+ * On embed failure, returns an unavailability object instead of throwing.
+ *
+ * VISUAL MATCHING: there is no visual pass in this build, and none is faked.
+ * The only embedding capability that exists is TEXT (`FindBackEmbeddings`
+ * embeds strings; the Needle challenger embeds strings). The vision runtime
+ * is a generative VLM that produces text descriptions, not image vectors.
+ * Single-resident ownership would also need sequential scheduling of a real
+ * image encoder alongside Needle. A visual signal would
+ * therefore be a different capability, not a flag on this one — see the
+ * E3 handoff for the smallest wiring plan. */
 export async function findPossibleMatches(
   target: PostItem,
   deps?: {

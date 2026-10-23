@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { splitSql } from "../../scripts/sql-behavior.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIG = join(ROOT, "migrations");
@@ -736,7 +737,9 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_add_comment_with_attachments",
   "findback_apply_moderation",
   "findback_audit_log",
+  "findback_block_user",
   "findback_bootstrap_admin",
+  "findback_bootstrap_claim_status",
   "findback_can",
   "findback_delete_notifications_client",
   "findback_get_notification_preferences_client",
@@ -745,16 +748,22 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_list_saved_posts_client",
   "findback_mark_notifications_read_client",
   "findback_mark_notifications_unread_client",
+  "findback_mark_recovered",
   "findback_moderation_queue",
   "findback_moderation_target",
   "findback_my_moderation_outcomes",
   "findback_my_post_moderation",
+  "findback_my_recoveries",
   "findback_my_reports",
   "findback_my_role",
   "findback_notification_count_client",
+  "findback_post_limit",
+  "findback_rate_return",
   "findback_react_comment_client",
   "findback_register_device_token_client",
+  "findback_reputation_tier",
   "findback_restore_notifications_client",
+  "findback_return_ratings",
   "findback_role_assignments",
   "findback_role_grant",
   "findback_role_invitations",
@@ -763,8 +772,11 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_save_post_client",
   "findback_search_profiles_client",
   "findback_set_notification_preferences_client",
+  "findback_standing",
   "findback_submit_appeal",
+  "findback_submit_feedback",
   "findback_submit_report",
+  "findback_unblock_user",
   "findback_unregister_device_token_client",
   "findback_unsave_post_client",
   "is_username_available",
@@ -4207,5 +4219,69 @@ describe("CF-060 R10 feed block flag (20261020090000 + 20261020090500)", () => {
       caps.includes(`BACKEND_SCHEMA_VERSION = "${newest}"`),
       "BACKEND_SCHEMA_VERSION names the newest migration prefix",
     );
+  });
+});
+
+// B1 above remains a historical assertion against its immutable migration.
+// These are the replacement-object anchors for the effective privacy contract.
+describe("moderation privacy precondition (re-anchored M1/M2/M3)", () => {
+  const name = "20261022172000_moderation_visibility_privacy_precondition.sql";
+  const source = () => mig(name);
+  const norm = (s) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const policy = "create policy item_posts_select_authenticated on public.item_posts for select to authenticated using (user_id = (select auth.uid())::text or moderation_visibility = 'PUBLISHED')";
+  const columns = "id user_id type title description category status event_date latitude longitude location_label youtube_url created_at updated_at".split(" ");
+  const view = `create view public.findback_visible_posts with (security_invoker = true) as select ${columns.map((c) => `p.${c}`).join(", ")}, public.findback_is_blocked_with_me(p.user_id) as blocked_author from public.item_posts p`;
+  function guard(sql) {
+    const statements = splitSql(sql).map(norm);
+    const exact = (prefix, expected) => assert.deepEqual(statements.filter((s) => s.startsWith(prefix)), [norm(expected)]);
+    exact("create policy ", policy);
+    exact("create view ", view);
+    exact("revoke select ", "revoke select (moderation_visibility) on public.item_posts from authenticated");
+    assert.equal(statements[0], "begin");
+    assert.equal(statements.at(-1), "commit");
+    assert.deepEqual(statements.filter((s) => /^drop /.test(s)), [
+      "drop policy if exists item_posts_select_authenticated on public.item_posts",
+      "drop view if exists public.findback_visible_posts",
+    ]);
+    assert.ok(!statements.some((s) => /^grant .*moderation_visibility/.test(s)));
+    const inbox = splitSql(sql).find((s) => norm(s).startsWith("create or replace function public.findback_list_notifications_client("));
+    // The complete old reader with precisely the spec's one executable delta.
+    const old = splitSql(mig("20261017070000_visibility_kernel_and_blocks.sql"))
+      .find((s) => norm(s).startsWith("create or replace function public.findback_list_notifications_client("));
+    // splitSql preserves comments inside dollar bodies; strip only those line
+    // comments for this function-body comparison (no string here contains --).
+    const bodyNorm = (s) => norm(s.replace(/--[^\n]*/g, ""));
+    const expected = bodyNorm(old).replace(
+      "exists ( select 1 from public.findback_visible_posts v where v.id = n.post_id )",
+      "exists ( select 1 from public.item_posts p where p.id = n.post_id and (p.user_id = v_uid or p.moderation_visibility = 'published') )",
+    );
+    assert.notEqual(expected, bodyNorm(old), "the historical inbox anchor must match");
+    assert.equal(bodyNorm(inbox), expected, "only the inbox moderation term changes");
+    for (const expectedAcl of [
+      "revoke all on public.findback_visible_posts from public, anon, authenticated",
+      "grant select on public.findback_visible_posts to authenticated",
+      "revoke all on function public.findback_list_notifications_client(boolean) from public, anon",
+      "grant execute on function public.findback_list_notifications_client(boolean) to authenticated",
+    ]) assert.ok(statements.includes(expectedAcl), expectedAcl);
+    assert.equal(statements.filter((s) => s.startsWith("comment on ")).length, 3);
+  }
+  it("pins the replacement policy, projection, inbox delta and ACLs", () => guard(source()));
+  it("sorts after candidates and before the first moderation writer", () => {
+    assert.ok(name > "20261022160000_match_candidates_reader.sql");
+    assert.ok(name < "20261022173000_moderation_reports_sanctions_appeals.sql");
+  });
+  for (const [label, before, after] of [
+    ["M1 policy gains or true", "or moderation_visibility = 'PUBLISHED');", "or moderation_visibility = 'PUBLISHED' or true);"],
+    ["M2 policy loses moderation atom", " or moderation_visibility = 'PUBLISHED');", ");"],
+    ["M3 policy loses authenticated scope", "  to authenticated\n  using", "  using"],
+    ["M3 view loses security_invoker", " with (security_invoker = true) as", " as"],
+    ["old view WHERE returns", "from public.item_posts p;", "from public.item_posts p where p.moderation_visibility = 'PUBLISHED';"],
+    ["column grant returns", "revoke select (moderation_visibility) on public.item_posts from authenticated;", "grant select (moderation_visibility) on public.item_posts to authenticated;"],
+    ["inbox loses moderation atom", "and (p.user_id = v_uid or p.moderation_visibility = 'PUBLISHED')", "and true"],
+  ]) it(`rejects ${label}`, () => {
+    const sql = source();
+    const mutated = sql.replace(before, after);
+    assert.notEqual(mutated, sql, "mutation matched the new effective object");
+    assert.throws(() => guard(mutated));
   });
 });

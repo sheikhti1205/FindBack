@@ -147,6 +147,8 @@ jobs:
         run: node --test supabase/tests/match_candidates_reader_parity.test.mjs
       - name: Run roles and capability contract guard
         run: node --test supabase/tests/roles_capabilities_parity.test.mjs
+      - name: Run notification helper preservation guard
+        run: node --test supabase/tests/notification_helper_parity.test.mjs
 
   candidate-reader-sql:
     name: Full-chain candidate reader SQL behavior
@@ -183,7 +185,7 @@ jobs:
         # SELECT/WITH probes must return exactly one row: errors AND empty
         # assertions are fatal. Fixtures run once in one session and roll back.
         # Platform stubs are local-only, not hosted or JWT acceptance evidence.
-        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql
+        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql --probe supabase/tests/verify_notification_helper_regressions.sql
 
   roles-capabilities-sql:
     name: Full-chain roles and invitation SQL behavior

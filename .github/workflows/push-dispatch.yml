@@ -3,7 +3,7 @@
 # Every 10 minutes, call the `push-dispatch` Edge Function to drain unsent
 # notifications into FCM. The function is authenticated by the shared
 # `PUSH_DISPATCH_SECRET`, stored both here (GitHub secret) and in the function
-# environment. Runs are no-ops until that secret is provisioned.
+# environment. Missing configuration fails the scheduled run.
 #
 # Required: secret `PUSH_DISPATCH_SECRET`, variable `SUPABASE_PROJECT_REF`.
 
@@ -32,12 +32,12 @@ jobs:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
           if [ -z "$PUSH_DISPATCH_SECRET" ]; then
-            echo "PUSH_DISPATCH_SECRET is not provisioned; skipping dispatch."
-            exit 0
+            echo "::error::PUSH_DISPATCH_SECRET is not provisioned; no notifications were sent."
+            exit 1
           fi
           if [ -z "$PROJECT_REF" ]; then
-            echo "SUPABASE_PROJECT_REF is not set; skipping dispatch."
-            exit 0
+            echo "::error::SUPABASE_PROJECT_REF is not set; no notifications were sent."
+            exit 1
           fi
           curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/push-dispatch" \
             -H "x-findback-dispatch-secret: ${PUSH_DISPATCH_SECRET}" \

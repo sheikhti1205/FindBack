@@ -85,4 +85,13 @@ describe("friendlyError", () => {
     expect(raw.message).not.toMatch(/constraint|duplicate key/i);
     expect(raw.message).toMatch(/conflicts with something already saved/i);
   });
+
+  it("uses only fixed deletion domain copy, never arbitrary coded text", () => {
+    expect(friendlyError(new ApiError("postgres private rpc", 409, "LAST_ADMIN_DELETION_BLOCKED")).message)
+      .toBe("This is the only admin account. Promote another admin before deleting this one.");
+    expect(friendlyError(new ApiError("postgres private rpc", 502, "ACCOUNT_DELETION_PENDING")).message)
+      .toBe("Your account deletion is pending. Account privileges and uploads remain disabled. Try deleting your account again to finish.");
+    expect(friendlyError(new ApiError("postgres private rpc", 409, "UNKNOWN")).message)
+      .toBe("That conflicts with something already saved. Refresh and try again.");
+  });
 });

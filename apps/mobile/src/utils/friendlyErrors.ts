@@ -36,6 +36,13 @@ export function friendlyError(err: unknown): FriendlyError {
   if (err instanceof ApiError && err.code === "READ_BACK_FAILED") {
     return { code: "SERVER", message: "Your report was saved, but the app could not read it back. Refresh to see it." };
   }
+  // Narrow domain discriminators: never echo arbitrary server messages.
+  if (err instanceof ApiError && err.status === 409 && err.code === "LAST_ADMIN_DELETION_BLOCKED") {
+    return { code: "CONFLICT", message: "This is the only admin account. Promote another admin before deleting this one." };
+  }
+  if (err instanceof ApiError && err.status === 502 && err.code === "ACCOUNT_DELETION_PENDING") {
+    return { code: "SERVER", message: "Your account deletion is pending. Account privileges and uploads remain disabled. Try deleting your account again to finish." };
+  }
   // A contract this build points at may not exist yet on the project it
   // points at (a migration that has not been applied). The surface is ABSENT,
   // not broken, and "not available in this build" is a different fact from

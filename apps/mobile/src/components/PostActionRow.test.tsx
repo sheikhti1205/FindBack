@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PostActionRow } from "./PostActionRow";
+import { ReportShareButton } from "./ReportShareButton";
 import { widthBand } from "./responsive";
 
 afterEach(cleanup);
@@ -59,6 +60,13 @@ function renderRow(props: Partial<ComponentProps<typeof PostActionRow>> = {}) {
 }
 
 describe("PostActionRow (compact flat action row)", () => {
+  it("keeps the real share control in one of four visible action slots", () => {
+    renderRow({ commentCount: 126, slots: { like: <LikeSlot />, share: <ReportShareButton postId="p1" title="Backpack" />, save: <SaveSlot /> } });
+    expect(screen.getByTestId("post-action-row").querySelectorAll("button")).toHaveLength(4);
+    expect(screen.getByRole("button", { name: "Save report" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Comments, 126" }).textContent).toBe("126");
+    expect(rowCssRules).toMatch(/\.fb-post-action-row\s+\.fb-report-action\s*>\s*svg\s*\{[^}]*flex-shrink:\s*0/);
+  });
   it("renders one row that owns the group semantics", () => {
     renderRow();
     const row = screen.getByTestId("post-action-row");

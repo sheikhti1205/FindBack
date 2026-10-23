@@ -47,6 +47,7 @@
             "npm:@capacitor/core@^8.5.1",
             "npm:@capacitor/geolocation@^8.1.0",
             "npm:@capacitor/push-notifications@^8.1.2",
+            "npm:@capacitor/share@^8.0.3",
             "npm:@findback/shared@*",
             "npm:@floating-ui/react@~0.27.20",
             "npm:@internationalized/date@^3.12.4",

@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { averageRankingMetrics, CATEGORY_BONUS, cosineSimilarity, MIN_COSINE_CUTOFF, rankMatches, rankingMetrics, type MatchCandidate } from "./similarity";
+import {
+  averageRankingMetrics,
+  CATEGORY_BONUS,
+  cosineSimilarity,
+  deriveMatchReasons,
+  isReasonSupported,
+  MATCH_REASON_MAX,
+  MATCH_REASON_MIN,
+  MATCH_RESULT_LIMIT,
+  MIN_COSINE_CUTOFF,
+  rankMatches,
+  rankingMetrics,
+  type MatchCandidate,
+  type MatchReason,
+} from "./similarity";
 import fixtures from "./__tests__/fixtures/matching-ranking-fixtures.v1.json";
 
 const target = { id: "lost-1", type: "LOST" as const, title: "black umbrella", description: "wooden handle", category: "Clothing" as const, eventDate: "2026-09-10", locationLat: 1.3, locationLng: 103.8, locationLabel: "Test Location" };
@@ -32,18 +46,18 @@ describe("frozen default matching policy (synthetic labeled score regression, no
   it("freezes full-context bonuses and the clamped saturation tie", () => {
     const context = rankFixture(fixtures.cases.find((c) => c.id === "context-can-reorder")!);
     expect(context[0]!.score).toBeCloseTo(0.62 + 0.15 + 0.10 + 0.10, 10);
-    expect(context[0]!.reasons).toEqual(["same category", "similar date", "close location"]);
+    expect(context[0]!.reasons).toEqual(["Within 5 km", "Same event date", "Same category"]);
     const saturated = rankFixture(fixtures.cases.find((c) => c.id === "saturation-id-tie-limitation")!);
     expect(saturated.map((m) => m.score)).toEqual([1, 1]);
   });
 
   it.each(fixtures.cases)("$id: $notes", (row) => {
     expect(rankFixture(row).map((m) => m.post.id)).toEqual(row.expectedIds);
-    // Candidate enumeration cannot change tie-breaking or the three-card cap.
+    // Candidate enumeration cannot change tie-breaking or the five-card cap.
     expect(rankFixture({ ...row, candidates: [...row.candidates].reverse() }).map((m) => m.post.id)).toEqual(row.expectedIds);
   });
 
-  it("freezes macro metrics including the known tie and three-card misses", () => {
+  it("freezes macro metrics including the known tie and the five-card miss", () => {
     const metrics = averageRankingMetrics(fixtures.cases.map((row) =>
       rankingMetrics(rankFixture(row).map((m) => m.post.id), row.relevantIds),
     ));
@@ -55,11 +69,24 @@ describe("frozen default matching policy (synthetic labeled score regression, no
 });
 
 describe("rankMatches", () => {
-  const scores = new Map([["a", 0.9], ["b", 0.5], ["c", 0.4], ["d", 0.3]]);
 
-  it("returns at most three and sorts by score with an id tie-break", () => {
-    const ranked = rankMatches(target, [candidate({ id: "a" }), candidate({ id: "b" }), candidate({ id: "c" }), candidate({ id: "d" })], scores);
-    expect(ranked.map((m) => m.post.id)).toEqual(["a", "b", "c"]);
+  it("returns at most five and sorts by score with an id tie-break", () => {
+    const ranked = rankMatches(
+      target,
+      [candidate({ id: "a" }), candidate({ id: "b" }), candidate({ id: "c" }), candidate({ id: "d" }), candidate({ id: "e" })],
+      new Map([["a", 0.9], ["b", 0.5], ["c", 0.4], ["d", 0.3], ["e", 0.2]]),
+    );
+    expect(ranked).toHaveLength(MATCH_RESULT_LIMIT);
+    expect(ranked.map((m) => m.post.id)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("leaves out the sixth suggestion rather than widening the list", () => {
+    const ranked = rankMatches(
+      target,
+      ["a", "b", "c", "d", "e", "f"].map((id) => candidate({ id })),
+      new Map([["a", 0.9], ["b", 0.8], ["c", 0.7], ["d", 0.6], ["e", 0.5], ["f", 0.4]]),
+    );
+    expect(ranked.map((m) => m.post.id)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
   it("adds transparent category and proximity bonuses without claiming a probability", () => {
@@ -85,5 +112,34 @@ describe("rankMatches", () => {
     const scores = new Map([["a", 0.9], ["b", 0.4]]);
     const ranked = rankMatches(target, [candidate({ id: "a" }), candidate({ id: "b" })], scores);
     expect(ranked.map((m) => m.post.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("consumer reasons (actual ranking bonuses only)", () => {
+  const lost: MatchCandidate = { id: "lost", title: "Umbrella", description: "wood handle", category: "Clothing", eventDate: "2026-09-10", locationLabel: "Library", locationLat: 23.81, locationLng: 90.412, photoUrl: "photo.jpg" };
+  const found = { ...lost, id: "found" };
+  it("emits three supported bonuses, never text or visual claims", () => {
+    expect(deriveMatchReasons(lost, found).map((r) => r.text)).toEqual(["Within 5 km", "Same event date", "Same category"]);
+    expect(deriveMatchReasons(lost, found).length).toBeLessThanOrEqual(MATCH_REASON_MAX);
+  });
+  it("does not pad missing evidence with text, labels or photos", () => {
+    const sparse = { ...found, eventDate: null, locationLat: null, locationLng: null };
+    expect(deriveMatchReasons(lost, sparse).map((r) => r.text)).toEqual(["Same category"]);
+    expect(deriveMatchReasons(lost, { ...sparse, category: "Other" })).toEqual([]);
+    expect(deriveMatchReasons(lost, sparse).length).toBeLessThan(MATCH_REASON_MIN);
+  });
+  it("requires coordinate proximity rather than matching labels", () => {
+    expect(deriveMatchReasons(lost, { ...found, locationLat: 23.92 }).find((r) => r.signal === "location")?.text).toBe("Within 20 km");
+    expect(deriveMatchReasons(lost, { ...found, locationLat: 24.2 }).some((r) => r.signal === "location")).toBe(false);
+  });
+  it("uses event dates and rejects missing, invalid or distant dates", () => {
+    expect(deriveMatchReasons(lost, { ...found, eventDate: "2026-09-12" }).find((r) => r.signal === "date")?.text).toBe("Events 2 days apart");
+    for (const eventDate of [null, "invalid", "2026-10-10"]) expect(deriveMatchReasons(lost, { ...found, eventDate }).some((r) => r.signal === "date")).toBe(false);
+  });
+  it("supports its output and rejects invented wording or removed evidence", () => {
+    for (const reason of deriveMatchReasons(lost, found)) expect(isReasonSupported(reason, lost, found)).toBe(true);
+    const invented: MatchReason = { signal: "date", text: "Events 2 days apart" };
+    expect(isReasonSupported(invented, lost, found)).toBe(false);
+    expect(isReasonSupported({ signal: "location", text: "Within 5 km" }, lost, { ...found, locationLat: null })).toBe(false);
   });
 });

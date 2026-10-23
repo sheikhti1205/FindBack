@@ -36,6 +36,10 @@
 .fb-post-action-row .fb-report-action:active {
   background: var(--fb-surface-container);
 }
+/* Counts may grow with text scale; icons must never collapse to make room. */
+.fb-post-action-row .fb-report-action > svg {
+  flex-shrink: 0;
+}
 /* A pressed (liked) control reads as pressed through the icon itself; the
  * house token's own colour utility is layered, so the pressed colour is set
  * here where it can actually win. */

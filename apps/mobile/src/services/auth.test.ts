@@ -804,6 +804,43 @@ describe("account deletion (Settings → Account → typed-email confirm → pur
     await expect(requestAccountDeletion("u1")).rejects.toThrow(/1000.*files.*already removed/i);
   });
 
+  it("shows the server's last-admin refusal VERBATIM, not retry advice", async () => {
+    // The last admin cannot delete the account. The server's sentence is the
+    // answer; rewriting it into "deletion is incomplete, try again" sends
+    // the user down a road that is refused forever.
+    const sentence = "This is the only admin account. Promote another admin before deleting this one.";
+    clientMock.functions.invoke.mockResolvedValue({
+      data: null,
+      error: new FunctionsHttpError(Response.json({ code: "LAST_ADMIN_DELETION_BLOCKED", error: sentence, uid: "u1", storageRemoved: 0, profileDeleted: false, authDeleted: false }, { status: 409 })),
+    });
+    let message = "";
+    let status = 0;
+    try {
+      await requestAccountDeletion("u1");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+      status = (err as { status?: number }).status ?? 0;
+    }
+    expect(message).toBe(sentence);
+    expect(status).toBe(409);
+  });
+
+  it("does not classify an inconsistent 409 with destructive progress as an inert refusal", async () => {
+    const sentence = "This is the only admin account. Promote another admin before deleting this one.";
+    clientMock.functions.invoke.mockResolvedValue({
+      data: null,
+      error: new FunctionsHttpError(Response.json({ code: "LAST_ADMIN_DELETION_BLOCKED", error: sentence, uid: "u1", storageRemoved: 12, profileDeleted: true, authDeleted: false }, { status: 409 })),
+    });
+    let message = "";
+    try {
+      await requestAccountDeletion("u1");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toMatch(/12 files were already removed/);
+    expect(message).not.toBe(sentence);
+  });
+
   it("fails closed on transport errors without claiming anything", async () => {
     clientMock.functions.invoke.mockRejectedValue(new Error("network down"));
     await expect(requestAccountDeletion("u1")).rejects.toThrow(/Account deletion failed: network down/i);

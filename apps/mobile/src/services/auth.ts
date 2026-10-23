@@ -353,7 +353,7 @@ export async function requestAccountDeletion(expectedUserId: string): Promise<Ac
     if (invoked.error) throw invoked.error;
     data = invoked.data;
   } catch (err) {
-    throw await mapDeletionError(err);
+    throw await mapDeletionError(err, expectedUserId);
   }
   const result = data as { uid?: unknown; storageRemoved?: unknown; profileDeleted?: unknown; authDeleted?: unknown } | null;
   const removed = result?.storageRemoved;
@@ -363,9 +363,9 @@ export async function requestAccountDeletion(expectedUserId: string): Promise<Ac
   return { storageRemoved: removed };
 }
 
-async function mapDeletionError(err: unknown): Promise<ApiError> {
+async function mapDeletionError(err: unknown, expectedUserId: string): Promise<ApiError> {
   const like = (err ?? {}) as { message?: unknown; status?: unknown; context?: unknown };
-  let body: { error?: unknown; storageRemoved?: unknown; profileDeleted?: unknown } | undefined;
+  let body: { error?: unknown; code?: unknown; uid?: unknown; storageRemoved?: unknown; profileDeleted?: unknown; authDeleted?: unknown } | undefined;
   let status = like.status;
   if (like.context instanceof Response) {
     status = like.context.status;
@@ -382,10 +382,21 @@ async function mapDeletionError(err: unknown): Promise<ApiError> {
   if (status === 401 || (status === undefined && /session|credential|jwt|token|expired/i.test(message))) {
     return new ApiError("Your session expired. Sign in again, then delete your account.", 401);
   }
+  const refusal = "This is the only admin account. Promote another admin before deleting this one.";
+  if (status === 409 && body?.code === "LAST_ADMIN_DELETION_BLOCKED" && body.uid === expectedUserId &&
+      body.error === refusal && body.storageRemoved === 0 && body.profileDeleted === false && body.authDeleted === false) {
+    return new ApiError(refusal, 409, "LAST_ADMIN_DELETION_BLOCKED");
+  }
+  if (status === 502 && body?.code === "ACCOUNT_DELETION_PENDING" && body.uid === expectedUserId &&
+      typeof body.storageRemoved === "number" && Number.isSafeInteger(body.storageRemoved) && body.storageRemoved >= 0 &&
+      typeof body.profileDeleted === "boolean" && body.authDeleted === false) {
+    return new ApiError("Your account deletion is pending. Account privileges and uploads remain disabled. Try deleting your account again to finish.", 502, "ACCOUNT_DELETION_PENDING");
+  }
   const removed = body?.storageRemoved;
   if ((typeof removed === "number" && Number.isSafeInteger(removed) && removed > 0) || body?.profileDeleted === true) {
     return new ApiError(`Account deletion is incomplete.${typeof removed === "number" && removed > 0 ? ` ${removed} files were already removed.` : ""}${body?.profileDeleted === true ? " Your profile was also removed." : ""} Try again to finish deleting this account.`, 502);
   }
+  if (status === 409) return new ApiError("Account deletion was refused by the server.", 409);
   if (message) return new ApiError(`Account deletion failed: ${message}`, 502);
   return new ApiError("Account deletion failed. Check your connection and try again.", 502);
 }

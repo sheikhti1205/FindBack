@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Eye, MapPin, Sparkles } from "lucide-react";
+import { Activity, Eye, Flag, MapPin, Sparkles, UserRoundX } from "lucide-react";
 import {
   PreferenceSwitchRow,
   SettingsGroup,
@@ -75,6 +75,22 @@ export function PrivacySettings() {
       backTo="/settings"
       description="What FindBack knows about you, and the real switches that control it."
     >
+      <SettingsGroup title="Safety">
+        <SettingsRow
+          title="Blocked accounts"
+          description="Review accounts you have blocked."
+          icon={UserRoundX}
+          iconTone="privacy"
+          route="/settings/privacy/blocked"
+        />
+        <SettingsRow
+          title="Your safety reports"
+          description="Review reports you have sent and their outcomes."
+          icon={Flag}
+          iconTone="privacy"
+          route="/settings/privacy/reports"
+        />
+      </SettingsGroup>
       <SettingsGroup
         title="Location"
         description="FindBack reads your location once when you choose it on a report — never in the background."

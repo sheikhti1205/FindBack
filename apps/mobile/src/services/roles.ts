@@ -147,6 +147,24 @@ export type CapabilityChangeOutcome =
   | { kind: "invitation"; email: string };
 
 /**
+ * What the server says about the one-time admin claim.
+ *
+ * The server is the authority: the app never decides on its own whether this
+ * account may claim. `reason` is the server's own sentence when it may not,
+ * and it is shown to the reader exactly as the server wrote it.
+ */
+export interface BootstrapClaimStatus {
+  /** May this account make the one-time claim right now? */
+  canClaim: boolean;
+  /** The server's sentence explaining why not, or null when it may. */
+  reason: string | null;
+  /** Does THIS account already hold the admin role? */
+  alreadyAdmin: boolean;
+  /** Does ANY account hold the admin role? The claim is closed then. */
+  hasAdmin: boolean;
+}
+
+/**
  * The server's refusal is a real answer.
  *
  * `42501` is the server saying "you may not do this" — it is not a network
@@ -322,10 +340,77 @@ export async function revokeRole(email: string): Promise<void> {
  * The server decides whether the caller may claim it: the address must be in
  * the seeded allowlist and no admin may exist yet. A refusal is a real answer
  * (403), not a failure to report.
+ *
+ * The server's own sentence SURVIVES: the claim raises a sentence ("An admin
+ * already exists", "This account is not in the admin bootstrap list") and
+ * that sentence is what the reader must be shown, so it is carried on the
+ * error untouched. Only known deliberate claim sentences bypass generic UI
+ * errors; database diagnostics never do.
  */
 export async function bootstrapAdmin(): Promise<void> {
-  const { error } = await getSupabase().rpc("findback_bootstrap_admin", {});
-  if (error) throw roleError(error.message, error.code);
+  const { data, error } = await getSupabase().rpc("findback_bootstrap_admin", {});
+  if (error) throw roleError(serverSentence(error), error.code);
+  if (data !== true) throw new ApiError("The claim was not confirmed.", 500, "UNEXPECTED_SHAPE");
+}
+
+/** Deliberate claim refusals only. Bound to the claim SQL by the parity test. */
+const BOOTSTRAP_REFUSALS = [
+  "Not authenticated",
+  "This account has no email address, so it cannot claim the admin role",
+  "Confirm your email address before claiming the admin role",
+  "This account is not in the admin bootstrap list",
+  "An admin already exists",
+];
+
+export function bootstrapRefusalMessage(error: unknown): string | null {
+  return error instanceof ApiError &&
+    (error.code === "42501" || error.code === "22023" || error.code === "28000") &&
+    BOOTSTRAP_REFUSALS.includes(error.message) ? error.message : null;
+}
+
+/**
+ * The text the server sent, preferring the sentence it raised.
+ *
+ * PostgREST puts the raised message in `message`; a gateway in front of it
+ * may put it in `details` instead. Either way the reader needs the server's
+ * sentence, so the first non-empty one is used. An empty text is not an
+ * answer, and the role taxonomy turns it into a server fault.
+ */
+function serverSentence(error: {
+  message?: string | null;
+  details?: string | null;
+}): string {
+  const message = typeof error.message === "string" ? error.message.trim() : "";
+  if (message) return message;
+  return typeof error.details === "string" ? error.details.trim() : "";
+}
+
+/**
+ * Whether THIS account may make the one-time admin claim right now.
+ *
+ * The answer comes from the server, which consults the caller's own address,
+ * the caller's own confirmed flag and the allowlist — and tells the caller
+ * the sentence explaining why not. The client never guesses, and never shows
+ * the claim to somebody the server would refuse.
+ */
+export async function fetchBootstrapClaimStatus(): Promise<BootstrapClaimStatus> {
+  const { data, error } = await getSupabase().rpc("findback_bootstrap_claim_status", {});
+  if (error) throw roleError(serverSentence(error), error.code);
+  const row = (data ?? {}) as {
+    can_claim?: unknown;
+    reason?: unknown;
+    already_admin?: unknown;
+    has_admin?: unknown;
+  };
+  return {
+    // Only an explicit true is a yes. A garbled answer is never rounded up to
+    // "you may claim".
+    canClaim: row.can_claim === true && row.reason === null &&
+      row.already_admin === false && row.has_admin === false,
+    reason: typeof row.reason === "string" && row.reason.trim() ? row.reason : null,
+    alreadyAdmin: row.already_admin === true,
+    hasAdmin: row.has_admin === true,
+  };
 }
 
 /** The append-only activity log (needs the audit_read capability). */

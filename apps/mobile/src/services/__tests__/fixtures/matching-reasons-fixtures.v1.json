@@ -1,0 +1,596 @@
+{
+  "version": "matching-reasons-eval-v1",
+  "evidenceKind": "hand-labelled lost/found pairs with SYNTHETIC mapped base scores; the on-device text embedding is NOT exercised, so these numbers measure the ranker and the reason derivation, never real-world matching quality",
+  "createdAt": "2026-10-23",
+  "fixtureSize": 12,
+  "target": {
+    "id": "query",
+    "title": "black umbrella wooden handle",
+    "description": "Left it on the reading table on Monday morning",
+    "category": "Umbrellas & Bottles",
+    "eventDate": "2026-09-10",
+    "locationLabel": "Central Library",
+    "locationLat": 23.81,
+    "locationLng": 90.412,
+    "photoUrl": "https://example.com/lost-umbrella.jpg"
+  },
+  "cases": [
+    {
+      "id": "umbrella-library-window",
+      "notes": "The ordinary case: same place, same day, same item word, matching details.",
+      "relevantIds": ["found-umbrella"],
+      "expectedReasonSignals": ["location", "date", "category"],
+      "candidates": [
+        {
+          "id": "found-umbrella",
+          "title": "black umbrella with wooden handle",
+          "description": "Handed in at the Central Library reading room on Monday",
+          "category": "Umbrellas & Bottles",
+          "eventDate": "2026-09-10",
+          "locationLabel": "Central Library",
+          "locationLat": 23.8103,
+          "locationLng": 90.4122,
+          "photoUrl": "https://example.com/found-umbrella.jpg",
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-jacket",
+          "title": "black jacket left on a chair",
+          "description": "Grey wool jacket, size medium",
+          "category": "Clothing",
+          "eventDate": "2026-09-11",
+          "locationLabel": "Central Library",
+          "locationLat": 23.811,
+          "locationLng": 90.413,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        },
+        {
+          "id": "found-staff",
+          "title": "wooden walking stick",
+          "description": "Carved wooden stick, about one metre long",
+          "category": "Tools & Equipment",
+          "eventDate": "2026-09-09",
+          "locationLabel": null,
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.58
+        }
+      ]
+    },
+    {
+      "id": "keys-cafe",
+      "notes": "Item word shared with a longer title; the details add words the title did not cover.",
+      "relevantIds": ["found-keys"],
+      "expectedReasonSignals": ["location", "date", "category"],
+      "target": {
+        "title": "house keys on red keyring",
+        "description": "Three keys and a small red keyring, dropped near the cafe tables",
+        "category": "Keys",
+        "eventDate": "2026-09-08",
+        "locationLabel": "Corner Cafe",
+        "locationLat": 23.82,
+        "locationLng": 90.41,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-keys",
+          "title": "keys with red keyring on cafe table",
+          "description": "Found three house keys with a red ring by the cafe tables on Sunday",
+          "category": "Keys",
+          "eventDate": "2026-09-08",
+          "locationLabel": "Corner Cafe",
+          "locationLat": 23.8205,
+          "locationLng": 90.4105,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-keys-far",
+          "title": "silver keychain with two keys",
+          "description": "Old silver keychain found on the bus",
+          "category": "Keys",
+          "eventDate": "2026-09-20",
+          "locationLabel": "Bus Terminal",
+          "locationLat": 23.9,
+          "locationLng": 90.5,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        },
+        {
+          "id": "found-cup",
+          "title": "blue ceramic mug",
+          "description": "A blue mug with a chip on the rim",
+          "category": "Household Items",
+          "eventDate": "2026-09-08",
+          "locationLabel": "Corner Cafe",
+          "locationLat": 23.8202,
+          "locationLng": 90.4102,
+          "photoUrl": null,
+          "mappedScore": 0.58
+        }
+      ]
+    },
+    {
+      "id": "phone-market",
+      "notes": "Context reorders a higher base score: the report with more shared context wins.",
+      "relevantIds": ["found-phone"],
+      "expectedReasonSignals": ["location", "date"],
+      "target": {
+        "title": "iphone 13 in clear case",
+        "description": "Black iPhone 13 with a transparent case, cracked screen protector",
+        "category": "Phones & Tablets",
+        "eventDate": "2026-09-14",
+        "locationLabel": "Old Market",
+        "locationLat": 23.8,
+        "locationLng": 90.4,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-phone",
+          "title": "phone in clear case",
+          "description": "Found a black phone with a clear case at the market stalls",
+          "category": "Electronics",
+          "eventDate": "2026-09-14",
+          "locationLabel": "Old Market",
+          "locationLat": 23.8004,
+          "locationLng": 90.4003,
+          "photoUrl": null,
+          "mappedScore": 0.55
+        },
+        {
+          "id": "found-laptop",
+          "title": "silver laptop bag",
+          "description": "Empty silver laptop sleeve",
+          "category": "Computers & Accessories",
+          "eventDate": "2026-09-20",
+          "locationLabel": "North Depot",
+          "locationLat": 24,
+          "locationLng": 90.5,
+          "photoUrl": null,
+          "mappedScore": 0.63
+        }
+      ]
+    },
+    {
+      "id": "cat-collar",
+      "notes": "Photos on both sides and nothing else: the reasons are the photo, the category and the title.",
+      "relevantIds": ["found-cat"],
+      "expectedReasonSignals": ["category"],
+      "target": {
+        "title": "grey tabby cat with blue collar",
+        "description": null,
+        "category": "Pet Accessories",
+        "eventDate": null,
+        "locationLabel": null,
+        "locationLat": null,
+        "locationLng": null,
+        "photoUrl": "https://example.com/lost-cat.jpg"
+      },
+      "candidates": [
+        {
+          "id": "found-cat",
+          "title": "tabby cat blue collar",
+          "description": null,
+          "category": "Pet Accessories",
+          "eventDate": null,
+          "locationLabel": null,
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": "https://example.com/found-cat.jpg",
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-dog",
+          "title": "brown dog leash",
+          "description": null,
+          "category": "Pet Accessories",
+          "eventDate": null,
+          "locationLabel": null,
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        }
+      ]
+    },
+    {
+      "id": "no-relevant-candidate",
+      "notes": "Nothing in the pool is the same item: this case measures precision only.",
+      "relevantIds": [],
+      "target": {
+        "title": "silver pendant necklace",
+        "description": "Small silver pendant on a thin chain",
+        "category": "Accessories & Jewelry",
+        "eventDate": "2026-09-01",
+        "locationLabel": "Riverside Park",
+        "locationLat": 23.83,
+        "locationLng": 90.42,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "c1",
+          "title": "gold ring",
+          "description": "Plain gold band",
+          "category": "Accessories & Jewelry",
+          "eventDate": "2026-09-01",
+          "locationLabel": "Riverside Park",
+          "locationLat": 23.8301,
+          "locationLng": 90.4201,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "c2",
+          "title": "silver bracelet",
+          "description": "Slim silver bangle",
+          "category": "Accessories & Jewelry",
+          "eventDate": "2026-09-20",
+          "locationLabel": "City Mall",
+          "locationLat": 23.86,
+          "locationLng": 90.45,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        }
+      ]
+    },
+    {
+      "id": "far-in-time",
+      "notes": "Forty-five days apart: the date comparison established nothing, so no date reason is claimed.",
+      "relevantIds": ["found-helmet"],
+      "expectedReasonSignals": ["location", "category"],
+      "target": {
+        "title": "red bicycle helmet",
+        "description": "Red helmet with a black strap",
+        "category": "Sports & Fitness",
+        "eventDate": "2026-08-20",
+        "locationLabel": "City Park",
+        "locationLat": 23.87,
+        "locationLng": 90.44,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-helmet",
+          "title": "red bike helmet",
+          "description": "Red cycling helmet with black strap left by the swings",
+          "category": "Sports & Fitness",
+          "eventDate": "2026-10-04",
+          "locationLabel": "City Park",
+          "locationLat": 23.8701,
+          "locationLng": 90.4401,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-blue-helmet",
+          "title": "blue helmet",
+          "description": "Blue bike helmet",
+          "category": "Sports & Fitness",
+          "eventDate": "2026-08-22",
+          "locationLabel": "City Park",
+          "locationLat": 23.8702,
+          "locationLng": 90.4402,
+          "photoUrl": null,
+          "mappedScore": 0.5
+        }
+      ]
+    },
+    {
+      "id": "far-in-place",
+      "notes": "Fifty-seven kilometres apart: the location comparison established nothing, so no location reason is claimed.",
+      "relevantIds": ["found-wallet"],
+      "expectedReasonSignals": ["date", "category"],
+      "target": {
+        "title": "brown leather wallet",
+        "description": "Wallet with my initials embossed on the front",
+        "category": "Bags & Wallets",
+        "eventDate": "2026-09-12",
+        "locationLabel": "North Station",
+        "locationLat": 23.78,
+        "locationLng": 90.38,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-wallet",
+          "title": "brown leather wallet",
+          "description": "Leather wallet with initials on the front, no cards inside",
+          "category": "Bags & Wallets",
+          "eventDate": "2026-09-12",
+          "locationLabel": "South Bus Stand",
+          "locationLat": 24.14,
+          "locationLng": 90.78,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-wallet-x",
+          "title": "black leather wallet",
+          "description": "Plain black wallet with nothing inside",
+          "category": "Bags & Wallets",
+          "eventDate": "2026-09-12",
+          "locationLabel": "North Station",
+          "locationLat": 23.7801,
+          "locationLng": 90.3801,
+          "photoUrl": null,
+          "mappedScore": 0.5
+        }
+      ]
+    },
+    {
+      "id": "two-relevant",
+      "notes": "Two of the candidates are the same item; both are labelled relevant.",
+      "relevantIds": ["found-bottle", "found-bottle-2"],
+      "expectedReasonSignals": ["location", "date", "category"],
+      "target": {
+        "title": "blue water bottle",
+        "description": "Blue steel bottle, 750 ml, dented on one side",
+        "category": "Umbrellas & Bottles",
+        "eventDate": "2026-09-18",
+        "locationLabel": "Gym",
+        "locationLat": 23.79,
+        "locationLng": 90.39,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-bottle",
+          "title": "blue steel water bottle",
+          "description": "Found a blue steel bottle with a dent near the gym",
+          "category": "Umbrellas & Bottles",
+          "eventDate": "2026-09-18",
+          "locationLabel": "Gym",
+          "locationLat": 23.7902,
+          "locationLng": 90.3901,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-bottle-2",
+          "title": "blue metal bottle",
+          "description": "Blue metal bottle left in the gym changing room",
+          "category": "Umbrellas & Bottles",
+          "eventDate": "2026-09-19",
+          "locationLabel": "Gym",
+          "locationLat": 23.7898,
+          "locationLng": 90.3899,
+          "photoUrl": null,
+          "mappedScore": 0.58
+        },
+        {
+          "id": "found-towel",
+          "title": "blue gym towel",
+          "description": "Blue microfibre towel",
+          "category": "Sports & Fitness",
+          "eventDate": "2026-09-18",
+          "locationLabel": "Gym",
+          "locationLat": 23.7901,
+          "locationLng": 90.39,
+          "photoUrl": null,
+          "mappedScore": 0.56
+        }
+      ]
+    },
+    {
+      "id": "title-only",
+      "notes": "Only the title overlaps: two supportable reasons, so two are shown.",
+      "relevantIds": ["found-notebook"],
+      "expectedReasonSignals": ["category"],
+      "target": {
+        "title": "green notebook",
+        "description": null,
+        "category": "Books & Stationery",
+        "eventDate": null,
+        "locationLabel": null,
+        "locationLat": null,
+        "locationLng": null,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-notebook",
+          "title": "green notebook",
+          "description": null,
+          "category": "Books & Stationery",
+          "eventDate": null,
+          "locationLabel": null,
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-backpack",
+          "title": "green backpack",
+          "description": null,
+          "category": "Bags & Wallets",
+          "eventDate": null,
+          "locationLabel": null,
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        }
+      ]
+    },
+    {
+      "id": "label-match-no-coordinates",
+      "notes": "Same place name without coordinates: no location bonus or location explanation is supported.",
+      "relevantIds": ["found-charger"],
+      "expectedReasonSignals": ["date", "category"],
+      "target": {
+        "title": "black laptop charger",
+        "description": "Dell charger with a braided cable",
+        "category": "Electronics",
+        "eventDate": "2026-09-05",
+        "locationLabel": "Co-working Space",
+        "locationLat": null,
+        "locationLng": null,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-charger",
+          "title": "black laptop charger",
+          "description": "Black charger with braided cable, left at the co-working space",
+          "category": "Electronics",
+          "eventDate": "2026-09-05",
+          "locationLabel": "Co-working Space",
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-powerbank",
+          "title": "white power bank",
+          "description": "Small white power bank with a short cable",
+          "category": "Electronics",
+          "eventDate": "2026-09-05",
+          "locationLabel": "Co-working Space",
+          "locationLat": null,
+          "locationLng": null,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        }
+      ]
+    },
+    {
+      "id": "category-mismatch-still-relevant",
+      "notes": "The same item filed under another category: the category reason is absent and the item still ranks first.",
+      "relevantIds": ["found-ring"],
+      "expectedReasonSignals": ["location", "date"],
+      "target": {
+        "title": "wedding ring gold band",
+        "description": "Plain gold band, small engraving inside",
+        "category": "Accessories & Jewelry",
+        "eventDate": "2026-09-22",
+        "locationLabel": "Beach Road",
+        "locationLat": 23.75,
+        "locationLng": 90.35,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "found-ring",
+          "title": "gold ring band",
+          "description": "Small gold ring found on the beach road",
+          "category": "Other",
+          "eventDate": "2026-09-22",
+          "locationLabel": "Beach Road",
+          "locationLat": 23.7501,
+          "locationLng": 90.3501,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "found-pendant",
+          "title": "silver pendant necklace",
+          "description": "Silver pendant on a chain found on the beach road",
+          "category": "Accessories & Jewelry",
+          "eventDate": "2026-09-22",
+          "locationLabel": "Beach Road",
+          "locationLat": 23.7502,
+          "locationLng": 90.3502,
+          "photoUrl": null,
+          "mappedScore": 0.4
+        }
+      ]
+    },
+    {
+      "id": "six-candidates-one-relevant-outside-the-cap",
+      "notes": "Six candidates, five suggestions shown: the sixth (and relevant) one is left out by the cap.",
+      "relevantIds": ["sneakers-1", "sneakers-6"],
+      "expectedReasonSignals": ["location", "date", "category"],
+      "target": {
+        "title": "white canvas sneakers",
+        "description": "White sneakers with a green stripe on the side",
+        "category": "Footwear",
+        "eventDate": "2026-09-09",
+        "locationLabel": "Mall",
+        "locationLat": 23.77,
+        "locationLng": 90.37,
+        "photoUrl": null
+      },
+      "candidates": [
+        {
+          "id": "sneakers-1",
+          "title": "white canvas sneakers",
+          "description": "White canvas shoes with green stripe found in the mall",
+          "category": "Footwear",
+          "eventDate": "2026-09-09",
+          "locationLabel": "Mall",
+          "locationLat": 23.7701,
+          "locationLng": 90.3701,
+          "photoUrl": null,
+          "mappedScore": 0.62
+        },
+        {
+          "id": "sneakers-2",
+          "title": "grey canvas sneakers",
+          "description": "Grey canvas sneakers in a shoebox, left in the mall",
+          "category": "Footwear",
+          "eventDate": "2026-09-09",
+          "locationLabel": "Mall",
+          "locationLat": 23.7702,
+          "locationLng": 90.3702,
+          "photoUrl": null,
+          "mappedScore": 0.6
+        },
+        {
+          "id": "sneakers-3",
+          "title": "white running shoes",
+          "description": "White trainers for running, size 42",
+          "category": "Footwear",
+          "eventDate": "2026-09-09",
+          "locationLabel": "Mall",
+          "locationLat": 23.7703,
+          "locationLng": 90.3703,
+          "photoUrl": null,
+          "mappedScore": 0.58
+        },
+        {
+          "id": "sneakers-4",
+          "title": "black sports shoes",
+          "description": "Black sports shoes for the gym",
+          "category": "Footwear",
+          "eventDate": "2026-09-09",
+          "locationLabel": "Mall",
+          "locationLat": 23.7704,
+          "locationLng": 90.3704,
+          "photoUrl": null,
+          "mappedScore": 0.56
+        },
+        {
+          "id": "sneakers-5",
+          "title": "grey sports trainers",
+          "description": "Grey trainers, size 41",
+          "category": "Footwear",
+          "eventDate": "2026-09-10",
+          "locationLabel": "Mall",
+          "locationLat": 23.7705,
+          "locationLng": 90.3705,
+          "photoUrl": null,
+          "mappedScore": 0.54
+        },
+        {
+          "id": "sneakers-6",
+          "title": "white canvas trainers",
+          "description": "White canvas trainers with green stripe in the mall food court",
+          "category": "Footwear",
+          "eventDate": "2026-09-10",
+          "locationLabel": "Mall",
+          "locationLat": 23.7706,
+          "locationLng": 90.3706,
+          "photoUrl": null,
+          "mappedScore": 0.52
+        }
+      ]
+    }
+  ]
+}

@@ -49,6 +49,13 @@ import { AiPrivacy } from "./screens/AiPrivacy";
 import { AiAdvanced } from "./screens/AiAdvanced";
 import { HelpGuide } from "./screens/HelpGuide";
 import { AdminTeam } from "./screens/AdminTeam";
+import { AdminBootstrap } from "./screens/AdminBootstrap";
+import { BlockedUsers } from "./screens/BlockedUsers";
+import { SafetyReports } from "./screens/SafetyReports";
+import { FeedbackForm } from "./screens/FeedbackForm";
+import { Returns } from "./screens/Returns";
+import { ModerationQueue } from "./screens/ModerationQueue";
+import { RequireCapability } from "./components/RequireCapability";
 import { AdminInvite } from "./screens/AdminInvite";
 import { AdminAuditLog } from "./screens/AdminAuditLog";
 import { CommunityGuidelines, PrivacyPolicy, Terms } from "./screens/Legal";
@@ -170,6 +177,9 @@ export function App() {
                <Route path="/ai-models" element={<AiModelsRoute />} />
               <Route path="/offline-ai" element={<Navigate to="/settings/ai/models" replace />} />
               <Route path="/settings" element={<Settings />} />
+              {/* Eligibility and the claim itself are server-controlled. An
+                  existing admin role must not be required to reach setup. */}
+              <Route path="/settings/administrator" element={<AdminBootstrap />} />
               <Route path="/settings/account" element={<AccountSettings />} />
               <Route path="/settings/appearance" element={<AppearanceSettings />} />
               <Route path="/settings/accessibility" element={<AccessibilitySettings />} />
@@ -177,6 +187,11 @@ export function App() {
               <Route path="/settings/media" element={<MediaSettings />} />
               <Route path="/settings/notifications" element={<NotificationPreferences />} />
               <Route path="/settings/privacy" element={<PrivacySettings />} />
+              <Route path="/settings/privacy/blocked" element={<BlockedUsers />} />
+              <Route path="/settings/privacy/reports" element={<SafetyReports />} />
+              <Route path="/settings/feedback" element={<FeedbackForm />} />
+              <Route path="/settings/returns" element={<Returns />} />
+              <Route path="/settings/moderation/queue" element={<RequireCapability capability="reports_review"><ModerationQueue /></RequireCapability>} />
               <Route path="/settings/ai" element={<AiSettings />} />
               <Route path="/settings/ai/connections" element={<AiConnection />} />
               <Route path="/settings/ai/chat-models" element={<CloudModels />} />

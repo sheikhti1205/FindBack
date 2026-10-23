@@ -30,6 +30,8 @@ import {
 import { getSupabase } from "./services/supabaseClient";
 import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
 import { storage } from "./services/storage";
+import { clearSessionExpired, markSessionExpired, sessionExpiryCandidate } from "./services/sessionExpiry";
+import { ApiError } from "./services/session";
 import {
   connectRealtime,
   disconnectRealtime,
@@ -108,11 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sdkObserved = useRef(false);
   const profileAdoptionBlocked = useRef(false);
   const authEpoch = useRef(0);
+  const hadStoredSession = useRef(sessionExpiryCandidate());
+  const intentionalSignOut = useRef(0);
   const assertAccount = useCallback((accountId: string) => {
     if (profileAdoptionBlocked.current || (sdkObserved.current && sdkAccount.current !== accountId)) throw new AuthAccountChangedError();
   }, []);
   const setUserState = useCallback((next: PublicUser | null) => {
     if (next !== null) assertAccount(next.id);
+    if (next !== null) clearSessionExpired();
     currentUser.current = next;
     publishUser(next);
   }, [assertAccount]);
@@ -152,6 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Retry. Never assume signed-out and never destroy the session here.
           setBootError("unreachable");
         } else {
+          if (err instanceof ApiError && err.status === 401 && hadStoredSession.current && intentionalSignOut.current === 0) markSessionExpired();
           // W0-B (S2, additive): a valid session without a FindBack profile
           // (new Google account or interrupted completion) routes to
           // completion — the session is KEPT, clearAllAuth is NOT called.
@@ -184,6 +190,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
         const previousAccount = sdkAccount.current ?? currentUser.current?.id ?? null;
+        if (event === "SIGNED_OUT" && (previousAccount !== null || hadStoredSession.current) && intentionalSignOut.current === 0) markSessionExpired();
+        if (session) clearSessionExpired();
+        if (event === "SIGNED_OUT") hadStoredSession.current = false;
         const nextAccount = session?.user.id ?? null;
         const accountChanged = previousAccount !== null && previousAccount !== nextAccount;
         // The SDK's startup snapshot is part of the boot restore, not a new
@@ -248,6 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSignedOut(() => {
+        if (currentUser.current && intentionalSignOut.current === 0) markSessionExpired();
         ++authEpoch.current;
         profileAdoptionBlocked.current = true;
         aiCredentials.clearSession();
@@ -264,7 +274,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (user) {
       connectRealtime();
       joinInboxRoom(user.id);
-      void startPushNotifications();
+      void startPushNotifications({
+        accountId: user.id,
+        isCurrent: () => currentUser.current?.id === user.id &&
+          (!sdkObserved.current || sdkAccount.current === user.id) && !profileAdoptionBlocked.current,
+      });
     } else {
       leaveInboxRoom();
       disconnectRealtime();
@@ -329,6 +343,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const deviceSignedOut = useCallback(() => currentUser.current === null && sdkAccount.current === null, []);
 
   const cleanAccountOnDevice = useCallback(async (accountId: string | null) => {
+    intentionalSignOut.current += 1;
+    hadStoredSession.current = false;
+    clearSessionExpired();
+    try {
     // Account A -> B switch starts here: drop this session's token cache and
     // pending email and notify signed-out handlers BEFORE the sign-out call,
     // so no A-owned slice can leak into the next account's calls.
@@ -379,6 +397,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearUserScopedLocalState();
     setUserState(null);
     if (keysFailed || sessionFailed) throw new Error("Stored sign-in or AI keys could not be removed. Retry cleanup on this device.");
+    } finally { intentionalSignOut.current -= 1; }
   }, [setUserState]);
 
   const logout = useCallback(() => cleanAccountOnDevice(currentUser.current?.id ?? sdkAccount.current), [cleanAccountOnDevice]);

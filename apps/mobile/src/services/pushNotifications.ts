@@ -41,6 +41,8 @@ export interface PushAdapter {
 
 export interface PushControllerOptions {
   adapter: PushAdapter;
+  /** Canonical runtime's live auth-owner guard, including explicit settings starts. */
+  isCurrent?: () => boolean;
   registerToken?: (token: string, platform: PushPlatform) => Promise<void>;
   /** Test seam; defaults to the auth.uid()-scoped unregister RPC. */
   unregisterToken?: (token: string) => Promise<void>;
@@ -59,13 +61,34 @@ export function reportUrlFromPushData(data: Record<string, string | undefined>):
   return postId ? reportLink(postId) : null;
 }
 
+/**
+ * What a teardown actually achieved. The device may hold no registration at
+ * all, or a registration that could not be released — the caller must be able
+ * to tell the difference instead of assuming the device is unregistered.
+ */
+export interface PushTeardown {
+  /** This device holds no live push registration any more. */
+  unregistered: boolean;
+  /** A registration existed and was released. */
+  released: boolean;
+}
+
+export interface PushStartOptions {
+  /** Only an explicit consumer Enable action may request OS permission. */
+  requestPermission?: boolean;
+  /** Auth-owner guard, rechecked at every asynchronous boundary and callback. */
+  isCurrent?: () => boolean;
+  /** Preference admission runs before native work, but is fenced by stop(). */
+  prepare?: () => Promise<boolean>;
+}
+
 export interface PushController {
-  start(): Promise<PushPermissionState>;
-  stop(): Promise<void>;
+  start(options?: PushStartOptions): Promise<PushPermissionState>;
+  stop(): Promise<PushTeardown>;
   isRunning(): boolean;
   /** Current OS permission state without prompting; "unsupported" on web. */
   permission(): Promise<PushPermissionState>;
-  /** Opens OS notification settings; no-op when the adapter cannot. */
+  /** Opens OS notification settings; rejects when unavailable. */
   openSettings(): Promise<void>;
 }
 
@@ -79,6 +102,15 @@ export function createPushController(options: PushControllerOptions): PushContro
   const cleanups: Array<() => void> = [];
   let running = false;
   let currentToken: string | null = null;
+  let generation = 0;
+  let pendingRegistration: Promise<void> = Promise.resolve();
+  let nativeQueue: Promise<unknown> = Promise.resolve();
+  let starting: Promise<PushPermissionState> | null = null;
+  const serialize = <T>(work: () => Promise<T>): Promise<T> => {
+    const result = nativeQueue.then(work);
+    nativeQueue = result.catch(() => {});
+    return result;
+  };
 
   const emitReceived =
     options.emitReceived ??
@@ -101,61 +133,103 @@ export function createPushController(options: PushControllerOptions): PushContro
     },
 
     async openSettings(): Promise<void> {
-      await adapter.openSettings?.();
+      if (!adapter.openSettings) throw new Error("Notification settings aren't available here.");
+      await adapter.openSettings();
     },
 
-    async start(): Promise<PushPermissionState> {
-      if (!adapter.isNative()) return "unsupported";
-      if (running) return "granted";
-      const permission = await adapter.requestPermission();
-      if (permission !== "granted") return permission;
-
-      cleanups.push(
-        await adapter.onRegistration(async (token) => {
-          const trimmed = token?.trim();
-          if (!trimmed) return;
-          currentToken = trimmed;
+    start(startOptions = {}): Promise<PushPermissionState> {
+      if (!adapter.isNative()) return Promise.resolve("unsupported");
+      if (starting) return starting;
+      if (running) return Promise.resolve("granted");
+      const epoch = generation;
+      const active = () => epoch === generation && (options.isCurrent?.() ?? true) && (startOptions.isCurrent?.() ?? true);
+      const attempt = (async (): Promise<PushPermissionState> => {
+        if (startOptions.prepare && !await startOptions.prepare()) return "prompt";
+        if (!active()) return "prompt";
+        return serialize(async (): Promise<PushPermissionState> => {
           try {
-            await (options.registerToken ?? registerDeviceToken)(trimmed, adapter.platform());
+            if (!active()) return "prompt";
+            let permission = await adapter.checkPermission?.() ?? "prompt";
+            if (!active()) return "prompt";
+            if (permission !== "granted" && startOptions.requestPermission === true) {
+              permission = await adapter.requestPermission();
+            }
+            if (!active()) return "prompt";
+            if (permission !== "granted") return permission;
+            const listen = async (listener: Promise<() => void>) => {
+              const cleanup = await listener;
+              if (!active()) cleanup();
+              else cleanups.push(cleanup);
+            };
+
+            await listen(adapter.onRegistration(async (token) => {
+              if (!active()) return;
+              const trimmed = token?.trim();
+              if (!trimmed) return;
+              currentToken = trimmed;
+              pendingRegistration = pendingRegistration.then(async () => {
+                if (!active()) return;
+                try {
+                  await (options.registerToken ?? registerDeviceToken)(trimmed, adapter.platform());
+                } catch (error) {
+                  options.onRegistrationError?.(error instanceof Error ? error.message : "token registration failed");
+                }
+              });
+              await pendingRegistration;
+            }));
+            await listen(adapter.onRegistrationError((message) => {
+              if (active()) options.onRegistrationError?.(message);
+            }));
+            await listen(adapter.onReceived(() => { if (active()) emitReceived(); }));
+            await listen(adapter.onAction((data) => {
+              if (!active()) return;
+              const url = reportUrlFromPushData(data);
+              if (url) openReportUrl(url);
+            }));
+            if (!active()) return "prompt";
+            await adapter.register();
+            if (!active()) return "prompt";
+            running = true;
+            return "granted";
           } catch (error) {
-            options.onRegistrationError?.(error instanceof Error ? error.message : "token registration failed");
+            // Retried starts must never leave an old listener able to register.
+            if (epoch === generation) ++generation;
+            for (const cleanup of cleanups.splice(0)) cleanup();
+            throw error;
           }
-        }),
-      );
-      cleanups.push(
-        await adapter.onRegistrationError((message) => options.onRegistrationError?.(message)),
-      );
-      cleanups.push(await adapter.onReceived(() => emitReceived()));
-      cleanups.push(
-        await adapter.onAction((data) => {
-          const url = reportUrlFromPushData(data);
-          if (url) openReportUrl(url);
-        }),
-      );
-      await adapter.register();
-      running = true;
-      return "granted";
+        });
+      })();
+      starting = attempt;
+      void attempt.finally(() => { if (starting === attempt) starting = null; }).catch(() => {});
+      return attempt;
     },
 
-    async stop(): Promise<void> {
-      for (const cleanup of cleanups.splice(0)) cleanup();
-      // Unregister while the session is still valid so a logged-out or
-      // switched account can never keep receiving this device's pushes.
-      if (currentToken) {
+    async stop(): Promise<PushTeardown> {
+      if (!adapter.isNative()) return { unregistered: true, released: false };
+      ++generation;
+      starting = null;
+      running = false;
+      return serialize(async () => {
+        for (const cleanup of cleanups.splice(0)) cleanup();
+        await pendingRegistration;
+        // Auth's intentional cleanup awaits stop before releasing its session.
         const token = currentToken;
-        currentToken = null;
-        try {
+        let unregistered = !token;
+        if (token) try {
           await (options.unregisterToken ?? unregisterDeviceToken)(token);
+          unregistered = true;
+          currentToken = null;
         } catch {
-          /* server cleanup is best-effort; the token row is transferred on next sign-in */
+          /* retain the token so a failed server cleanup can be retried */
         }
+        let deviceReleased = true;
         try {
           await adapter.deleteToken?.();
         } catch {
-          /* deleting the device token is best-effort */
+          deviceReleased = false;
         }
-      }
-      running = false;
+        return { unregistered: unregistered && deviceReleased, released: unregistered && deviceReleased && token !== null };
+      });
     },
   };
 }

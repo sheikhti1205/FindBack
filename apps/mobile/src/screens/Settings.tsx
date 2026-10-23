@@ -5,11 +5,13 @@ import {
   Bell,
   CircleHelp,
   Cpu,
+  Flag,
   Image,
   Info,
   LayoutGrid,
   LifeBuoy,
   LogOut,
+  MessageSquare,
   Palette,
   RotateCcw,
   Scale,
@@ -46,6 +48,7 @@ import { feedLayoutSummary } from "./FeedLayoutSettings";
 import { fetchNotificationPreferences, type NotificationPreferences } from "../services/notificationPreferences";
 import { pushController } from "../services/pushRuntime";
 import { fetchMyRole, type MyRole } from "../services/roles";
+import { AdminBootstrapRow } from "../components/AdminBootstrapRow";
 import type { PushPermissionState } from "../services/pushNotifications";
 import { APP_VERSION } from "../services/appCapabilities";
 import { friendlyError } from "../utils/friendlyErrors";
@@ -138,21 +141,25 @@ export function Settings() {
   // everything an ordinary account asks for, so the client never offers what
   // would be refused. A moderator is staff, but every console destination is
   // admin-only, so a moderator gets no entry here (not a row that bounces).
-  const [staffRole, setStaffRole] = useState<MyRole | null>(null);
+  const [roleSnapshot, setRoleSnapshot] = useState<{ userId: string; role: MyRole } | null>(null);
+  // Hide previous-account authority on the first render, before effects run.
+  const staffRole = roleSnapshot?.userId === user?.id ? roleSnapshot?.role : null;
 
   useEffect(() => {
     let cancelled = false;
+    const userId = user?.id;
+    if (!userId) return;
     void fetchMyRole()
       .then((role) => {
-        if (!cancelled) setStaffRole(role);
+        if (!cancelled) setRoleSnapshot({ userId, role });
       })
       .catch(() => {
-        if (!cancelled) setStaffRole(null);
+        if (!cancelled) setRoleSnapshot(null);
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,7 +222,15 @@ export function Settings() {
         )
       ) : (
         <>
+          <AdminBootstrapRow />
           <SettingsGroup title="Account">
+            <SettingsRow
+              title="Recovered items"
+              description="Returned items, ratings and your standing."
+              icon={RotateCcw}
+              iconTone="privacy"
+              route="/settings/returns"
+            />
             <SettingsRow
               title="Account & verification"
               icon={UserRound}
@@ -289,7 +304,24 @@ export function Settings() {
               />
             </SettingsGroup>
           )}
+          {(staffRole?.isAdmin || staffRole?.capabilities.includes("reports_review")) && (
+            <SettingsGroup title="Reports to review">
+              <SettingsRow
+                title="Review reports"
+                icon={Flag}
+                iconTone="privacy"
+                route="/settings/moderation/queue"
+              />
+            </SettingsGroup>
+          )}
           <SettingsGroup title="More">
+            <SettingsRow
+              title="Send feedback"
+              description="Tell us what is working and what is not."
+              icon={MessageSquare}
+              iconTone="neutral"
+              route="/settings/feedback"
+            />
             <SettingsNestedGroup
               title="Advanced"
               description="Uploads and troubleshooting."

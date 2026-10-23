@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +8,8 @@ vi.mock("@capacitor/core", () => ({
   Plugins: {},
 }));
 
-const { postsMock, findMock, authState } = vi.hoisted(() => ({
+const { postsMock, findMock, authState, submitReport } = vi.hoisted(() => ({
+  submitReport: vi.fn(),
   postsMock: {
     fetchPost: vi.fn(),
     fetchComments: vi.fn(),
@@ -23,6 +24,9 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
 }));
 
 vi.mock("../services/posts", () => postsMock);
+vi.mock("../services/moderation", async (original) => ({
+  ...await original<typeof import("../services/moderation")>(), submitReport,
+}));
 vi.mock("../services/realtime", () => ({
   joinPostRoom: vi.fn(),
   leavePostRoom: vi.fn(),
@@ -77,15 +81,99 @@ function renderDetail() {
 }
 
 describe("PostDetail density (owner wave)", () => {
+  it("reports the loaded post through an overflow outside the four social slots", async () => {
+    renderDetail();
+    const trigger = await screen.findByRole("button", { name: "More report actions" });
+    expect(trigger.closest('[data-testid="post-action-row"]')).toBeNull();
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Report post" }));
+    fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await screen.findByTestId("report-receipt");
+    expect(submitReport).toHaveBeenCalledWith({ targetType: "POST", targetId: "p1", reason: "HARASSMENT", detail: null });
+  });
   beforeEach(() => {
+    vi.clearAllMocks();
     authState.user = { id: "u9", username: "reader" };
     postsMock.fetchPost.mockResolvedValue(basePost);
     postsMock.fetchComments.mockResolvedValue([comment]);
     postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+    submitReport.mockResolvedValue({ reportId: "receipt" });
+    postsMock.deleteComment.mockResolvedValue(undefined);
   });
 
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("reports the actual comment through the unified overflow and sheet", async () => {
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
+    expect(screen.queryByRole("menuitem", { name: "Delete comment" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Report comment" }));
+    fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await screen.findByTestId("report-receipt");
+    expect(submitReport).toHaveBeenCalledWith({ targetType: "COMMENT", targetId: "c1", reason: "HARASSMENT", detail: null });
+  });
+
+  it("targets a nested reply, not its parent, when reporting", async () => {
+    postsMock.fetchComments.mockResolvedValue([comment, {
+      ...comment, id: "reply-1", parentId: "c1", body: "Nested reply",
+      author: { id: "u4", username: "helper" },
+    }]);
+    renderDetail();
+    const body = await screen.findByText("Nested reply");
+    const reply = body.closest("li")!;
+    fireEvent.click(within(reply).getByRole("button", { name: "Actions for comment by helper" }));
+    fireEvent.click(within(reply).getByRole("menuitem", { name: "Report comment" }));
+    fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Send report" }));
+    await screen.findByTestId("report-receipt");
+    expect(submitReport).toHaveBeenCalledWith({ targetType: "COMMENT", targetId: "reply-1", reason: "HARASSMENT", detail: null });
+  });
+
+  it("never exposes comment moderation actions to a signed-out viewer", async () => {
+    authState.user = null;
+    renderDetail();
+    await screen.findByText("first comment");
+    expect(screen.queryByRole("button", { name: /Actions for comment by/i })).toBeNull();
+    expect(postsMock.deleteComment).not.toHaveBeenCalled();
+    expect(submitReport).not.toHaveBeenCalled();
+  });
+
+  it("offers self Delete without self Report and respects cancellation", async () => {
+    authState.user = { id: "u3", username: "neighbour" };
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
+    expect(screen.queryByRole("menuitem", { name: "Report comment" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(postsMock.deleteComment).not.toHaveBeenCalled();
+    expect(screen.getByText("first comment")).toBeTruthy();
+  });
+
+  it("lets the report owner delete through the same menu and server write", async () => {
+    authState.user = { id: "u2", username: "owner" };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
+    expect(screen.getByRole("menuitem", { name: "Report comment" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    await waitFor(() => expect(screen.queryByText("first comment")).toBeNull());
+    expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1");
+  });
+
+  it("retains a comment when the server refuses deletion", async () => {
+    authState.user = { id: "u3", username: "neighbour" };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    postsMock.deleteComment.mockRejectedValue(new Error("offline"));
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    await screen.findByRole("alert");
+    expect(screen.getByText("first comment")).toBeTruthy();
+  });
 
   it("puts like, comments, share and save in ONE flat action row", async () => {
     renderDetail();

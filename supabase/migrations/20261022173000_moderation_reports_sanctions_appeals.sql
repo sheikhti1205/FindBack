@@ -787,6 +787,8 @@ begin
   -- Never notify yourself; never double-notify the same actor for the same
   -- post/comment/type. A NULL actor is allowed for the two SYSTEM types
   -- (STATUS has no actor; MODERATION must not name the moderator, D13).
+  -- Preserve 20261011010000: a different REACTION kind after read notifies;
+  -- same-kind re-reactions stay suppressed. The trigger collapses unread rows.
   if p_user_id is null or p_user_id = p_actor_id then
     return;
   end if;
@@ -802,6 +804,10 @@ begin
         and n.post_id is not distinct from p_post_id
         and n.comment_id is null
         and n.deleted_at is null
+        and (
+          p_type <> 'REACTION'
+          or n.reaction_kind is not distinct from p_reaction_kind
+        )
     ) then
       return;
     end if;
@@ -819,7 +825,7 @@ revoke all on function
   from public, anon, authenticated;
 
 comment on function public.findback_insert_notification(text, text, text, text, text, text, text) is
-  'FindBack notification insert helper (definer, internal). Unchanged from 20261011000000 except ONE delta: a MODERATION row may carry a NULL actor, because D13 forbids the copy from naming the moderator. Every 6-argument caller keeps working through the default.';
+  'FindBack notification insert helper (definer, internal). Unchanged from 20261011010000 except ONE delta: a MODERATION row may carry a NULL actor, because D13 forbids the copy from naming the moderator. REACTION kind-keyed dedupe is preserved. Every 6-argument caller keeps working through the default.';
 
 -- Consumer-safe outcome copy (D13): consequence only. No reason code, no
 -- reporter, no moderator, no report count, no internal vocabulary. It is a

@@ -65,6 +65,11 @@ vi.mock("./screens/DownloadedModels", () => ({ DownloadedModels: () => <p>Downlo
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <p>Notifications screen</p> }));
 vi.mock("./screens/SharedReport", () => ({ SharedReport: () => <p>SharedReport screen</p> }));
 vi.mock("./screens/Settings", () => ({ Settings: marker("Settings") }));
+vi.mock("./screens/AdminBootstrap", () => ({ AdminBootstrap: marker("AdminBootstrap") }));
+vi.mock("./screens/BlockedUsers", () => ({ BlockedUsers: marker("BlockedUsers") }));
+vi.mock("./screens/SafetyReports", () => ({ SafetyReports: marker("SafetyReports") }));
+vi.mock("./screens/FeedbackForm", () => ({ FeedbackForm: marker("FeedbackForm") }));
+vi.mock("./screens/Returns", () => ({ Returns: marker("Returns") }));
 vi.mock("./screens/AccountSettings", () => ({ AccountSettings: marker("AccountSettings") }));
 vi.mock("./screens/AppearanceSettings", () => ({ AppearanceSettings: marker("AppearanceSettings") }));
 vi.mock("./screens/AccessibilitySettings", () => ({ AccessibilitySettings: marker("AccessibilitySettings") }));
@@ -192,6 +197,7 @@ describe("consumer route map", () => {
   it.each([
     ["/profile", "Profile screen"],
     ["/settings", "Settings screen"],
+    ["/settings/administrator", "AdminBootstrap screen"],
     ["/settings/account", "AccountSettings screen"],
     ["/settings/appearance", "AppearanceSettings screen"],
     ["/settings/accessibility", "AccessibilitySettings screen"],
@@ -199,6 +205,10 @@ describe("consumer route map", () => {
     ["/settings/media", "MediaSettings screen"],
     ["/settings/notifications", "NotificationPreferences screen"],
     ["/settings/privacy", "PrivacySettings screen"],
+    ["/settings/privacy/blocked", "BlockedUsers screen"],
+    ["/settings/privacy/reports", "SafetyReports screen"],
+    ["/settings/feedback", "FeedbackForm screen"],
+    ["/settings/returns", "Returns screen"],
     ["/settings/ai", "AiSettings screen"],
     ["/settings/ai/connections", "AiConnection screen"],
     ["/settings/ai/models", "AiModelsRoute screen"],
@@ -255,6 +265,17 @@ describe("consumer route map", () => {
     returningGuest();
     renderAt("/settings/appearance");
     expect(screen.getByText("Gateway:email")).toBeTruthy();
+  });
+
+  it("requires sign-in, not an existing admin role, for administrator setup", () => {
+    returningGuest();
+    renderAt("/settings/administrator");
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(screen.queryByText("AdminBootstrap screen")).toBeNull();
+    cleanup();
+    signedIn();
+    renderAt("/settings/administrator");
+    expect(screen.getByText("AdminBootstrap screen")).toBeTruthy();
   });
 
   it("resumes a pending shared-report link after sign-in", () => {

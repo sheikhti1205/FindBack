@@ -45,6 +45,13 @@ async function locationGroup() {
 }
 
 describe("PrivacySettings", () => {
+  it("links blocked accounts and report receipts from the safety section", () => {
+    renderPrivacy();
+    const safety = screen.getByRole("region", { name: "Safety" });
+    expect(within(safety).getByRole("link", { name: /Blocked accounts/i }).getAttribute("href")).toBe("/settings/privacy/blocked");
+    expect(within(safety).getByRole("link", { name: /Your safety reports/i }).getAttribute("href")).toBe("/settings/privacy/reports");
+  });
+
   it("renders one h1 backed to /settings and shows the real location state", async () => {
     enabledMock.mockResolvedValue(true);
     renderPrivacy();

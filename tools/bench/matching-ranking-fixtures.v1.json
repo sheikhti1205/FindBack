@@ -56,15 +56,17 @@
       "expectedIds": ["a-distractor", "z-relevant"]
     },
     {
-      "id": "top-three-recall-limitation", "relevantIds": ["relevant-fourth"],
-      "notes": "A relevant fourth candidate is omitted from the three-card result: freeze the miss honestly.",
+      "id": "top-five-recall-limitation", "relevantIds": ["relevant-sixth"],
+      "notes": "A relevant sixth candidate is omitted from the five-card result: freeze the miss honestly.",
       "candidates": [
         { "id": "d1", "title": "black raincoat", "category": "Other", "mappedScore": 0.89 },
         { "id": "d2", "title": "blue umbrella", "category": "Other", "mappedScore": 0.8 },
         { "id": "d3", "title": "wooden walking stick", "category": "Other", "mappedScore": 0.7 },
-        { "id": "relevant-fourth", "category": "Other", "mappedScore": 0.6 }
+        { "id": "d4", "title": "green scarf", "category": "Other", "mappedScore": 0.66 },
+        { "id": "d5", "title": "brown satchel", "category": "Other", "mappedScore": 0.63 },
+        { "id": "relevant-sixth", "category": "Other", "mappedScore": 0.6 }
       ],
-      "expectedIds": ["d1", "d2", "d3"]
+      "expectedIds": ["d1", "d2", "d3", "d4", "d5"]
     }
   ]
 }

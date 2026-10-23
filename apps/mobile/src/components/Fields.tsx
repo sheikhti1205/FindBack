@@ -1,4 +1,11 @@
-import { useId, useState, type InputHTMLAttributes, type SelectHTMLAttributes, type ReactNode } from "react";
+import {
+  useId,
+  useState,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Eye, EyeOff } from "lucide-react";
 import {
@@ -274,5 +281,64 @@ export function FieldError({ message }: { message?: string }) {
     <span className="mt-1 block text-xs text-error" role="alert">
       {message}
     </span>
+  );
+}
+
+interface TextAreaFieldProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  label: string;
+  error?: string;
+  hint?: string;
+}
+
+/**
+ * The multi-line sibling of `TextField`.
+ *
+ * It shares the ONE `FieldShell` — the same label lift, the same hint/error
+ * slot, the same focus behaviour — so a long answer looks like the rest of
+ * the form instead of being a second field style. The reason it lives here
+ * rather than in a screen: two forms (the safety report note and the
+ * feedback message) need it, and a form field is a primitive, not a screen.
+ */
+export function TextAreaField({
+  label,
+  error,
+  hint,
+  className = "",
+  onFocus,
+  onBlur,
+  ...rest
+}: TextAreaFieldProps) {
+  const id = useId();
+  const errorId = `${id}-error`;
+  const hintId = `${id}-hint`;
+  const [focused, setFocused] = useState(false);
+
+  return (
+    <FieldShell
+      label={label}
+      htmlFor={id}
+      error={error}
+      hint={hint}
+      errorId={errorId}
+      hintId={hintId}
+      focused={focused}
+    >
+      <textarea
+        id={id}
+        rows={4}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : hint ? hintId : undefined}
+        className={`${baseField} min-h-[112px] resize-y leading-relaxed ${error ? "border-error" : ""} ${className}`}
+        onFocus={(event) => {
+          setFocused(true);
+          onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setFocused(false);
+          onBlur?.(event);
+        }}
+        {...rest}
+      />
+    </FieldShell>
   );
 }

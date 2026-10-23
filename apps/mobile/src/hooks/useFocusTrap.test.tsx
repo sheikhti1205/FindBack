@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useFocusTrap } from "./useFocusTrap";
 
 afterEach(() => cleanup());
@@ -47,6 +48,58 @@ function openInner(): void {
 }
 
 describe("useFocusTrap nested layers", () => {
+  it.each(["disabled", "removed"])("recovers focus when the current control is %s", async (change) => {
+    function Changing({ changed }: { changed: boolean }) {
+      const ref = useRef<HTMLDivElement>(null);
+      const setRef = useFocusTrap(ref, vi.fn());
+      return <div ref={setRef} role="dialog" tabIndex={-1}>
+        <button>Close</button>
+        {!(changed && change === "removed") && <button disabled={changed}>Send</button>}
+      </div>;
+    }
+    const { rerender } = render(<Changing changed={false} />);
+    screen.getByRole("button", { name: "Send" }).focus();
+    rerender(<Changing changed />);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" })));
+  });
+
+  it("uses the container when a mutation leaves no enabled controls", async () => {
+    function Changing({ busy }: { busy: boolean }) {
+      const ref = useRef<HTMLDivElement>(null);
+      const setRef = useFocusTrap(ref, vi.fn());
+      return <div ref={setRef} role="dialog" tabIndex={-1}><button disabled={busy}>Send</button></div>;
+    }
+    const { rerender } = render(<Changing busy={false} />);
+    rerender(<Changing busy />);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("dialog")));
+    const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    document.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+  });
+
+  it("preserves a valid text-field focus across unrelated content mutations", async () => {
+    function Changing({ loaded }: { loaded: boolean }) {
+      const ref = useRef<HTMLDivElement>(null);
+      const setRef = useFocusTrap(ref, vi.fn());
+      return <div ref={setRef} tabIndex={-1}><button>Close</button><input aria-label="Details" />{loaded && <p>Loaded</p>}</div>;
+    }
+    const { rerender } = render(<Changing loaded={false} />);
+    screen.getByRole("textbox").focus();
+    rerender(<Changing loaded />);
+    await waitFor(() => expect(screen.getByText("Loaded")).toBeTruthy());
+    expect(document.activeElement).toBe(screen.getByRole("textbox"));
+  });
+
+  it("does not let a covered sheet reclaim focus on its own mutation", async () => {
+    const { rerender } = render(<Outer><p>Loading</p></Outer>);
+    // Register a top layer by opening it after the outer layer, as production does.
+    rerender(<Outer><p>Loading</p>{createPortal(<Inner onClose={vi.fn()} />, document.body)}</Outer>);
+    screen.getByRole("button", { name: "Inner second" }).focus();
+    rerender(<Outer><p>Outer load completed</p>{createPortal(<Inner onClose={vi.fn()} />, document.body)}</Outer>);
+    await waitFor(() => expect(screen.getByText("Outer load completed")).toBeTruthy());
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Inner second" }));
+  });
+
   it("moves Tab into the topmost dialog instead of wrapping the covered editor", () => {
     const onOuterClose = vi.fn();
     const onInnerClose = vi.fn();
