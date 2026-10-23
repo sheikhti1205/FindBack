@@ -18,6 +18,7 @@ import { shareReport } from "../utils/shareReport";
 import { friendlyError } from "../utils/friendlyErrors";
 import { invalidateFeedCaches } from "../hooks/feedCache";
 import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
+import { RecoverySheet } from "../components/RecoverySheet";
 
 const MY_CACHE_BASE = "my:reports";
 
@@ -69,6 +70,7 @@ export function MyPosts() {
   useEffect(() => { ownerStatusRef.current = ownerStatus; }, [ownerStatus]);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [recoveryPost, setRecoveryPost] = useState<PostItem | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // The feed filter carries userId, so the resolved cache key is already
@@ -78,6 +80,27 @@ export function MyPosts() {
     { userId: user?.id, status: ownerStatus === "ALL" ? "" : ownerStatus },
     { cacheKey: MY_CACHE_BASE, scrollRef },
   );
+
+  // The sheet always reads the live row, not the snapshot taken when it
+  // opened: a refetch can replace the same id with a different type/owner.
+  const liveRecoveryPost = recoveryPost
+    ? items.find((item) => item.id === recoveryPost.id) ?? recoveryPost
+    : null;
+
+  // A new account is a new ownership boundary. The old target must not stay
+  // armed under the new account.
+  useEffect(() => {
+    setRecoveryPost(null);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!recoveryPost) return;
+    const live = items.find((item) => item.id === recoveryPost.id);
+    // A row removed after a confirmed recovery is not an eligibility change:
+    // the sheet keeps its receipt. A live row that is no longer a lost report
+    // owned by this account is.
+    if (live && (live.type !== "LOST" || live.userId !== user?.id)) setRecoveryPost(null);
+  }, [items, recoveryPost, user?.id]);
 
   // Active Profile tab tap does not reach here (My Reports is a sub-screen),
   // but keep the same refresh+top behavior for consistency.
@@ -183,14 +206,23 @@ export function MyPosts() {
   const changeStatus = useCallback(
     (post: PostItem, status: PostStatus) => {
       if (status === post.status) return;
-      // Recovered/Closed are terminal for the searcher: confirm explicitly.
-      // All other transitions stay direct. No new statuses are introduced.
-      if ((status === "RECOVERED" || status === "CLOSED")) {
-        const ok = window.confirm(
-          status === "RECOVERED"
-            ? "Mark this report as recovered? It will leave the open search."
-            : "Close this report? It will leave the open search.",
-        );
+      // Recovered is not a status write: it is the durable recovery
+      // relationship (MC D25), so the owner chooses the helper first and the
+      // server writes the row and the status together. A FOUND report cannot
+      // be "recovered" by this path.
+      if (status === "RECOVERED") {
+        if (post.type !== "LOST") {
+          const message = "Only a lost-item report can be marked recovered.";
+          setActionError(message);
+          announce(message);
+          return;
+        }
+        setRecoveryPost(post);
+        return;
+      }
+      // Closed is terminal for the searcher: confirm explicitly.
+      if (status === "CLOSED") {
+        const ok = window.confirm("Close this report? It will leave the open search.");
         if (!ok) return;
       }
       void (async () => {
@@ -223,6 +255,20 @@ export function MyPosts() {
       }
     })();
   }, []);
+
+  const onRecovered = useCallback(
+    (_returnId: string, post: PostItem) => {
+      // In All (or the Recovered filter) patch in place; a status-only list
+      // that no longer matches loses the row with its count. The sheet already
+      // invalidated the feed caches for the confirmed write, including a
+      // success that completed after this dialog was dismissed.
+      if (ownerStatusRef.current !== "ALL" && ownerStatusRef.current !== "RECOVERED") removeItem(post.id);
+      else patchItem(post.id, { status: "RECOVERED" });
+      setActionError(null);
+      setNotice("Report marked recovered.");
+    },
+    [patchItem, removeItem],
+  );
 
   const actions: OwnerReportActionHandlers = {
     onChangeStatus: changeStatus,
@@ -308,6 +354,18 @@ export function MyPosts() {
           />
         </PullToRefresh>
       </OwnerReportActionsProvider>
+
+      <RecoverySheet
+        open={recoveryPost !== null}
+        post={liveRecoveryPost}
+        scopeKey={`${user?.id ?? "guest"}:${liveRecoveryPost?.id ?? ""}:${liveRecoveryPost?.type ?? ""}:${liveRecoveryPost?.userId ?? ""}`}
+        onClose={() => setRecoveryPost(null)}
+        onRecovered={onRecovered}
+        onRate={() => {
+          setRecoveryPost(null);
+          navigate("/settings/returns");
+        }}
+      />
 
       {pendingDelete && pendingDelete.phase === "pending" && (
         <div

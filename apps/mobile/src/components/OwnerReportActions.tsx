@@ -168,7 +168,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           >
             Status
           </p>
-          {POST_STATUSES.map((status) => (
+          {POST_STATUSES.filter((status) => status !== "RECOVERED" || post.type === "LOST").map((status) => (
             <button
               key={status}
               type="button"

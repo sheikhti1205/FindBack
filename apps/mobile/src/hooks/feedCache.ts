@@ -16,6 +16,12 @@ interface FeedCacheEntry {
 
 /** Per-session in-memory cache keyed by filter string. */
 const sessionCache = new Map<string, FeedCacheEntry>();
+/**
+ * Monotonic invalidation epoch. A feed that loaded before an invalidation must
+ * not persist its older items as fresh: its save keeps `dirty` set so the next
+ * mount refetches instead of restoring a stale row.
+ */
+let cacheEpoch = 0;
 const STALE_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Normalized filter identity: type/search/query trimmed, empties collapsed. */
@@ -65,18 +71,30 @@ export function clearFeedCaches(): void {
 export function saveFeedCache(
   filterKey: string,
   data: { items: PostItem[]; total: number; cursor: string | null; scrollTop: number },
-  options: { clearNewPostCount?: boolean } = {},
+  options: { clearNewPostCount?: boolean; loadedEpoch?: number; dirty?: boolean } = {},
 ): void {
   const existing = sessionCache.get(filterKey);
+  // A feed loaded before the last invalidation cannot certify its items as
+  // fresh. Its save stays dirty so a later mount refetches. A snapshot whose
+  // restored rows were already dirty keeps that provenance until a successful
+  // full replacement, regardless of the latest append/restore epoch.
+  const stale =
+    options.dirty === true ||
+    (options.loadedEpoch !== undefined && options.loadedEpoch !== cacheEpoch);
   sessionCache.set(filterKey, {
     ...data,
     filters: filterKey,
     lastRefresh: Date.now(),
-    // A save is fresh data, so the invalidation flag is cleared. The pending
+    // A save of data loaded after the last invalidation is fresh. The pending
     // new-post pill is preserved unless the caller explicitly consumed it.
-    dirty: false,
+    dirty: stale,
     newPostCount: options.clearNewPostCount ? 0 : (existing?.newPostCount ?? 0),
   });
+}
+
+/** The current invalidation epoch; feeds capture it when they load. */
+export function feedCacheEpoch(): number {
+  return cacheEpoch;
 }
 
 /**
@@ -84,6 +102,7 @@ export function saveFeedCache(
  * mounted. The next load restores the visible items (no flash) and refetches.
  */
 export function invalidateFeedCaches(): void {
+  cacheEpoch += 1;
   for (const entry of sessionCache.values()) entry.dirty = true;
 }
 

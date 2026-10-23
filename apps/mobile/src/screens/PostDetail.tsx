@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Star, Tag, ThumbsDown, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
@@ -30,6 +30,7 @@ import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { SafetyActions } from "../components/SafetyActions";
 import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
+import { RecoverySheet } from "../components/RecoverySheet";
 import { PostActionRow } from "../components/PostActionRow";
 import { SavePostButton } from "../components/SavePostButton";
 import { PossibleMatches } from "../components/PossibleMatches";
@@ -148,6 +149,7 @@ function CommentLikeButton({
 export function PostDetail() {
   const { id = "" } = useParams();
   const { hash, search, key: locationKey } = useLocation();
+  const navigate = useNavigate();
   const requestedComment = new URLSearchParams(search).get("comment");
   const linkedComment = requestedComment && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedComment) ? requestedComment : null;
   const focusedLink = useRef<string | null>(null);
@@ -194,6 +196,14 @@ export function PostDetail() {
   const [socialError, setSocialError] = useState<string | null>(null);
   // Mutation failures stay inline + announce; they never own the page.
   const [actionError, setActionError] = useState<string | null>(null);
+  const [recoveryPost, setRecoveryPost] = useState<PostItem | null>(null);
+
+  // This route component is reused for in-place report navigation. A new
+  // report (or a new type/owner for the same id) or a new account is a new
+  // recovery boundary: close the old sheet and invalidate its pending write.
+  useEffect(() => {
+    setRecoveryPost(null);
+  }, [id, post?.id, post?.type, post?.userId, user?.id]);
 
   // W3.3 multi-kind reaction UI state. The post summary override holds
   // server-truth counts/total once a write or realtime event delivers them;
@@ -497,6 +507,11 @@ export function PostDetail() {
 
   const current = post;
   const isOwner = user?.id === current.author.id;
+  // The sheet reads the live viewed report when it is still the same report,
+  // so a same-id type/owner replacement is visible to its own eligibility
+  // check instead of being masked by the snapshot that opened it.
+  const recoveryTarget =
+    recoveryPost && post && post.id === recoveryPost.id ? post : recoveryPost;
 
   /**
    * True when a mutation started for `snap` may no longer write: the viewer
@@ -699,14 +714,24 @@ export function PostDetail() {
   }
 
   async function onChangeStatus(status: PostStatus) {
-    // Recovered/Closed are terminal for the searcher: confirm explicitly.
-    // All other transitions stay direct. No new statuses are introduced.
-    if ((status === "RECOVERED" || status === "CLOSED") && current.status !== status) {
-      const ok = window.confirm(
-        status === "RECOVERED"
-          ? "Mark this report as recovered? It will leave the open search."
-          : "Close this report? It will leave the open search.",
-      );
+    if (status === current.status) return;
+    // Recovered is not a status write: it is the durable recovery
+    // relationship (MC D25), so the owner chooses the helper first and the
+    // server writes the row and the status together. A FOUND report cannot be
+    // "recovered" by this path.
+    if (status === "RECOVERED") {
+      if (current.type !== "LOST") {
+        const message = "Only a lost-item report can be marked recovered.";
+        setActionError(message);
+        announce(message);
+        return;
+      }
+      setRecoveryPost(current);
+      return;
+    }
+    // Closed is terminal for the searcher: confirm explicitly.
+    if (status === "CLOSED") {
+      const ok = window.confirm("Close this report? It will leave the open search.");
       if (!ok) return;
     }
     // Increment sequence token - only the latest request's response will be applied
@@ -1140,7 +1165,7 @@ export function PostDetail() {
               ariaLabel="Post status"
               value={post.status}
               onChange={(s) => void onChangeStatus(s)}
-              options={POST_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))}
+              options={POST_STATUSES.filter((s) => s !== "RECOVERED" || current.type === "LOST").map((s) => ({ value: s, label: statusLabel(s) }))}
               disabled={ownerControlsDisabled}
             />
           </section>
@@ -1364,6 +1389,21 @@ export function PostDetail() {
           </div>
         </section>
       </article>
+
+      <RecoverySheet
+        open={recoveryPost !== null}
+        post={recoveryTarget}
+        scopeKey={`${user?.id ?? "guest"}:${post?.id ?? ""}:${post?.type ?? ""}:${post?.userId ?? ""}`}
+        onClose={() => setRecoveryPost(null)}
+        onRecovered={(_returnId, recovered) => {
+          setPost((prev) => (prev && prev.id === recovered.id ? { ...prev, status: "RECOVERED" } : prev));
+          setActionError(null);
+        }}
+        onRate={() => {
+          setRecoveryPost(null);
+          navigate("/settings/returns");
+        }}
+      />
 
       {/* Full-image inspection: contain fit, swipe + arrows + keyboard. */}
       {lightbox && lightboxPhotos.length > 0 && (

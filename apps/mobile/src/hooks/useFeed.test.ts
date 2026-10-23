@@ -9,6 +9,7 @@ import {
   feedFilterKey,
   invalidateFeedCaches,
   loadFeedCache,
+  saveFeedCache,
 } from "./feedCache";
 
 const { fetchFeedMock } = vi.hoisted(() => ({ fetchFeedMock: vi.fn() }));
@@ -215,6 +216,117 @@ describe("useFeed", () => {
     });
     expect(result.current.items.map((i) => i.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
     expect(result.current.total).toBe(25);
+  });
+
+  it("keeps a dirty restored snapshot dirty when the refresh never completes", async () => {
+    const key = buildFeedCacheKey("test:dirty-pending", {});
+    saveFeedCache(key, {
+      items: [{ id: "p1" } as never],
+      total: 1,
+      cursor: null,
+      scrollTop: 0,
+    });
+    invalidateFeedCaches();
+    fetchFeedMock.mockImplementationOnce(() => new Promise(() => {}));
+
+    const { unmount } = renderHook(() => useFeed({}, { cacheKey: "test:dirty-pending" }));
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    unmount();
+
+    // A refresh was started, not confirmed. The restored OPEN row must stay
+    // dirty so the next mount fetches instead of restoring it as fresh.
+    expect(loadFeedCache(key)?.dirty).toBe(true);
+  });
+
+  it("keeps a dirty restored snapshot dirty when the refresh fails", async () => {
+    const key = buildFeedCacheKey("test:dirty-failed", {});
+    saveFeedCache(key, {
+      items: [{ id: "p1" } as never],
+      total: 1,
+      cursor: null,
+      scrollTop: 0,
+    });
+    invalidateFeedCaches();
+    fetchFeedMock.mockRejectedValueOnce(new Error("network down"));
+
+    const { result, unmount } = renderHook(() => useFeed({}, { cacheKey: "test:dirty-failed" }));
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    unmount();
+
+    expect(loadFeedCache(key)?.dirty).toBe(true);
+  });
+
+  it("does not let an append bless older pages after an invalidation", async () => {
+    const key = buildFeedCacheKey("test:append-invalidated", {});
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }], "cur-1", 2))
+      .mockResolvedValueOnce(page([{ id: "b" }], null, 2));
+
+    const { result, unmount } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:append-invalidated" }),
+    );
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    invalidateFeedCaches();
+
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual(["a", "b"]);
+    unmount();
+
+    // Page 1 predates the invalidation; the append must not certify it.
+    expect(loadFeedCache(key)?.dirty).toBe(true);
+  });
+
+  it("lets a full replacement started after an invalidation save clean", async () => {
+    const key = buildFeedCacheKey("test:full-after-invalidation", {});
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }], null, 1))
+      .mockResolvedValueOnce(page([{ id: "fresh" }], null, 1));
+
+    const { result, unmount } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:full-after-invalidation" }),
+    );
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+    invalidateFeedCaches();
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.items.map((i) => i.id)).toEqual(["fresh"]);
+    unmount();
+
+    expect(loadFeedCache(key)?.dirty).toBe(false);
+  });
+
+  it("keeps a full replacement that straddled an invalidation dirty", async () => {
+    const key = buildFeedCacheKey("test:full-straddle", {});
+    let resolveRefresh: (p: unknown) => void = () => {};
+    fetchFeedMock
+      .mockResolvedValueOnce(page([{ id: "a" }], null, 1))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRefresh = resolve; }));
+
+    const { result, unmount } = renderHook(() =>
+      useFeed({}, { cacheKey: "test:full-straddle" }),
+    );
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    let refresh: Promise<void> = Promise.resolve();
+    act(() => {
+      refresh = result.current.refresh();
+    });
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(2));
+    invalidateFeedCaches();
+
+    await act(async () => {
+      resolveRefresh(page([{ id: "fresh" }], null, 1));
+      await refresh;
+    });
+    unmount();
+
+    // The replacement started before the confirmed write, so its rows cannot
+    // be certified against it even though they arrived later.
+    expect(loadFeedCache(key)?.dirty).toBe(true);
   });
 
   it("does not re-run scroll restoration when paginating", async () => {

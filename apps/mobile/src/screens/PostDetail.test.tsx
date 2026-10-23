@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MotionConfig } from "framer-motion";
 
@@ -39,6 +39,45 @@ vi.mock("../services/realtime", () => ({
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
+
+// The recovery sheet has its own suite; this stand-in proves the detail
+// screen opens it for a LOST report instead of writing a bare status.
+const { recoverySheet, recoveryMode, recoveryService } = vi.hoisted(() => ({
+  recoverySheet: { open: false, post: null as unknown },
+  recoveryMode: { real: false },
+  recoveryService: { markRecovered: vi.fn(), search: vi.fn() },
+}));
+vi.mock("../services/trust", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../services/trust")>(),
+  markRecovered: (...args: unknown[]) => recoveryService.markRecovered(...args),
+}));
+vi.mock("../services/profile", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../services/profile")>(),
+  searchProfilesByPrefix: (...args: unknown[]) => recoveryService.search(...args),
+}));
+vi.mock("../components/RecoverySheet", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/RecoverySheet")>();
+  return {
+    RecoverySheet: (props: {
+      open: boolean;
+      post: unknown;
+      scopeKey?: string;
+      onRecovered?: (id: string, post: unknown) => void;
+    }) => {
+      if (recoveryMode.real) {
+        return <actual.RecoverySheet {...(props as React.ComponentProps<typeof actual.RecoverySheet>)} />;
+      }
+      recoverySheet.open = props.open;
+      recoverySheet.post = props.post;
+      if (!props.open) return null;
+      return (
+        <button type="button" onClick={() => props.onRecovered?.("ret-1", props.post)}>
+          confirm recovery
+        </button>
+      );
+    },
+  };
+});
 
 import { PostDetail, withSentReportRefs } from "./PostDetail";
 import { LiveRegion } from "../components/LiveRegion";
@@ -82,6 +121,12 @@ const longComment = {
   updatedAt: "2026-09-02T00:00:00.000Z",
   author: { id: "u3", username: LONG },
 };
+
+/** The compact safety overflow is the ONE comment action surface. */
+async function openCommentActions(author = "commenter") {
+  fireEvent.click(await screen.findByRole("button", { name: `Actions for comment by ${author}` }));
+  return screen.getByRole("menu", { name: `Comment actions for ${author}` });
+}
 
 function renderDetail() {
   return render(
@@ -238,14 +283,16 @@ describe("PostDetail comment delete visibility", () => {
     authState.user = { id: "u3", username: "commenter" };
     postsMock.fetchComments.mockResolvedValue([otherComment]);
     renderDetail();
-    expect(await screen.findByRole("button", { name: "Delete comment by commenter" })).toBeTruthy();
+    const menu = await openCommentActions();
+    expect(within(menu).getByRole("menuitem", { name: /delete comment/i })).toBeTruthy();
   });
 
   it("shows Delete to the post owner moderating another user's comment", async () => {
     authState.user = { id: "u2", username: "owner" };
     postsMock.fetchComments.mockResolvedValue([otherComment]);
     renderDetail();
-    expect(await screen.findByRole("button", { name: "Delete comment by commenter" })).toBeTruthy();
+    const menu = await openCommentActions();
+    expect(within(menu).getByRole("menuitem", { name: /delete comment/i })).toBeTruthy();
   });
 
   it("hides Delete from an unrelated third user", async () => {
@@ -253,7 +300,9 @@ describe("PostDetail comment delete visibility", () => {
     postsMock.fetchComments.mockResolvedValue([otherComment]);
     renderDetail();
     await waitFor(() => expect(screen.getByText(/someone else's comment/)).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Delete comment by commenter" })).toBeNull();
+    const menu = await openCommentActions();
+    expect(within(menu).getByRole("menuitem", { name: /report comment/i })).toBeTruthy();
+    expect(within(menu).queryByRole("menuitem", { name: /delete comment/i })).toBeNull();
   });
 });
 
@@ -721,8 +770,9 @@ describe("PostDetail threaded replies", () => {
   it("removes a deleted parent's replies locally", async () => {
     renderDetail();
     await screen.findByText("nested reply");
-
-    fireEvent.click(screen.getByRole("button", { name: "Delete comment by commenter" }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const menu = await openCommentActions();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /delete comment/i }));
 
     await waitFor(() => expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1"));
     await waitFor(() => {
@@ -929,5 +979,106 @@ describe("blocked-by-viewer shields on a report detail", () => {
     renderDetail();
     expect(await screen.findByText("Blocked report title").catch(() => null)).toBeNull();
     expect(screen.queryByTestId("blocked-shield")).toBeNull();
+  });
+});
+
+describe("PostDetail recovery", () => {
+  beforeEach(() => {
+    recoverySheet.open = false;
+    recoverySheet.post = null;
+    authState.user = { id: "u2", username: "owner" };
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, type: "LOST" });
+    postsMock.fetchComments.mockResolvedValue([]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    postsMock.updatePostStatus.mockReset();
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(cleanup);
+
+  it("opens the recovery sheet for a LOST report and never writes a bare status", async () => {
+    renderDetail();
+    const recovered = await screen.findByRole("radio", { name: "Recovered" });
+    fireEvent.click(recovered);
+
+    await waitFor(() => expect(recoverySheet.open).toBe(true));
+    expect(recoverySheet.post).toMatchObject({ id: "p1", type: "LOST" });
+    expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm recovery/i }));
+    await waitFor(() => expect(recovered.getAttribute("aria-checked")).toBe("true"));
+    expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Recovered on a FOUND report", async () => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, type: "FOUND" });
+    renderDetail();
+    await screen.findByRole("radio", { name: "Matched" });
+    expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
+  });
+});
+
+describe("PostDetail recovery route lifetime", () => {
+  beforeEach(() => {
+    recoveryMode.real = true;
+    recoveryService.markRecovered.mockReset();
+    recoveryService.search.mockReset();
+    authState.user = { id: "u2", username: "owner" };
+    postsMock.fetchPost.mockImplementation(async (target: string) =>
+      target === "p1"
+        ? { ...basePost, type: "LOST", title: "Lost wallet" }
+        : { ...basePost, id: "p2", type: "FOUND", title: "Found p2" },
+    );
+    postsMock.fetchComments.mockResolvedValue([]);
+    postsMock.fetchSocialState.mockResolvedValue({ myReaction: null, myRating: null });
+    postsMock.updatePostStatus.mockReset();
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 0, matches: [] });
+  });
+
+  afterEach(() => {
+    recoveryMode.real = false;
+    cleanup();
+  });
+
+  it("ends the old recovery lifetime when the route is replaced", async () => {
+    let resolveMark: (value: string) => void = () => {};
+    recoveryService.markRecovered.mockReturnValueOnce(
+      new Promise<string>((resolve) => { resolveMark = resolve; }),
+    );
+
+    function Nav() {
+      const navigate = useNavigate();
+      return <button type="button" onClick={() => navigate("/posts/p2")}>go p2</button>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/posts/p1"]}>
+        <Nav />
+        <Routes>
+          <Route path="/posts/:id" element={<PostDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("radio", { name: "Recovered" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
+    expect(recoveryService.markRecovered).toHaveBeenCalledWith(
+      expect.objectContaining({ postId: "p1", helperKind: "OUTSIDE" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "go p2" }));
+    await screen.findByText("Found p2");
+
+    await act(async () => {
+      resolveMark("ret-p1");
+      await Promise.resolve();
+    });
+
+    // The old report's confirmed write must not paint a receipt, announce, or
+    // patch anything on the new report's screen.
+    expect(screen.queryByTestId("recovery-receipt")).toBeNull();
+    expect(screen.queryByText("Recovery saved.")).toBeNull();
+    expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
   });
 });

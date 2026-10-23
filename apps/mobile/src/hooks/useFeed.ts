@@ -3,7 +3,7 @@ import type { FeedPage, PostItem } from "@findback/shared";
 import { fetchFeed, type FeedFilters } from "../services/posts";
 import { friendlyError } from "../utils/friendlyErrors";
 import { recordLoadTiming } from "../utils/loadTiming";
-import { feedFilterKey, loadFeedCache, saveFeedCache } from "./feedCache";
+import { feedCacheEpoch, feedFilterKey, loadFeedCache, saveFeedCache } from "./feedCache";
 
 export interface FeedState {
   items: PostItem[];
@@ -81,6 +81,14 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
   }
   const generationRef = useRef(0);
   const loadedRef = useRef(false);
+  // The invalidation epoch this feed's visible data belongs to. A save with an
+  // older epoch stays dirty, so an unmount cannot pin a stale OPEN row as
+  // fresh after a confirmed write invalidated the caches.
+  const loadedEpochRef = useRef(feedCacheEpoch());
+  // Freshness belongs to the retained snapshot, not the latest restore or
+  // appended page. A dirty restored snapshot stays dirty until a full
+  // replacement succeeds; an append never upgrades older base pages.
+  const dirtyRef = useRef(false);
   const restoredScrollRef = useRef<string | null>(null);
   const latestRef = useRef({ items, total, cursor: cursorRef.current });
   latestRef.current = { items, total, cursor: cursorRef.current };
@@ -100,6 +108,8 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
       if (cached) {
         cursorRef.current = cached.cursor;
         loadedRef.current = true;
+        dirtyRef.current = cached.dirty;
+        loadedEpochRef.current = feedCacheEpoch();
         setItems(cached.items);
         setTotal(cached.total);
         setError(null);
@@ -110,6 +120,8 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
       }
     }
     loadedRef.current = false;
+    dirtyRef.current = false;
+    loadedEpochRef.current = feedCacheEpoch();
     setItems([]);
     setTotal(0);
     setRefreshing(false);
@@ -154,7 +166,7 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
         total: latestRef.current.total,
         cursor: latestRef.current.cursor,
         scrollTop: el?.scrollTop ?? 0,
-      });
+      }, { loadedEpoch: loadedEpochRef.current, dirty: dirtyRef.current });
     };
   }, [cacheKey]);
 
@@ -170,12 +182,19 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
       else setLoading(true);
       setError(null);
       const startedAt = Date.now();
+      const fetchEpoch = feedCacheEpoch();
       try {
         const page: FeedPage = await fetchFeed(filters, cursor ?? undefined);
         recordLoadTiming("feed", Date.now() - startedAt);
         // Discard if filters/generation changed while we were fetching
         if (gen !== generationRef.current) return;
         loadedRef.current = true;
+        // Only a full replacement can certify every retained row. An append
+        // keeps the base snapshot's epoch and dirty provenance.
+        if (!append) {
+          dirtyRef.current = false;
+          loadedEpochRef.current = fetchEpoch;
+        }
         // Keep the initial full filtered total stable: keyset follow-up
         // pages carry a page-relative count, so appends must never overwrite it.
         if (!append) setTotal(page.total);
@@ -204,6 +223,8 @@ export function useFeed(filters: FeedFilters, options: UseFeedOptions = {}): Fee
     // (a realtime INSERT arrived while this feed was unmounted) still restores
     // the visible items instantly, then refreshes in the background.
     const cached = cacheKey ? loadFeedCache(cacheKey) : null;
+    loadedEpochRef.current = feedCacheEpoch();
+    dirtyRef.current = cached ? cached.dirty : false;
     if (cached && !cached.dirty) return;
     void load(null, false);
   }, [cacheKey, filterKey, load]);

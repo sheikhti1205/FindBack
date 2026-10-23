@@ -16,10 +16,38 @@ vi.mock("../services/posts", () => ({
   deletePost: deletePostMock,
 }));
 vi.mock("../utils/shareReport", () => ({ shareReport: shareReportMock }));
-vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "alice" } }) }));
+const { authState } = vi.hoisted(() => ({
+  authState: { user: { id: "u1", username: "alice" } as { id: string; username: string } | null },
+}));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => ({ tapCount: 0 }) }));
 
-import { clearFeedCaches } from "../hooks/feedCache";
+// The recovery sheet has its own suite; here it stands in as the one
+// confirmation surface so the screen's routing and row patch are provable.
+const { recoverySheet } = vi.hoisted(() => ({
+  recoverySheet: { open: false, post: null as unknown, onRecovered: null as unknown, onRate: null as unknown },
+}));
+vi.mock("../components/RecoverySheet", () => ({
+  RecoverySheet: (props: {
+    open: boolean;
+    post: unknown;
+    onRecovered?: (id: string, post: unknown) => void;
+    onRate?: () => void;
+  }) => {
+    recoverySheet.open = props.open;
+    recoverySheet.post = props.post;
+    recoverySheet.onRecovered = props.onRecovered;
+    recoverySheet.onRate = props.onRate;
+    if (!props.open) return null;
+    return (
+      <button type="button" onClick={() => props.onRecovered?.("ret-1", props.post)}>
+        confirm recovery
+      </button>
+    );
+  },
+}));
+
+import { clearFeedCaches, invalidateFeedCaches } from "../hooks/feedCache";
 import { MyPosts, DELETE_UNDO_WINDOW_MS } from "./MyPosts";
 import { ReportDeletionFeedbackProvider } from "../components/ReportDeletionFeedback";
 
@@ -36,13 +64,13 @@ beforeAll(() => {
   );
 });
 
-function post(id: string, status = "OPEN") {
+function post(id: string, status = "OPEN", type: "LOST" | "FOUND" = "LOST") {
   const now = new Date().toISOString();
   return {
     id,
     userId: "u1",
     author: { id: "u1", username: "alice" },
-    type: "LOST",
+    type,
     status,
     title: `Report ${id}`,
     description: "A description",
@@ -77,6 +105,11 @@ beforeEach(() => {
   deletePostMock.mockReset();
   shareReportMock.mockReset();
   clearFeedCaches();
+  authState.user = { id: "u1", username: "alice" };
+  recoverySheet.open = false;
+  recoverySheet.post = null;
+  recoverySheet.onRecovered = null;
+  recoverySheet.onRate = null;
   fetchFeedMock.mockResolvedValue({
     items: [post("p1"), post("p2")],
     nextCursor: null,
@@ -218,6 +251,93 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() =>
       expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
     );
+  });
+
+  it("routes Recovered through the recovery sheet, never a bare status write", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /recovered/i }));
+
+    await waitFor(() => expect(recoverySheet.open).toBe(true));
+    expect(recoverySheet.post).toMatchObject({ id: "p1", type: "LOST" });
+    expect(updatePostStatusMock).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /confirm recovery/i }));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Recovered"),
+    );
+    expect(updatePostStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("does not persist a clean stale feed after a late confirmed recovery", async () => {
+    const view = renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    // A recovery that confirms after the sheet was dismissed invalidates the
+    // caches while this feed is still mounted and still holds the OPEN row.
+    invalidateFeedCaches();
+    view.unmount();
+
+    fetchFeedMock.mockClear();
+    renderMyPosts();
+    // The stale mounted snapshot must not be saved as fresh: the next mount
+    // has to refetch instead of restoring a clean OPEN row.
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+  });
+
+  it("keeps the invalidation across a failed remount refresh", async () => {
+    const first = renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    // A confirmed recovery invalidated the caches after the sheet closed.
+    invalidateFeedCaches();
+    first.unmount();
+
+    fetchFeedMock.mockClear();
+    fetchFeedMock.mockRejectedValueOnce(new Error("network down"));
+    const second = renderMyPosts();
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+    // The dirty snapshot was restored, but its refresh failed; the old OPEN
+    // rows must not become a clean cache on the way out.
+    await screen.findByText(/network problem/i);
+    second.unmount();
+
+    fetchFeedMock.mockReset();
+    fetchFeedMock.mockResolvedValue({
+      items: [post("p1"), post("p2")],
+      nextCursor: null,
+      total: 2,
+    });
+    renderMyPosts();
+    await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("discards a retained recovery target when the account changes", async () => {
+    const view = renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /recovered/i }));
+    await waitFor(() => expect(recoverySheet.open).toBe(true));
+
+    authState.user = { id: "u2", username: "bob" };
+    view.rerender(
+      <MemoryRouter initialEntries={["/my-reports"]}>
+        <ReportDeletionFeedbackProvider><MyPosts /></ReportDeletionFeedbackProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(recoverySheet.open).toBe(false));
+  });
+
+  it("does not offer Recovered on a FOUND report", async () => {
+    fetchFeedMock.mockResolvedValue({
+      items: [post("p3", "OPEN", "FOUND")],
+      nextCursor: null,
+      total: 1,
+    });
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(1));
+    const menu = openFirstRowMenu();
+    expect(within(menu).queryByRole("menuitemradio", { name: /recovered/i })).toBeNull();
   });
 
   it("shares through the canonical share path", async () => {
