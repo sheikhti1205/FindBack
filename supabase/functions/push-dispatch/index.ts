@@ -88,6 +88,11 @@ export function categoryFor(type: string): keyof Pick<PreferenceRow, "likes" | "
       return "mentions";
     case "STATUS":
       return "status";
+    // MODERATION notifications (report approved/rejected) are realtime-only:
+    // they are surfaced in-app via the inbox subscription, never pushed, so
+    // moderation activity is not leaked to a device lock screen (consumer-first).
+    case "MODERATION":
+      return null;
     default:
       return null;
   }

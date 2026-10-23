@@ -57,6 +57,7 @@ Deno.test("categoryFor maps every notification type", () => {
   assertEquals(categoryFor("COMMENT"), "comments");
   assertEquals(categoryFor("MENTION"), "mentions");
   assertEquals(categoryFor("STATUS"), "status");
+  assertEquals(categoryFor("MODERATION"), null);
   assertEquals(categoryFor("UNKNOWN"), null);
 });
 
