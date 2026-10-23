@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
 import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
 import { fetchFeed } from "../services/posts";
+import { fetchReputationTier, REPUTATION_TIER_LABELS } from "../services/trust";
 import { UserAvatar } from "../components/UserAvatar";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { SafetyActions } from "../components/SafetyActions";
@@ -42,6 +43,8 @@ function PublicProfileSession({ username }: { username: string }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reputationTier, setReputationTier] = useState<string | null>(null);
+  const [reputationLoading, setReputationLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -56,15 +59,26 @@ function PublicProfileSession({ username }: { username: string }) {
         const found = await fetchPublicProfile(username);
         if (!alive) return;
         setProfile(found);
-        try {
-          const page = await fetchFeed({ userId: found.id });
-          if (alive) {
-            setReports(page.items);
-            setNextCursor(page.nextCursor ?? null);
-          }
-        } catch {
-          // Reports are supplementary: a feed failure never hides the profile.
+        setReputationTier(null);
+        setReputationLoading(true);
+        // Reputation and the reports feed are both supplementary and both
+        // need found.id, so run them together instead of serializing.
+        const [reputationResult, feedResult] = await Promise.allSettled([
+          fetchReputationTier(found.id),
+          fetchFeed({ userId: found.id }),
+        ]);
+        if (!alive) return;
+        if (reputationResult.status === "fulfilled") {
+          setReputationTier(reputationResult.value);
+        } else {
+          setReputationTier(null);
         }
+        setReputationLoading(false);
+        if (feedResult.status === "fulfilled") {
+          setReports(feedResult.value.items);
+          setNextCursor(feedResult.value.nextCursor ?? null);
+        }
+        // Both failures are non-fatal: the profile still renders.
       } catch {
         if (alive) setError("That profile could not be found.");
       } finally {
@@ -125,6 +139,14 @@ function PublicProfileSession({ username }: { username: string }) {
               <p className="flex flex-wrap gap-2">
                 {profile.emailVerified && <StatusPill tone="success">Email verified</StatusPill>}
                 {profile.phoneVerified && <StatusPill tone="neutral">Phone verified</StatusPill>}
+              </p>
+            )}
+            {reputationLoading && (
+              <p className="text-xs text-on-surface-variant" role="status">Loading reputation…</p>
+            )}
+            {reputationTier && (
+              <p className="text-xs text-on-surface-variant">
+                Reputation: {REPUTATION_TIER_LABELS[reputationTier as keyof typeof REPUTATION_TIER_LABELS] ?? reputationTier}
               </p>
             )}
             {profile.bio && <p className="break-words text-sm text-on-surface">{profile.bio}</p>}

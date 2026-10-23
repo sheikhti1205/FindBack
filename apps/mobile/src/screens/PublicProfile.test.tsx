@@ -4,11 +4,12 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
 
-const { fetchPublicProfileMock, fetchFeedMock, authState, submitReport } = vi.hoisted(() => ({
+const { fetchPublicProfileMock, fetchFeedMock, authState, submitReport, fetchReputationTierMock } = vi.hoisted(() => ({
   fetchPublicProfileMock: vi.fn(),
   fetchFeedMock: vi.fn(),
   authState: { user: { id: "reader" } as { id: string } | null },
   submitReport: vi.fn(),
+  fetchReputationTierMock: vi.fn().mockResolvedValue("NORMAL"),
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/moderation", async (original) => ({
@@ -20,6 +21,10 @@ vi.mock("../services/profile", async (importOriginal) => {
   return { ...actual, fetchPublicProfile: fetchPublicProfileMock };
 });
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
+vi.mock("../services/trust", () => ({
+  fetchReputationTier: fetchReputationTierMock,
+  REPUTATION_TIER_LABELS: { NEW: "New", NORMAL: "Established", TRUSTED: "Trusted" },
+}));
 
 import { PublicProfile } from "./PublicProfile";
 
@@ -77,6 +82,7 @@ beforeEach(() => {
   submitReport.mockResolvedValue({ reportId: "receipt" });
   fetchPublicProfileMock.mockResolvedValue(profile);
   fetchFeedMock.mockResolvedValue({ items: [post], nextCursor: null, total: 1 });
+  fetchReputationTierMock.mockResolvedValue("NORMAL");
 });
 
 describe("PublicProfile", () => {
@@ -148,6 +154,20 @@ describe("PublicProfile", () => {
     renderRoute();
     expect(await screen.findByText("Owner Name")).toBeTruthy();
     expect(screen.queryByText("Found a wallet")).toBeNull();
+  });
+
+  it("still renders the profile and reports when reputation fetch fails", async () => {
+    fetchReputationTierMock.mockRejectedValueOnce(new Error("tier down"));
+    renderRoute();
+    expect(await screen.findByText("Owner Name")).toBeTruthy();
+    expect(await screen.findByText("Found a wallet")).toBeTruthy();
+    expect(screen.queryByText(/Reputation:/i)).toBeNull();
+  });
+
+  it("shows the reputation label once the tier loads", async () => {
+    renderRoute();
+    expect(await screen.findByText("Owner Name")).toBeTruthy();
+    expect(await screen.findByText(/Reputation: Established/i)).toBeTruthy();
   });
 
   it("shows a human not-found message when the lookup fails", async () => {
