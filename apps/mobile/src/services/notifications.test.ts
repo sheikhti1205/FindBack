@@ -96,6 +96,22 @@ describe("fetchNotifications", () => {
     ]);
   });
 
+  it("recognizes an actorless moderation outcome without projecting private audit fields", async () => {
+    clientMock.rpc.mockResolvedValue({ data: [row({
+      type: "MODERATION", actor_id: null, actor_username: null,
+      preview: "We hid this content after a review of our community rules.",
+      moderator_id: "private-moderator", reporter_id: "private-reporter", note: "private note",
+    })], error: null });
+    const [outcome] = await fetchNotifications();
+    expect(outcome?.type).toBe("MODERATION");
+    expect(outcome?.actorId).toBeNull();
+    expect(outcome?.actorUsername).toBeNull();
+    expect(outcome?.preview).toBe("We hid this content after a review of our community rules.");
+    expect(outcome).not.toHaveProperty("moderator_id");
+    expect(outcome).not.toHaveProperty("reporter_id");
+    expect(outcome).not.toHaveProperty("note");
+  });
+
   it("reads the soft-deleted view when asked", async () => {
     clientMock.rpc.mockResolvedValue({ data: [], error: null });
     await fetchNotifications({ deleted: true });

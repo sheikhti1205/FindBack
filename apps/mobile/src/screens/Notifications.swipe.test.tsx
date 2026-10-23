@@ -20,6 +20,7 @@ vi.mock("../services/notifications", () => ({
 vi.mock("../services/notificationSignals", () => ({ signalInboxChanged: signalMock }));
 
 import { Notifications, UNDO_WINDOW_MS, notificationRoute, swipeActionFor } from "./Notifications";
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 
 function item() {
   return {

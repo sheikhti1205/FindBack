@@ -11,9 +11,9 @@ export interface NotificationItem {
   preview: string | null;
   read: boolean;
   createdAt: string;
-  /** Null only for system STATUS rows (no actor performed them). */
+  /** Null for system STATUS/MODERATION rows (no public actor is projected). */
   actorId: string | null;
-  /** Null only for system STATUS rows; render a system label then. */
+  /** Null for system STATUS/MODERATION rows; render a system label then. */
   actorUsername: string | null;
   postId: string | null;
   postTitle: string | null;
@@ -77,7 +77,8 @@ function isNotificationType(value: unknown): value is NotificationType {
     value === "COMMENT" ||
     value === "MENTION" ||
     value === "STATUS" ||
-    value === "REACTION"
+    value === "REACTION" ||
+    value === "MODERATION"
   );
 }
 

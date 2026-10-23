@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { motion, type PanInfo } from "framer-motion";
 import { Bell, Check, Mail, MoreVertical, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { useAuth } from "../auth";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { UserAvatar } from "../components/UserAvatar";
 import { announce } from "../components/LiveRegion";
@@ -72,6 +73,8 @@ export function typeLabel(type: NotificationType): string {
       return "mentioned you";
     case "STATUS":
       return "status update";
+    case "MODERATION":
+      return "review update";
     case "UNKNOWN":
       return "sent you an update";
     default:
@@ -104,17 +107,50 @@ function startsInsideShield(event: Event): boolean {
 }
 
 export function Notifications() {
+  const { user } = useAuth();
+  return user ? <AccountNotifications key={user.id} /> : null;
+}
+
+function AccountNotifications() {
   const [view, setView] = useState<InboxView>("inbox");
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [lastDeleted, setLastDeleted] = useState<readonly string[] | null>(null);
+  const lastDeletedRef = useRef<readonly string[] | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alive = useRef(false);
+  const viewRef = useRef(view);
+  const loadSequence = useRef(0);
+  const mutationSequence = useRef(0);
+  const lastDeleteWrite = useRef<Promise<void> | null>(null);
+  const viewGeneration = useRef(0);
+  const writeQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingWrites = useRef(0);
+  const confirmedRead = useRef(new Map<string, boolean>());
+  const readSequence = useRef(new Map<string, number>());
+
+  useLayoutEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; loadSequence.current += 1; };
+  }, []);
+
+  useLayoutEffect(() => {
+    viewRef.current = view;
+    viewGeneration.current += 1;
+    loadSequence.current += 1;
+    setItems(null);
+    setError(null);
+    setActionError(null);
+  }, [view]);
 
   const clearUndo = useCallback(() => {
     if (undoTimer.current !== null) {
       clearTimeout(undoTimer.current);
       undoTimer.current = null;
     }
+    lastDeletedRef.current = null;
+    lastDeleteWrite.current = null;
     setLastDeleted(null);
   }, []);
 
@@ -126,11 +162,35 @@ export function Notifications() {
   );
 
   const load = useCallback(async (target: InboxView) => {
+    if (!alive.current || target !== viewRef.current) return;
+    const sequence = ++loadSequence.current;
+    const current = () => alive.current && sequence === loadSequence.current && target === viewRef.current;
     setError(null);
-    try {
-      setItems(await fetchNotifications({ deleted: target === "deleted" }));
-    } catch (err) {
-      setError(friendlyError(err).message);
+    while (current()) {
+      // A focus/realtime refresh must read after every already-admitted
+      // mutation. Otherwise it can replace optimism with pre-write data.
+      while (pendingWrites.current > 0 && current()) {
+        const tail = writeQueue.current;
+        await tail.catch(() => undefined);
+        if (!current()) return;
+      }
+      if (!current()) return;
+      const mutation = mutationSequence.current;
+      try {
+        const rows = await fetchNotifications({ deleted: target === "deleted" });
+        if (!current()) return;
+        // A newer choice invalidates the snapshot, not the requested refresh.
+        // Retry after its write rather than dropping notification additions.
+        if (mutation !== mutationSequence.current) continue;
+        for (const row of rows) confirmedRead.current.set(row.id, row.read);
+        setItems(rows);
+        return;
+      } catch (err) {
+        if (!current()) return;
+        if (mutation !== mutationSequence.current) continue;
+        setError(friendlyError(err).message);
+        return;
+      }
     }
   }, []);
 
@@ -155,100 +215,138 @@ export function Notifications() {
     return onRealtime("notification:added", () => void load("inbox"));
   }, [load, view]);
 
-  const updateItem = useCallback((id: string, patch: Partial<NotificationItem>) => {
-    setItems((current) =>
-      current ? current.map((item) => (item.id === id ? { ...item, ...patch } : item)) : current,
-    );
+  const queueWrite = useCallback((work: () => Promise<void>) => {
+    const idle = pendingWrites.current === 0;
+    pendingWrites.current += 1;
+    mutationSequence.current += 1;
+    const run = async () => {
+      try {
+        // The account-keyed component may have gone away while this waited.
+        if (alive.current) await work();
+      } finally {
+        pendingWrites.current -= 1;
+      }
+    };
+    // A tap may navigate immediately after admitting its mark-read write.
+    // Start an idle write now; only queued continuations wait/recheck lifetime.
+    const write = idle ? run() : writeQueue.current.catch(() => undefined).then(run);
+    writeQueue.current = write;
+    return write;
   }, []);
 
-  const handleMarkRead = useCallback(
-    async (id: string) => {
-      updateItem(id, { read: true });
+  const changeRead = useCallback((ids: readonly string[] | undefined, read: boolean) => {
+    const generation = viewGeneration.current;
+    const affected = (items ?? []).filter((item) => !ids || ids.includes(item.id));
+    const previousRead = new Map(affected.map((item) => [item.id, item.read]));
+    const versions = new Map(affected.map((item) => {
+      const next = (readSequence.current.get(item.id) ?? 0) + 1;
+      readSequence.current.set(item.id, next);
+      return [item.id, next];
+    }));
+    setActionError(null);
+    setItems((current) => current?.map((item) => versions.has(item.id) ? { ...item, read } : item) ?? current);
+    return queueWrite(async () => {
       try {
-        await markNotificationsRead([id]);
-        signalInboxChanged();
-      } catch {
-        updateItem(id, { read: false });
+        if (read) {
+          if (ids) await markNotificationsRead(ids);
+          else await markNotificationsRead();
+        }
+        else await markNotificationsUnread(ids);
+        for (const item of affected) confirmedRead.current.set(item.id, read);
+        if (alive.current) signalInboxChanged();
+      } catch (err) {
+        if (!alive.current || generation !== viewGeneration.current) return;
+        // Change only this operation's still-current read fields. Never
+        // resurrect rows deleted meanwhile or revert a newer choice.
+        setItems((current) => current?.map((item) => versions.get(item.id) === readSequence.current.get(item.id)
+          && versions.has(item.id)
+          ? { ...item, read: confirmedRead.current.get(item.id) ?? previousRead.get(item.id) ?? item.read }
+          : item) ?? current);
+        setActionError(friendlyError(err).message);
       }
-    },
-    [updateItem],
-  );
+    });
+  }, [items, queueWrite]);
 
-  const handleMarkUnread = useCallback(
-    async (id: string) => {
-      updateItem(id, { read: false });
-      try {
-        await markNotificationsUnread([id]);
-        signalInboxChanged();
-      } catch {
-        updateItem(id, { read: true });
-      }
-    },
-    [updateItem],
-  );
-
-  const handleMarkAllRead = useCallback(async () => {
-    const previous = items;
-    setItems((current) => current?.map((item) => ({ ...item, read: true })) ?? current);
-    try {
-      await markNotificationsRead();
-      signalInboxChanged();
-    } catch {
-      setItems(previous);
-    }
-  }, [items]);
+  const handleMarkRead = useCallback((id: string) => changeRead([id], true), [changeRead]);
+  const handleMarkUnread = useCallback((id: string) => changeRead([id], false), [changeRead]);
+  const handleMarkAllRead = useCallback(() => changeRead(undefined, true), [changeRead]);
 
   const handleDelete = useCallback(
     async (ids: readonly string[]) => {
-      const previous = items;
+      const generation = viewGeneration.current;
+      const removed = (items ?? []).filter((item) => ids.includes(item.id));
+      const positions = new Map((items ?? []).map((item, index) => [item.id, index]));
+      setActionError(null);
       setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
+      lastDeletedRef.current = ids;
       setLastDeleted(ids);
       if (undoTimer.current !== null) clearTimeout(undoTimer.current);
       undoTimer.current = setTimeout(() => {
         undoTimer.current = null;
+        lastDeletedRef.current = null;
+        lastDeleteWrite.current = null;
         setLastDeleted(null);
       }, UNDO_WINDOW_MS);
       try {
-        await deleteNotifications([...ids]);
-        signalInboxChanged();
+        const write = queueWrite(async () => {
+          await deleteNotifications([...ids]);
+        });
+        lastDeleteWrite.current = write;
+        await write;
+        if (alive.current) signalInboxChanged();
       } catch (err) {
-        if (undoTimer.current !== null) {
-          clearTimeout(undoTimer.current);
-          undoTimer.current = null;
-        }
-        setItems(previous);
-        setLastDeleted(null);
-        setError(friendlyError(err).message);
+        if (!alive.current || generation !== viewGeneration.current) return;
+        if (lastDeletedRef.current === ids) clearUndo();
+        setItems((current) => {
+          if (!current) return current;
+          const restored = [...current];
+          for (const row of removed) {
+            if (!restored.some((item) => item.id === row.id)) {
+              restored.splice(Math.min(positions.get(row.id) ?? restored.length, restored.length), 0,
+                { ...row, read: confirmedRead.current.get(row.id) ?? row.read });
+            }
+          }
+          return restored;
+        });
+        setActionError(friendlyError(err).message);
       }
     },
-    [items],
+    [items, queueWrite, clearUndo],
   );
 
   const handleUndoDelete = useCallback(async () => {
     if (!lastDeleted) return;
     const ids = lastDeleted;
+    const deletion = lastDeleteWrite.current;
+    const generation = viewGeneration.current;
     clearUndo();
     try {
-      await restoreNotifications([...ids]);
-      signalInboxChanged();
+      // Restore must follow the delete on the server. An early Undo cannot
+      // race ahead and leave the notification deleted by the slower write.
+      await deletion;
+      if (!alive.current) return;
+      await queueWrite(async () => { await restoreNotifications([...ids]); });
+      if (alive.current) signalInboxChanged();
     } catch (err) {
-      setError(friendlyError(err).message);
+      if (alive.current && generation === viewGeneration.current) setActionError(friendlyError(err).message);
     }
-    await load("inbox");
-  }, [lastDeleted, clearUndo, load]);
+    if (alive.current) await load(viewRef.current);
+  }, [lastDeleted, clearUndo, load, queueWrite]);
 
   const handleRestore = useCallback(
     async (ids: readonly string[]) => {
+      const generation = viewGeneration.current;
       setItems((current) => current?.filter((item) => !ids.includes(item.id)) ?? current);
       try {
-        await restoreNotifications([...ids]);
-        signalInboxChanged();
+        await queueWrite(async () => { await restoreNotifications([...ids]); });
+        if (alive.current) signalInboxChanged();
       } catch (err) {
-        setError(friendlyError(err).message);
+        if (!alive.current || generation !== viewGeneration.current) return;
+        setActionError(friendlyError(err).message);
         await load("deleted");
       }
     },
-    [load],
+    [load, queueWrite],
   );
 
   const unreadCount = items?.filter((item) => !item.read).length ?? 0;
@@ -273,7 +371,7 @@ export function Notifications() {
       <header className="flex flex-wrap items-center gap-2">
         <BackButton fallbackTo="/" label="Back to home" />
         <h1 className="text-xl font-semibold tracking-tight">Notifications</h1>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
           {view === "inbox" && unreadCount > 0 && (
             <button
               type="button"
@@ -303,6 +401,8 @@ export function Notifications() {
           </button>
         </div>
       </header>
+
+      {actionError && <p role="alert" className="py-2 text-sm text-error [overflow-wrap:anywhere]">{actionError}</p>}
 
       {/* Inbox states swap with one short fade — loading holds fixed-size
           skeleton rows so resolving content never reflows. */}
@@ -428,9 +528,9 @@ export function Notifications() {
       {lastDeleted && view === "inbox" ? (
         <div
           role="status"
-          className="sticky bottom-3 mt-auto flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+          className="sticky bottom-3 mt-auto flex min-w-0 flex-wrap items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
         >
-          <span className="flex-1">
+          <span className="min-w-0 flex-[1_1_8rem] [overflow-wrap:anywhere]">
             {lastDeleted.length === 1 ? "Notification deleted" : `${lastDeleted.length} notifications deleted`}
           </span>
           <button
@@ -601,7 +701,7 @@ function NotificationOverflow({
 function NotificationBody({ item }: { item: NotificationItem }) {
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {!item.read && (
           <span
             aria-label="Unread"
@@ -609,7 +709,7 @@ function NotificationBody({ item }: { item: NotificationItem }) {
           />
         )}
         <UserAvatar username={item.actorUsername} size={32} />
-        <p className="text-sm">
+        <p className="min-w-0 flex-[1_1_6rem] text-sm [overflow-wrap:anywhere]">
           <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
           <span className="text-on-surface-variant">
             {item.type === "REACTION" && reactionKindLabel(item.reactionKind)
@@ -624,10 +724,10 @@ function NotificationBody({ item }: { item: NotificationItem }) {
         </p>
       </div>
       {item.postTitle ? (
-        <p className="text-sm font-medium">{item.postTitle}</p>
+        <p className="text-sm font-medium [overflow-wrap:anywhere]">{item.postTitle}</p>
       ) : null}
       {item.preview && item.preview !== item.postTitle ? (
-        <p className="line-clamp-2 text-sm text-on-surface-variant">{item.preview}</p>
+        <p className={`${item.type === "MODERATION" ? "" : "line-clamp-2 "}text-sm text-on-surface-variant [overflow-wrap:anywhere]`}>{item.preview}</p>
       ) : null}
       <time
         dateTime={item.createdAt}

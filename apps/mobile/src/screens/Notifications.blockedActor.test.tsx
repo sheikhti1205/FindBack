@@ -20,6 +20,7 @@ vi.mock("../services/notifications", () => ({
 }));
 
 import { Notifications } from "./Notifications";
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 
 function item(overrides: Record<string, unknown> = {}) {
   return {
