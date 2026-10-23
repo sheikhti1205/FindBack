@@ -108,6 +108,15 @@ afterEach(() => {
 });
 
 describe("CreateReport", () => {
+  it("shows a Lost-specific safety hint by default and a Found-specific one after switching type", async () => {
+    render(<CreateReport />);
+    expect(await screen.findByText(/Safety tip: post about your own item/i)).toBeTruthy();
+    const foundBtn = screen.getByRole("radio", { name: /i found something/i });
+    fireEvent.click(foundBtn);
+    expect(await screen.findByText(/Safety tip: describe what you found and where/i)).toBeTruthy();
+    expect(screen.queryByText(/Safety tip: post about your own item/i)).toBeNull();
+  });
+
   it("does not offer the generic file picker on native, so all capture paths reach the VLM", async () => {
     photo.isNativeCameraAvailable.mockReturnValue(true);
     try {

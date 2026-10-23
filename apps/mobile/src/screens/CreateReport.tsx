@@ -1549,6 +1549,14 @@ function ReportForm() {
         <p className="text-sm text-on-surface-variant">
           Posting as @{user?.username}. Be specific — details help reunions.
         </p>
+        <p
+          className="rounded-m3-sm border border-outline-variant px-3 py-2 text-xs text-on-surface-variant"
+          role="note"
+        >
+          {type === "LOST"
+            ? "Safety tip: post about your own item, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."
+            : "Safety tip: describe what you found and where, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."}
+        </p>
       </header>
 
       {error && (
