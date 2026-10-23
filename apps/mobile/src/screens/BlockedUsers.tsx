@@ -4,7 +4,7 @@ import { announce } from "../components/LiveRegion";
 import { listMyBlocks, unblockUser, type BlockedUser } from "../services/blocks";
 import { fetchAccountLabels } from "../services/accountLabels";
 import { friendlyError } from "../utils/friendlyErrors";
-import { UNAVAILABLE_SENTENCES, formatSafetyDate } from "../utils/safetyCopy";
+import { BLOCKING_EXPLANATION, UNAVAILABLE_SENTENCES, formatSafetyDate, unblockOutcome } from "../utils/safetyCopy";
 import { isMissingServerFunction } from "../utils/safetyService";
 import { useAuth } from "../auth";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
@@ -17,10 +17,9 @@ import { useSafetyLifetime } from "../utils/useSafetyLifetime";
  * this screen shows is the caller's OWN outgoing blocks, which is the only
  * direction the server can read at all (MC D18).
  *
- * THE EFFECT IS MUTUAL, and the unblock copy says so exactly. Unblocking
- * clears the caller's own direction only; if the other person has blocked
- * them, the pair stays hidden, and the screen says that in words instead of
- * pretending the pair is back (MC D22).
+ * Owner O5 supersedes hiding content: public content remains revealable,
+ * while interaction is refused mutually. Unblocking clears the caller's
+ * outgoing direction only; an independent block can still refuse interaction.
  */
 export function BlockedUsers() {
   const { user } = useAuth();
@@ -80,7 +79,7 @@ function ScopedBlockedUsers() {
       await unblockUser(row.userId);
       if (!alive.current) return;
       setRows((current) => (current ?? []).filter((item) => item.userId !== row.userId));
-      const outcome = `You've unblocked ${name}. You still won't see each other if they've blocked you.`;
+      const outcome = unblockOutcome(name);
       setNotice(outcome);
       announce(outcome);
     } catch (err) {
@@ -97,11 +96,11 @@ function ScopedBlockedUsers() {
     <SettingsPage
       title="Blocked accounts"
       backTo="/settings/privacy"
-      description="People you have blocked. They are not told that you blocked them."
+      description="People you have blocked."
     >
       <SettingsGroup
         title="Blocked"
-        description="Blocking hides each of you from the other. Unblocking lets you see each other again — unless they have blocked you."
+        description={BLOCKING_EXPLANATION}
       >
         {notice ? (
           <p role="status" data-testid="blocked-users-notice" className="px-3 py-2 text-sm text-on-surface-variant">
@@ -134,7 +133,7 @@ function ScopedBlockedUsers() {
           <SettingsRow
             key={row.userId}
             title={`Unblock ${nameFor(row.userId)}`}
-            description={`Blocked on ${formatSafetyDate(row.blockedAt)}. You’ll see each other again unless they’ve blocked you.`}
+            description={`Blocked on ${formatSafetyDate(row.blockedAt)}. Unblocking allows interaction unless they've also blocked you.`}
             destructive
             disabled={busyId !== null}
             onClick={() => void unblock(row)}

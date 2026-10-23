@@ -3,7 +3,7 @@ import { useAuth } from "../auth";
 import { announce } from "./LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { blockUser, listMyBlocks, unblockUser } from "../services/blocks";
-import { UNAVAILABLE_SENTENCES } from "../utils/safetyCopy";
+import { BLOCKING_EXPLANATION, UNAVAILABLE_SENTENCES, unblockOutcome } from "../utils/safetyCopy";
 import { isMissingServerFunction } from "../utils/safetyService";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 
@@ -48,8 +48,8 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className }: Blo
   const act = async () => {
     if (busy || known === null) return;
     const question = known
-      ? `Unblock ${name}? You will see each other again unless they have blocked you.`
-      : `Block ${name}? Blocking hides each of you from the other: you won't see their reports, comments or notifications, and they won't see yours either. They are not told that you blocked them.`;
+      ? `Unblock ${name}? You can interact again unless they've also blocked you.`
+      : `Block ${name}? ${BLOCKING_EXPLANATION}`;
     if (!window.confirm(question)) return;
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -64,8 +64,8 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className }: Blo
       setKnown(next);
       // Identical conditional copy for BOTH unblock results: never infer inbound direction.
       const outcome = next
-        ? `You blocked ${name}. You won't see each other from now on.`
-        : `You've unblocked ${name}. You still won't see each other if they've blocked you.`;
+        ? `You blocked ${name}. You can't interact with each other, but public content can still be revealed.`
+        : unblockOutcome(name);
       setMessage(outcome); announce(outcome);
       onChanged?.({ blocked: next, stillHidden });
     } catch (err) {

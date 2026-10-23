@@ -38,8 +38,9 @@
 }
 .fb-settings-sticky > button {
   flex: none;
-  min-height: 3rem;
-  min-width: 3rem;
+  /* Icon-only target stays 48px when text grows, leaving room for the title. */
+  min-height: 48px;
+  min-width: 48px;
   margin: 0 0 0 -0.5rem;
 }
 .fb-settings-sticky h1 {

@@ -19,10 +19,11 @@ it("uses outgoing membership even if incoming-only mutual blocking exists", asyn
   mocks.mutual.mockResolvedValue(true);
   render(<BlockControl {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Block Sam" }));
-  expect(await screen.findByText("You blocked Sam. You won't see each other from now on.")).toBeTruthy();
+  expect(await screen.findByText("You blocked Sam. You can't interact with each other, but public content can still be revealed.")).toBeTruthy();
   expect(mocks.block).toHaveBeenCalledWith("sam");
   expect(mocks.mutual).not.toHaveBeenCalled();
-  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("they won't see yours either"));
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Public reports and comments remain behind a warning"));
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("option to reveal them"));
 });
 
 it.each([true, false])("unblock clears outgoing state regardless of stillHidden=%s", async (stillHidden) => {
@@ -31,7 +32,7 @@ it.each([true, false])("unblock clears outgoing state regardless of stillHidden=
   render(<BlockControl {...props} blocked onChanged={onChanged} />);
   fireEvent.click(screen.getByRole("button", { name: "Unblock Sam" }));
   expect(await screen.findByRole("button", { name: "Block Sam" })).toBeTruthy();
-  expect(screen.getByTestId("block-outcome").textContent).toBe("You've unblocked Sam. You still won't see each other if they've blocked you.");
+  expect(screen.getByTestId("block-outcome").textContent).toBe("You've unblocked Sam. You can interact again unless they've also blocked you.");
   expect(onChanged).toHaveBeenCalledWith({ blocked: false, stillHidden });
 });
 

@@ -87,7 +87,8 @@ describe("the accounts a reader blocked", () => {
   it("names each blocked account and says the block is mutual", async () => {
     renderScreen();
     expect(await screen.findByText("Unblock sam")).toBeTruthy();
-    expect(document.body.textContent).toContain("You’ll see each other again unless they’ve blocked you.");
+    expect(document.body.textContent).toContain("Public reports and comments remain behind a warning with an option to reveal them.");
+    expect(document.body.textContent).toContain("Unblocking allows interaction unless they've also blocked you.");
   });
 
   it("never shows an identifier", async () => {
@@ -109,7 +110,7 @@ describe("the accounts a reader blocked", () => {
 
     const notice = await screen.findByTestId("blocked-users-notice");
     expect(notice.textContent).toBe(
-      "You've unblocked sam. You still won't see each other if they've blocked you.",
+      "You've unblocked sam. You can interact again unless they've also blocked you.",
     );
     // The direction is never revealed.
     expect(notice.textContent).not.toMatch(/\bthey blocked you\b/i);

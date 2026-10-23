@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
 import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
@@ -7,6 +7,8 @@ import { UserAvatar } from "../components/UserAvatar";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { SafetyActions } from "../components/SafetyActions";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
+import { useAuth } from "../auth";
+import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 
 /** "Joined January 2026" from an ISO timestamp; tolerant of bad input. */
 function formatJoined(createdAt: string): string {
@@ -24,6 +26,15 @@ function formatJoined(createdAt: string): string {
  */
 export function PublicProfile() {
   const { username = "" } = useParams();
+  const { user } = useAuth();
+  // Reports carry viewer-dependent block flags. Neither a handle nor an
+  // account replacement may reuse that list, its reveal state or its cursors.
+  return <PublicProfileSession key={JSON.stringify([user?.id ?? null, username])} username={username} />;
+}
+
+function PublicProfileSession({ username }: { username: string }) {
+  const alive = useSafetyLifetime();
+  const pageInFlight = useRef(false);
   const [profile, setProfile] = useState<PublicProfileShape | null>(null);
   const [reports, setReports] = useState<PostItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -66,18 +77,22 @@ export function PublicProfile() {
   }, [username]);
 
   async function loadMoreReports() {
-    if (!profile || !nextCursor || loadingMore) return;
+    if (!alive.current || !profile || !nextCursor || pageInFlight.current) return;
+    pageInFlight.current = true;
     setLoadingMore(true);
     setMoreError(null);
     try {
       const page = await fetchFeed({ userId: profile.id }, nextCursor);
+      if (!alive.current) return;
       setReports((previous) => appendReportPage(previous, page));
       setNextCursor(page.nextCursor ?? null);
     } catch {
+      if (!alive.current) return;
       // The loaded profile and reports stay: only the next page failed.
       setMoreError("Could not load more reports. Check your connection and try again.");
     } finally {
-      setLoadingMore(false);
+      pageInFlight.current = false;
+      if (alive.current) setLoadingMore(false);
     }
   }
 

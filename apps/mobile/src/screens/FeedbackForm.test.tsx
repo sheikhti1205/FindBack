@@ -48,6 +48,24 @@ function renderScreen() {
 }
 
 describe("the one feedback form", () => {
+  it.each([
+    "#/settings/feedback?email=synthetic-person@example.invalid",
+    "#/u/synthetic-member-id?access_token=synthetic-not-a-credential",
+    `#/settings/feedback?context=${"synthetic-".repeat(20)}`,
+  ])("never adds URL parameters or dynamic identity to opted-in screen context: %s", async (hash) => {
+    const previous = window.location.href;
+    try {
+      window.history.replaceState(null, "", hash);
+      renderScreen();
+      fireEvent.click(screen.getByRole("switch", { name: /include technical details/i }));
+      fireEvent.click(screen.getByRole("radio", { name: /an idea/i }));
+      fireEvent.change(screen.getByLabelText(/tell us what happened/i), { target: { value: "A synthetic suggestion" } });
+      fireEvent.click(screen.getByRole("button", { name: /send feedback/i }));
+      await waitFor(() => expect(mockSubmitFeedback).toHaveBeenCalledTimes(1));
+      expect(mockSubmitFeedback.mock.calls[0]![0].screen).toBe("feedback");
+    } finally { window.history.replaceState(null, "", previous); }
+  });
+
   it("suppresses old-account history reads", async () => {
     let finish!: (rows: unknown[]) => void;
     mockListMyFeedback.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));

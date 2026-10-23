@@ -26,6 +26,14 @@ import type {
 } from "../services/moderation";
 import type { ReputationTier, Standing } from "../services/trust";
 
+/** Owner O5: public content is revealable; blocking refuses interaction. */
+export const BLOCKING_EXPLANATION = "Blocking stops you interacting with each other. Public reports and comments remain behind a warning with an option to reveal them.";
+
+/** Same conditional wording for either server result; never infer direction. */
+export function unblockOutcome(name: string): string {
+  return `You've unblocked ${name}. You can interact again unless they've also blocked you.`;
+}
+
 /** The seven report reasons, in words. */
 export const REPORT_REASON_LABELS: Readonly<Record<ReportReason, string>> = {
   SCAM_OR_MISLEADING: "Scam or misleading",

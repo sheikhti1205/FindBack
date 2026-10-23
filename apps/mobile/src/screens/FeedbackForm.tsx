@@ -81,11 +81,12 @@ function ScopedFeedbackForm() {
     }
     const band = widthBand(typeof window === "undefined" ? 599 : window.innerWidth);
     const deviceClass = band === "compact" ? "phone" : band === "medium" ? "large screen" : "wide screen";
-    const route = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
     return {
       appVersion: APP_VERSION,
       platform: Capacitor.getPlatform(),
-      screen: route === "" ? null : route,
+      // This form is the feedback screen. Never collect an arbitrary fragment,
+      // query, dynamic account/report ID or auth callback as technical context.
+      screen: "feedback",
       deviceClass,
     };
   }, [includeTechnical]);
