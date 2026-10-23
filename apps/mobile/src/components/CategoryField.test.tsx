@@ -7,6 +7,17 @@ import { categoryTrigger, categoryValue } from "../test-utils/reportCategory";
 afterEach(cleanup);
 
 describe("CategoryField (P3 searchable grouped sheet)", () => {
+  it("dismisses an open sheet when locked and does not reopen on unlock", async () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<CategoryField value="Electronics" onChange={onChange} />);
+    fireEvent.click(categoryTrigger());
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    rerender(<CategoryField value="Electronics" onChange={onChange} disabled />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    rerender(<CategoryField value="Electronics" onChange={onChange} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
   it("exposes all 25 released canonical options for submission", () => {
     expect(CATEGORY_OPTIONS.map((o) => o.value)).toEqual([
       "Electronics",

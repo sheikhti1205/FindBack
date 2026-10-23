@@ -52,11 +52,14 @@ vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({ permission: async () => "unsupported" as const }),
 }));
 
-import { App } from "../App";
+import { App, createAppRouter } from "../App";
+let router: ReturnType<typeof createAppRouter> | undefined;
 
 function renderAt(hash: string) {
   window.history.replaceState(null, "", `/#${hash}`);
-  return render(<App />);
+  router?.dispose();
+  router = createAppRouter();
+  return render(<App router={router} />);
 }
 
 beforeEach(() => {
@@ -69,6 +72,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  router?.dispose();
   vi.clearAllMocks();
   window.history.replaceState(null, "", "/");
 });

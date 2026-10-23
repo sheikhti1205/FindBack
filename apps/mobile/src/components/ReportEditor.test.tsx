@@ -66,6 +66,18 @@ function values(): ReportEditorValues {
 afterEach(cleanup);
 
 describe("ReportEditor", () => {
+  it("makes the real description editor and date trigger read-only while disabled", () => {
+    const { container, rerender } = render(<ReportEditor values={values()} onChange={() => {}} disabled />);
+    const description = container.querySelector(".tiptap")!;
+    expect(description.getAttribute("contenteditable")).toBe("false");
+    expect(description.getAttribute("aria-disabled")).toBe("true");
+    expect((screen.getByRole("button", { name: /expand description editor/i }) as HTMLButtonElement).disabled).toBe(true);
+    const dateTrigger = screen.getByRole("button", { name: /date of event/i }) as HTMLButtonElement;
+    expect(dateTrigger.disabled).toBe(true);
+    rerender(<ReportEditor values={values()} onChange={() => {}} />);
+    expect(description.getAttribute("contenteditable")).toBe("true");
+    expect(dateTrigger.disabled).toBe(false);
+  });
   it("hydrates the stored report into the fields", () => {
     render(<ReportEditor values={values()} onChange={() => {}} photos={post.attachments} />);
     expect((screen.getByLabelText("What did you lose?") as HTMLInputElement).value).toBe(
@@ -98,6 +110,7 @@ describe("ReportEditor", () => {
     const baseline = values();
     expect(reportEditorIsDirty(baseline, baseline)).toBe(false);
     expect(reportEditorIsDirty({ ...baseline, title: "Another title" }, baseline)).toBe(true);
+    expect(reportEditorIsDirty({ ...baseline, youtubeUrl: "https://youtu.be/dQw4w9WgXcQ" }, baseline)).toBe(true);
     expect(
       reportEditorIsDirty(
         { ...baseline, location: { ...baseline.location, label: "" } },
@@ -110,6 +123,38 @@ describe("ReportEditor", () => {
         baseline,
       ),
     ).toBe(true);
+  });
+
+  it("shows the stored YouTube link in an editable optional field", () => {
+    const onChange = vi.fn();
+    render(
+      <ReportEditor
+        values={reportEditorValuesFromPost({
+          ...post,
+          youtubeUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        } as never)}
+        onChange={onChange}
+      />,
+    );
+    const field = screen.getByLabelText("YouTube link (optional)") as HTMLInputElement;
+    expect(field.value).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+    fireEvent.change(field, { target: { value: "https://youtu.be/dQw4w9WgXcQ" } });
+    expect(onChange).toHaveBeenCalledWith({ youtubeUrl: "https://youtu.be/dQw4w9WgXcQ" });
+    expect(screen.getByText(/clear this field to remove/i)).toBeTruthy();
+  });
+
+  it("accepts a blank YouTube link and rejects a link that is not YouTube", () => {
+    const base = values();
+    expect(base.youtubeUrl).toBe("");
+    expect(validateReportEditorValues(base)).toEqual({});
+    expect(
+      validateReportEditorValues({ ...base, youtubeUrl: "https://youtu.be/dQw4w9WgXcQ" }),
+    ).toEqual({});
+    const errors = validateReportEditorValues({
+      ...base,
+      youtubeUrl: "https://example.com/watch?v=dQw4w9WgXcQ",
+    });
+    expect(errors.youtubeUrl).toMatch(/doesn't look like a YouTube link/i);
   });
 
   it("validates against the server's own bounds", () => {

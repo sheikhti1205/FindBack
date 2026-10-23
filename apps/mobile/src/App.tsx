@@ -1,4 +1,4 @@
-import { HashRouter, Navigate, Route, Routes } from "react-router";
+import { createHashRouter, Navigate, Route, RouterProvider, Routes } from "react-router";
 import { MotionConfig } from "framer-motion";
 import type { ReactNode } from "react";
 import { AuthProvider } from "./auth";
@@ -92,7 +92,14 @@ function AppMotionConfig({ children }: { children: ReactNode }) {
   );
 }
 
-export function App() {
+// Created once by the entrypoint, outside StrictMode's render cycle. Keep the
+// existing descendant route tree; a data router enables supported blockers
+// for every navigation source (links, imperative navigation and history POP).
+export function createAppRouter() {
+  return createHashRouter([{ path: "*", element: <AppRouteTree /> }]);
+}
+
+export function App({ router }: { router: ReturnType<typeof createAppRouter> }) {
   return (
     <ThemeProvider>
       <AuthProvider>
@@ -102,7 +109,17 @@ export function App() {
             all read the same truth. */}
         <SavedReportsProvider>
         <AppMotionConfig>
-        <HashRouter>
+        <RouterProvider router={router} />
+        </AppMotionConfig>
+        </SavedReportsProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  );
+}
+
+function AppRouteTree() {
+  return (
+    <>
           <AuthLinkBootstrap />
           <ReportLinkHandler />
           <BackButtonHandler />
@@ -216,10 +233,6 @@ export function App() {
           </Routes>
             </ReportDeletionFeedbackProvider>
           </ErrorBoundary>
-        </HashRouter>
-        </AppMotionConfig>
-        </SavedReportsProvider>
-      </AuthProvider>
-    </ThemeProvider>
+    </>
   );
 }

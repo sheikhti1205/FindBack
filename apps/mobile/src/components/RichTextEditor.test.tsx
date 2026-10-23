@@ -120,6 +120,30 @@ describe("richTextEditor converters", () => {
 });
 
 describe("RichTextEditor", () => {
+  it("locks the same editor and formatting rail in fullscreen without trapping the close action", () => {
+    const ref = createRef<Editor | null>();
+    const { rerender } = render(<RichTextEditor label="Description" value="Wallet" onChange={() => {}} editorRef={ref} />);
+    fireEvent.click(screen.getByRole("button", { name: /expand description editor/i }));
+    rerender(<RichTextEditor label="Description" value="Wallet" onChange={() => {}} editorRef={ref} disabled />);
+    expect(ref.current?.isEditable).toBe(false);
+    expect(ref.current?.view.dom.getAttribute("contenteditable")).toBe("false");
+    expect(screen.getByRole("button", { name: "Bold" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: /close full-screen editor/i }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    rerender(<RichTextEditor label="Description" value="Wallet" onChange={() => {}} editorRef={ref} />);
+    expect(ref.current?.isEditable).toBe(true);
+    expect(ref.current?.getText()).toBe("Wallet");
+  });
+
+  it("scrolls a keyboard-focused formatting action fully into its rail", () => {
+    render(<RichTextEditor label="Description" value="Wallet" onChange={() => {}} />);
+    const button = screen.getByRole("button", { name: "Numbered" });
+    const scrollIntoView = vi.fn();
+    button.scrollIntoView = scrollIntoView;
+    fireEvent.focus(button);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest", inline: "nearest", behavior: "instant" });
+  });
+
   it("renders grouped formatting actions, placeholder text, and character count", () => {
     render(<RichTextEditor label="Description" value="" onChange={() => {}} placeholder="Describe the item" />);
     for (const name of ["Bold", "Italic", "Link", "Bullets", "Numbered", "Quote", "Clear all formatting", "Undo", "Redo", "Paste as Markdown"]) {

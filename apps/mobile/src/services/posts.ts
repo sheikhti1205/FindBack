@@ -372,7 +372,8 @@ export async function updatePostStatus(id: string, status: PostStatus): Promise<
  * The argument itself is sent ONLY when the owner emptied something, so an
  * ordinary edit never names an argument the deployed function does not have.
  */
-export const CLEARABLE_POST_FIELDS = ["location_label", "latitude", "longitude"] as const;
+// 20261023190000 extends the existing explicit-clear contract with youtube_url.
+export const CLEARABLE_POST_FIELDS = ["location_label", "latitude", "longitude", "youtube_url"] as const;
 export type ClearablePostField = (typeof CLEARABLE_POST_FIELDS)[number];
 
 export interface UpdatePostInput {

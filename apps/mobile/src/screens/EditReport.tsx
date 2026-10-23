@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useBlocker, useNavigate, useParams, type BlockerFunction } from "react-router";
 import { RESOLVED_STATUSES, type PostItem } from "@findback/shared";
 import { ArrowLeft } from "lucide-react";
+import { useIsPresent } from "framer-motion";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { announce } from "../components/LiveRegion";
-import { registerBackInterceptor } from "../components/backNavigation";
 import { ErrorView } from "../components/uiPrimitives";
 import {
-  ReadOnlyField,
   ReportEditor,
   reportEditorIsDirty,
   reportEditorValuesFromPost,
@@ -56,6 +55,9 @@ export const UNSAVED_CHANGES_MESSAGE =
  * coordinates at all. A report that already carries a published pin must not
  * lose it because the owner changed the wording: the pin goes only when the
  * owner CLEARS the place, which removes the name and the pin together.
+ *
+ * Clearing a previously published YouTube link explicitly names youtube_url.
+ * An already-empty field sends no clear, preserving ordinary partial updates.
  */
 export function buildUpdateInput(
   values: ReportEditorValues,
@@ -71,6 +73,8 @@ export function buildUpdateInput(
       values.location.latitude == null && values.location.longitude == null) {
     clearFields.push("latitude", "longitude");
   }
+  const youtubeUrl = values.youtubeUrl.trim();
+  if (youtubeUrl === "" && baseline.youtubeUrl.trim() !== "") clearFields.push("youtube_url");
 
   return {
     type: values.type,
@@ -81,6 +85,7 @@ export function buildUpdateInput(
     latitude: values.location.latitude,
     longitude: values.location.longitude,
     locationLabel: nextLabel === "" ? null : nextLabel,
+    youtubeUrl: youtubeUrl === "" ? null : youtubeUrl,
     clearFields,
   };
 }
@@ -105,9 +110,23 @@ export function buildUpdateInput(
  */
 export function EditReport({ postId }: EditReportProps) {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const params = useParams();
   const id = postId ?? params.id ?? "";
+  const isPresent = useIsPresent();
+  const wasPresent = useRef(isPresent);
+  const [entry, setEntry] = useState(0);
+  // AnimatePresence can reuse an exiting route when Back reverses its exit.
+  // That is a fresh visit, not revival of the discarded draft/pending writes.
+  useLayoutEffect(() => {
+    if (isPresent && !wasPresent.current) setEntry((value) => value + 1);
+    wasPresent.current = isPresent;
+  }, [isPresent]);
+  // A draft belongs to one account/report lifetime, including its local controls.
+  return <EditReportSession key={JSON.stringify([user?.id ?? null, id, entry])} id={id} userId={user?.id} />;
+}
+
+function EditReportSession({ id, userId }: { id: string; userId?: string }) {
+  const navigate = useNavigate();
 
   const [post, setPost] = useState<PostItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -123,6 +142,13 @@ export function EditReport({ postId }: EditReportProps) {
   // compares against what the server had, not against the live values.
   const baselineRef = useRef<ReportEditorValues | null>(null);
   const dirtyRef = useRef(false);
+  const activeRef = useRef(false);
+  const saveInFlightRef = useRef(false);
+
+  useLayoutEffect(() => {
+    activeRef.current = true;
+    return () => { activeRef.current = false; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,8 +181,8 @@ export function EditReport({ postId }: EditReportProps) {
   }, [id]);
 
   const dirty = useMemo(
-    () => (values && baselineRef.current ? reportEditorIsDirty(values, baselineRef.current) : false),
-    [values],
+    () => (!saved && values && baselineRef.current ? reportEditorIsDirty(values, baselineRef.current) : false),
+    [values, saved],
   );
   dirtyRef.current = dirty;
 
@@ -165,10 +191,21 @@ export function EditReport({ postId }: EditReportProps) {
     return window.confirm(UNSAVED_CHANGES_MESSAGE);
   }, []);
 
-  // The hardware/gesture back button goes through the app's own back
-  // interceptor, so an unsaved edit is caught there too — not only by the
-  // button in the header.
-  useEffect(() => registerBackInterceptor(() => !askToLeave()), [askToLeave]);
+  // One guard for shell links, deep-link navigation, header/discard and POP.
+  // Native back still lets topmost dialogs consume it first; when it reaches
+  // router navigation this blocker asks exactly once, like browser Back.
+  const blocker = useBlocker(useCallback<BlockerFunction>(({ currentLocation, nextLocation }) => {
+    // Search/state changes do not unmount this report's draft. Confirm before
+    // admitting a route departure, and fence pending writes synchronously:
+    // AnimatePresence keeps the departing editor mounted during its exit.
+    if (!activeRef.current || !dirtyRef.current || currentLocation.pathname === nextLocation.pathname) return false;
+    if (!askToLeave()) return true;
+    activeRef.current = false;
+    return false;
+  }, [askToLeave]));
+  useEffect(() => {
+    if (blocker.state === "blocked") blocker.reset();
+  }, [blocker]);
 
   // Leaving the page entirely (tab close, app exit) asks as well.
   useEffect(() => {
@@ -182,6 +219,7 @@ export function EditReport({ postId }: EditReportProps) {
   }, [dirty]);
 
   const onChange = useCallback((patch: Partial<ReportEditorValues>) => {
+    if (!activeRef.current || saveInFlightRef.current) return;
     setValues((current) => (current ? { ...current, ...patch } : current));
     setFieldErrors((current) => {
       const next = { ...current };
@@ -193,22 +231,28 @@ export function EditReport({ postId }: EditReportProps) {
   }, []);
 
   const onSave = useCallback(async () => {
-    if (!post || !values || !baselineRef.current) return;
+    if (!activeRef.current || saveInFlightRef.current || !post || !values || !baselineRef.current ||
+        post.userId !== userId || RESOLVED_STATUSES.includes(post.status) || !dirtyRef.current) return;
     const errors = validateReportEditorValues(values);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       announce("Fix the highlighted fields before saving.");
       return;
     }
+    saveInFlightRef.current = true;
     setSaving(true);
     setSaveError(null);
     setSaveHint(null);
     try {
       await updatePost(post.id, buildUpdateInput(values, baselineRef.current));
+      if (!activeRef.current) return;
+      baselineRef.current = values;
+      dirtyRef.current = false;
       setSaved(true);
       announce("Report updated.");
       navigate("/my");
     } catch (err) {
+      if (!activeRef.current) return;
       // The server's own refusal is shown as it is. The edits stay on screen:
       // a failed save never discards what the owner typed.
       const friendly = friendlyError(err);
@@ -222,14 +266,14 @@ export function EditReport({ postId }: EditReportProps) {
       );
       announce(friendly.message);
     } finally {
-      setSaving(false);
+      saveInFlightRef.current = false;
+      if (activeRef.current) setSaving(false);
     }
-  }, [post, values, navigate]);
+  }, [post, values, userId, navigate]);
 
   const leave = useCallback(() => {
-    if (!askToLeave()) return;
     navigate("/my");
-  }, [askToLeave, navigate]);
+  }, [navigate]);
 
   if (loading) {
     return (
@@ -250,12 +294,12 @@ export function EditReport({ postId }: EditReportProps) {
     );
   }
 
-  const isOwner = user?.id === post.userId;
+  const isOwner = userId === post.userId;
   const isResolved = RESOLVED_STATUSES.includes(post.status);
 
   return (
-    <div className="flex h-full flex-col gap-4 px-4 py-5" data-testid="edit-report">
-      <header className="flex items-center gap-2">
+    <div className="flex min-h-full flex-col gap-4 px-4 py-5" data-testid="edit-report">
+      <header className="sticky top-0 z-20 -mx-4 flex shrink-0 items-center gap-2 bg-surface px-4">
         <button
           type="button"
           onClick={leave}
@@ -311,7 +355,6 @@ export function EditReport({ postId }: EditReportProps) {
             disabled={saving}
             publishedLocation={baselineRef.current?.location}
           />
-          {post.youtubeUrl && <ReadOnlyField label="YouTube link (not editable here)" value={post.youtubeUrl} />}
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" size="lg" loading={saving} disabled={!dirty}>
               {dirty ? "Save changes" : "No changes to save"}

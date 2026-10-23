@@ -9,6 +9,8 @@ interface SegmentedProps<T extends string> {
   options: { value: T; label: string }[];
   ariaLabel?: string;
   disabled?: boolean;
+  /** Let sentence-length options wrap into rows as text grows. */
+  wrapLongLabels?: boolean;
 }
 
 export function Segmented<T extends string>({
@@ -17,6 +19,7 @@ export function Segmented<T extends string>({
   options,
   ariaLabel,
   disabled = false,
+  wrapLongLabels = false,
 }: SegmentedProps<T>) {
   const refs = useRef<Array<HTMLButtonElement | null>>([]);
   // Scoped layoutId so the selection background slides within this group
@@ -34,7 +37,7 @@ export function Segmented<T extends string>({
       role="radiogroup"
       aria-label={ariaLabel}
       aria-disabled={disabled}
-      className="grid auto-cols-fr grid-flow-col rounded-m3-sm bg-surface-container p-1"
+      className={`${wrapLongLabels ? "flex flex-wrap" : "grid auto-cols-fr grid-flow-col"} rounded-m3-sm bg-surface-container p-1`}
       onKeyDown={(e) => {
         if (disabled) return;
         const active = document.activeElement;
@@ -64,7 +67,7 @@ export function Segmented<T extends string>({
             // Roving focus: one tab stop for the group; arrows move within it.
             tabIndex={disabled ? -1 : selected ? 0 : -1}
             onClick={() => !disabled && onChange(o.value)}
-            className={`relative min-h-[48px] rounded-m3-xs px-3 text-sm font-medium transition-colors ${
+            className={`relative min-h-[48px] rounded-m3-xs px-3 text-sm font-medium transition-colors ${wrapLongLabels ? "min-w-0 flex-1 basis-[max-content] [overflow-wrap:anywhere]" : ""} ${
               disabled
                 ? "opacity-50 cursor-not-allowed"
                 : selected
@@ -81,7 +84,7 @@ export function Segmented<T extends string>({
                 className="absolute inset-0 rounded-m3-xs bg-surface shadow-sm"
               />
             )}
-            <span className="relative z-[1]">{o.label}</span>
+            <span className={`relative z-[1] ${wrapLongLabels ? "block" : ""}`}>{o.label}</span>
           </button>
         );
       })}

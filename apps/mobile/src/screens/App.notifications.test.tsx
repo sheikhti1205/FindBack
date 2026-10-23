@@ -37,10 +37,16 @@ vi.mock("../services/notifications", () => ({
   markNotificationsRead: markReadMock,
 }));
 
-import { App } from "../App";
+import { App, createAppRouter } from "../App";
+let router: ReturnType<typeof createAppRouter> | undefined;
+function renderApp() {
+  router = createAppRouter();
+  return render(<App router={router} />);
+}
 
 afterEach(() => {
   cleanup();
+  router?.dispose();
   native.back = null;
   auth.user = { id: "member-1" };
   fetchNotificationsMock.mockReset();
@@ -53,7 +59,7 @@ afterEach(() => {
 describe("/notifications", () => {
   it("renders a truthful empty state inside the authenticated shell on a deep link", async () => {
     window.history.replaceState(null, "", "/#/notifications");
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole("heading", { name: "Notifications" })).toBeTruthy();
     expect(await screen.findByText(/no notifications/i)).toBeTruthy();
@@ -67,7 +73,7 @@ describe("/notifications", () => {
     auth.user = null;
     localStorage.clear();
     window.history.replaceState(null, "", "/#/notifications");
-    render(<App />);
+    renderApp();
 
     await waitFor(() => expect(screen.getByText("Onboarding screen")).toBeTruthy());
     expect(screen.queryByRole("heading", { name: "Notifications" })).toBeNull();
@@ -76,7 +82,7 @@ describe("/notifications", () => {
 
   it("backs out of a cold deep link to Home", async () => {
     window.history.replaceState(null, "", "/#/notifications");
-    render(<App />);
+    renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
     await waitFor(() => expect(screen.getByText("Home screen")).toBeTruthy());
@@ -85,7 +91,7 @@ describe("/notifications", () => {
 
   it("handles Android Back on a cold deep link without exiting", async () => {
     window.history.replaceState(null, "", "/#/notifications");
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole("heading", { name: "Notifications" })).toBeTruthy();
     expect(native.back).not.toBeNull();

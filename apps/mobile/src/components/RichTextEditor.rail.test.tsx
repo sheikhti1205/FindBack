@@ -119,4 +119,22 @@ describe("Report editor formatting rail", () => {
       Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
     }
   });
+
+  it("discards clipboard input begun before a lock even when it settles after unlocking", async () => {
+    const ref = createRef<Editor | null>();
+    const onChange = vi.fn();
+    let resolveClipboard!: (value: string) => void;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText: () => new Promise<string>((resolve) => { resolveClipboard = resolve; }) } });
+    try {
+      const { rerender } = render(<RichTextEditor label="Description" value="before after" onChange={onChange} editorRef={ref} />);
+      fireEvent.click(screen.getByRole("button", { name: "Paste as Markdown" }));
+      rerender(<RichTextEditor label="Description" value="before after" onChange={onChange} editorRef={ref} disabled />);
+      rerender(<RichTextEditor label="Description" value="before after" onChange={onChange} editorRef={ref} />);
+      await act(async () => resolveClipboard("**late clipboard**"));
+      expect(ref.current?.getText()).toBe("before after");
+      expect(onChange).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    }
+  });
 });

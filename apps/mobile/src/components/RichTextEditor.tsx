@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useModalBack } from "../hooks/useModalBack";
 import { isTopModalLayer, useModalLayer } from "../hooks/modalLayers";
-import { Bold, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, X, ClipboardPaste } from "lucide-react";
+import { ArrowLeft, Bold, Check, Italic, Link2, List, ListOrdered, Quote, Redo2, RemoveFormatting, Undo2, Expand, ClipboardPaste } from "lucide-react";
 import { Slice } from "@tiptap/pm/model";
 import {
   fromMarkdown,
@@ -313,6 +313,7 @@ interface RichTextEditorProps {
   required?: boolean;
   maxLength?: number;
   inputId?: string;
+  disabled?: boolean;
 }
 
 interface PMTextMark {
@@ -641,7 +642,10 @@ export function tiptapToMarkdown(json: unknown): string {
  * replacement, and after every operation. A collapsed caret with no pending
  * range only toggles the stored mark for future typing — never stale text.
  */
-export function RichTextEditor({ label, value, onChange, placeholder, editorRef, error, required, maxLength, inputId }: RichTextEditorProps) {
+export function RichTextEditor({ label, value, onChange, placeholder, editorRef, error, required, maxLength, inputId, disabled = false }: RichTextEditorProps) {
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  const clipboardGeneration = useRef(0);
   const [empty, setEmpty] = useState(true);
   const [counts, setCounts] = useState({ stored: 0, visible: 0 });
   const [, refreshSelection] = useState(0);
@@ -728,6 +732,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         }),
       ],
       content: initialContent,
+      editable: !disabled,
       immediatelyRender: false,
       editorProps: {
         attributes: {
@@ -735,6 +740,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
            class: `tiptap min-h-[120px] max-h-[240px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
         },
         handlePaste: (view, event) => {
+          if (disabledRef.current) return true;
           // Priority 1: trustworthy rich clipboard keeps the native path
           // (schema + safe-link allowlist apply as usual).
           const clipboard = event.clipboardData;
@@ -764,6 +770,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         if (transaction.storedMarksSet) refreshSelection((revision) => revision + 1);
       },
       onUpdate: ({ editor: updated }) => {
+        if (disabledRef.current) return;
         setEmpty(updated.isEmpty);
         refreshCounts(updated);
         const markdown = tiptapToMarkdown(updated.getJSON());
@@ -789,6 +796,19 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     },
     [],
   );
+
+  useLayoutEffect(() => {
+    editor?.setEditable(!disabled, false);
+    editor?.view.dom.setAttribute("aria-disabled", String(disabled));
+    if (disabled) {
+      clipboardGeneration.current += 1;
+      setOpenMenu(null);
+      setLinkSelection(null);
+      savedRangeRef.current = null;
+      pendingToolbarRangeRef.current = null;
+    }
+  }, [editor, disabled]);
+  useEffect(() => () => { clipboardGeneration.current += 1; }, []);
 
   useEffect(() => {
     if (!editor) return;
@@ -1003,7 +1023,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function toggleMarkWithSavedSelection(mark: "bold" | "italic") {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     const range = resolveFormatRange();
     if (range && editor.state.selection.empty) {
       if (mark === "bold") editor.chain().focus().setTextSelection(range).toggleBold().run();
@@ -1014,7 +1034,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyBlock(kind: "body" | 1 | 2 | 3) {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     const range = resolveFormatRange();
     focusRangeOrCurrent(range);
     // setHeading (not toggle): re-choosing the current level keeps it (ED-02).
@@ -1025,7 +1045,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyList(kind: "bullet" | "ordered") {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     const range = resolveFormatRange();
     focusRangeOrCurrent(range);
     if (kind === "bullet") editor.chain().focus().toggleBulletList().run();
@@ -1035,7 +1055,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyQuote() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     const range = resolveFormatRange();
     focusRangeOrCurrent(range);
     editor.chain().focus().toggleBlockquote().run();
@@ -1044,7 +1064,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyClearAll() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     // Clear-all targets the selection when present, else the current block.
     editor.chain().focus().clearNodes().unsetAllMarks().run();
     setOpenMenu(null);
@@ -1052,7 +1072,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyUndo() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     editor.chain().focus().undo().run();
     setOpenMenu(null);
     finishOperation("Undone");
@@ -1065,7 +1085,8 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
    * undo history. Genuine user gesture (menu tap) satisfies clipboard policy.
    */
   async function pasteClipboardAsMarkdown() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
+    const generation = clipboardGeneration.current;
     const range = resolveFormatRange();
     const doc = editor.state.doc;
     setOpenMenu(null);
@@ -1073,9 +1094,11 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     try {
       text = await navigator.clipboard.readText();
     } catch {
+      if (editor.isDestroyed || disabledRef.current || generation !== clipboardGeneration.current) return;
       setStatus("Clipboard is unavailable");
       return;
     }
+    if (editor.isDestroyed || disabledRef.current || generation !== clipboardGeneration.current) return;
     if (text.trim() === "") {
       setStatus("Clipboard is empty");
       return;
@@ -1090,14 +1113,14 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function applyRedo() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     editor.chain().focus().redo().run();
     setOpenMenu(null);
     finishOperation("Redone");
   }
 
   function applyLink() {
-    if (!editor) return;
+    if (!editor || disabledRef.current) return;
     const { empty: collapsed } = editor.state.selection;
     // Caret inside an existing link opens the edit dialog (ED-07) —
     // never an instant destructive unset.
@@ -1139,6 +1162,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function saveLink(href: string): string | null {
+    if (disabledRef.current) return "The editor is currently read-only.";
     if (!editor || !linkSelection) return "Selection is no longer available.";
     if (!isSafeRichTextHref(href) || /\s/.test(href) || Array.from(href).some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return "Enter a safe HTTP(S) URL.";
     const { from, to, doc, text } = linkSelection;
@@ -1160,7 +1184,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   }
 
   function removeLink() {
-    if (!editor || !linkSelection) return;
+    if (!editor || !linkSelection || disabledRef.current) return;
     const { from, to, doc, text } = linkSelection;
     if (editor.state.doc === doc) {
       try {
@@ -1205,6 +1229,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
     "flex min-h-[48px] w-full items-center gap-2 rounded-m3-xs px-3 text-left text-on-surface hover:bg-surface-container";
 
   function toggleMenu(kind: "block", button: RefObject<HTMLButtonElement | null>) {
+    if (disabledRef.current) return;
     if (openMenu === kind) {
       setOpenMenu(null);
     } else {
@@ -1223,9 +1248,9 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
   function renderFormattingRail(inline: boolean) {
     // Rail buttons keep their stable slot (no layout animation) and confirm
     // every press with a fast spring scale plus the active background.
-    const action = (name: string, Icon: typeof Bold, onClick: () => void, active = false, disabled = false) => (
+    const action = (name: string, Icon: typeof Bold, onClick: () => void, active = false, unavailable = false) => (
       <motion.button type="button" title={name} aria-label={name} aria-pressed={active}
-        disabled={!editor || disabled} onClick={onClick} className={toolButtonCls(active)}
+        disabled={!editor || disabled || unavailable} onClick={onClick} className={toolButtonCls(active)}
         whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}>
         <Icon size={18} aria-hidden />
       </motion.button>
@@ -1235,6 +1260,12 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
         style={inline ? undefined : { paddingBottom: "max(4px, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))" }}>
         <div role="toolbar" aria-label={`${label} formatting`}
           className="flex flex-nowrap items-center gap-1 overflow-x-auto overscroll-x-contain py-1"
+          onFocusCapture={(event) => {
+            // Browser focus scrolling may stop at the containing group,
+            // leaving the focused action partially beyond the clipped rail.
+            const button = (event.target as HTMLElement).closest("button");
+            button?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: "instant" });
+          }}
           onPointerDownCapture={captureToolbarRange} onMouseDownCapture={captureToolbarRange} onTouchStartCapture={captureToolbarRange}>
           <div role="group" aria-label="History" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
             {action("Undo", Undo2, applyUndo, false, !canUndo)}
@@ -1243,7 +1274,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           <div role="group" aria-label="Text" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
             <motion.button ref={blockButtonRef} type="button" title={`Block type: ${currentBlock}`}
               aria-label={`Block type: ${currentBlock}`} aria-haspopup="menu" aria-expanded={openMenu === "block"}
-              disabled={!editor} onClick={() => toggleMenu("block", blockButtonRef)}
+              disabled={!editor || disabled} onClick={() => toggleMenu("block", blockButtonRef)}
               className={toolButtonCls(currentBlock !== "Body")}
               whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}>
               <span aria-hidden className="whitespace-nowrap text-sm">{currentBlock} ▾</span>
@@ -1258,7 +1289,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           </div>
           <div role="group" aria-label="Insert" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
             <motion.button ref={linkButtonRef} type="button" title={linkDisabled ? "Select text to add a link" : "Link"}
-              aria-label="Link" aria-pressed={linkActive} disabled={!editor || linkDisabled}
+              aria-label="Link" aria-pressed={linkActive} disabled={!editor || disabled || linkDisabled}
               onClick={applyLink} className={toolButtonCls(linkActive)}
               whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}><Link2 size={18} aria-hidden /></motion.button>
             {action("Paste as Markdown", ClipboardPaste, () => void pasteClipboardAsMarkdown())}
@@ -1266,7 +1297,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           <div role="group" aria-label="Other actions" className="flex shrink-0 items-center gap-0.5 rounded-m3-sm bg-surface px-1">
             {action("Clear all formatting", RemoveFormatting, applyClearAll)}
             {inline && <motion.button ref={expandButtonRef} type="button" title="Expand description editor"
-              aria-label="Expand description editor" disabled={!editor} className={toolButtonCls(false)}
+              aria-label="Expand description editor" disabled={!editor || disabled} className={toolButtonCls(false)}
               whileTap={pressFeedback.rail} transition={{ duration: motionDurations.instant }}
               onClick={() => {
                 overlayPreviouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1275,7 +1306,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               }}><Expand size={18} aria-hidden /></motion.button>}
           </div>
         </div>
-        <FloatingMenu open={openMenu === "block"} onClose={() => setOpenMenu(null)}
+        <FloatingMenu open={!disabled && openMenu === "block"} onClose={() => setOpenMenu(null)}
           triggerRef={blockButtonRef} label="Block type" placement="top">
           <div onKeyDown={handleMenuKeyDown}>
             {blockOptions.map((option) => {
@@ -1349,7 +1380,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
           }}
         >
           <header
-            className="flex items-center justify-between px-4 py-3 border-b border-outline-variant flex-shrink-0"
+            className="grid grid-cols-[48px_minmax(0,1fr)_48px] items-center px-2 py-3 border-b border-outline-variant flex-shrink-0"
             // The overlay portal lives outside Shell's .fb-app-viewport, so it
             // takes the same safe-area owner token directly (no double padding:
             // shell insets never apply to this detached root).
@@ -1361,17 +1392,17 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               onClick={() => setIsExpanded(false)}
               className="min-h-[48px] min-w-[48px] flex items-center justify-center"
             >
-              <X size={20} aria-hidden />
+              <ArrowLeft size={20} aria-hidden />
             </button>
-            <h2 id="report-editor-overlay-title" className="text-lg font-semibold">Description</h2>
+            <h2 id="report-editor-overlay-title" className="min-w-0 text-center text-base font-semibold [overflow-wrap:anywhere]">Description</h2>
             <button
               type="button"
               title="Done"
               aria-label="Done"
               onClick={() => setIsExpanded(false)}
-              className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-m3-xs bg-on-surface px-3 text-surface"
+              className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-m3-xs bg-on-surface text-surface"
             >
-              Done
+              <Check size={20} aria-hidden />
             </button>
           </header>
            <div

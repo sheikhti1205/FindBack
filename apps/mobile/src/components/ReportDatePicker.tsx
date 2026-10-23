@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent, type Ref, type TouchEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type Ref, type TouchEvent } from "react";
 import {
   Calendar,
   CalendarGrid,
@@ -22,6 +22,7 @@ interface ReportDatePickerProps {
   error?: string;
   id?: string;
   expected?: "LOST" | "FOUND";
+  disabled?: boolean;
   "aria-describedby"?: string;
 }
 
@@ -59,6 +60,7 @@ function isFutureDate(date: CalendarDate | CalendarDateTime | ZonedDateTime): bo
 }
 
 export function ReportDatePicker({
+  disabled = false,
   value,
   onChange,
   error,
@@ -73,6 +75,7 @@ export function ReportDatePicker({
   const descriptionId = `${id}-description`;
 
   const [isOpen, setIsOpen] = useState(false);
+  useEffect(() => { if (disabled) setIsOpen(false); }, [disabled]);
   const [displayedValue, setDisplayedValue] = useState<CalendarDate | null>(() =>
     value ? parseISO(value) : null
   );
@@ -148,6 +151,7 @@ export function ReportDatePicker({
   };
 
   const openSheet = () => {
+    if (disabled) return;
     const parsed = value ? parseISO(value) : null;
     setDisplayedValue(parsed);
     // Reopen centered on the value's month, not a stale focused month.
@@ -156,7 +160,7 @@ export function ReportDatePicker({
   };
 
   const closeSheet = (commit = false) => {
-    if (commit && displayedValue && !isFutureDate(displayedValue)) {
+    if (!disabled && commit && displayedValue && !isFutureDate(displayedValue)) {
       onChange(displayedValue.toString());
     }
     setIsOpen(false);
@@ -194,12 +198,13 @@ export function ReportDatePicker({
   return (
     <div className="w-full">
       <button
+        disabled={disabled}
         ref={triggerRef}
         id={triggerId}
         type="button"
         role="button"
         aria-haspopup="dialog"
-        aria-expanded={isOpen}
+        aria-expanded={isOpen && !disabled}
         aria-invalid={hasError || undefined}
         aria-describedby={describedBy}
         aria-label={`Date of event${expected ? ` (${expected.toLowerCase()})` : ""}. ${displayText}`}
@@ -223,7 +228,7 @@ export function ReportDatePicker({
       )}
 
       <BottomSheet
-        open={isOpen}
+        open={isOpen && !disabled}
         onClose={handleCancel}
         title={`When was it ${expected?.toLowerCase() || "lost/found"}?`}
         description="Select the date from the calendar below."

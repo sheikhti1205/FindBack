@@ -13,6 +13,17 @@ afterEach(() => {
 describe("ReportDatePicker", () => {
   const onChange = vi.fn();
 
+  it("dismisses an open calendar when locked without committing or reopening on unlock", async () => {
+    const { rerender } = render(<ReportDatePicker value="2026-09-26" onChange={onChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /date of event/i }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    rerender(<ReportDatePicker value="2026-09-26" onChange={onChange} disabled />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    rerender(<ReportDatePicker value="2026-09-26" onChange={onChange} />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     onChange.mockClear();
   });

@@ -226,6 +226,24 @@ describe("PostDetail redesign (UXN-3)", () => {
     renderDetail();
     await screen.findByRole("heading", { level: 1 });
     expect(screen.queryByRole("region", { name: /manage report/i })).toBeNull();
+    expect(screen.queryByTestId("detail-edit-link")).toBeNull();
+  });
+
+  it("gives the owner an Edit details link in the manage card, outside the action row", async () => {
+    authState.user = { id: "u2", username: "owner" };
+    const { container } = renderDetail();
+    const link = await screen.findByTestId("detail-edit-link");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("/my/p1/edit");
+    expect(link.textContent).toMatch(/edit details/i);
+    // A native anchor is keyboard reachable without a custom tabindex.
+    expect(link.getAttribute("tabindex")).toBeNull();
+    const manage = screen.getByRole("region", { name: /manage report/i });
+    expect(manage.contains(link)).toBe(true);
+    // The compact four-slot action row keeps its shape: no fifth entry.
+    const activity = container.querySelector("#detail-activity")!;
+    expect(activity.contains(link)).toBe(false);
+    expect(activity.querySelectorAll("[data-testid='detail-edit-link']").length).toBe(0);
   });
 
   it("social row keeps Like with count, share copies without a count", async () => {

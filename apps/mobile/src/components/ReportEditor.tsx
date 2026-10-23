@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { extractYouTubeId } from "@findback/shared";
+import { isValidPostYouTubeUrl } from "../utils/youtubeUrl";
 import type { Attachment, Category, PostItem, PostType } from "@findback/shared";
 import type { Editor } from "@tiptap/react";
 import { TextField } from "./Fields";
@@ -8,6 +10,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { ReportDatePicker } from "./ReportDatePicker";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
 import { PhotoLightbox } from "./PhotoLightbox";
+import { YouTubeEmbed } from "./YouTubeEmbed";
 import { ImageOff } from "lucide-react";
 
 /**
@@ -33,6 +36,8 @@ export interface ReportEditorValues {
   category: Category | "";
   eventDate: string;
   location: LocationValue;
+  /** Optional YouTube link. Clearing a published value removes it on save. */
+  youtubeUrl: string;
 }
 
 export type ReportEditorField = keyof ReportEditorValues;
@@ -67,9 +72,6 @@ export interface ReportEditorProps {
   disabled?: boolean;
 }
 
-const inputCls =
-  "w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none";
-
 /** The values a stored report hydrates into. */
 export function reportEditorValuesFromPost(post: PostItem): ReportEditorValues {
   return {
@@ -83,6 +85,7 @@ export function reportEditorValuesFromPost(post: PostItem): ReportEditorValues {
       latitude: post.latitude,
       longitude: post.longitude,
     },
+    youtubeUrl: post.youtubeUrl ?? "",
   };
 }
 
@@ -134,6 +137,7 @@ export function reportEditorIsDirty(values: ReportEditorValues, baseline: Report
     values.description !== baseline.description ||
     values.category !== baseline.category ||
     values.eventDate !== baseline.eventDate ||
+    values.youtubeUrl.trim() !== baseline.youtubeUrl.trim() ||
     !sameLocation(values.location, baseline.location)
   );
 }
@@ -162,6 +166,12 @@ export function validateReportEditorValues(values: ReportEditorValues): ReportEd
   }
   if ((values.location.label ?? "").length > REPORT_LOCATION_LABEL_MAX) {
     errors.location = "That place name is too long.";
+  }
+  // URL acceptance is the deployed server rule, not best-effort extraction.
+  // A blank link is valid and can explicitly remove a published one.
+  const youtubeUrl = values.youtubeUrl.trim();
+  if (youtubeUrl && !isValidPostYouTubeUrl(youtubeUrl)) {
+    errors.youtubeUrl = "That doesn't look like a YouTube link.";
   }
   return errors;
 }
@@ -248,10 +258,13 @@ export function ReportEditor({
   publishedLocation,
 }: ReportEditorProps) {
   const editorRef = useRef<Editor | null>(null);
+  const draftYoutubeUrl = values.youtubeUrl.trim();
+  const youtubeId = isValidPostYouTubeUrl(draftYoutubeUrl) ? extractYouTubeId(draftYoutubeUrl) : null;
 
   return (
     <div className="flex flex-col gap-5" data-testid="report-editor">
       <Segmented<PostType>
+        wrapLongLabels
         ariaLabel="Lost or found"
         value={values.type}
         onChange={(type) => onChange({ type })}
@@ -277,6 +290,7 @@ export function ReportEditor({
 
       <div data-testid="report-description">
         <RichTextEditor
+          disabled={disabled}
           label="Description"
           value={values.description}
           onChange={(description) => onChange({ description })}
@@ -289,6 +303,7 @@ export function ReportEditor({
       </div>
 
       <CategoryField
+        disabled={disabled}
         value={values.category}
         onChange={(category) => onChange({ category })}
         error={errors.category}
@@ -299,6 +314,7 @@ export function ReportEditor({
           {values.type === "LOST" ? "Date lost" : "Date found"}
         </span>
         <ReportDatePicker
+          disabled={disabled}
           value={values.eventDate}
           expected={values.type}
           aria-describedby="report-event-date-label"
@@ -308,6 +324,7 @@ export function ReportEditor({
       </div>
 
       <LocationPicker
+        disabled={disabled}
         value={values.location}
         onChange={(location) =>
           onChange({
@@ -326,22 +343,24 @@ export function ReportEditor({
           Editing the place name keeps the map pin that is already published. Clearing the place removes the name and the pin when you save.
         </p>
       )}
-    </div>
-  );
-}
 
-/**
- * A read-only line for content the editor does not write.
- *
- * The report's YouTube link is preserved by the update RPC (the editor
- * never sends it), so it is shown as it stands instead of quietly
- * disappearing from the owner's view of their own report.
- */
-export function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1" data-testid="report-editor-readonly">
-      <span className="text-sm font-medium">{label}</span>
-      <p className={`${inputCls} text-on-surface-variant`}>{value}</p>
+      <TextField
+        label="YouTube link (optional)"
+        type="url"
+        inputMode="url"
+        autoComplete="url"
+        value={values.youtubeUrl}
+        onChange={(event) => onChange({ youtubeUrl: event.target.value })}
+        placeholder="https://www.youtube.com/watch?v=…"
+        error={errors.youtubeUrl}
+        hint="Clear this field to remove the video when you save."
+        disabled={disabled}
+      />
+      {youtubeId && (
+        <div className="flex flex-col gap-1">
+          <YouTubeEmbed url={draftYoutubeUrl} />
+        </div>
+      )}
     </div>
   );
 }

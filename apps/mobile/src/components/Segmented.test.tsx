@@ -12,6 +12,21 @@ const OPTIONS = [
 ] as const;
 
 describe("Segmented motion pass", () => {
+  it("keeps full long labels and keyboard selection without changing the roving radio contract", () => {
+    const options = [{ value: "LOST", label: "I lost something" }, { value: "FOUND", label: "I found something" }];
+    const onChange = vi.fn();
+    const { rerender } = render(<Segmented value="LOST" onChange={onChange} options={options} wrapLongLabels />);
+    const lost = screen.getByRole("radio", { name: "I lost something" });
+    const found = screen.getByRole("radio", { name: "I found something" });
+    lost.focus();
+    fireEvent.keyDown(lost, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(found);
+    expect(onChange).toHaveBeenCalledWith("FOUND");
+    rerender(<Segmented value="FOUND" onChange={onChange} options={options} wrapLongLabels />);
+    expect(found.getAttribute("aria-checked")).toBe("true");
+    expect(found.tabIndex).toBe(0);
+    expect(lost.tabIndex).toBe(-1);
+  });
   it("keeps the radio API (roving tab stop, aria-checked, arrows)", () => {
     const onChange = vi.fn();
     render(<Segmented value="ALL" onChange={onChange} options={[...OPTIONS]} ariaLabel="Post type" />);

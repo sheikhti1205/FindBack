@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
@@ -18,6 +18,12 @@ const auth = vi.hoisted(() => ({
   retryBoot: vi.fn(),
 }));
 const native = vi.hoisted(() => ({ back: null as (() => void) | null }));
+const editorPosts = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn() }));
+vi.mock("./services/posts", async (original) => ({
+  ...await original<typeof import("./services/posts")>(),
+  fetchPost: editorPosts.load,
+  updatePost: editorPosts.save,
+}));
 vi.mock("./auth", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({ ...auth }),
@@ -83,14 +89,17 @@ vi.mock("./screens/HelpGuide", () => ({ HelpGuide: marker("HelpGuide") }));
 vi.mock("./screens/Diagnostics", () => ({ Diagnostics: marker("Diagnostics") }));
 
 import { ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION } from "./services/onboarding";
-import { App } from "./App";
+import { App, createAppRouter } from "./App";
+let router: ReturnType<typeof createAppRouter> | undefined;
 
 const origin = "https://findbackapp.social";
 const postId = "5b6f7c8d-1234-4abc-8def-123456789012";
 
 function renderAt(hash: string) {
+  router?.dispose();
   window.history.replaceState(null, "", `/#${hash}`);
-  return render(<App />);
+  router = createAppRouter();
+  return render(<App router={router} />);
 }
 
 function returningGuest() {
@@ -128,6 +137,13 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   unexpectedErrors.length = 0;
+  editorPosts.load.mockReset();
+  editorPosts.save.mockReset();
+  editorPosts.load.mockResolvedValue({
+    id: "p1", userId: "u1", type: "LOST", status: "OPEN", title: "Original title",
+    description: "A sufficiently long original description", category: "Electronics", eventDate: "2020-01-01",
+    locationLabel: "", latitude: null, longitude: null, youtubeUrl: null, attachments: [],
+  });
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     unexpectedErrors.push(args);
   });
@@ -151,15 +167,72 @@ afterEach(() => {
     expect(suspicious, `unexpected console.error on this route: ${JSON.stringify(suspicious).slice(0, 800)}`).toEqual([]);
   } finally {
     cleanup();
+    router?.dispose();
     vi.unstubAllEnvs();
     native.back = null;
     window.history.replaceState(null, "", "/");
     consoleErrorSpy?.mockRestore();
     consoleErrorSpy = null;
+    vi.restoreAllMocks();
   }
 });
 
 describe("consumer route map", () => {
+  it("protects the actual cold hash Edit route on Android back, asking only once per press", async () => {
+    signedIn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderAt("/my/p1/edit");
+    const title = await screen.findByLabelText("What did you lose?");
+    fireEvent.change(title, { target: { value: "Keep this draft" } });
+    act(() => native.back?.());
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(window.location.hash).toBe("#/my/p1/edit");
+    expect((title as HTMLInputElement).value).toBe("Keep this draft");
+    confirm.mockReturnValue(true);
+    act(() => native.back?.());
+    await screen.findByText("Home screen");
+    expect(window.location.hash).toBe("#/");
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not redirect a new destination when a save settles during the Edit exit animation", async () => {
+    signedIn();
+    let resolve!: (value: unknown) => void;
+    editorPosts.save.mockReturnValue(new Promise((res) => { resolve = res; }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderAt("/my/p1/edit");
+    fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Pending save title" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await act(async () => { await router!.navigate("/profile"); resolve({}); });
+    await waitFor(() => expect(window.location.hash).toBe("#/profile"));
+    expect(await screen.findByText("Profile screen")).toBeTruthy();
+  });
+
+  it("keeps a returned editor usable when Back reverses its exit animation", async () => {
+    signedIn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderAt("/my/p1/edit");
+    fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Departing title" } });
+    await act(async () => { await router!.navigate("/profile"); });
+    await act(async () => { await router!.navigate(-1); });
+    expect(window.location.hash).toBe("#/my/p1/edit");
+    const title = await screen.findByLabelText("What did you lose?");
+    await waitFor(() => expect((title as HTMLInputElement).value).toBe("Original title"));
+    fireEvent.change(title, { target: { value: "Returned title" } });
+    expect((title as HTMLInputElement).value).toBe("Returned title");
+  });
+
+  it("does not ask the exiting editor to guard a subsequent destination", async () => {
+    signedIn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderAt("/my/p1/edit");
+    fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Departing title" } });
+    await act(async () => { await router!.navigate("/profile"); });
+    await act(async () => { await router!.navigate("/my"); });
+    expect(window.location.hash).toBe("#/my");
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
   it("renders first-run onboarding for a fresh guest", () => {
     renderAt("/onboarding");
     expect(screen.getByText("Onboarding screen")).toBeTruthy();

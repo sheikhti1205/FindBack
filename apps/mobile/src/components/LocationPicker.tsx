@@ -50,6 +50,7 @@ interface LocationPickerProps {
   onChange: (value: LocationValue) => void;
   maxLength?: number;
   locationAdapter?: LocationAdapter;
+  disabled?: boolean;
 }
 
 /**
@@ -57,7 +58,9 @@ interface LocationPickerProps {
  * optional + graceful fallback) plus a free-text place label, decimal
  * coordinates, or a Google Maps link. No tracking.
  */
-export function LocationPicker({ value, onChange, maxLength, locationAdapter }: LocationPickerProps) {
+export function LocationPicker({ value, onChange, maxLength, locationAdapter, disabled = false }: LocationPickerProps) {
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
   const [defaultAdapter] = useState(createProductionLocationAdapter);
   const adapter = locationAdapter ?? defaultAdapter;
   const fixGeneration = useRef(0);
@@ -93,6 +96,16 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   const emittedRef = useRef(value);
 
   useEffect(() => {
+    if (!disabled) return;
+    fixGeneration.current += 1;
+    resolveSeq.current += 1;
+    setLocating(false);
+    setResolving(false);
+    setPendingFix(null);
+    setMapOpen(false);
+  }, [disabled]);
+
+  useEffect(() => {
     if (value === emittedRef.current) return;
     fixGeneration.current += 1;
     emittedRef.current = value;
@@ -112,9 +125,10 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
     setParseError(null);
   }, [value]);
 
-  useEffect(() => () => { fixGeneration.current += 1; }, []);
+  useEffect(() => () => { fixGeneration.current += 1; resolveSeq.current += 1; }, []);
 
   function emit(next: LocationValue) {
+    if (disabledRef.current) return;
     emittedRef.current = next;
     onChange(next);
   }
@@ -125,6 +139,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
     lng: number | null,
     precision: "APPROXIMATE" | "EXACT",
   ) {
+    if (disabledRef.current) return;
     if (lat == null || lng == null) {
       setPrecise(null);
       setApprox(true);
@@ -143,13 +158,14 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   async function useCurrentLocation() {
+    if (disabledRef.current) return;
     setLocating(true);
     setGeoError(null);
     setGeoErrorKind(null);
     setPendingFix(null);
 
     const outcome = await requestFixWithGeneration(adapter, { generation: fixGeneration });
-    if (outcome.kind === "idle") return;
+    if (outcome.kind === "idle" || disabledRef.current) return;
     if (outcome.kind === "fix") {
       if (isLowAccuracy(outcome.accuracy)) {
         // Coarser than the published ~100 m pin: hold it for an explicit
@@ -181,7 +197,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
    * typed-place / manual-map fallback — nothing is force-enabled.
    */
   async function enableServicesAndRetry() {
-    if (enablingServices) return;
+    if (enablingServices || disabledRef.current) return;
     setEnablingServices(true);
     try {
       const enabled = await requestEnableDeviceLocation();
@@ -194,7 +210,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   function acceptPendingFix() {
-    if (!pendingFix) return;
+    if (!pendingFix || disabledRef.current) return;
     setPendingFix(null);
     setGeoError(null);
     setCoords(
@@ -207,6 +223,9 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   function handleInput(raw: string) {
+    if (disabledRef.current) return;
+    resolveSeq.current += 1;
+    setResolving(false);
     fixGeneration.current += 1;
     setLocating(false);
     setPendingFix(null);
@@ -218,13 +237,13 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
       setResolving(true);
       void resolveShortLink(raw)
         .then((finalUrl) => {
-          if (seq !== resolveSeq.current) return;
+          if (seq !== resolveSeq.current || disabledRef.current) return;
           const resolved = parseLocationInput(finalUrl);
           setCoords(resolved.label, resolved.latitude, resolved.longitude, "APPROXIMATE");
           setParseError(resolved.error);
         })
         .catch((err: unknown) => {
-          if (seq !== resolveSeq.current) return;
+          if (seq !== resolveSeq.current || disabledRef.current) return;
           setParseError(err instanceof Error ? err.message : "Could not resolve the map link.");
         })
         .finally(() => {
@@ -249,6 +268,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   function handleApproximate() {
+    if (disabledRef.current) return;
     const lat = precise?.lat ?? value.latitude;
     const lng = precise?.lng ?? value.longitude;
     if (lat == null || lng == null) return;
@@ -259,6 +279,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   function handleUseExact() {
+    if (disabledRef.current) return;
     if (!precise) return;
     emit({ ...value, latitude: precise.lat, longitude: precise.lng, precision: "EXACT", preciseLatitude: precise.lat, preciseLongitude: precise.lng });
     setApprox(false);
@@ -266,6 +287,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
   }
 
   function handleMapConfirm(next: LocationValue) {
+    if (disabledRef.current) return;
     fixGeneration.current += 1;
     setLocating(false);
     setPendingFix(null);
@@ -294,6 +316,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
         </span>
         <div className="flex gap-2">
           <input
+            disabled={disabled}
             value={sourceText}
             onChange={(e) => handleInput(e.target.value)}
             placeholder="Place, decimal coords, or a Google Maps link"
@@ -313,11 +336,12 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
           size="md"
           loading={locating || resolving}
           onClick={useCurrentLocation}
+          disabled={disabled}
         >
           <Crosshair size={16} aria-hidden />
           Use my location once
         </Button>
-        <Button type="button" variant="outline" size="md" onClick={() => setMapOpen(true)}>
+        <Button type="button" variant="outline" size="md" disabled={disabled} onClick={() => setMapOpen(true)}>
           <MapPin size={16} aria-hidden />
           Choose on map
         </Button>
@@ -325,14 +349,14 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
           type="button"
           variant="outline"
           size="md"
-          disabled={!sourceText.trim() && !hasCoords}
+          disabled={disabled || (!sourceText.trim() && !hasCoords)}
           onClick={() => void openInMaps(value.latitude, value.longitude, sourceText.trim() || value.label)}
         >
           <ExternalLink size={16} aria-hidden />
           Find location in Maps
         </Button>
         {hasCoords && (
-          <Button type="button" variant="text" size="md" onClick={() => void openInMaps(value.latitude, value.longitude, value.label)}>
+          <Button type="button" variant="text" size="md" disabled={disabled} onClick={() => void openInMaps(value.latitude, value.longitude, value.label)}>
             <ExternalLink size={16} aria-hidden />
             Open in Maps
           </Button>
@@ -354,7 +378,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
           <p className="text-xs text-error">
             Warning: this is an exact pin and will be shown publicly. Prefer the approximate area.
           </p>
-          <Button type="button" variant="outline" size="md" onClick={handleApproximate}>
+          <Button type="button" variant="outline" size="md" disabled={disabled} onClick={handleApproximate}>
             Round to ~100 m
           </Button>
         </div>
@@ -364,7 +388,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
           <p className="text-xs text-on-surface-variant">
             Pin rounded to ~100 m precision.
           </p>
-          <Button type="button" variant="text" size="md" onClick={handleUseExact}>
+          <Button type="button" variant="text" size="md" disabled={disabled} onClick={handleUseExact}>
             Use exact pin
           </Button>
         </div>
@@ -380,7 +404,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
             {pendingFix.accuracy != null ? formatAccuracy(pendingFix.accuracy) : "a few km"}
             . Nothing was saved — confirm if you still want to use it.
           </p>
-          <Button type="button" variant="outline" size="md" onClick={acceptPendingFix}>
+          <Button type="button" variant="outline" size="md" disabled={disabled} onClick={acceptPendingFix}>
             Use this location anyway
           </Button>
         </div>
@@ -396,6 +420,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
             variant="outline"
             size="md"
             loading={enablingServices}
+            disabled={disabled}
             onClick={() => void enableServicesAndRetry()}
           >
             Turn on location
@@ -415,7 +440,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter }: 
       )}
 
       <MapPickerSheet
-        open={mapOpen}
+        open={mapOpen && !disabled}
         onClose={() => setMapOpen(false)}
         value={value}
         onConfirm={handleMapConfirm}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Star, Tag, ThumbsDown, X } from "lucide-react";
+import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, Tag, ThumbsDown, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { POST_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -1163,11 +1163,24 @@ export function PostDetail() {
             <p className="mb-2 text-sm font-medium">Manage report (owner only)</p>
             <Segmented<PostStatus>
               ariaLabel="Post status"
+              wrapLongLabels
               value={post.status}
               onChange={(s) => void onChangeStatus(s)}
               options={POST_STATUSES.filter((s) => s !== "RECOVERED" || current.type === "LOST").map((s) => ({ value: s, label: statusLabel(s) }))}
               disabled={ownerControlsDisabled}
             />
+            {/* The owner's edit entry lives HERE, in the manage card — not in
+                the compact four-slot action row, whose like/comment/share/save
+                shape is fixed. A native router link: keyboard and
+                screen-reader behaviour come from the platform, and the edit
+                screen owns its own unsaved-changes guard. */}
+            <Link
+              to={`/my/${post.id}/edit`}
+              data-testid="detail-edit-link"
+              className="mt-2 inline-flex min-h-[48px] items-center gap-1.5 rounded-m3-sm text-sm font-medium underline focus:outline-2 focus:outline-offset-2 focus:outline-on-surface"
+            >
+              <Pencil size={16} aria-hidden /> Edit details
+            </Link>
           </section>
         )}
 

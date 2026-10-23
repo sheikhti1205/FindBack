@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
 import type { LocationAdapter } from "../services/locationAdapter";
 
@@ -301,6 +301,35 @@ describe("LocationPicker map wiring", () => {
 });
 
 describe("LocationPicker one-time approximate location", () => {
+  it("discards a short-link resolution begun before locking even if it settles after unlocking", async () => {
+    let resolveLink!: (response: Response) => void;
+    vi.stubGlobal("fetch", () => new Promise<Response>((resolve) => { resolveLink = resolve; }));
+    const onChange = vi.fn();
+    const { rerender } = render(<LocationPicker value={emptyValue} onChange={onChange} />);
+    fireEvent.change(screen.getByPlaceholderText(/place, decimal coords/i), { target: { value: "https://maps.app.goo.gl/fixture" } });
+    expect(resolveLink).toBeTypeOf("function");
+    rerender(<LocationPicker value={emptyValue} onChange={onChange} disabled />);
+    rerender(<LocationPicker value={emptyValue} onChange={onChange} />);
+    await act(async () => resolveLink(new Response("", { status: 200 })));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText(/place, decimal coords/i)).toHaveProperty("value", "https://maps.app.goo.gl/fixture");
+  });
+  it("discards a fix begun before locking even if it settles after unlocking", async () => {
+    let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
+    const adapter: LocationAdapter = {
+      getPermission: async () => "granted",
+      getCurrentPosition: () => new Promise((resolve) => { resolveFix = resolve; }),
+    };
+    const onChange = vi.fn();
+    const { rerender } = render(<LocationPicker value={emptyValue} onChange={onChange} locationAdapter={adapter} />);
+    fireEvent.click(screen.getByRole("button", { name: /use my location once/i }));
+    await waitFor(() => expect(resolveFix).toBeTypeOf("function"));
+    rerender(<LocationPicker value={emptyValue} onChange={onChange} locationAdapter={adapter} disabled />);
+    rerender(<LocationPicker value={emptyValue} onChange={onChange} locationAdapter={adapter} />);
+    await act(async () => resolveFix({ latitude: 23.810332, longitude: 90.412518, accuracyMeters: 42 }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText(/place, decimal coords/i)).toHaveProperty("value", "");
+  });
   it("discards a late adapter fix after an external report reset", async () => {
     let resolveFix!: (fix: { latitude: number; longitude: number; accuracyMeters: number }) => void;
     const adapter: LocationAdapter = {

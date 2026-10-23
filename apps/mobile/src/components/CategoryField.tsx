@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import type { Category } from "@findback/shared";
 import { CATEGORY_GROUPS, isReleasedCategory, RELEASED_CATEGORIES, searchCategoryCatalog } from "@findback/shared";
@@ -19,11 +19,13 @@ interface CategoryFieldProps {
   value: Category | "";
   onChange: (value: Category | "") => void;
   error?: string;
+  disabled?: boolean;
 }
 
-export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
+export function CategoryField({ value, onChange, error, disabled = false }: CategoryFieldProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   const errorId = error ? "category-error" : undefined;
 
   const results = useMemo(() => searchCategoryCatalog(query), [query]);
@@ -37,7 +39,7 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
   );
 
   function commit(canonical: string) {
-    if (!isReleasedCategory(canonical)) return;
+    if (disabled || !isReleasedCategory(canonical)) return;
     onChange(canonical as Category);
     setOpen(false);
     setQuery("");
@@ -91,11 +93,12 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        aria-expanded={open}
+        aria-expanded={open && !disabled}
         aria-label="Category"
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         data-testid="category-trigger"
+        disabled={disabled}
         className={`flex min-h-[48px] w-full items-center justify-between gap-2 rounded-m3-sm border bg-surface px-3.5 py-3 text-left text-base ${
           error ? "border-error" : "border-outline-variant"
         }`}
@@ -112,7 +115,7 @@ export function CategoryField({ value, onChange, error }: CategoryFieldProps) {
       )}
 
       <BottomSheet
-        open={open}
+        open={open && !disabled}
         onClose={() => setOpen(false)}
         title="Choose a category"
         description="Pick the group that best matches the item."

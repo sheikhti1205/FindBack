@@ -78,11 +78,13 @@ vi.mock("./screens/HelpGuide", () => ({ HelpGuide: marker("HelpGuide") }));
 vi.mock("./screens/Diagnostics", () => ({ Diagnostics: marker("Diagnostics") }));
 vi.mock("./fixture/FixtureRoute", () => ({ FixtureRoute: () => <p>Fixture screen</p> }));
 
-import { App } from "./App";
+import { App, createAppRouter } from "./App";
+let router: ReturnType<typeof createAppRouter> | undefined;
 
 function renderAt(hash: string) {
   window.history.replaceState(null, "", `/#${hash}`);
-  return render(<App />);
+  router = createAppRouter();
+  return render(<App router={router} />);
 }
 
 beforeEach(() => {
@@ -102,6 +104,7 @@ afterEach(() => {
     expect(screen.queryByText("Something went wrong")).toBeNull();
   } finally {
     cleanup();
+    router?.dispose();
     vi.unstubAllEnvs();
     window.history.replaceState(null, "", "/");
   }

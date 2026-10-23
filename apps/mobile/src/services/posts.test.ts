@@ -378,6 +378,13 @@ describe("updatePost", () => {
     ]);
   });
 
+  it("sends the explicit optional YouTube clear without inventing a replacement", async () => {
+    mockUpdate();
+    await updatePost("p1", { youtubeUrl: null, clearFields: ["youtube_url"] });
+    expect(updateArgs().p_clear_fields).toEqual(["youtube_url"]);
+    expect(updateArgs().p_youtube_url).toBeNull();
+  });
+
   it("sends p_clear_fields naming the emptied fields when the owner really cleared something", async () => {
     mockUpdate();
 
