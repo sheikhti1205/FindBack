@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { PostItem, PostStatus } from "@findback/shared";
+import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { POST_STATUS_LABELS } from "@findback/shared";
 import { BackButton } from "../components/BackButton";
 import { PostList } from "../components/PostList";
@@ -14,7 +14,7 @@ import {
   type OwnerReportActionHandlers,
 } from "../components/OwnerReportActions";
 import { deletePost, updatePostStatus } from "../services/posts";
-import { shareReport } from "../utils/shareReport";
+import { copyReportLink, shareReport } from "../utils/shareReport";
 import { friendlyError } from "../utils/friendlyErrors";
 import { invalidateFeedCaches } from "../hooks/feedCache";
 import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
@@ -31,6 +31,9 @@ const MY_CACHE_BASE = "my:reports";
  * keep a report hanging in the air.
  */
 export const DELETE_UNDO_WINDOW_MS = 5000;
+
+/** The status change is optimistic; this is how long its Undo stays offered. */
+export const STATUS_UNDO_WINDOW_MS = 5000;
 
 /** UXN-4 owner-status quick filters. ALL clears the status restriction;
  *  every option keeps the userId feed restriction. */
@@ -53,6 +56,21 @@ interface PendingDelete {
   phase: "pending" | "sending";
 }
 
+/** A just-committed status change that can still be put back. */
+interface StatusUndo {
+  postId: string;
+  previous: PostStatus;
+  next: PostStatus;
+  type: PostType;
+}
+
+/** Owner-facing lifecycle language, matching the card's status chip. */
+function ownerStatusLabel(status: PostStatus, type: PostType): string {
+  if (status === "OPEN") return type === "LOST" ? "Still missing" : "Awaiting owner";
+  if (status === "MATCHED") return "Potential match";
+  return POST_STATUS_LABELS[status];
+}
+
 export function MyPosts() {
   const { user } = useAuth();
   const reportDeletionFailure = useReportDeletionFailure();
@@ -72,6 +90,21 @@ export function MyPosts() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [recoveryPost, setRecoveryPost] = useState<PostItem | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [statusUndo, setStatusUndo] = useState<StatusUndo | null>(null);
+  const statusUndoRef = useRef<StatusUndo | null>(null);
+  const statusUndoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-row write order and last-writer-wins UI token. A fast second change
+  // must not be overwritten by the slower first response, and the server must
+  // receive the two writes in the order the user made them.
+  const statusSeq = useRef(new Map<string, number>());
+  const statusQueue = useRef(new Map<string, Promise<unknown>>());
+  // The last status the server actually confirmed for a row. Optimistic
+  // patches must never become the rollback target: if a change and an early
+  // Undo both fail, the row belongs at the last confirmed status, not at
+  // either optimistic value.
+  const confirmedStatus = useRef(new Map<string, PostStatus>());
+  const statusInFlight = useRef(new Map<string, number>());
+  const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
 
   // The feed filter carries userId, so the resolved cache key is already
   // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
@@ -87,11 +120,53 @@ export function MyPosts() {
     ? items.find((item) => item.id === recoveryPost.id) ?? recoveryPost
     : null;
 
-  // A new account is a new ownership boundary. The old target must not stay
-  // armed under the new account.
+  const clearStatusUndo = useCallback(() => {
+    if (statusUndoTimer.current !== null) {
+      clearTimeout(statusUndoTimer.current);
+      statusUndoTimer.current = null;
+    }
+    statusUndoRef.current = null;
+    setStatusUndo(null);
+  }, []);
+
+  const armStatusUndo = useCallback(
+    (undo: StatusUndo) => {
+      clearStatusUndo();
+      statusUndoRef.current = undo;
+      setStatusUndo(undo);
+      statusUndoTimer.current = setTimeout(() => {
+        statusUndoTimer.current = null;
+        statusUndoRef.current = null;
+        setStatusUndo(null);
+      }, STATUS_UNDO_WINDOW_MS);
+    },
+    [clearStatusUndo],
+  );
+
+  // A new account is a new ownership boundary. The old target and any
+  // outstanding Undo must not stay armed under the new account.
   useEffect(() => {
     setRecoveryPost(null);
-  }, [user?.id]);
+    setManualCopyUrl(null);
+    clearStatusUndo();
+    // In-flight writes belong to the old account's rows; their completions
+    // must not patch the new account's list.
+    statusSeq.current.clear();
+    statusQueue.current.clear();
+    confirmedStatus.current.clear();
+    statusInFlight.current.clear();
+  }, [user?.id, clearStatusUndo]);
+
+  // Rows that are not being written track the feed's status, which is
+  // server-confirmed data. Rows with a queued write keep their last confirmed
+  // status so an optimistic value can never become a rollback target.
+  useEffect(() => {
+    for (const item of items) {
+      if ((statusInFlight.current.get(item.id) ?? 0) === 0) {
+        confirmedStatus.current.set(item.id, item.status);
+      }
+    }
+  }, [items]);
 
   useEffect(() => {
     if (!recoveryPost) return;
@@ -167,6 +242,11 @@ export function MyPosts() {
     return () => {
       mountedRef.current = false;
       clearUndoTimer();
+      if (statusUndoTimer.current !== null) {
+        clearTimeout(statusUndoTimer.current);
+        statusUndoTimer.current = null;
+      }
+      statusUndoRef.current = null;
       const pending = pendingDeleteRef.current;
       if (pending?.phase === "pending") void commitDelete(pending.id);
     };
@@ -184,6 +264,8 @@ export function MyPosts() {
       if (!ok) return;
       setActionError(null);
       setNotice(null);
+      clearStatusUndo();
+      setManualCopyUrl(null);
       clearUndoTimer();
       pendingDeleteRef.current = { id: post.id, userId: user.id, title: post.title, phase: "pending" };
       setPendingDelete(pendingDeleteRef.current);
@@ -191,7 +273,7 @@ export function MyPosts() {
         void commitDelete(post.id);
       }, DELETE_UNDO_WINDOW_MS);
     },
-    [clearUndoTimer, commitDelete, user],
+    [clearStatusUndo, clearUndoTimer, commitDelete, user],
   );
 
   const undoDelete = useCallback(() => {
@@ -202,6 +284,16 @@ export function MyPosts() {
     setNotice("Deletion cancelled — the report is still here.");
     announce("Deletion cancelled.");
   }, [clearUndoTimer]);
+
+  const beginStatusWrite = useCallback((postId: string) => {
+    statusInFlight.current.set(postId, (statusInFlight.current.get(postId) ?? 0) + 1);
+  }, []);
+
+  const endStatusWrite = useCallback((postId: string) => {
+    const left = (statusInFlight.current.get(postId) ?? 1) - 1;
+    if (left <= 0) statusInFlight.current.delete(postId);
+    else statusInFlight.current.set(postId, left);
+  }, []);
 
   const changeStatus = useCallback(
     (post: PostItem, status: PostStatus) => {
@@ -225,26 +317,121 @@ export function MyPosts() {
         const ok = window.confirm("Close this report? It will leave the open search.");
         if (!ok) return;
       }
+
+      const previous = post.status;
+      // The row may already show an optimistic status from a queued write.
+      // Roll back to the last status the server confirmed, never to that
+      // optimistic value.
+      const confirmed = confirmedStatus.current.get(post.id) ?? previous;
+      const seq = (statusSeq.current.get(post.id) ?? 0) + 1;
+      statusSeq.current.set(post.id, seq);
+      const latest = () => mountedRef.current && statusSeq.current.get(post.id) === seq;
+
+      // Optimistic: the row shows the chosen status immediately. A failed
+      // write puts the last confirmed status back and withdraws the Undo offer.
+      beginStatusWrite(post.id);
+      patchItem(post.id, { status });
+      setActionError(null);
+      setNotice(null);
+      armStatusUndo({ postId: post.id, previous, next: status, type: post.type });
+
+      // Writes for one row are serialised so the last choice is the last
+      // write the server sees, even when the user changes status twice fast.
+      const prior = statusQueue.current.get(post.id) ?? Promise.resolve();
+      const write = prior.catch(() => undefined).then(() => updatePostStatus(post.id, status));
+      statusQueue.current.set(post.id, write);
+
       void (async () => {
         try {
-          const updated = await updatePostStatus(post.id, status);
+          const updated = await write;
+          // This write is now server-confirmed even if a newer one follows.
+          confirmedStatus.current.set(post.id, updated.status);
           // In All, patch in place. In a status-only list, a row that no
           // longer belongs must leave with its count; do not refetch/reorder.
           invalidateFeedCaches();
+          if (!latest()) return;
           if (ownerStatusRef.current !== "ALL" && ownerStatusRef.current !== updated.status) removeItem(post.id);
           else patchItem(post.id, { status: updated.status });
           setActionError(null);
-          setNotice(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
-          announce(`Status updated to ${POST_STATUS_LABELS[updated.status]}.`);
+          announce(`Status updated to ${ownerStatusLabel(updated.status, post.type)}.`);
         } catch (err) {
+          // A failed optimistic write must never be cached as clean either.
+          invalidateFeedCaches();
+          if (!latest()) return;
+          // Read the confirmed value at settlement, not at click time: an
+          // earlier queued write may have succeeded while this one was in
+          // flight, and that newer server state is the correct rollback.
+          patchItem(post.id, { status: confirmedStatus.current.get(post.id) ?? confirmed });
+          clearStatusUndo();
           const message = friendlyError(err).message;
           setActionError(message);
           announce(message);
+        } finally {
+          endStatusWrite(post.id);
         }
       })();
     },
-    [patchItem, removeItem],
+    [armStatusUndo, beginStatusWrite, clearStatusUndo, endStatusWrite, patchItem, removeItem],
   );
+
+  const undoStatus = useCallback(() => {
+    const pending = statusUndoRef.current;
+    if (!pending) return;
+    clearStatusUndo();
+
+    const { postId, previous, type } = pending;
+    // Undo restores what the server last confirmed, not the optimistic value
+    // the change showed. If the change and the Undo both fail, the row must
+    // land back on the server's status.
+    const confirmed = confirmedStatus.current.get(postId) ?? previous;
+    const seq = (statusSeq.current.get(postId) ?? 0) + 1;
+    statusSeq.current.set(postId, seq);
+    const latest = () => mountedRef.current && statusSeq.current.get(postId) === seq;
+
+    // Undo is optimistic too: put the old status back now, then confirm.
+    beginStatusWrite(postId);
+    patchItem(postId, { status: previous });
+    setNotice(null);
+
+    const prior = statusQueue.current.get(postId) ?? Promise.resolve();
+    const write = prior.catch(() => undefined).then(() => updatePostStatus(postId, previous));
+    statusQueue.current.set(postId, write);
+
+    void (async () => {
+      try {
+        const updated = await write;
+        confirmedStatus.current.set(postId, updated.status);
+        invalidateFeedCaches();
+        if (!latest()) return;
+        if (ownerStatusRef.current !== "ALL" && ownerStatusRef.current !== updated.status) {
+          removeItem(postId);
+          void refresh();
+        } else {
+          patchItem(postId, { status: updated.status });
+          // A status-only list may have removed the row on the original
+          // success; a refetch is the only way to put it back.
+          if (ownerStatusRef.current !== "ALL") void refresh();
+        }
+        setNotice(`Status restored to ${ownerStatusLabel(updated.status, type)}.`);
+        announce(`Status restored to ${ownerStatusLabel(updated.status, type)}.`);
+      } catch (err) {
+        // Same cache rule as a failed change: do not let an unmounted
+        // optimistic snapshot be restored as clean.
+        invalidateFeedCaches();
+        if (!latest()) return;
+        // The change may have settled successfully while this Undo was in
+        // flight; roll back to that server-confirmed status, not the value
+        // captured when Undo was tapped.
+        patchItem(postId, { status: confirmedStatus.current.get(postId) ?? confirmed });
+        if (ownerStatusRef.current !== "ALL") void refresh();
+        const message = friendlyError(err).message;
+        setActionError(message);
+        announce(message);
+      } finally {
+        endStatusWrite(postId);
+      }
+    })();
+  }, [beginStatusWrite, clearStatusUndo, endStatusWrite, patchItem, refresh, removeItem]);
 
   const shareOne = useCallback((post: PostItem) => {
     void (async () => {
@@ -252,6 +439,35 @@ export function MyPosts() {
         announce(await shareReport(post.id, post.title));
       } catch {
         announce("Couldn't share this report. Please try again.");
+      }
+    })();
+  }, []);
+
+  /**
+   * Explicit Copy, next to Share. Clipboard support is not universal (and a
+   * WebView can refuse it), so a refusal shows the actual link in a
+   * selectable field instead of claiming it was copied.
+   */
+  const copyOne = useCallback((post: PostItem) => {
+    void (async () => {
+      try {
+        const result = await copyReportLink(post.id);
+        if (!mountedRef.current) return;
+        if (result.status === "copied") {
+          setManualCopyUrl(null);
+          setActionError(null);
+          setNotice("Link copied.");
+          announce("Link copied.");
+        } else {
+          setManualCopyUrl(result.url);
+          setNotice(null);
+          announce("Copying isn't available here. Tap the link and copy it.");
+        }
+      } catch {
+        if (!mountedRef.current) return;
+        const message = "Couldn't build the link for this report.";
+        setActionError(message);
+        announce(message);
       }
     })();
   }, []);
@@ -264,16 +480,19 @@ export function MyPosts() {
       // success that completed after this dialog was dismissed.
       if (ownerStatusRef.current !== "ALL" && ownerStatusRef.current !== "RECOVERED") removeItem(post.id);
       else patchItem(post.id, { status: "RECOVERED" });
+      clearStatusUndo();
+      setManualCopyUrl(null);
       setActionError(null);
       setNotice("Report marked recovered.");
     },
-    [patchItem, removeItem],
+    [clearStatusUndo, patchItem, removeItem],
   );
 
   const actions: OwnerReportActionHandlers = {
     onChangeStatus: changeStatus,
     onEdit: (post) => navigate(`/my/${post.id}/edit`),
     onShare: shareOne,
+    onCopy: copyOne,
     onDelete: requestDelete,
     pendingDeleteId: pendingDelete?.id ?? null,
     onUndoDelete: undoDelete,
@@ -295,6 +514,42 @@ export function MyPosts() {
         <p role="alert" className="mx-4 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
           {actionError}
         </p>
+      )}
+
+      {manualCopyUrl && (
+        <div
+          role="group"
+          aria-label="Copy link"
+          data-testid="my-posts-copy-manual"
+          className="mx-4 flex flex-col gap-1 rounded-m3-sm border border-outline-variant bg-surface-container-low p-3"
+        >
+          <label htmlFor="my-reports-copy-link" className="text-xs text-on-surface-variant">
+            Report link
+          </label>
+          <input
+            id="my-reports-copy-link"
+            readOnly
+            value={manualCopyUrl}
+            onFocus={(event) => {
+              try {
+                event.currentTarget.select();
+              } catch {
+                announce("Automatic selection isn't available. Press and hold the link to select it.");
+              }
+            }}
+            className="min-h-[44px] w-full min-w-0 rounded-m3-sm border border-outline-variant bg-surface px-2 text-sm text-on-surface"
+          />
+          <p className="text-xs text-on-surface-variant">Select the link to copy it.</p>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setManualCopyUrl(null)}
+              className="min-h-[44px] rounded-full px-3 text-sm font-semibold underline"
+            >
+              Done
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="fb-scroll-fade mx-4">
@@ -377,6 +632,25 @@ export function MyPosts() {
           <button
             type="button"
             onClick={undoDelete}
+            className="min-h-[44px] rounded-full px-3 font-semibold underline"
+          >
+            Undo
+          </button>
+        </div>
+      )}
+
+      {statusUndo && !pendingDelete && (
+        <div
+          role="status"
+          data-testid="my-posts-status-undo"
+          className="sticky bottom-3 mx-4 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+        >
+          <span className="flex-1">
+            Status changed to {ownerStatusLabel(statusUndo.next, statusUndo.type)} — Undo for a few seconds
+          </span>
+          <button
+            type="button"
+            onClick={undoStatus}
             className="min-h-[44px] rounded-full px-3 font-semibold underline"
           >
             Undo

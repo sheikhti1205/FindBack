@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@findback/shared";
-import { MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
+import { Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
 
 /**
  * The owner controls on a My Reports row.
@@ -17,6 +17,8 @@ export interface OwnerReportActionHandlers {
   onEdit: (post: PostItem) => void;
   /** Share one report through the canonical share path. */
   onShare: (post: PostItem) => void;
+  /** Copy the public link, with the caller's manual fallback when needed. */
+  onCopy?: (post: PostItem) => void;
   /** Ask to delete one report. The delete itself is DELAYED — see the screen. */
   onDelete: (post: PostItem) => void;
   /** The report whose delete is waiting for the undo window (null = none). */
@@ -160,7 +162,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           aria-label={`Manage ${post.title}`}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
-          className="absolute right-0 z-20 mt-1 flex w-56 flex-col gap-0.5 rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
+          className="absolute right-0 z-20 mt-1 flex max-h-[calc(100dvh-5rem)] w-56 flex-col gap-0.5 overflow-y-auto rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
         >
           <p
             role="presentation"
@@ -206,6 +208,17 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
             <Share2 size={16} aria-hidden />
             <span className="flex-1">Share</span>
           </button>
+          {actions.onCopy && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => actions.onCopy?.(post))}
+              className={MENU_ITEM_CLASS}
+            >
+              <Copy size={16} aria-hidden />
+              <span className="flex-1">Copy link</span>
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

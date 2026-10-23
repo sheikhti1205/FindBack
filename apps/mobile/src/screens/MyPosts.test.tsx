@@ -3,19 +3,24 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchFeedMock, updatePostStatusMock, deletePostMock, shareReportMock } = vi.hoisted(() => ({
-  fetchFeedMock: vi.fn(),
-  updatePostStatusMock: vi.fn(),
-  deletePostMock: vi.fn(),
-  shareReportMock: vi.fn(),
-}));
+const { fetchFeedMock, updatePostStatusMock, deletePostMock, shareReportMock, copyReportLinkMock } =
+  vi.hoisted(() => ({
+    fetchFeedMock: vi.fn(),
+    updatePostStatusMock: vi.fn(),
+    deletePostMock: vi.fn(),
+    shareReportMock: vi.fn(),
+    copyReportLinkMock: vi.fn(),
+  }));
 
 vi.mock("../services/posts", () => ({
   fetchFeed: fetchFeedMock,
   updatePostStatus: updatePostStatusMock,
   deletePost: deletePostMock,
 }));
-vi.mock("../utils/shareReport", () => ({ shareReport: shareReportMock }));
+vi.mock("../utils/shareReport", () => ({
+  shareReport: shareReportMock,
+  copyReportLink: copyReportLinkMock,
+}));
 const { authState } = vi.hoisted(() => ({
   authState: { user: { id: "u1", username: "alice" } as { id: string; username: string } | null },
 }));
@@ -104,6 +109,8 @@ beforeEach(() => {
   updatePostStatusMock.mockReset();
   deletePostMock.mockReset();
   shareReportMock.mockReset();
+  copyReportLinkMock.mockReset();
+  copyReportLinkMock.mockResolvedValue({ status: "copied" });
   clearFeedCaches();
   authState.user = { id: "u1", username: "alice" };
   recoverySheet.open = false;
@@ -238,6 +245,7 @@ describe("MyPosts management (owner row actions)", () => {
     ]);
     expect(within(menu).getByRole("menuitem", { name: /edit details/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /share/i })).toBeTruthy();
+    expect(within(menu).getByRole("menuitem", { name: /copy link/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /delete report/i })).toBeTruthy();
   });
 
@@ -251,6 +259,247 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() =>
       expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
     );
+  });
+
+  it("shows the chosen status immediately and rolls it back when the write fails", async () => {
+    let rejectWrite: (error: Error) => void = () => {};
+    const pendingWrite = new Promise((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    updatePostStatusMock.mockReturnValueOnce(pendingWrite);
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+
+    // Optimistic: the row changed before the server answered.
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match");
+    expect(screen.getByTestId("my-posts-status-undo")).toBeTruthy();
+
+    await act(async () => {
+      rejectWrite(new Error("network down"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing"),
+    );
+    expect(screen.queryByTestId("my-posts-status-undo")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
+  });
+
+  it("rolls a change and an early Undo back to the last server-confirmed status when both writes fail", async () => {
+    let rejectFirst: (error: Error) => void = () => {};
+    let rejectSecond: (error: Error) => void = () => {};
+    const first = new Promise((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const second = new Promise((_resolve, reject) => {
+      rejectSecond = reject;
+    });
+    updatePostStatusMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match");
+
+    // Undo before the original write settles. Both writes are optimistic;
+    // neither may become the rollback target when both are refused.
+    fireEvent.click(within(screen.getByTestId("my-posts-status-undo")).getByRole("button", { name: /undo/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
+
+    await act(async () => {
+      rejectFirst(new Error("network down"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "OPEN"));
+
+    await act(async () => {
+      rejectSecond(new Error("network still down"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing"),
+    );
+    expect(screen.queryByTestId("my-posts-status-undo")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
+  });
+
+  it("rolls a failed second change back to the first change's confirmed status", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    let rejectSecond: (error: Error) => void = () => {};
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise((_resolve, reject) => {
+      rejectSecond = reject;
+    });
+    updatePostStatusMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+
+    let menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
+
+    menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
+
+    // The first write settles successfully while the second is queued; its
+    // MATCHED is now the server truth and must be the second failure's target.
+    await act(async () => {
+      resolveFirst(post("p1", "MATCHED"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "CLOSED"));
+
+    await act(async () => {
+      rejectSecond(new Error("network down"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+    );
+    expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
+  });
+
+  it("rolls a failed Undo back to the change that settled while the Undo was in flight", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    let rejectSecond: (error: Error) => void = () => {};
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise((_resolve, reject) => {
+      rejectSecond = reject;
+    });
+    updatePostStatusMock.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(within(screen.getByTestId("my-posts-status-undo")).getByRole("button", { name: /undo/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
+
+    // The original change lands MATCHED while the Undo waits. The Undo's
+    // failure must restore that confirmed status, not the optimistic OPEN.
+    await act(async () => {
+      resolveFirst(post("p1", "MATCHED"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "OPEN"));
+
+    await act(async () => {
+      rejectSecond(new Error("network down"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+    );
+    expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
+  });
+
+  it("restores the previous status from the Undo snackbar", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+    );
+
+    const undo = screen.getByTestId("my-posts-status-undo");
+    fireEvent.click(within(undo).getByRole("button", { name: /undo/i }));
+
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "OPEN"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing"),
+    );
+    expect(screen.getByTestId("my-posts-notice").textContent).toMatch(/restored to still missing/i);
+  });
+
+  it("serializes rapid status writes and keeps the last choice", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    updatePostStatusMock
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce(post("p1", "CLOSED"));
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+
+    let menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
+
+    // The second choice is optimistic immediately, but its write must wait
+    // for the first so the server's final state is the user's final choice.
+    menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
+    expect(updatePostStatusMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst(post("p1", "MATCHED"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
+    );
+    expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "CLOSED");
+  });
+
+  it("copies the report link explicitly from the owner menu", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /copy link/i }));
+
+    await waitFor(() => expect(copyReportLinkMock).toHaveBeenCalledWith("p1"));
+    await waitFor(() => expect(screen.getByTestId("my-posts-notice").textContent).toMatch(/link copied/i));
+  });
+
+  it("shows a selectable link instead of claiming a copy the platform refused", async () => {
+    copyReportLinkMock.mockResolvedValue({
+      status: "manual",
+      url: "https://findback.example/posts/p1",
+    });
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /copy link/i }));
+
+    const field = await screen.findByLabelText("Report link");
+    expect((field as HTMLInputElement).value).toBe("https://findback.example/posts/p1");
+    expect((field as HTMLInputElement).readOnly).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByTestId("my-posts-copy-manual")).toBeNull();
+  });
+
+  it("reveals the next status on a horizontal swipe and runs it", async () => {
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const swipe = screen.getAllByTestId("owner-status-swipe-surface")[0]!;
+    fireEvent.pointerDown(swipe, { pointerId: 1, pointerType: "touch", clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
+    fireEvent.pointerUp(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark matched" }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "MATCHED"));
   });
 
   it("routes Recovered through the recovery sheet, never a bare status write", async () => {

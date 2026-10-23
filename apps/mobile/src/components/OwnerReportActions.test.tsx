@@ -50,6 +50,7 @@ function handlers(overrides: Partial<Parameters<typeof OwnerReportActionsProvide
     onChangeStatus: vi.fn(),
     onEdit: vi.fn(),
     onShare: vi.fn(),
+    onCopy: vi.fn(),
     onDelete: vi.fn(),
     ...overrides,
   };
@@ -145,6 +146,16 @@ describe("the overflow menu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /edit details/i }));
 
     expect(value.onEdit).toHaveBeenCalledWith(post);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("copies the link when the screen supplies the handler", () => {
+    const value = renderMenu();
+    fireEvent.click(screen.getByRole("button", { name: /manage report/i }));
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /copy link/i }));
+
+    expect(value.onCopy).toHaveBeenCalledWith(post);
     expect(screen.queryByRole("menu")).toBeNull();
   });
 

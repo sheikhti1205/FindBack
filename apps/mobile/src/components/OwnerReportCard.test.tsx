@@ -2,8 +2,9 @@
 import type { PostItem, PostStatus, PostType } from "@findback/shared";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OwnerReportCard } from "./OwnerReportCard";
+import { OwnerReportActionsProvider } from "./OwnerReportActions";
 
 function post(overrides: Partial<PostItem> = {}): PostItem {
   const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
@@ -175,6 +176,38 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
     ]);
     expect(card.querySelector("select, input")).toBeNull();
     expect(card.textContent).not.toMatch(/delete|close report|mark recovered/i);
+  });
+
+  it("shows where and when the item was lost or found", () => {
+    renderCard(<OwnerReportCard post={imagePost()} />);
+    expect(screen.getByTestId("owner-report-location").textContent).toContain("Riverside Park");
+    expect(screen.getByTestId("owner-report-event-date").textContent).toMatch(/2026/);
+  });
+
+  it("reveals the next lifecycle step on a swipe and runs it through the owner handler", () => {
+    const onChangeStatus = vi.fn();
+    render(
+      <MemoryRouter>
+        <OwnerReportActionsProvider
+          value={{
+            onChangeStatus,
+            onEdit: vi.fn(),
+            onShare: vi.fn(),
+            onDelete: vi.fn(),
+          }}
+        >
+          <OwnerReportCard post={imagePost()} />
+        </OwnerReportActionsProvider>
+      </MemoryRouter>,
+    );
+
+    const swipe = screen.getByTestId("owner-status-swipe-surface");
+    fireEvent.pointerDown(swipe, { pointerId: 1, pointerType: "touch", clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
+    fireEvent.pointerUp(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark matched" }));
+    expect(onChangeStatus).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }), "MATCHED");
   });
 
   it("never conflates LOST/FOUND type with lifecycle state", () => {
