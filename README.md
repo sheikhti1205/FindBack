@@ -64,9 +64,9 @@ Android only for now. Beta builds are attached to the GitHub Releases page.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) if present, or open an issue.
+See [CONTRIBUTING.md](https://github.com/sheikhti1205/FindBack/blob/main/CONTRIBUTING.md) if present, or open an issue.
 
 ## License
 
-See [`LICENSE`](LICENSE) if present.
+See [LICENSE](https://github.com/sheikhti1205/FindBack/blob/main/LICENSE) if present.
 path: /home/sheikh/GitHub/FindBack/README.md
