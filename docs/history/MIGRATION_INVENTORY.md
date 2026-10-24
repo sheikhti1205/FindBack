@@ -4,6 +4,14 @@
 **Total migrations:** 89
 **Latest:** 20261024120000_cf050_mutual_confirmation.sql
 
+**Source-file index only — NOT an applied-migration or dependency inventory.**
+Descriptions below are truncated migration-header excerpts, not validated behavior.
+They may contain stale references or unsupported claims (for example, the 110000
+header names a nonexistent 050000 appeals file; the actual resolver is 080000).
+File count and schema-version metadata do not prove SQL replay or hosted state.
+The post-safety additions have failed independent source review; see the
+[acceptance correction](ACCEPTANCE_EVIDENCE_REPORT_2026-10-24.md) before using them.
+
 | Migration File | Purpose |
 |---|---|
 | 20260912000000_init.sql | FindBack — initial PostgreSQL schema (Supabase). Mirrors services/api/src/db/sqliteAdapter.ts (SQLITE_SCHEMA). Apply wit |

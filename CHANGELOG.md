@@ -1,133 +1,31 @@
 # Changelog
 
-All notable changes to FindBack are documented here.
+FindBack is beta/pre-public. Historical product milestones are being audited;
+this file is not evidence of a stable release or completed consumer-final programme.
 
-## [2.0.0-beta.1] (r0697–r0854)
+## Unreleased — consumer-final work in progress
 
-### Added
-- R3 private chat foundation (REQUEST/CONNECTED/BLOCKED/ENDED state machine)
-- CF-050 owner-confirmed matching (report_matches table, propose/confirm/cancel RPCs)
-- Appeals resolver (staff-only resolve_appeal RPC)
-- Permission-first default/open opt-in for chat
-- Multiple text-only request-stage messages
-- Quiet content-free initial nudge
+The repository contains ongoing work on report matching and recovery, private
+communication, and moderation appeals. These additions are **not release-ready**:
+backend correctness/security, client integration, and acceptance work remain.
+Private chat, backup/restore and reciprocal read receipts must not be advertised
+as shipped merely because SQL declarations exist.
 
-### Changed
-- Chat history retained on End (CONNECTED → REQUEST)
-- Author-only unsend tombstones
-- Wall-clock time for sanction/day decisions (clock_timestamp)
+Earlier safety fixes remain preserved at `8ab29dc`, `cb03f16` and `0d1438e`, with
+their individual test/review evidence retained. They are not blanket approval of
+later changes. See the detailed
+[acceptance status](docs/history/ACCEPTANCE_EVIDENCE_REPORT_2026-10-24.md).
 
-### Security
-- F1: Visibility revalidated after lock waits
-- F2: Reply author standing enforced (service token bypass fixed)
-- F3: Transaction-start time replaced with wall-clock time
+## Historical release notes — verification pending
 
-## [1.0.0] (r0532–r0696)
+The previous generated changelog attributed later R3 work to the frozen
+r0697–r0854 interval, treated package declarations as accepted milestones, and
+listed unimplemented chat behavior. Those assertions are withdrawn, not silently
+carried into a new release history. Original text remains recoverable in Git.
 
-### Added
-- Stable release line
-- Auth-recovery with verified password recovery and server sync
-- Sentry release parity gate
-
-## [0.9.0-beta.1] (r0486–r0531)
-
-### Added
-- Assistant landing page
-- Neutral palette
-- Security closure wave
-
-## [0.8.0-beta.2] (r0470–r0485)
-
-### Added
-- Single-line main-only v8 beta
-- Immutable branch rule
-
-## [0.7.0-beta.2] (r0448–r0469)
-
-### Added
-- Phone verification flow
-- Password recovery
-
-## [0.7.0-beta.1] (r0444–r0447)
-
-### Added
-- Release preparation
-
-## [0.6.0-beta.1] (r0434–r0443)
-
-### Added
-- On-device SmolVLM2 default photo engine
-- AI wiring fixes
-
-## [0.5.0-beta.1] (r0430–r0433)
-
-### Added
-- Release preparation
-
-## [0.4.0-beta.2] (r0405–r0429)
-
-### Added
-- Pinned NDK for release builds
-- Per-ABI native set verification
-
-## [0.4.0-beta.1] (r0404)
-
-### Added
-- Version cut
-
-## [0.3.0-beta.1] (r0363–r0403)
-
-### Added
-- Release preparation
-- Device waiver documentation
-
-## [0.2.0-beta.3] (r0340–r0362)
-
-### Added
-- Report redesign (Home action tiles, owner status cards)
-- Interaction gap fixes
-
-## [0.2.0-beta.2] (r0337–r0339)
-
-### Added
-- Beta.2 UX release gaps closed
-
-## [0.2.0-beta.1] (r0325–r0336)
-
-### Added
-- AI capability copy reconciliation
-- Aria-busy on pending home love toggle
-
-## [0.1.0-beta.1] (r0190–r0324)
-
-### Added
-- Signed beta pipeline
-- Manual backend deploy
-- Supabase Auth cutover
-- Direct Supabase data reads/writes
-- Realtime subscriptions
-- Direct Storage uploads
-- AI Help Edge Function
-- Supabase-only mobile runtime
-- Rich text editor
-- VLM scaffolding and model management
-- Feed, search, location, matches
-- Markdown rendering
-- Accessibility improvements
-
-## [0.1.0] (r0001–r0189)
-
-### Added
-- Monorepo scaffold
-- Mobile feature screens and routing
-- Activity reporting endpoint
-- Android/Capacitor platform
-- PostgreSQL/Supabase database adapter
-- RLS on all public tables
-- Supabase Data API store
-- Feed and reporting RPCs
-- Auth provider abstraction
-- Supabase Auth sessions
-- Storage uploads
-- Realtime cutover
-path: /home/sheikh/GitHub/FindBack/CHANGELOG.md
+The [history inventory](docs/history/VERSION_HISTORY.md) retains original commit
+identities and observed package declarations, including the historical `1.0.0`
+label without treating it as stable acceptance. Release-level product notes,
+truthful tags/artifacts and the reconstructed current beta version will follow
+actual meaningful-diff review. No historical work has been collapsed into a
+replacement baseline, and no new version number is assigned here.
