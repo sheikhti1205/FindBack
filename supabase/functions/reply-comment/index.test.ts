@@ -88,7 +88,7 @@ Deno.test("reason to status mapping stays stable", () => {
   assertEquals(statusForReason("missing"), 403);
 });
 
-Deno.test("a refused reply reaches the device as 429 through the real handler", async () => {
+Deno.test("the handler maps an RPC spacing refusal to a 429 response", async () => {
   const response = await handleReply(
     post({ token: TOKEN, body: "silver zipper" }),
     deps(async () => ({
@@ -101,7 +101,7 @@ Deno.test("a refused reply reaches the device as 429 through the real handler", 
   assertEquals(await response.json(), { ok: false, reason: "rate_limited" });
 });
 
-Deno.test("the day's ceiling also reaches the device as 429", async () => {
+Deno.test("the handler maps an RPC daily ceiling to a 429 response", async () => {
   const response = await handleReply(
     post({ token: TOKEN, body: "silver zipper" }),
     deps(async () => ({
@@ -111,6 +111,19 @@ Deno.test("the day's ceiling also reaches the device as 429", async () => {
   );
   assertEquals(response.status, 429);
   assertEquals(await response.json(), { ok: false, reason: "daily_limit" });
+});
+
+Deno.test("the handler maps the token author's standing refusal to 403 without inviting retry", async () => {
+  const response = await handleReply(
+    post({ token: TOKEN, body: "silver zipper" }),
+    deps(async () => ({
+      data: null,
+      error: { code: "P0001", message: "POST_NOT_AVAILABLE: your account cannot post or comment right now" },
+    })),
+  );
+  assertEquals(response.status, 403);
+  assertEquals(response.headers.get("retry-after"), null);
+  assertEquals(await response.json(), { ok: false, reason: "account_restricted" });
 });
 
 Deno.test("a consumed token answered by the RPC is a 409", async () => {
