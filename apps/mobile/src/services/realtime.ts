@@ -6,8 +6,8 @@ export type RealtimeEvent =
   | "feed:changed"
   | "post:updated"
   | "post:deleted"
-  | "comment:added"
-  | "comment:deleted"
+  | "comment:invalidate"
+  | "reaction:invalidate"
   | "reaction:changed"
   | "rating:changed"
   | "notification:added";
@@ -79,9 +79,10 @@ function scheduleRetry(key: string, retry: () => void): void {
  * fire synchronously, and a failure must be able to clear the slot it just
  * filled.
  */
-function bindHandlers(channel: RealtimeChannel, bindings: Array<[string, RealtimeEvent]>): RealtimeChannel {
+function bindHandlers(channel: RealtimeChannel, bindings: Array<[string, RealtimeEvent]>, current: () => boolean): RealtimeChannel {
   for (const [wireEvent, appEvent] of bindings) {
     channel.on("broadcast", { event: wireEvent }, (message) => {
+      if (!current()) return;
       dispatch(appEvent, (message?.payload ?? {}) as Record<string, unknown>);
     });
   }
@@ -218,19 +219,22 @@ export function joinPostRoom(postId: string): void {
   void ready.then(() => {
     if (client !== c || !desiredPosts.has(postId) || postChannels.has(postId)) return;
     const key = `post:${postId}`;
-    const channel = bindHandlers(c.channel(key, { config: { private: true } }), [
+    const channel = c.channel(key, { config: { private: true } });
+    bindHandlers(channel, [
       ["post:updated", "post:updated"],
       ["post:deleted", "post:deleted"],
-      ["comment:added", "comment:added"],
-      ["comment:deleted", "comment:deleted"],
+      ["comment:invalidate", "comment:invalidate"],
+      ["reaction:invalidate", "reaction:invalidate"],
       ["reaction:changed", "reaction:changed"],
       ["rating:changed", "rating:changed"],
-    ]);
+    ], () => client === c && postChannels.get(postId) === channel && desiredPosts.has(postId));
     // Slot first (a synchronous subscribe failure must be able to clear it).
     postChannels.set(postId, channel);
     channel.subscribe((status: unknown) => {
       if (isSubscribedStatus(status)) {
+        if (postChannels.get(postId) !== channel || client !== c) return;
         clearRetry(key);
+        dispatch("comment:invalidate", { postId, invalidate: true });
         return;
       }
       if (!isFailedStatus(status)) return;
@@ -294,15 +298,19 @@ export function joinInboxRoom(userId: string): void {
     }
     if (skip) return;
     if (inboxChannel) return;
-    const channel = bindHandlers(c.channel(`notification:${userId}`, { config: { private: true } }), [
+    const channel = c.channel(`notification:${userId}`, { config: { private: true } });
+    bindHandlers(channel, [
       ["notification:added", "notification:added"],
-    ]);
+      ["comment:invalidate", "comment:invalidate"],
+    ], () => client === c && inboxChannel === channel && boundInboxUser === userId && desiredInboxUser === userId);
     // Slot first (a synchronous subscribe failure must be able to clear it).
     inboxChannel = channel;
     boundInboxUser = userId;
     channel.subscribe((status: unknown) => {
       if (isSubscribedStatus(status)) {
+        if (inboxChannel !== channel || client !== c) return;
         clearRetry("inbox");
+        dispatch("comment:invalidate", { userId, invalidate: true });
         return;
       }
       if (!isFailedStatus(status)) return;

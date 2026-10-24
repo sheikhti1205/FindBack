@@ -347,3 +347,83 @@ Deno.test("authorized request names missing sender credentials and sends nothing
     assertEquals(body.sent, 0);
   } finally { Deno.env.get = original; }
 });
+
+// Real fetch handler with in-memory HTTP peers. No live env/key/network access.
+async function dispatchFixture(states: Array<boolean | "error">) {
+  const key = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+  const bytes = new Uint8Array(await crypto.subtle.exportKey("pkcs8", key.privateKey));
+  const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...bytes))}\n-----END PRIVATE KEY-----`;
+  const fakeEnv: Record<string, string> = {
+    PUSH_DISPATCH_SECRET: "test-only", SUPABASE_URL: "https://dispatch.invalid",
+    SUPABASE_SERVICE_ROLE_KEY: "test-only-not-a-credential", FCM_PROJECT_ID: "test-project",
+    PUBLIC_SHARE_ORIGIN: "https://findback.invalid", FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify({
+      client_email: "test@example.invalid", private_key: pem,
+    }),
+  };
+  const originalEnv = Deno.env.get;
+  const originalFetch = globalThis.fetch;
+  const minted: unknown[] = []; const stamped: unknown[] = []; const retiredTokens: string[] = [];
+  let sent = 0; let checked = 0; let retries = 0;
+  Deno.env.get = (name) => fakeEnv[name];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    const json = (value: unknown, status = 200) => Response.json(value, { status });
+    if (url.hostname === "oauth2.googleapis.com") return json({ access_token: "test-only-access", expires_in: 3600 });
+    if (url.hostname === "fcm.googleapis.com") { sent++; return json({ name: "test-message" }); }
+    if (url.hostname !== "dispatch.invalid") throw new Error("Unexpected network destination");
+    if (url.pathname.endsWith("/rpc/findback_notification_delivery_allowed")) {
+      assertEquals(await request.json(), { p_notification_id: "n1" });
+      const state = states[Math.min(checked++, states.length - 1)];
+      return state === "error" ? json({ message: "test unavailable" }, 503) : json(state);
+    }
+    if (url.pathname.endsWith("/rpc/findback_record_push_failure")) { retries++; return json(0); }
+    if (url.pathname.endsWith("/notifications")) {
+      if (request.method === "GET") return json([notification({ type: "COMMENT", comment_id: "c1" })]);
+      stamped.push(await request.json()); return new Response(null, { status: 204 });
+    }
+    if (url.pathname.endsWith("/notification_preferences")) return json([prefs()]);
+    if (url.pathname.endsWith("/device_tokens")) return json([{ user_id: "u1", token: "test-device" }]);
+    if (url.pathname.endsWith("/push_reply_tokens")) {
+      if (request.method === "POST") minted.push(await request.json());
+      if (request.method === "DELETE") retiredTokens.push(url.search);
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected test route ${url.pathname}`);
+  };
+  try {
+    const response = await dispatcher.fetch(new Request("https://example.invalid", {
+      method: "POST", headers: { "x-findback-dispatch-secret": "test-only" },
+    }));
+    return { status: response.status, body: await response.json(), checked, minted, stamped, sent, retries, retiredTokens };
+  } finally { Deno.env.get = originalEnv; globalThis.fetch = originalFetch; }
+}
+
+Deno.test("queued notification concealed before scan mints and sends nothing, then retires", async () => {
+  const r = await dispatchFixture([false]);
+  assertEquals(r.sent, 0); assertEquals(r.minted.length, 0);
+  assertEquals(r.checked, 1); assertEquals(r.stamped.length, 1);
+});
+Deno.test("eligibility RPC error fails closed and leaves pending notification retryable", async () => {
+  const r = await dispatchFixture(["error"]);
+  assertEquals(r.sent, 0); assertEquals(r.minted.length, 0); assertEquals(r.stamped.length, 0);
+  assertEquals(r.status, 503);
+});
+Deno.test("recipient concealed after scan is checked again before token mint", async () => {
+  const r = await dispatchFixture([true, false]);
+  assertEquals(r.sent, 0); assertEquals(r.minted.length, 0); assertEquals(r.stamped.length, 1);
+});
+Deno.test("recipient concealed after token mint is checked before send and token is retired", async () => {
+  const r = await dispatchFixture([true, true, false]);
+  assertEquals(r.sent, 0); assertEquals(r.minted.length, 1);
+  assertEquals(r.retiredTokens.length, 1); assertEquals(r.stamped.length, 1);
+});
+Deno.test("eligibility failure after token mint sends nothing and retries without terminal stamp", async () => {
+  const r = await dispatchFixture([true, true, "error"]);
+  assertEquals(r.sent, 0); assertEquals(r.stamped.length, 0); assertEquals(r.retries, 1);
+});
+Deno.test("eligible recipient gets one token and one send through the actual handler", async () => {
+  const r = await dispatchFixture([true]);
+  assertEquals(r.checked, 3); assertEquals(r.sent, 1); assertEquals(r.minted.length, 1); assertEquals(r.stamped.length, 1);
+});

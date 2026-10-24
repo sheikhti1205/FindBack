@@ -79,7 +79,8 @@ vi.mock("../components/RecoverySheet", async (importOriginal) => {
   };
 });
 
-import { PostDetail, withSentReportRefs } from "./PostDetail";
+import { PostDetail } from "./PostDetail";
+import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { LiveRegion } from "../components/LiveRegion";
 
 beforeEach(() => {
@@ -244,7 +245,12 @@ describe("PostDetail comments", () => {
     postsMock.fetchPost.mockImplementation(async (target: string) => target === id
       ? { ...basePost, id, title: "Found blue wallet" }
       : basePost);
-    postsMock.addComment.mockResolvedValue({ ...longComment, id: "c-reference", body: "", author: { id: "u9", username: "reader" } });
+    const sent = { ...longComment, id: "c-reference", body: "", author: { id: "u9", username: "reader" } };
+    postsMock.addComment.mockImplementation(async () => {
+      // The list is the attachment/visibility authority after creation.
+      postsMock.fetchComments.mockResolvedValue([{ ...sent, attachments: [{ kind: "report", displayOrder: 1, reportPostId: id }] }]);
+      return sent;
+    });
     try {
       renderDetail();
       fireEvent.click(await screen.findByRole("button", { name: "Attach a report" }));
@@ -771,6 +777,7 @@ describe("PostDetail threaded replies", () => {
     renderDetail();
     await screen.findByText("nested reply");
     vi.spyOn(window, "confirm").mockReturnValue(true);
+    postsMock.deleteComment.mockImplementation(async () => { postsMock.fetchComments.mockResolvedValue([]); });
     const menu = await openCommentActions();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /delete comment/i }));
 
@@ -854,30 +861,14 @@ describe("PostDetail comment report references", () => {
   });
 });
 
-describe("withSentReportRefs (forward-provisioning for I4b)", () => {
-  const sent = {
-    id: "c-new",
-    postId: "p1",
-    body: "look",
-    createdAt: "2026-09-02T00:00:00.000Z",
-    updatedAt: "2026-09-02T00:00:00.000Z",
-    author: {
-      id: "u9",
-      username: "reader",
-      emailVerified: false,
-      phoneVerified: false,
-      avatarUrl: null,
-      createdAt: "2026-01-02T00:00:00.000Z",
-    },
-  };
-
-  it("merges only report descriptors, tombstones included", () => {
-    const merged = withSentReportRefs(sent, [
+describe("authorized-list reference projection (replaces writer forward-provisioning)", () => {
+  it("projects only report descriptors, tombstones included", () => {
+    const refs = mapCommentAttachmentRefs([
       { kind: "photo", display_order: 1, remote_url: "https://cdn.test/a.jpg" },
       { kind: "report", display_order: 2, report_post_id: "11111111-1111-4111-8111-111111111111" },
       { kind: "report", display_order: 3, report_post_id: null },
-    ] as unknown as Parameters<typeof withSentReportRefs>[1]);
-    expect(merged.attachments).toEqual([
+    ]);
+    expect(refs).toEqual([
       {
         kind: "report",
         reportPostId: "11111111-1111-4111-8111-111111111111",
@@ -885,15 +876,13 @@ describe("withSentReportRefs (forward-provisioning for I4b)", () => {
       },
       { kind: "report", reportPostId: null, displayOrder: 3 },
     ]);
-    expect(merged.body).toBe("look");
   });
 
-  it("leaves the comment untouched when no report descriptor was sent", () => {
-    const merged = withSentReportRefs(sent, [
+  it("projects no report cards from media descriptors", () => {
+    const refs = mapCommentAttachmentRefs([
       { kind: "photo", display_order: 1, remote_url: "https://cdn.test/a.jpg" },
     ]);
-    expect(merged).toBe(sent);
-    expect("attachments" in merged).toBe(false);
+    expect(refs).toEqual([]);
   });
 });
 

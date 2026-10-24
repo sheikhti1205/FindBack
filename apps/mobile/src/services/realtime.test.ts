@@ -103,6 +103,36 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe("comment authorization invalidations", () => {
+  it("binds content-free invalidations and ignores events after leaving the room", async () => {
+    const mod = await load();
+    const seen: unknown[] = [];
+    mod.onRealtime("comment:invalidate", p => seen.push(p));
+    mod.onRealtime("reaction:invalidate", p => seen.push(p));
+    mod.joinPostRoom("p1"); await flush();
+    seen.length = 0; // successful subscribe also reconciles missed events
+    const channel = find("post:p1");
+    emit(channel, "comment:invalidate", { postId: "p1", invalidate: true });
+    emit(channel, "reaction:invalidate", { postId: "p1", invalidate: true });
+    expect(seen).toHaveLength(2);
+    mod.leavePostRoom("p1");
+    emit(channel, "comment:invalidate", { postId: "p1", invalidate: true });
+    expect(seen).toHaveLength(2);
+    mod.disconnectRealtime();
+  });
+  it("refetches after a successful reconnect and consumes recipient-local invalidation", async () => {
+    const mod = await load();
+    const seen: unknown[] = [];
+    mod.onRealtime("comment:invalidate", p => seen.push(p));
+    mod.joinPostRoom("p1"); await flush();
+    expect(seen).toContainEqual({ postId: "p1", invalidate: true });
+    mod.joinInboxRoom("u1"); await flush();
+    emit(find("notification:u1"), "comment:invalidate", { postId: "p1", invalidate: true });
+    expect(seen.filter((p) => (p as {postId?: string}).postId === "p1").length).toBeGreaterThan(1);
+    mod.disconnectRealtime();
+  });
+});
+
 describe("connectRealtime", () => {
   it("pushes the session token and subscribes to the private feed channel", async () => {
     const mod = await load();
@@ -193,8 +223,8 @@ describe("joinPostRoom", () => {
     for (const event of [
       "post:updated",
       "post:deleted",
-      "comment:added",
-      "comment:deleted",
+      "comment:invalidate",
+      "reaction:invalidate",
       "reaction:changed",
       "rating:changed",
     ] as const) {
@@ -207,10 +237,10 @@ describe("joinPostRoom", () => {
     const channel = find("post:p1");
     expect(channel.opts.config?.private).toBe(true);
     emit(channel, "reaction:changed", { likeCount: 2 });
-    emit(channel, "comment:added", { comment: { id: "c1" } });
+    emit(channel, "comment:invalidate", { postId: "p1", invalidate: true });
 
     expect(seen.get("reaction:changed")).toEqual({ likeCount: 2 });
-    expect(seen.get("comment:added")).toEqual({ comment: { id: "c1" } });
+    expect(seen.get("comment:invalidate")).toEqual({ postId: "p1", invalidate: true });
   });
 
   it("is idempotent per post", async () => {

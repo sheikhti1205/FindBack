@@ -13,6 +13,8 @@ export interface CommentSafetyMenuProps {
   canDelete: boolean;
   /** Opens the parent's existing confirmation/undo + server-backed delete flow. */
   onDelete?: () => void;
+  /** Server-confirmed receipt: parent discards stale content and refetches. */
+  onReported?: () => void;
 }
 
 /** Compact comment overflow, using OwnerReportMenu's non-modal keyboard pattern.
@@ -22,7 +24,7 @@ export function CommentSafetyMenu(props: CommentSafetyMenuProps) {
   return <ScopedCommentSafetyMenu key={`${props.viewerId}:${props.commentId}:${props.authorId}`} {...props} />;
 }
 
-function ScopedCommentSafetyMenu({ commentId, authorId, authorName, viewerId, canDelete, onDelete }: CommentSafetyMenuProps) {
+function ScopedCommentSafetyMenu({ commentId, authorId, authorName, viewerId, canDelete, onDelete, onReported }: CommentSafetyMenuProps) {
   const [open, setOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
@@ -89,7 +91,7 @@ function ScopedCommentSafetyMenu({ commentId, authorId, authorName, viewerId, ca
           </button>}
         </div>
       )}
-      <ReportSheet open={reportOpen && mayReport} target={{ targetType: "COMMENT", targetId: commentId }} onClose={() => setReportOpen(false)} />
+      <ReportSheet open={reportOpen && mayReport} target={{ targetType: "COMMENT", targetId: commentId }} onClose={() => setReportOpen(false)} onReported={onReported} />
       <BottomSheet open={blockOpen && mayReport} title="Block account" height="medium" onClose={() => setBlockOpen(false)}>
         {blockOpen && <BlockControl userId={authorId} name={authorName} />}
       </BottomSheet>

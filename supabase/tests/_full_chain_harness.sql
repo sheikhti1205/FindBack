@@ -97,3 +97,10 @@ create table realtime.messages(
 create function realtime.send(
   payload jsonb, event text, topic text, private boolean default false
 ) returns void language plpgsql as $$ begin return; end; $$;
+-- Hosted already grants authenticated USAGE on this schema (and SELECT on the
+-- table); the disposable stub has to mirror that or a policy read is not
+-- provable locally. Deliberately NOT in the migration: hosted's realtime schema
+-- is owned by supabase_realtime_admin, the delegation covers policy statements
+-- and object grants but not schema grants, and a 42501 there would roll back the
+-- whole migration transaction for a privilege the platform already holds.
+grant usage on schema realtime to authenticated;

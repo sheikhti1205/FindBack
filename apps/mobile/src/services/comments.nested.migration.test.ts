@@ -37,10 +37,26 @@ describe("nested comments migration", () => {
     expect(text).toMatch(/v_mentioned_id is not distinct from v_parent_author/i);
   });
 
-  it("broadcasts parentId and depth on comment:added", () => {
-    const text = sql();
-    expect(text).toMatch(/'parentId', new\.parent_id/);
-    expect(text).toMatch(/'depth', new\.depth/);
-    expect(text).toMatch(/'comment:added', 'post:' \|\| v_post, true/);
+  it("is superseded by the content-free comment:invalidate emission", () => {
+    // 20261002030000 is an immutable historical file, so this test used to keep
+    // asserting a public `comment:added` broadcast that no longer runs. The
+    // comment-isolation wave replaced that emission with a content-free
+    // invalidation; this now pins the current contract and records that the old
+    // one is gone, rather than leaving misleading green coverage behind.
+    const current = readFileSync(
+      resolve(REPO_ROOT, "supabase/migrations/20261024010000_comment_isolation.sql"),
+      "utf8",
+    );
+    expect(current).not.toMatch(/'comment:added'/);
+    expect(current).toMatch(/'comment:invalidate','post:'\|\|v_post,true/);
+    expect(current).toMatch(/'postId',v_post,'entity','comment','invalidate',true,'op',tg_op/);
+    const start = current.indexOf("create or replace function public.findback_broadcast_comment_change");
+    expect(start).toBeGreaterThan(-1);
+    const triggerBody = current.slice(
+      start,
+      current.indexOf("revoke all on function public.findback_broadcast_comment_change", start),
+    );
+    // A shared room may carry no body, author, child id or reaction counts.
+    expect(triggerBody).not.toMatch(/body|user_id|author|reaction/);
   });
 });

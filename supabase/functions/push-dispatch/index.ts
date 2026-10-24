@@ -446,8 +446,33 @@ export default {
       return Response.json({ error: "read failed", scanned: 0, sent: 0 }, { status: 500 });
     }
 
-    const notifications = (pending ?? []) as DispatchNotification[];
-    if (notifications.length === 0) return Response.json({ scanned: 0, sent: 0, pruned: 0, failed: 0 });
+    const scanned = (pending ?? []) as DispatchNotification[];
+    if (scanned.length === 0) return Response.json({ scanned: 0, sent: 0, pruned: 0, failed: 0 });
+
+    // Service-role scans bypass RLS. Resolve eligibility from the stored row's
+    // recipient/subject, never a caller-supplied actor. An unknown answer is not
+    // permission and must remain retryable, not become a terminal disposition.
+    const allowed = async (id: string): Promise<boolean> => {
+      const { data, error } = await admin.rpc("findback_notification_delivery_allowed", { p_notification_id: id });
+      if (error || typeof data !== "boolean") throw new Error("Delivery eligibility unavailable");
+      return data;
+    };
+    const notifications: DispatchNotification[] = [];
+    const suppressed = new Set<string>();
+    const deferred = new Set<string>();
+    try {
+      for (const row of scanned) {
+        if (await allowed(row.id)) notifications.push(row);
+        else suppressed.add(row.id);
+      }
+    } catch {
+      return Response.json({ error: "eligibility unavailable", scanned: scanned.length, sent: 0 }, { status: 503 });
+    }
+    if (notifications.length === 0) {
+      const { error } = await admin.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", [...suppressed]);
+      if (error) return Response.json({ error: "disposition failed", sent: 0 }, { status: 503 });
+      return Response.json({ scanned: scanned.length, suppressed: suppressed.size, sent: 0, pruned: 0, failed: 0 });
+    }
 
     const userIds = [...new Set(notifications.map((n) => n.user_id))];
     const [{ data: prefs }, { data: tokens }] = await Promise.all([
@@ -481,6 +506,9 @@ export default {
     const tokenExpiresAt = new Date(Date.now() + REPLY_TOKEN_TTL_MS).toISOString();
     for (const notification of notifiableReplyTargets(notifications, deliveries)) {
       if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) continue;
+      try {
+        if (!await allowed(notification.id)) { suppressed.add(notification.id); continue; }
+      } catch { deferred.add(notification.id); continue; }
       const raw = generateReplyToken();
       const row = buildReplyTokenRow(
         notification,
@@ -498,6 +526,25 @@ export default {
     const pruned: string[] = [];
     const outcomes: SendOutcome[] = [];
     for (const delivery of deliveries) {
+      if (suppressed.has(delivery.notificationId)) continue;
+      if (deferred.has(delivery.notificationId)) {
+        outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
+        continue;
+      }
+      // Eligibility can change while OAuth or token writes are in flight. Check
+      // again immediately before each external send; no stale scan can permit it.
+      try {
+        if (!await allowed(delivery.notificationId)) {
+          suppressed.add(delivery.notificationId);
+          await admin.from("push_reply_tokens").delete().eq("notification_id", delivery.notificationId).is("used_at", null);
+          replyTokens.delete(delivery.notificationId);
+          continue;
+        }
+      } catch {
+        deferred.add(delivery.notificationId);
+        outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
+        continue;
+      }
       const result = await sendMessage(
         projectId!,
         accessToken,
@@ -515,7 +562,7 @@ export default {
     // delivered anywhere, or only invalid-token failures is stamped. A
     // notification whose only failures were transient stays pending so the next
     // scheduled run retries it, up to MAX_PUSH_ATTEMPTS.
-    const { handled, retry } = planDispatchOutcomes(notifications, outcomes);
+    const { handled, retry } = planDispatchOutcomes(scanned, outcomes);
     const pushedAt = new Date().toISOString();
     if (handled.length > 0) {
       await admin.from("notifications").update({ pushed_at: pushedAt }).in("id", handled);
@@ -535,7 +582,8 @@ export default {
     }
 
     return Response.json({
-      scanned: notifications.length,
+      scanned: scanned.length,
+      suppressed: suppressed.size,
       sent,
       pruned: pruned.length,
       failed,

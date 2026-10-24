@@ -453,11 +453,12 @@ where (select decider_user_id from public.moderation_case_decisions
   );
 
 -- ---------------------------------------------------------------------------
--- S7. A COMMENT content action owns the POST's single visibility atom.
+-- S7. A COMMENT content action owns ONLY the comment atom.
 --
---     Without this, a moderator could HIDE the comment (comment key), then a
---     second moderator could HIDE the post through a different key and reverse
---     the same verdict.
+--     OWNER AMENDMENT 2026-10-24 supersedes the earlier comment->post coupling:
+--     a report or decision about a comment must never hide, publish or own its
+--     parent post, and an independent post case can neither reverse nor inherit
+--     the comment verdict. The two atoms are decided separately.
 -- ---------------------------------------------------------------------------
 
 set local role authenticated;
@@ -487,53 +488,96 @@ $$;
 
 reset role;
 
-select 'S7 a comment decision is stored on the post case' as probe
+select 'S7 a comment decision is stored on the comment atom' as probe
 where exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'POST' and d.target_id = 'p-sd-comment'
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-1'
      and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
      and d.audit_id = current_setting('probe.sd_comment_audit', true)
      and d.generation = 1
 )
-and (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'HIDDEN'
+and (select moderation_visibility from public.comments where id = 'c-sd-1') = 'HIDDEN'
+and (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'PUBLISHED'
+and exists (
+  select 1 from public.admin_audit_log l where l.id=current_setting('probe.sd_comment_audit',true)
+    and (l.new_state->>'decision_generation')::integer=1
+    and l.previous_state->>'moderation_visibility'='PUBLISHED'
+    and l.new_state->>'moderation_visibility'='HIDDEN'
+)
+and exists (
+  select 1 from public.content_reports r where r.target_type='COMMENT' and r.target_id='c-sd-1'
+    and r.status='ACTIONED' and r.internal_note='A hides the comment'
+)
 and not exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-1'
+   where d.target_type = 'POST' and d.target_id = 'p-sd-comment'
 );
 
+-- S7b: a post decision is independent; it cannot reverse the comment verdict.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
 do $$
 begin
-  begin
-    perform public.findback_apply_moderation('POST', 'p-sd-comment', 'HIDE', 'OTHER', 'B tries the post', null, null);
-    raise exception 'S7b FAILED: a second moderator reversed the comment decision through the post key' using errcode = '0A000';
-  exception when sqlstate 'P0001' then
-    if sqlerrm <> 'MODERATION_DECISION_FINAL' then
-      raise exception 'S7b FAILED: wrong refusal token (%)', sqlerrm;
-    end if;
-    raise notice 'S7b ok: the post key is owned by the comment decision';
-  end;
-end;
-$$;
-
-select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
-
-do $$
-begin
-  if public.findback_apply_moderation('POST', 'p-sd-comment', 'PUBLISH', 'OTHER', 'A restores the post', null, null) is null then
-    raise exception 'S7c FAILED: the decider could not revise through the post key';
+  if public.findback_apply_moderation('POST', 'p-sd-comment', 'HIDE', 'OTHER', 'B hides the carrier post', null, null) is null then
+    raise exception 'S7b FAILED: an independent post decision was refused';
   end if;
 end;
 $$;
 
 reset role;
 
-select 'S7c the same decider revises through either target' as probe
-where (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'PUBLISHED'
+select 'S7b a post decision does not own the comment atom' as probe
+where (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'HIDDEN'
+  and (select moderation_visibility from public.comments where id = 'c-sd-1') = 'HIDDEN'
+  and (select decider_user_id from public.moderation_case_decisions
+        where target_type = 'COMMENT' and target_id = 'c-sd-1') = '00000000-0000-4000-8000-00000000f102'
   and (select generation from public.moderation_case_decisions
-        where target_type = 'POST' and target_id = 'p-sd-comment') = 2;
+        where target_type = 'COMMENT' and target_id = 'c-sd-1') = 1;
+
+-- S7c: the comment decider revises only the comment.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
+
+do $$
+begin
+  if public.findback_apply_moderation('COMMENT', 'c-sd-1', 'PUBLISH', 'OTHER', 'A restores the comment', null, null) is null then
+    raise exception 'S7c FAILED: the comment decider could not revise the comment';
+  end if;
+end;
+$$;
+
+reset role;
+
+select 'S7c the comment decider revises only the comment' as probe
+where (select moderation_visibility from public.comments where id = 'c-sd-1') = 'PUBLISHED'
+  and (select generation from public.moderation_case_decisions
+        where target_type = 'COMMENT' and target_id = 'c-sd-1') = 2
+  and (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'HIDDEN'
+  and exists (
+    select 1 from public.admin_audit_log l where l.target_type='COMMENT' and l.target_id='c-sd-1'
+      and (l.new_state->>'decision_generation')::integer=2
+      and l.previous_state->>'moderation_visibility'='HIDDEN'
+      and l.new_state->>'moderation_visibility'='PUBLISHED'
+  );
+
+-- S7d: the post decider restores the post independently.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
+
+do $$
+begin
+  if public.findback_apply_moderation('POST', 'p-sd-comment', 'PUBLISH', 'OTHER', 'B restores the carrier post', null, null) is null then
+    raise exception 'S7d FAILED: the post decider could not restore the post';
+  end if;
+end;
+$$;
+
+reset role;
+
+select 'S7d the post decider restores only the post' as probe
+where (select moderation_visibility from public.item_posts where id = 'p-sd-comment') = 'PUBLISHED'
+  and (select moderation_visibility from public.comments where id = 'c-sd-1') = 'PUBLISHED';
 
 -- ---------------------------------------------------------------------------
 -- S8. A deleted decider is still the owner: no takeover.
@@ -660,12 +704,13 @@ where exists (
 );
 
 -- ---------------------------------------------------------------------------
--- S10. A report that exists before the decision does not reopen the atom.
+-- S10. Comment and post atoms are independent (owner amendment 2026-10-24).
 --
---      A decides the comment, which owns the post atom; the content decision
---      closes every report the atom owns, including the older post report. B
---      must still be refused: the case belongs to A, and only an appeal or a
---      report id the decision did not already know reopens it.
+--      A COMMENT decision closes only the comment's own reports. A POST report
+--      that predates it stays OPEN, the post stays PUBLISHED and no POST
+--      decision is created. A moderator may then decide the POST on its own
+--      merits; that independent decision closes the older POST report and does
+--      not revise, inherit or reopen A's comment decision.
 -- ---------------------------------------------------------------------------
 
 set local role authenticated;
@@ -695,65 +740,92 @@ $$;
 
 reset role;
 
-select 'S10 the decision closes the whole atom and stays with A' as probe
+select 'S10 a comment decision leaves the post report and the post alone' as probe
 where exists (
   select 1 from public.content_reports r
-   where r.target_type = 'POST' and r.target_id = 'p-sd-stale' and r.status = 'ACTIONED'
+   where r.target_type = 'POST' and r.target_id = 'p-sd-stale' and r.status = 'OPEN'
 )
-and (select moderation_visibility from public.item_posts where id = 'p-sd-stale') = 'HIDDEN'
+and (select moderation_visibility from public.item_posts where id = 'p-sd-stale') = 'PUBLISHED'
 and exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'POST' and d.target_id = 'p-sd-stale'
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-2'
      and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
      and d.generation = 1
-     and current_setting('probe.sd_stale_report', true) = any(d.closed_report_ids)
-     and current_setting('probe.sd_stale_report', true) = any(d.known_report_ids)
+)
+and not exists (
+  select 1 from public.moderation_case_decisions d
+   where d.target_type = 'POST' and d.target_id = 'p-sd-stale'
 );
 
+-- S10b: an independent POST decision is allowed and closes only the POST report.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
 do $$
 begin
-  begin
-    perform public.findback_apply_moderation('POST', 'p-sd-stale', 'PUBLISH', 'OTHER', 'B uses the old report', null, null);
-    raise exception 'S10b FAILED: an older open report reopened the atom to another moderator' using errcode = '0A000';
-  exception when sqlstate 'P0001' then
-    raise notice 'S10b ok: an older open report does not reopen the case';
-  end;
-end;
-$$;
-
-select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
-
-do $$
-begin
-  if public.findback_apply_moderation('POST', 'p-sd-stale', 'PUBLISH', 'SPAM_OR_DUPLICATE', 'A closes its own report', null, null) is null then
-    raise exception 'S10c FAILED: the decider could not close the older report';
+  if public.findback_apply_moderation('POST', 'p-sd-stale', 'HIDE', 'SPAM_OR_DUPLICATE', 'B decides the older post report', null, null) is null then
+    raise exception 'S10b FAILED: the independent post decision was refused';
   end if;
 end;
 $$;
 
 reset role;
 
-select 'S10c the decider closes the report and the generation moves' as probe
-where (select moderation_visibility from public.item_posts where id = 'p-sd-stale') = 'PUBLISHED'
+select 'S10b the post decision closes only the post report' as probe
+where (select moderation_visibility from public.item_posts where id = 'p-sd-stale') = 'HIDDEN'
   and exists (
     select 1 from public.content_reports r
      where r.target_type = 'POST' and r.target_id = 'p-sd-stale' and r.status = 'ACTIONED'
   )
+  and exists (
+    select 1 from public.moderation_case_decisions d
+     where d.target_type = 'POST' and d.target_id = 'p-sd-stale'
+       and d.decider_user_id = '00000000-0000-4000-8000-00000000f103'
+       and d.generation = 1
+       and current_setting('probe.sd_stale_report', true) = any(d.closed_report_ids)
+       and current_setting('probe.sd_stale_report', true) = any(d.known_report_ids)
+  )
+  and exists (
+    select 1 from public.moderation_case_decisions d
+     where d.target_type = 'COMMENT' and d.target_id = 'c-sd-2'
+       and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
+       and d.generation = 1
+  );
+
+-- S10c: the comment owner cannot rewrite the independent post decision.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
+
+do $$
+begin
+  begin
+    perform public.findback_apply_moderation('POST', 'p-sd-stale', 'PUBLISH', 'OTHER', 'A tries the post atom', null, null);
+    raise exception 'S10c FAILED: the comment owner rewrote the post decision' using errcode = '0A000';
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> 'MODERATION_DECISION_FINAL' then
+      raise exception 'S10c FAILED: wrong refusal token (%)', sqlerrm;
+    end if;
+    raise notice 'S10c ok: the post decision belongs to its own decider';
+  end;
+end;
+$$;
+
+reset role;
+
+select 'S10c the post verdict and generation are unchanged' as probe
+where (select moderation_visibility from public.item_posts where id = 'p-sd-stale') = 'HIDDEN'
   and (select generation from public.moderation_case_decisions
-        where target_type = 'POST' and target_id = 'p-sd-stale') = 2;
+        where target_type = 'POST' and target_id = 'p-sd-stale') = 1;
 
 
 -- ---------------------------------------------------------------------------
--- S11. A dismissal and a content action are ONE case.
+-- S11. Dismissal and content action on the SAME COMMENT are one comment case.
 --
---      R10-M1: A dismisses the comment (NO_ACTION), B must not be able to hide
---      that same comment (or its post) through a different key. The reverse
---      ordering — A hides, B dismisses — must also be refused. The same decider
---      may revise, and the revision increments one generation. No COMMENT-key
---      decision row may exist.
+--      OWNER AMENDMENT 2026-10-24: the case is the comment, not its parent
+--      post. A dismissal and a hide of the same comment share one decision and
+--      one generation; another moderator cannot reverse either. A different
+--      comment, and the parent post, are independent cases. The parent post
+--      action is therefore allowed and does not touch the comment verdict.
 -- ---------------------------------------------------------------------------
 
 set local role authenticated;
@@ -786,18 +858,19 @@ $$;
 
 reset role;
 
-select 'S11 a dismissal is stored on the post atom' as probe
+select 'S11 a dismissal is stored on the same comment atom' as probe
 where exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'POST' and d.target_id = 'p-sd-dismiss'
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-3'
      and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
      and d.decision_action = 'NO_ACTION'
      and d.generation = 1
 )
 and not exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'COMMENT' and d.target_id in ('c-sd-3','c-sd-4')
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-4'
 )
+and (select moderation_visibility from public.item_posts where id = 'p-sd-dismiss') = 'PUBLISHED'
 and exists (
   select 1 from public.content_reports r
    where r.target_type = 'COMMENT' and r.target_id = 'c-sd-3' and r.status = 'DISMISSED'
@@ -814,23 +887,36 @@ do $$
 begin
   begin
     perform public.findback_apply_moderation('COMMENT', 'c-sd-3', 'HIDE', 'HARASSMENT', 'B overrides the dismissal', null, null);
-    raise exception 'S11b FAILED: B reversed A''s dismissal through the content key' using errcode = '0A000';
+    raise exception 'S11b FAILED: B reversed A''s comment dismissal' using errcode = '0A000';
   exception when sqlstate 'P0001' then
     if sqlerrm <> 'MODERATION_DECISION_FINAL' then
       raise exception 'S11b FAILED: wrong refusal token (%)', sqlerrm;
     end if;
     raise notice 'S11b ok: B is refused on the same comment';
   end;
-
-  begin
-    perform public.findback_apply_moderation('POST', 'p-sd-dismiss', 'HIDE', 'HARASSMENT', 'B hides the parent', null, null);
-    raise exception 'S11c FAILED: B reversed the dismissal through the parent post' using errcode = '0A000';
-  exception when sqlstate 'P0001' then
-    raise notice 'S11c ok: B is refused on the parent post too';
-  end;
 end;
 $$;
 
+-- S11c: the parent post is a separate case and may be decided independently.
+do $$
+begin
+  if public.findback_apply_moderation('POST', 'p-sd-dismiss', 'HIDE', 'HARASSMENT', 'B hides the parent independently', null, null) is null then
+    raise exception 'S11c FAILED: the independent post decision was refused';
+  end if;
+end;
+$$;
+
+reset role;
+
+select 'S11c the parent post does not inherit the comment verdict' as probe
+where (select moderation_visibility from public.item_posts where id = 'p-sd-dismiss') = 'HIDDEN'
+  and (select moderation_visibility from public.comments where id = 'c-sd-3') = 'PUBLISHED'
+  and (select decision_action from public.moderation_case_decisions
+        where target_type = 'COMMENT' and target_id = 'c-sd-3') = 'NO_ACTION'
+  and (select generation from public.moderation_case_decisions
+        where target_type = 'COMMENT' and target_id = 'c-sd-3') = 1;
+
+set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
 do $$
 begin
@@ -842,44 +928,98 @@ $$;
 
 reset role;
 
-select 'S11d the same decider revises one coherent generation' as probe
-where (select moderation_visibility from public.item_posts where id = 'p-sd-dismiss') = 'HIDDEN'
+select 'S11d the same decider revises one comment generation' as probe
+where (select moderation_visibility from public.comments where id = 'c-sd-3') = 'HIDDEN'
   and exists (
     select 1 from public.moderation_case_decisions d
-     where d.target_type = 'POST' and d.target_id = 'p-sd-dismiss'
+     where d.target_type = 'COMMENT' and d.target_id = 'c-sd-3'
        and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
        and d.decision_action = 'HIDE'
        and d.generation = 2
   )
   and exists (
     select 1 from public.content_reports r
-     where r.target_type = 'COMMENT' and r.target_id = 'c-sd-4' and r.status = 'ACTIONED'
+     where r.target_type = 'COMMENT' and r.target_id = 'c-sd-4' and r.status = 'OPEN'
+  )
+  and exists (
+    select 1 from public.moderation_case_decisions d
+     where d.target_type = 'POST' and d.target_id = 'p-sd-dismiss'
+       and d.decider_user_id = '00000000-0000-4000-8000-00000000f103'
+       and d.generation = 1
   );
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
+-- Reverse direction: after A's HIDE, B cannot dismiss the SAME COMMENT.
+do $$ begin
+  begin
+    perform public.findback_apply_moderation('COMMENT','c-sd-3','NO_ACTION','OTHER','B tries to dismiss the hide',null,null);
+    raise exception 'S11 reverse FAILED: B dismissed another decider''s hidden comment' using errcode='0A000';
+  exception when sqlstate 'P0001' then
+    if sqlerrm<>'MODERATION_DECISION_FINAL' then raise; end if;
+  end;
+end $$;
+reset role;
+select 'S11 reverse refusal changes no comment, report, audit or generation' as probe
+where (select moderation_visibility from public.comments where id='c-sd-3')='HIDDEN'
+  and (select generation from public.moderation_case_decisions where target_type='COMMENT' and target_id='c-sd-3')=2
+  and (select decision_action from public.moderation_case_decisions where target_type='COMMENT' and target_id='c-sd-3')='HIDE'
+  and (select count(*) from public.admin_audit_log where target_type='COMMENT' and target_id='c-sd-3')=2
+  and not exists(select 1 from public.content_reports where target_type='COMMENT' and target_id='c-sd-3' and status<>'DISMISSED');
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
+
+do $$
+begin
+  if public.findback_apply_moderation('COMMENT', 'c-sd-4', 'NO_ACTION', 'OTHER', 'B dismisses the second comment', null, null) is null then
+    raise exception 'S11e FAILED: an independent comment case was refused';
+  end if;
+end;
+$$;
+
+reset role;
+
+select 'S11e another comment case is decided independently' as probe
+where exists (
+  select 1 from public.moderation_case_decisions d
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-4'
+     and d.decider_user_id = '00000000-0000-4000-8000-00000000f103'
+     and d.decision_action = 'NO_ACTION'
+     and d.generation = 1
+)
+and exists (
+  select 1 from public.content_reports r
+   where r.target_type = 'COMMENT' and r.target_id = 'c-sd-4' and r.status = 'DISMISSED'
+)
+and (select generation from public.moderation_case_decisions
+      where target_type = 'COMMENT' and target_id = 'c-sd-3') = 2;
+
+-- S11f: the reverse ordering on the SAME comment is still refused.
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
+
 do $$
 begin
   begin
-    perform public.findback_apply_moderation('COMMENT', 'c-sd-4', 'NO_ACTION', 'OTHER', 'B dismisses instead', null, null);
-    raise exception 'S11e FAILED: B reversed a content decision with a dismissal' using errcode = '0A000';
+    perform public.findback_apply_moderation('COMMENT', 'c-sd-4', 'HIDE', 'HARASSMENT', 'A reverses B''s dismissal', null, null);
+    raise exception 'S11f FAILED: a comment decision was reversed by another moderator' using errcode = '0A000';
   exception when sqlstate 'P0001' then
-    raise notice 'S11e ok: the reverse ordering is refused too';
+    raise notice 'S11f ok: the reverse ordering is refused';
   end;
 end;
 $$;
 
-select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
-
-select 'S11f the comment reader shows the one post-atom decision' as probe
+select 'S11g the comment reader shows the comment atom decision' as probe
 where (public.findback_moderation_target('COMMENT', 'c-sd-3')->'decision'->>'action') = 'HIDE'
-  and (public.findback_moderation_target('COMMENT', 'c-sd-3')->'decision'->>'generation')::int = 2;
+  and (public.findback_moderation_target('COMMENT', 'c-sd-3')->'decision'->>'generation')::int = 2
+  and (public.findback_moderation_target('COMMENT', 'c-sd-4')->'decision'->>'action') = 'NO_ACTION'
+  and (public.findback_moderation_target('COMMENT', 'c-sd-4')->'decision'->>'generation')::int = 1;
 
 -- ---------------------------------------------------------------------------
 -- S12. A reopened comment-origin case keeps its report evidence and history.
 --
---      R10-M2: the queue row for the reopened POST must count the comment
+--      Owner amendment: the queue row for the reopened COMMENT must count its
 --      report, the target reader must project its snapshot and the COMMENT
 --      audit outcome, and decision/reopen must come from the same case.
 -- ---------------------------------------------------------------------------
@@ -912,10 +1052,10 @@ $$;
 
 reset role;
 
-select 'S12 the decision is on the post atom with a COMMENT audit' as probe
+select 'S12 the decision is on the comment atom with a COMMENT audit' as probe
 where exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'POST' and d.target_id = 'p-sd-reopen'
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-5'
      and d.decider_user_id = '00000000-0000-4000-8000-00000000f102'
      and d.audit_id = current_setting('probe.sd_reopen_audit', true)
      and d.generation = 1
@@ -940,16 +1080,17 @@ $$;
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
-select 'S12 the queue counts the comment report on the POST case' as probe
+select 'S12 the queue counts the comment report on the COMMENT case' as probe
 from public.findback_moderation_queue(200) q
-where q.target_type = 'POST' and q.target_id = 'p-sd-reopen'
+where q.target_type = 'COMMENT' and q.target_id = 'c-sd-5'
   and q.status = 'OPEN'
+  and q.current_visibility = 'HIDDEN'
   and q.report_count = 1
   and q.reasons @> array['HARASSMENT']::text[];
 
-select 'S12 the POST reader projects the comment evidence and audit' as probe
+select 'S12 the COMMENT reader projects its evidence and audit' as probe
 where exists (
-  select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-reopen')->'reports') e
+  select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-5')->'reports') e
    where e->>'id' = current_setting('probe.sd_reopen_report', true)
      and e->>'reason' = 'HARASSMENT'
      and e->>'status' = 'ACTIONED'
@@ -957,17 +1098,20 @@ where exists (
      and e->'evidence'->>'post_id' = 'p-sd-reopen'
 )
 and exists (
-  select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-reopen')->'outcomes') e
+  select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-5')->'outcomes') e
    where e->>'action' = 'HIDE'
      and e->>'reason' = 'HARASSMENT'
 )
-and (public.findback_moderation_target('POST', 'p-sd-reopen')->'decision'->>'action') = 'HIDE'
-and (public.findback_moderation_target('POST', 'p-sd-reopen')->'decision'->>'generation')::int = 1
-and (public.findback_moderation_target('POST', 'p-sd-reopen')->'reopen'->>'message') = 'Please re-evaluate this.';
+and (public.findback_moderation_target('COMMENT', 'c-sd-5')->'decision'->>'action') = 'HIDE'
+and (public.findback_moderation_target('COMMENT', 'c-sd-5')->'target'->>'moderation_visibility') = 'HIDDEN'
+and (public.findback_moderation_target('COMMENT', 'c-sd-5')->'decision'->>'generation')::int = 1
+and (public.findback_moderation_target('COMMENT', 'c-sd-5')->'reopen'->>'message') = 'Please re-evaluate this.'
+and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-reopen')->'reports') = 0
+and (public.findback_moderation_target('POST', 'p-sd-reopen')->'decision') = 'null'::jsonb;
 
 do $$
 begin
-  if public.findback_apply_moderation('POST', 'p-sd-reopen', 'PUBLISH', 'HARASSMENT', 'B reconsiders the atom', null, null) is null then
+  if public.findback_apply_moderation('COMMENT', 'c-sd-5', 'PUBLISH', 'HARASSMENT', 'B reconsiders the comment', null, null) is null then
     raise exception 'S12b FAILED: B could not decide the reopened case';
   end if;
 end;
@@ -979,13 +1123,13 @@ select 'S12b B owns generation 2 after the re-evaluation' as probe
 where (select moderation_visibility from public.item_posts where id = 'p-sd-reopen') = 'PUBLISHED'
   and exists (
     select 1 from public.moderation_case_decisions d
-     where d.target_type = 'POST' and d.target_id = 'p-sd-reopen'
+     where d.target_type = 'COMMENT' and d.target_id = 'c-sd-5'
        and d.decider_user_id = '00000000-0000-4000-8000-00000000f103'
        and d.generation = 2
        and d.reopened_at is null
   );
 
--- Mixed direct and comment reports on the same atom.
+-- Mixed direct and comment reports are separate atoms, even on the same post.
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f112', true);
@@ -1032,26 +1176,28 @@ $$;
 
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
-select 'S12c mixed direct and comment reports are one case' as probe
+select 'S12c the reopened post case counts only its direct report' as probe
 from public.findback_moderation_queue(200) q
 where q.target_type = 'POST' and q.target_id = 'p-sd-mixed'
   and q.status = 'OPEN'
-  and q.report_count = 2
-  and q.reasons @> array['INAPPROPRIATE_CONTENT','SCAM_OR_MISLEADING']::text[];
+  and q.report_count = 1
+  and q.reasons = array['SCAM_OR_MISLEADING']::text[];
 
-select 'S12c the mixed reader projects both reports' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-mixed')->'reports') = 2
+select 'S12c the mixed readers keep their reports separate' as probe
+where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-mixed')->'reports') = 1
   and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-mixed')->'outcomes') = 1
-  and (public.findback_moderation_target('POST', 'p-sd-mixed')->'reopen'->>'message') = 'Reconsider the whole post.';
+  and (public.findback_moderation_target('POST', 'p-sd-mixed')->'reopen'->>'message') = 'Reconsider the whole post.'
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-6')->'reports') = 1
+  and (public.findback_moderation_target('COMMENT', 'c-sd-6')->'reports'->0->>'status') = 'OPEN'
+  and (public.findback_moderation_target('COMMENT', 'c-sd-6')->'decision') = 'null'::jsonb;
 
 
 -- ---------------------------------------------------------------------------
 -- S13. Deleting a comment must not delete its retained case evidence.
 --
---      R11 finding: the canonical atom was resolved only through the live
---      comments row, so a deleted comment dropped its report, its snapshot and
---      its COMMENT audit from the queue/target reader. The report snapshot
---      still names the post; the current decision still points at the audit.
+--      Exact COMMENT identity survives the live row without falling back to
+--      POST. Its receipt/snapshot/history stay readable to staff, independent
+--      of its sibling and parent. A missing target can be dismissed, not hidden.
 -- ---------------------------------------------------------------------------
 
 set local role authenticated;
@@ -1091,28 +1237,31 @@ select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103
 
 select 'S13 the deleted comment report stays on the queue atom' as probe
 from public.findback_moderation_queue(200) q
-where q.target_type = 'POST' and q.target_id = 'p-sd-deleted'
+where q.target_type = 'COMMENT' and q.target_id = 'c-sd-7'
   and q.status = 'OPEN'
-  and q.report_count = 2
-  and q.reasons @> array['HARASSMENT','SPAM_OR_DUPLICATE']::text[];
+  and q.report_count = 1
+  and q.reasons = array['HARASSMENT']::text[];
 
-select 'S13 the POST reader keeps both comment reports' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-deleted')->'reports') = 2
+select 'S13 each COMMENT reader keeps only its own report after deletion' as probe
+where jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-7')->'reports') = 1
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-8')->'reports') = 1
+  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-deleted')->'reports') = 0
   and exists (
-    select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-deleted')->'reports') e
+    select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-7')->'reports') e
      where e->>'id' = current_setting('probe.sd_deleted_report', true)
        and e->>'status' = 'OPEN'
        and e->'evidence'->>'target_type' = 'COMMENT'
        and e->'evidence'->>'post_id' = 'p-sd-deleted'
   )
-  and (public.findback_moderation_target('POST', 'p-sd-deleted')->'decision'->>'action') is null;
+  and (public.findback_moderation_target('COMMENT', 'c-sd-7')->'decision'->>'action') is null
+  and (public.findback_moderation_target('COMMENT', 'c-sd-7')->>'target_exists')::boolean = false;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
 do $$
 begin
-  if public.findback_apply_moderation('POST', 'p-sd-deleted', 'HIDE', 'HARASSMENT', 'A hides the atom', null, null) is null then
-    raise exception 'S13b FAILED: the post could not be decided';
+  if public.findback_apply_moderation('COMMENT', 'c-sd-7', 'NO_ACTION', 'HARASSMENT', 'The target was deleted', null, null) is null then
+    raise exception 'S13b FAILED: the deleted comment report could not be dismissed';
   end if;
   if public.findback_apply_moderation('COMMENT', 'c-sd-8', 'HIDE', 'SPAM_OR_DUPLICATE', 'A hides the second comment', null, null) is null then
     raise exception 'S13b FAILED: the second comment could not be decided';
@@ -1122,20 +1271,25 @@ $$;
 
 reset role;
 
-select 'S13b the content decision closes the deleted comment report' as probe
+select 'S13b each decision closes only its exact comment report' as probe
 where exists (
   select 1 from public.content_reports r
    where r.id = current_setting('probe.sd_deleted_report', true)
-     and r.status = 'ACTIONED'
+     and r.status = 'DISMISSED'
 )
 and exists (
   select 1 from public.moderation_case_decisions d
-   where d.target_type = 'POST' and d.target_id = 'p-sd-deleted'
-     and d.decision_action = 'HIDE'
-     and d.generation = 2
+   where d.target_type = 'COMMENT' and d.target_id = 'c-sd-7'
+     and d.decision_action = 'NO_ACTION'
+     and d.generation = 1
      and current_setting('probe.sd_deleted_report', true) = any(d.known_report_ids)
-     and current_setting('probe.sd_deleted_report_2', true) = any(d.known_report_ids)
-);
+     and not (current_setting('probe.sd_deleted_report_2', true) = any(d.known_report_ids))
+)
+and exists (
+  select 1 from public.content_reports r
+   where r.id = current_setting('probe.sd_deleted_report_2', true) and r.status = 'ACTIONED'
+)
+and (select moderation_visibility from public.item_posts where id = 'p-sd-deleted') = 'PUBLISHED';
 
 -- The live comment is deleted after its COMMENT decision. Its audit must
 -- survive through the decision row.
@@ -1145,12 +1299,13 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 
 select 'S13c the deleted comment audit survives through the decision' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-deleted')->'reports') = 2
-  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-deleted')->'outcomes') = 2
-  and (public.findback_moderation_target('POST', 'p-sd-deleted')->'decision'->>'action') = 'HIDE'
-  and (public.findback_moderation_target('POST', 'p-sd-deleted')->'decision'->>'generation')::int = 2
+where jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-8')->'reports') = 1
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-8')->'outcomes') = 1
+  and (public.findback_moderation_target('COMMENT', 'c-sd-8')->'decision'->>'action') = 'HIDE'
+  and (public.findback_moderation_target('COMMENT', 'c-sd-8')->'decision'->>'generation')::int = 1
+  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-deleted')->'outcomes') = 0
   and exists (
-    select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-deleted')->'outcomes') e
+    select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-8')->'outcomes') e
      where e->>'action' = 'HIDE'
   );
 
@@ -1192,24 +1347,25 @@ select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103
 
 select 'S14 an OPEN receipt survives erasure on the queue' as probe
 from public.findback_moderation_queue(200) q
-where q.target_type = 'POST' and q.target_id = 'p-sd-erased'
+where q.target_type = 'COMMENT' and q.target_id = 'c-sd-9'
   and q.status = 'OPEN'
   and q.report_count = 1
   and q.reasons @> array['HARASSMENT']::text[];
 
 select 'S14 the reader keeps the receipt with null evidence' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased')->'reports') = 1
+where jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-9')->'reports') = 1
   and exists (
-    select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-erased')->'reports') e
+    select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-9')->'reports') e
      where e->>'id' = current_setting('probe.sd_erased_report', true)
        and e->>'status' = 'OPEN'
        and (e->'evidence') = 'null'::jsonb
   )
-  and (public.findback_moderation_target('POST', 'p-sd-erased')->'decision'->>'action') is null;
+  and (public.findback_moderation_target('COMMENT', 'c-sd-9')->'decision'->>'action') is null
+  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased')->'reports') = 0;
 
 -- A proactive comment action (no report at all), then deletion, then a parent
--- revision. The older COMMENT action must stay on the atom's history and the
--- deleted COMMENT reader must still resolve the current parent decision.
+-- decision. The deleted COMMENT keeps its own history; the new parent decision
+-- must neither adopt nor overwrite it.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f102', true);
 do $$
@@ -1238,16 +1394,17 @@ reset role;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 set local role authenticated;
 
-select 'S14b a proactive COMMENT action survives deletion and revision' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased-2')->'outcomes') = 2
+select 'S14b a proactive COMMENT action survives deletion independently' as probe
+where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased-2')->'outcomes') = 1
   and (public.findback_moderation_target('POST', 'p-sd-erased-2')->'decision'->>'action') = 'PUBLISH'
-  and (public.findback_moderation_target('POST', 'p-sd-erased-2')->'decision'->>'generation')::int = 2
-  and (public.findback_moderation_target('COMMENT', 'c-sd-10')->'decision'->>'action') = 'PUBLISH'
-  and (public.findback_moderation_target('COMMENT', 'c-sd-10')->'decision'->>'generation')::int = 2;
+  and (public.findback_moderation_target('POST', 'p-sd-erased-2')->'decision'->>'generation')::int = 1
+  and (public.findback_moderation_target('COMMENT', 'c-sd-10')->'decision'->>'action') = 'HIDE'
+  and (public.findback_moderation_target('COMMENT', 'c-sd-10')->'decision'->>'generation')::int = 1
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-10')->'outcomes') = 1;
 
 -- A reported comment, a current appeal, deletion and erasure, then a parent
--- revision. The receipt, the COMMENT audit and the current decision must all
--- remain on the POST case.
+-- dismissal. The receipt, COMMENT audit and decision remain on the COMMENT
+-- case. There is no live row to publish, so re-evaluation must not invent one.
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f117', true);
 do $$
@@ -1295,7 +1452,12 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 do $$
 begin
-  if public.findback_apply_moderation('POST', 'p-sd-erased-3', 'PUBLISH', 'INAPPROPRIATE_CONTENT', 'B after erasure', null, null) is null then
+  begin
+    perform public.findback_apply_moderation('COMMENT', 'c-sd-11', 'PUBLISH', 'INAPPROPRIATE_CONTENT', 'No live row to publish', null, null);
+    raise exception 'S14c FAILED: a deleted comment was published' using errcode = '0A000';
+  exception when no_data_found then null;
+  end;
+  if public.findback_apply_moderation('COMMENT', 'c-sd-11', 'NO_ACTION', 'INAPPROPRIATE_CONTENT', 'B after erasure', null, null) is null then
     raise exception 'S14c FAILED: B could not decide the reopened case';
   end if;
 end;
@@ -1306,27 +1468,27 @@ select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103
 set local role authenticated;
 
 select 'S14c the erased receipt and COMMENT audit stay on the case' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased-3')->'reports') = 1
+where jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-11')->'reports') = 1
   and exists (
-    select 1 from jsonb_array_elements(public.findback_moderation_target('POST', 'p-sd-erased-3')->'reports') e
+    select 1 from jsonb_array_elements(public.findback_moderation_target('COMMENT', 'c-sd-11')->'reports') e
      where e->>'id' = current_setting('probe.sd_erased_report_2', true)
        and (e->'evidence') = 'null'::jsonb
   )
-  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased-3')->'outcomes') = 2
-  and (public.findback_moderation_target('POST', 'p-sd-erased-3')->'decision'->>'action') = 'PUBLISH'
-  and (public.findback_moderation_target('POST', 'p-sd-erased-3')->'decision'->>'generation')::int = 2
-  and (public.findback_moderation_target('COMMENT', 'c-sd-11')->'decision'->>'action') = 'PUBLISH'
-  and (public.findback_moderation_target('COMMENT', 'c-sd-11')->'decision'->>'generation')::int = 2;
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-11')->'outcomes') = 2
+  and (public.findback_moderation_target('COMMENT', 'c-sd-11')->'decision'->>'action') = 'NO_ACTION'
+  and (public.findback_moderation_target('COMMENT', 'c-sd-11')->'decision'->>'generation')::int = 2
+  and (public.findback_moderation_target('COMMENT', 'c-sd-11')->'reopen') = 'null'::jsonb
+  and (public.findback_moderation_target('POST', 'p-sd-erased-3')->'decision') = 'null'::jsonb
+  and jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-erased-3')->'reports') = 0;
 
 reset role;
 
 -- ---------------------------------------------------------------------------
--- S15. Legacy backfill prefers the authoritative live comment parent.
+-- S15. Audit association uses exact COMMENT identity, live or deleted.
 --
---      R13-M1: the audit backfill looked only at retained reports, so a
---      pre-migration proactive COMMENT action on a still-live comment was
---      wrongly keyed COMMENT even though its parent was recoverable. The
---      backfill helper is re-run here against a nonempty legacy fixture.
+--      This is a post-amendment association test. Actual pre-amendment COMMENT
+--      history blocks migration with LEGACY_COMMENT_CASE_REMEDIATION_REQUIRED;
+--      it cannot be silently reclassified by this helper.
 -- ---------------------------------------------------------------------------
 
 insert into public.admin_audit_log (
@@ -1340,12 +1502,12 @@ insert into public.admin_audit_log (
 
 select public.findback_backfill_moderation_case_audits();
 
-select 'S15 a live legacy comment audit maps to its parent' as probe
+select 'S15 a comment audit maps to the exact comment' as probe
 where exists (
   select 1 from public.moderation_case_audits ca
    where ca.audit_id = 'sd-legacy-comment-audit'
-     and ca.case_type = 'POST'
-     and ca.case_id = 'p-sd-legacy'
+     and ca.case_type = 'COMMENT'
+     and ca.case_id = 'c-sd-legacy'
 );
 
 -- A parent revision after the backfill: the legacy action must stay on the
@@ -1364,8 +1526,9 @@ reset role;
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 set local role authenticated;
 
-select 'S15 the legacy action is in the parent history before deletion' as probe
-where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-legacy')->'outcomes') = 2
+select 'S15 parent and comment histories are separate before deletion' as probe
+where jsonb_array_length(public.findback_moderation_target('POST', 'p-sd-legacy')->'outcomes') = 1
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'outcomes') = 1
   and (public.findback_moderation_target('POST', 'p-sd-legacy')->'decision'->>'generation')::int = 1;
 
 reset role;
@@ -1374,10 +1537,11 @@ delete from public.comments where id = 'c-sd-legacy';
 select set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-00000000f103', true);
 set local role authenticated;
 
-select 'S15 the deleted legacy COMMENT resolves the parent and its history' as probe
-where (public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'decision'->>'action') = 'PUBLISH'
-  and (public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'decision'->>'generation')::int = 1
-  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'outcomes') = 2;
+select 'S15 deleted COMMENT retains only its exact audit history' as probe
+where (public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'decision') = 'null'::jsonb
+  and (public.findback_moderation_target('COMMENT', 'c-sd-legacy')->>'target_exists')::boolean = false
+  and jsonb_array_length(public.findback_moderation_target('COMMENT', 'c-sd-legacy')->'outcomes') = 1
+  and (public.findback_moderation_target('POST', 'p-sd-legacy')->'decision'->>'generation')::int = 1;
 
 reset role;
 select set_config('request.jwt.claim.sub', '', true);

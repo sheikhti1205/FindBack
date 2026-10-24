@@ -311,20 +311,74 @@ describe("PostDetail comment Like (packet 08 §2 — Like-only)", () => {
     expect(screen.queryByTestId("reaction-tray")).toBeNull();
   });
 
-  it("patches a comment summary live from a comment reaction:changed broadcast", async () => {
+  it("refetches a comment summary on invalidation without trusting shared counts", async () => {
     renderDetail();
     await screen.findByTestId("comment-react-c1");
-    const handler = realtimeHandlers.get("reaction:changed");
+    postsMock.fetchComments.mockResolvedValue([
+      { ...summerizedComment, reactionSummary: { counts: { LOVE: 5, WOW: 4 }, myReaction: null, total: 9 } }, reactedComment,
+    ]);
+    const handler = realtimeHandlers.get("reaction:invalidate");
     expect(handler).toBeTruthy();
 
     act(() => {
-      handler!({ postId: "p1", commentId: "c1", reactionCounts: { LOVE: 5, WOW: 4 } });
+      handler!({ postId: "p1", invalidate: true });
     });
 
-    expect(screen.getByTestId("comment-react-c1").getAttribute("aria-label")).toBe(
+    expect((await screen.findByTestId("comment-react-c1")).getAttribute("aria-label")).toBe(
       "Like this comment, 9 likes",
     );
+    expect(postsMock.fetchComments).toHaveBeenCalledTimes(2);
     // The post control is untouched by a comment broadcast.
     expect(screen.getByTestId("detail-like").getAttribute("aria-label")).toBe("Like, 4 likes");
+  });
+
+  it("keeps the chosen reply target through another account's reaction invalidation", async () => {
+    renderDetail();
+    const replyControl = await screen.findByLabelText("Reply to commenter");
+    fireEvent.click(replyControl);
+    expect(screen.getByText(/Replying to/)).toBeTruthy();
+
+    // A stranger likes a comment. The broadcast names no child and carries no
+    // op: it must refresh through the authorized list, not destroy the draft.
+    const handler = realtimeHandlers.get("reaction:invalidate");
+    act(() => {
+      handler!({ postId: "p1", invalidate: true });
+    });
+
+    await waitFor(() => expect(postsMock.fetchComments).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Replying to/)).toBeTruthy();
+    // The list stays painted (no conceal) so the conversation does not blank.
+    expect(screen.getByTestId("comment-react-c1")).toBeTruthy();
+  });
+
+  it("conceals only on a moderation signal and clears the reply target only when it is truly gone", async () => {
+    renderDetail();
+    fireEvent.click(await screen.findByLabelText("Reply to commenter"));
+    expect(screen.getByText(/Replying to/)).toBeTruthy();
+
+    const handler = realtimeHandlers.get("comment:invalidate");
+    expect(handler).toBeTruthy();
+
+    // Another account inserting a comment is a quiet refetch.
+    act(() => {
+      handler!({ postId: "p1", invalidate: true, op: "INSERT" });
+    });
+    await waitFor(() => expect(postsMock.fetchComments).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Replying to/)).toBeTruthy();
+
+    // A moderation invalidation conceals the unverified bodies, and because the
+    // refetched list still contains the parent the reply target survives.
+    act(() => {
+      handler!({ postId: "p1", invalidate: true, op: "MODERATION" });
+    });
+    await waitFor(() => expect(postsMock.fetchComments).toHaveBeenCalledTimes(3));
+    expect(screen.getByText(/Replying to/)).toBeTruthy();
+
+    // When the authorized list no longer contains it, it is genuinely gone.
+    postsMock.fetchComments.mockResolvedValue([reactedComment]);
+    act(() => {
+      handler!({ postId: "p1", invalidate: true, op: "MODERATION" });
+    });
+    await waitFor(() => expect(screen.queryByText(/Replying to/)).toBeNull());
   });
 });

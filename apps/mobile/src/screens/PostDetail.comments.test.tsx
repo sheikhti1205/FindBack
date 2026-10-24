@@ -98,10 +98,10 @@ function renderDetail(entries: string[] = ["/posts/p1"]) {
 }
 
 function deleteButtonFor(commentId: string) {
-  const buttons = screen.getAllByRole("button", { name: /delete comment by/i });
-  const match = buttons.find((b) => b.closest("li")?.id === `detail-comment-${commentId}`);
-  if (!match) throw new Error(`no delete button scoped to ${commentId}`);
-  return match;
+  const row = document.getElementById(`detail-comment-${commentId}`)!;
+  const trigger = within(row).getAllByRole("button", { name: /actions for comment by/i }).find(b => b.closest("li") === row)!;
+  fireEvent.click(trigger);
+  return within(row).getByRole("menuitem", { name: /delete comment/i });
 }
 
 describe("PostDetail inline comment threads", () => {
@@ -264,7 +264,8 @@ describe("PostDetail inline comment threads", () => {
   });
 
   it("deleting a parent drops its expanded thread state", async () => {
-    postsMock.fetchComments.mockResolvedValue([
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const original = [
       makeComment("r1", "rootOne", "first root"),
       makeComment("r1a", "u1", "first root reply a", "r1", 1),
       makeComment("r1b", "u2a", "first root reply b", "r1", 1),
@@ -272,7 +273,8 @@ describe("PostDetail inline comment threads", () => {
       makeComment("r2a", "u3", "second root reply a", "r2", 1),
       makeComment("r2b", "u4", "second root reply b", "r2", 1),
       makeComment("r2c", "u5", "second root reply c", "r2", 1),
-    ]);
+    ];
+    postsMock.fetchComments.mockResolvedValueOnce(original).mockResolvedValue(original.filter(c => c.id.startsWith("r1")));
     renderDetail();
     // Expand the second thread beyond its default window.
     const rootTwoLi = await screen.findByText("second root");
@@ -287,14 +289,16 @@ describe("PostDetail inline comment threads", () => {
     expect(screen.queryByText("second root reply c")).toBeNull();
     // The surviving thread is untouched.
     expect(screen.getByText("first root reply a")).toBeTruthy();
-    // Re-add a same-id thread live: stale expanded counts must be gone, so it
-    // renders collapsed to the default first-replies window again.
-    const added = realtimeHandlers.get("comment:added");
-    expect(added).toBeTruthy();
-    added!({ comment: makeComment("r2", "rootTwo", "second root returns") });
-    for (const [id, user, body] of [["r2a", "u3", "returned reply a"], ["r2b", "u4", "returned reply b"], ["r2c", "u5", "returned reply c"], ["r2d", "u6", "returned reply d"]] as const) {
-      added!({ comment: makeComment(id, user, body, "r2", 1) });
-    }
+    // Re-add a same-id thread through the authorized list, never broadcast
+    // content. Its old expansion must still be forgotten.
+    postsMock.fetchComments.mockResolvedValue([
+      ...original.filter(c => c.id.startsWith("r1")), makeComment("r2", "rootTwo", "second root returns"),
+      ...([["r2a", "u3", "returned reply a"], ["r2b", "u4", "returned reply b"], ["r2c", "u5", "returned reply c"], ["r2d", "u6", "returned reply d"]] as const)
+        .map(([id, user, body]) => makeComment(id, user, body, "r2", 1)),
+    ]);
+    const invalidate = realtimeHandlers.get("comment:invalidate");
+    expect(invalidate).toBeTruthy();
+    invalidate!({ postId: "p1", invalidate: true });
     const revived = (await screen.findByText("second root returns")).closest("li") as HTMLElement;
     expect(within(revived).getByText("returned reply a")).toBeTruthy();
     expect(within(revived).queryByText("returned reply c")).toBeNull();

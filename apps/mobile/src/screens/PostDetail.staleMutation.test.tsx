@@ -154,6 +154,8 @@ describe("PostDetail stale mutation guard (W8-STATIC)", () => {
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 99, dislikeCount: 0, myReaction: "LIKE" }));
 
     expect(screen.queryByRole("button", { name: /Liked, 99 likes/ })).toBeNull();
-    await waitFor(() => expect(screen.getByRole("button", { name: /Liked, 2 likes/ })).toBeTruthy());
+    // New account reloads its own server truth, not the previous account's
+    // optimistic Like. Keeping that optimistic state was an identity leak.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Like, 1 like/ })).toBeTruthy());
   });
 });

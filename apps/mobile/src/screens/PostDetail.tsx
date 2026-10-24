@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, Tag, ThumbsDown, X } from "lucide-react";
@@ -26,7 +26,6 @@ import { ReportReferenceCard } from "../components/ReportReferenceCard";
 import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
-import { mapCommentAttachmentRefs } from "../services/commentAttachments";
 import { ReportShareButton } from "../components/ReportShareButton";
 import { SafetyActions } from "../components/SafetyActions";
 import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
@@ -86,21 +85,6 @@ function scrollToSection(id: string) {
   const reduced = shouldReduceMotion();
   el.focus({ preventScroll: true });
   el.scrollIntoView({ behavior: reduced ? "instant" : "smooth", block: "start" });
-}
-
-/**
- * Forward-provisioning for typed report references (I4b): the writer RPC
- * returns comment + author columns only, so the descriptors just sent are
- * merged onto the local comment and the card appears before any refetch.
- * Media descriptors are ignored here — they render from the body — and the
- * refs go through the same kind-gated mapper as the list path.
- */
-export function withSentReportRefs(
-  comment: CommentItem,
-  attachments?: readonly CommentAttachmentDescriptor[],
-): CommentItem {
-  const refs = mapCommentAttachmentRefs(attachments);
-  return refs.length ? { ...comment, attachments: refs } : comment;
 }
 
 /**
@@ -262,6 +246,18 @@ export function PostDetail() {
   const commentsRef = useRef<CommentItem[]>([]);
   commentsRef.current = comments;
 
+  // A new account/report is a new authorization boundary, not a reload of the
+  // old list. Clear private content before paint and fence every outstanding
+  // response (including requests that finish during unmount).
+  useLayoutEffect(() => {
+    ++loadGen.current; ++commentsSeq.current; ++socialSeq.current;
+    setComments([]); setReplyTo(null); setCommentSummaries({}); setCommentPending({});
+    setCommentsLoading(true); setCommentsError(null);
+    setMyReaction(null); setMyRating(null); setPostCountsOverride(null);
+    setLightbox(null); setPost(null); setLoading(true); postPresentRef.current = false;
+    return () => { ++loadGen.current; ++commentsSeq.current; ++socialSeq.current; };
+  }, [id, user?.id]);
+
   const loadPost = useCallback(
     async (gen: number) => {
       const startedAt = Date.now();
@@ -280,7 +276,7 @@ export function PostDetail() {
         if (loadGen.current === gen) setLoading(false);
       }
     },
-    [id],
+    [id, user?.id],
   );
 
   const loadComments = useCallback(
@@ -292,6 +288,8 @@ export function PostDetail() {
         if (loadGen.current !== gen || commentsSeq.current !== seq) return;
         setCommentsError(null);
         setComments(cs);
+        setCommentSummaries({});
+        setReplyTo((prev) => prev ? cs.find(c => c.id === prev.id) ?? null : null);
         setCommentsEpoch((n) => n + 1);
       } catch (err) {
         recordLoadTiming("comments", Date.now() - startedAt);
@@ -301,7 +299,7 @@ export function PostDetail() {
         if (loadGen.current === gen && commentsSeq.current === seq) setCommentsLoading(false);
       }
     },
-    [id],
+    [id, user?.id],
   );
 
   const loadSocial = useCallback(
@@ -322,7 +320,7 @@ export function PostDetail() {
         if (loadGen.current === gen && socialSeq.current === seq) setSocialLoading(false);
       }
     },
-    [id],
+    [id, user?.id],
   );
 
   // Start post/comments/social in parallel; each section reconciles on its
@@ -350,6 +348,28 @@ export function PostDetail() {
     setCommentsError(null);
     void loadComments(gen, seq);
   }, [loadComments]);
+
+  const reconcileComments = useCallback((conceal = true) => {
+    const seq = ++commentsSeq.current;
+    if (conceal) {
+      // An invalidation names no child by design. Until an authorized list
+      // arrives, none of the previous media is verified, so the body/media is
+      // dropped from paint. The CHOSEN REPLY TARGET is not discarded here:
+      // another account's ordinary activity (a like, a new comment) must never
+      // destroy the user's draft context. loadComments re-points it to the
+      // refetched row and clears it only when that row is genuinely gone.
+      setComments([]); commentsRef.current = []; setCommentSummaries({}); setCommentsLoading(true);
+    }
+    setCommentsError(null);
+    return loadComments(loadGen.current, seq);
+  }, [loadComments]);
+
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState !== "hidden") void reconcileComments(false); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
+  }, [reconcileComments]);
 
   const retrySocial = useCallback(() => {
     const gen = loadGen.current;
@@ -382,15 +402,18 @@ export function PostDetail() {
   // Live updates while viewing this post (no refresh).
   useEffect(() => {
     joinPostRoom(id);
+    const invalidate = (payload: Record<string, unknown>) => {
+      if (payload.postId !== undefined && payload.postId !== id) return;
+      if (payload.userId !== undefined && payload.userId !== user?.id) return;
+      // Only a moderation/deletion/update signal may conceal the list. An
+      // INSERT, a reaction and any unknown/missing op are quiet refetches: they
+      // keep the visible conversation and the user's chosen reply target.
+      const op = String(payload.op ?? "").toUpperCase();
+      void reconcileComments(op === "MODERATION" || op === "DELETE" || op === "UPDATE");
+    };
     const offs = [
-      onRealtime("comment:added", (payload) => {
-        const p = payload as { comment: CommentItem };
-        setComments((prev) => (prev.some((c) => c.id === p.comment.id) ? prev : [...prev, p.comment]));
-      }),
-      onRealtime("comment:deleted", (payload) => {
-        const p = payload as { commentId: string };
-        setComments((prev) => prev.filter((c) => c.id !== p.commentId));
-      }),
+      onRealtime("comment:invalidate", invalidate),
+      onRealtime("reaction:invalidate", invalidate),
       onRealtime("reaction:changed", (payload) => {
         const p = payload as {
           postId: string;
@@ -400,20 +423,10 @@ export function PostDetail() {
           commentId?: string;
         };
         if (p.postId !== id) return;
-        // Comment reaction broadcast: patch that comment's summary live,
-        // keeping the caller's own reaction (the payload carries no
-        // my_reaction — it is counts-only).
+        // Older servers must not reintroduce child counts/identity into local
+        // state. Even this compatibility signal goes through authorized reads.
         if (typeof p.commentId === "string") {
-          const counts = reactionCountsFromJson(p.reactionCounts);
-          setCommentSummaries((prev) => ({
-            ...prev,
-            [p.commentId as string]: reactionSummaryFromCounts(
-              counts,
-              prev[p.commentId as string]?.myReaction ??
-                commentsRef.current.find((c) => c.id === p.commentId)?.reactionSummary?.myReaction ??
-                null,
-            ),
-          }));
+          void reconcileComments(false);
           return;
         }
         setPost((prev) =>
@@ -444,7 +457,7 @@ export function PostDetail() {
       leavePostRoom(id);
       offs.forEach((off) => off());
     };
-  }, [id, load]);
+  }, [id, user?.id, load, reconcileComments]);
 
   // W3 inline threads: ancestor chain of the ?comment= deep link. Derived
   // (not state) so a linked reply inside a collapsed branch auto-expands on
@@ -615,13 +628,12 @@ export function PostDetail() {
   async function postCommentBody(body: string, attachments?: readonly CommentAttachmentDescriptor[]) {
     if ((!body.trim() && !attachments?.length) || body.length > 1000) return;
     const snap = { postId: current.id, viewer: user?.id };
-    const comment =
-      attachments && attachments.length > 0
-        ? await addComment(current.id, body, replyTo?.id ?? null, attachments)
-        : await addComment(current.id, body, replyTo?.id ?? null);
+    if (attachments && attachments.length > 0) await addComment(current.id, body, replyTo?.id ?? null, attachments);
+    else await addComment(current.id, body, replyTo?.id ?? null);
     if (isStaleMutation(snap)) return;
-    const withRefs = withSentReportRefs(comment, attachments);
-    setComments((prev) => (prev.some((c) => c.id === comment.id) ? prev : [...prev, withRefs]));
+    // A writer's response is not the list/topology/media authority. A concurrent
+    // report/hide may have changed eligibility before the write completed.
+    void reconcileComments(false);
   }
 
   function commentFailed(message: string) {
@@ -649,6 +661,7 @@ export function PostDetail() {
       }
       setComments((prev) => prev.filter((c) => !doomed.has(c.id)));
       if (replyTo && doomed.has(replyTo.id)) setReplyTo(null);
+      void reconcileComments(false);
     } catch (err) {
       if (isStaleMutation(snap)) return;
       const message = friendlyError(err).message;
@@ -679,6 +692,7 @@ export function PostDetail() {
     if (commentPending[c.id]) return;
     const prev = commentSummaryFor(c);
     const snap = { postId: current.id, viewer: user?.id };
+    const readSeq = commentsSeq.current;
     const optimistic: ReactionSummary = reactionSummaryFromCounts(
       applyCountDeltas(prev.counts, reactionMoveDeltas(prev.myReaction, next)),
       next,
@@ -687,13 +701,13 @@ export function PostDetail() {
     setCommentSummaries((p) => ({ ...p, [c.id]: optimistic }));
     try {
       const res = await setCommentReaction(c.id, next);
-      if (isStaleMutation(snap)) return;
+      if (isStaleMutation(snap) || commentsSeq.current !== readSeq) return;
       setCommentSummaries((p) => ({
         ...p,
         [c.id]: { counts: res.counts, myReaction: res.myReaction, total: res.total },
       }));
     } catch (err) {
-      if (isStaleMutation(snap)) return;
+      if (isStaleMutation(snap) || commentsSeq.current !== readSeq) return;
       setCommentSummaries((p) => ({ ...p, [c.id]: prev }));
       const message = friendlyError(err).message;
       setActionError(message);
@@ -995,6 +1009,17 @@ export function PostDetail() {
             authorName={c.author.username}
             viewerId={user?.id ?? null}
             canDelete={canDelete}
+            onReported={() => {
+              // This receipt identifies exactly one local concealment. Keep
+              // unrelated siblings mounted while authorized topology refetches.
+              const snap = { postId: current.id, viewer: user?.id };
+              setComments(prev => prev.filter(row => row.id !== c.id));
+              setReplyTo(prev => prev?.id === c.id ? null : prev);
+              void reconcileComments(false);
+              requestAnimationFrame(() => {
+                if (!isStaleMutation(snap)) document.getElementById("detail-comments")?.focus({ preventScroll: true });
+              });
+            }}
             onDelete={() => {
               if (window.confirm("Delete this comment?")) void onDeleteComment(c.id);
             }}
@@ -1320,8 +1345,8 @@ export function PostDetail() {
           {commentsLoading ? (
             <CommentSkeleton />
           ) : commentsError ? (
-            <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
-              <span>Could not load comments: {commentsError}</span>
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+              <span className="min-w-0 break-words">Could not load comments: {commentsError}</span>
               <button
                 type="button"
                 onClick={retryComments}
