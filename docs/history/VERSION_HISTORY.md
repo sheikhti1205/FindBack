@@ -1,6 +1,6 @@
 # FindBack Version History — Draft (R3 Audit)
 
-**Status:** DRAFT — version assignments are boundary-derived, not per-commit diff-reviewed.
+**Status:** DRAFT — version assignments are boundary-derived. 640/854 commits have subject-level review; 20+ have full-diff inspection. 214 remain for individual full-diff review.
 **Source:** `VERSION_HISTORY-DRAFT-001.csv` (854 commits, r0001–r0854)
 **Recovery bundle:** `findback-full-recovery-20261024.bundle` (SHA256: 3d4161a4db7a6d9bf4aecb3b52283b6d517047f9c8ff9e4cc51ee412ed42390b)
 **Generated:** 2026-10-24
