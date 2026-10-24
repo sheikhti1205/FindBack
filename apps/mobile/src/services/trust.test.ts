@@ -475,6 +475,9 @@ describe("the interaction limits", () => {
     const { ApiError } = await import("./session");
     expect(isInteractionLimitRefusal(new ApiError("POST_LIMIT_REACHED: you have reached today's limit of 5", 429, "P0001"))).toBe(true);
     expect(isInteractionLimitRefusal(new ApiError("POST_COOLDOWN: wait 90 seconds before posting again", 429, "P0001"))).toBe(true);
+    // The zero-limit standing refusal is the guard's own word too: without it a
+    // restricted writer's refusal fell through as a generic error (R3 F-1).
+    expect(isInteractionLimitRefusal(new ApiError("POST_NOT_AVAILABLE: your account cannot post or comment right now", 403, "P0001"))).toBe(true);
     expect(isInteractionLimitRefusal(new ApiError("FEEDBACK_LIMIT_REACHED: you have reached today's feedback limit", 429, "P0001"))).toBe(false);
     expect(isInteractionLimitRefusal(new Error("POST_LIMIT_REACHED"))).toBe(false);
   });

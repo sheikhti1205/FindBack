@@ -183,9 +183,21 @@ reset role;
 
 -- IR2: raw discovery must only expose the current adverse audit, not a
 -- favorable/dismissal revision or an old adverse audit that still has a receipt.
+-- The author is a NON-probation fixture account on purpose: this suite puts
+-- user ...001 on probation at line 49, and the amended public-interaction clock
+-- now spaces any author who is on probation - five system inserts in one
+-- transaction included. Author identity is irrelevant to these moderation
+-- targets, so the fixture uses a clean account instead of switching the clock off.
+insert into public.users (id,username,email,phone,email_verified,created_at,updated_at)
+values ('00000000-0000-4000-9000-000000000006','ar_content_owner','ar_content_owner@example.invalid','+8801900000006',1,'2026-10-23T00:00:00.000Z','2026-10-23T00:00:00.000Z');
 insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-select 'ar-content-'||kind,'00000000-0000-4000-9000-000000000001','LOST','Content fixture','Description','Electronics','OPEN','2026-10-22','2026-10-23T00:00:00.000Z','2026-10-23T00:00:00.000Z'
+select 'ar-content-'||kind,'00000000-0000-4000-9000-000000000006','LOST','Content fixture','Description','Electronics','OPEN','2026-10-22','2026-10-23T00:00:00.000Z','2026-10-23T00:00:00.000Z'
 from unnest(array['hide','remove','publish','dismiss','superseded']) kind;
+-- Ownership moves to the probation fixture account afterwards: the appeals below
+-- are submitted by the affected author, but five system inserts in one statement
+-- cannot all pass the amended public-interaction clock for a probation author.
+update public.item_posts set user_id='00000000-0000-4000-9000-000000000001'
+ where id like 'ar-content-%';
 create temporary table ar_expected_content (post_id text,old_audit text,current_audit text,receipt_id text,discover boolean);
 do $$ declare kind text; old_id text; current_id text; receipt text; begin
   foreach kind in array array['hide','remove','publish','dismiss','superseded'] loop

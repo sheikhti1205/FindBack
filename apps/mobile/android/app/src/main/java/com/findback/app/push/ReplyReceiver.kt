@@ -26,14 +26,42 @@ class ReplyReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         Thread {
             try {
-                val posted = postReply(token, text)
+                val outcome = postReply(token, text)
                 val presenter = NotificationPresenter(context)
-                presenter.updateStatus(
-                    push,
-                    context.getString(if (posted) R.string.findback_reply_sent else R.string.findback_reply_failed),
-                    // Failure keeps the reply action so the user can retry inline.
-                    keepReply = !posted,
-                )
+                // A refusal is an answer, not a broken app: the clock can be waited
+                // out (so the reply action stays), the day's ceiling cannot (so the
+                // copy points at FindBack instead of inviting a retry).
+                val message: String
+                val keepReply: Boolean
+                when (outcome) {
+                    is ReplyOutcome.Sent -> {
+                        message = context.getString(R.string.findback_reply_sent)
+                        keepReply = false
+                    }
+                    is ReplyOutcome.TooFast -> {
+                        message = context.getString(
+                            R.string.findback_reply_too_fast,
+                            outcome.retryAfterSeconds,
+                        )
+                        keepReply = true
+                    }
+                    is ReplyOutcome.DailyLimit -> {
+                        message = context.getString(R.string.findback_reply_limit_reached)
+                        keepReply = false
+                    }
+                    is ReplyOutcome.Restricted -> {
+                        // Standing, not a spent day: the retry would fail identically
+                        // for as long as the restriction lasts, so the action is
+                        // retired like the ceiling and the copy says so.
+                        message = context.getString(R.string.findback_reply_restricted)
+                        keepReply = false
+                    }
+                    is ReplyOutcome.Failed -> {
+                        message = context.getString(R.string.findback_reply_failed)
+                        keepReply = true
+                    }
+                }
+                presenter.updateStatus(push, message, keepReply = keepReply)
             } finally {
                 pendingResult.finish()
             }
@@ -57,7 +85,7 @@ class ReplyReceiver : BroadcastReceiver() {
         )
     }
 
-    private fun postReply(token: String, text: String): Boolean {
+    private fun postReply(token: String, text: String): ReplyOutcome {
         var connection: HttpURLConnection? = null
         return try {
             connection = (URL(BuildConfig.REPLY_ENDPOINT).openConnection() as HttpURLConnection).apply {
@@ -68,9 +96,20 @@ class ReplyReceiver : BroadcastReceiver() {
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
             }
             connection.outputStream.use { it.write(replyRequestJson(token, text).toByteArray(Charsets.UTF_8)) }
-            connection.responseCode in 200..299
+            val status = connection.responseCode
+            // Only a refusal carries a reason worth reading; a success body is not.
+            val body = if (status in 200..299) {
+                null
+            } else {
+                connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            }
+            replyOutcomeFor(
+                status,
+                replyReasonFrom(body),
+                retryAfterSecondsFrom(connection.getHeaderField("retry-after")),
+            )
         } catch (_: Exception) {
-            false
+            ReplyOutcome.Failed
         } finally {
             connection?.disconnect()
         }

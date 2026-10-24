@@ -16,4 +16,7 @@
     <string name="findback_reply_label">Reply</string>
     <string name="findback_reply_sent">Reply sent</string>
     <string name="findback_reply_failed">Reply failed — open FindBack to try again</string>
+    <string name="findback_reply_too_fast">Too fast — reply again in %1$ds</string>
+    <string name="findback_reply_limit_reached">That\'s all your replies for today — open FindBack</string>
+    <string name="findback_reply_restricted">Replying isn\'t available on your account right now — open FindBack</string>
 </resources>

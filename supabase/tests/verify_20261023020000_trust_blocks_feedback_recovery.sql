@@ -40,8 +40,9 @@
 --   F4  a category outside the closed vocabulary → 22023
 --   F5  the author cannot read message / technical_context / admin_note
 --   F7  the daily feedback ceiling refuses the next submission
---   S3  a Probation account's second same-day post → POST_LIMIT_REACHED
---   S4  a Restricted/Suspended account's FIRST post → POST_LIMIT_REACHED
+--   S3  a Probation account's second same-day post → POST_LIMIT_REACHED (spent day)
+--   S4  a Restricted/Suspended account's FIRST post → POST_NOT_AVAILABLE (standing,
+--       not a spent day: the two causes were one word until review R3 F-1)
 --   S5  two posts inside the cooldown window → POST_COOLDOWN
 
 -- ---------------------------------------------------------------------------
@@ -897,7 +898,12 @@ and not exists (
   where c.table_schema = 'public' and c.column_name in ('reputation', 'reputation_tier', 'trust_score', 'trust_tier')
 );
 
--- S3. PROBATION caps at one per day: the first post lands, the second fails.
+-- S3. PROBATION keeps the TIER ceiling and is spaced by 30 s (owner amendment
+-- 2026-10-24). The superseded 1/day + 120 s branch is replaced, not deleted: the
+-- full contract (tier caps, cross-action spacing, no-op/removal exemptions, the
+-- private/safety bypass, expiry and revocation) is proven in
+-- verify_public_probation.sql, and this suite keeps its own independent check
+-- that the probation branch still reaches the daily ceiling.
 insert into public.account_sanctions (id, user_id, kind, starts_at, ends_at, reason_code, active, created_at)
 values ('50000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000005', 'PROBATION',
         '2026-10-01T00:00:00.000Z', null, 'OTHER', true, '2026-10-01T00:00:00.000Z');
@@ -912,8 +918,11 @@ declare
 begin
   select l.limit_per_day, l.burst_cooldown_seconds into v_limit, v_cooldown
     from public.findback_post_limit() l;
-  if v_limit <> 1 then
-    raise exception 'S3a FAILED: a Probation account''s limit is %, not 1', v_limit;
+  if v_limit <> 3 then
+    raise exception 'S3a FAILED: a NEW Probation account''s daily limit is %, not the tier ceiling 3', v_limit;
+  end if;
+  if v_cooldown <> 30 then
+    raise exception 'S3a FAILED: a Probation account''s interval is % s, not 30', v_cooldown;
   end if;
   if public.findback_standing() <> 'PROBATION' then
     raise exception 'S3a FAILED: a Probation sanction did not become the standing';
@@ -931,12 +940,70 @@ begin
             'LOST', 'probation second', 'desc', 'Other', 'OPEN', '2026-10-01',
             to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
-    raise exception 'S3b FAILED: a Probation account posted twice in a day';
+    raise exception 'S3b FAILED: a Probation account beat the 30 s public clock';
+  exception when raise_exception then
+    if sqlerrm not like 'POST_COOLDOWN%' then
+      raise exception 'S3b FAILED: the second post was refused with % instead of POST_COOLDOWN', sqlerrm;
+    end if;
+    raise notice 'S3b ok: the second post was refused with %', sqlerrm;
+  end;
+end;
+$$;
+
+reset role;
+-- Privileged test-only rewind of the actor's admission ledger: the tier ceiling
+-- has to be reachable inside one transaction to be asserted at all.
+update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
+ where user_id = '10000000-0000-4000-8000-000000000005';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+
+do $$
+begin
+  insert into public.item_posts (id, user_id, type, title, description, category, status, event_date, created_at, updated_at)
+  values ('20000000-0000-4000-8000-000000000031', '10000000-0000-4000-8000-000000000005',
+          'LOST', 'probation second', 'desc', 'Other', 'OPEN', '2026-10-01',
+          to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+end;
+$$;
+
+reset role;
+update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
+ where user_id = '10000000-0000-4000-8000-000000000005';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+
+do $$
+begin
+  insert into public.item_posts (id, user_id, type, title, description, category, status, event_date, created_at, updated_at)
+  values ('20000000-0000-4000-8000-000000000032', '10000000-0000-4000-8000-000000000005',
+          'LOST', 'probation third', 'desc', 'Other', 'OPEN', '2026-10-01',
+          to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+end;
+$$;
+
+reset role;
+update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
+ where user_id = '10000000-0000-4000-8000-000000000005';
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+
+do $$
+begin
+  begin
+    insert into public.item_posts (id, user_id, type, title, description, category, status, event_date, created_at, updated_at)
+    values ('20000000-0000-4000-8000-000000000033', '10000000-0000-4000-8000-000000000005',
+            'LOST', 'probation fourth', 'desc', 'Other', 'OPEN', '2026-10-01',
+            to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+            to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+    raise exception 'S3c FAILED: a Probation account exceeded the tier ceiling';
   exception when raise_exception then
     if sqlerrm not like 'POST_LIMIT_REACHED%' then
-      raise exception 'S3b FAILED: the second post was refused with % instead of POST_LIMIT_REACHED', sqlerrm;
+      raise exception 'S3c FAILED: the fourth post was refused with % instead of POST_LIMIT_REACHED', sqlerrm;
     end if;
-    raise notice 'S3b ok: the second same-day post was refused with %', sqlerrm;
+    raise notice 'S3c ok: the tier ceiling was enforced with %', sqlerrm;
   end;
 end;
 $$;
@@ -972,8 +1039,14 @@ begin
             to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
     raise exception 'S4b FAILED: a Suspended account posted at all';
   exception when raise_exception then
-    if sqlerrm not like 'POST_LIMIT_REACHED%' then
-      raise exception 'S4b FAILED: the post was refused with % instead of POST_LIMIT_REACHED', sqlerrm;
+    -- A zero limit is a STANDING fact, not a spent day, so it has its own word:
+    -- this probe used to assert POST_LIMIT_REACHED, which is what made the device
+    -- copy ("that's all your replies for today") a lie for a suspended account
+    -- (review R3 F-1). S3c above still pins POST_LIMIT_REACHED for the real
+    -- ceiling, so the two causes are provably distinguishable and not merely
+    -- asserted to differ.
+    if sqlerrm not like 'POST_NOT_AVAILABLE%' then
+      raise exception 'S4b FAILED: the post was refused with % instead of POST_NOT_AVAILABLE', sqlerrm;
     end if;
     raise notice 'S4b ok: a Suspended account''s first post was refused with %', sqlerrm;
   end;

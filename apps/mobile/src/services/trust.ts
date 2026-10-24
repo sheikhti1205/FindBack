@@ -600,13 +600,15 @@ export async function fetchActiveSanctionKind(userId: string): Promise<SanctionK
  * calls it: it recognises the refusal when a post or a comment comes back
  * refused.
  */
-export const INTERACTION_LIMIT_REFUSALS = ["POST_LIMIT_REACHED", "POST_COOLDOWN"] as const;
+export const INTERACTION_LIMIT_REFUSALS = ["POST_LIMIT_REACHED", "POST_COOLDOWN", "POST_NOT_AVAILABLE"] as const;
 
 /**
  * Is this error the interaction-limit guard refusing a write?
  *
- * Both refusals arrive as P0001 with the word in front of the message; the
+ * The refusals arrive as P0001 with the word in front of the message; the
  * feedback ceiling uses a different word, so it is not mistaken for one.
+ * `POST_NOT_AVAILABLE` is the zero-limit case (a standing fact), which used to be
+ * indistinguishable from the day's ceiling — see R3 F-1.
  */
 export function isInteractionLimitRefusal(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
