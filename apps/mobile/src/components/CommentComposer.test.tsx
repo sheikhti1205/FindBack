@@ -150,6 +150,47 @@ describe("CommentComposer social layout", () => {
     );
   });
 
+  it("answers a standing refusal with the fact, never with a retry", async () => {
+    const { ApiError } = await import("../services/session");
+    const onSubmit = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiError("POST_NOT_AVAILABLE: your account cannot post or comment right now", 400, "P0001"),
+      );
+    const onError = vi.fn();
+    render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+    fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByTestId("comment-send"));
+    // A zero limit is a standing fact: inviting a retry would be the same lie the
+    // Android shade reply used to tell (R3-delta N-4).
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith("Your account can't post or reply right now."),
+    );
+  });
+
+  it("tells a spent day from the 30-second clock instead of one generic sentence", async () => {
+    const { ApiError } = await import("../services/session");
+    const cases: Array<[string, string]> = [
+      [
+        "POST_LIMIT_REACHED: you have reached today's limit of 5",
+        "You've reached your limit for today. Come back tomorrow.",
+      ],
+      [
+        "POST_COOLDOWN: wait 90 seconds before posting again",
+        "You're posting too quickly. Wait a moment, then try again.",
+      ],
+    ];
+    for (const [message, copy] of cases) {
+      const onSubmit = vi.fn().mockRejectedValue(new ApiError(message, 400, "P0001"));
+      const onError = vi.fn();
+      const view = render(<CommentComposer {...baseProps({ onSubmit, onError })} />);
+      fireEvent.change(screen.getByTestId("comment-input"), { target: { value: "hi" } });
+      fireEvent.click(screen.getByTestId("comment-send"));
+      await waitFor(() => expect(onError).toHaveBeenCalledWith(copy));
+      view.unmount();
+    }
+  });
+
   it("tells an offline user to check the connection instead of a bare retry", async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error("offline down"));
     const onError = vi.fn();

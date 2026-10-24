@@ -1,5 +1,6 @@
 import type { Category, PostType } from "@findback/shared";
 import { ApiError } from "./session";
+import { refusalStatus } from "../utils/interactionRefusal";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
 import { withTimeout } from "./timeout";
@@ -36,7 +37,11 @@ async function createRpc(name: string, args: Record<string, unknown>, traceId?: 
     if (!result.error.code || result.error.code.startsWith("PGRST")) {
       throw new PublishOutcomeUncertainError();
     }
-    throw new ApiError(result.error.message, result.error.code === "42501" ? 403 : 400);
+    const refusal = refusalStatus(result.error.message);
+    throw new ApiError(
+      result.error.message,
+      result.error.code === "42501" ? 403 : (refusal ?? 400),
+    );
   }
   if (typeof result.data !== "string" || !result.data.trim()) {
     throw new PublishOutcomeUncertainError();

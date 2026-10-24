@@ -78,6 +78,54 @@ describe("friendlyError", () => {
     expect(limit.message).toBe("you have reached today's limit of 5");
   });
 
+  it("turns the guard's own refusal words into reader sentences, never tokens", () => {
+    const standing = friendlyError(
+      new ApiError("POST_NOT_AVAILABLE: your account cannot post or comment right now", 400, "P0001"),
+    );
+    expect(standing.code).toBe("PERMISSION");
+    expect(standing.message).toBe("Your account can't post or reply right now.");
+    // A zero limit cannot be fixed today: no retry, no "come back later" that
+    // implies it can be. This is R3-delta's N-4.
+    expect(standing.message).not.toMatch(/try again/i);
+
+    const ceiling = friendlyError(
+      new ApiError("POST_LIMIT_REACHED: you have reached today's limit of 5", 400, "P0001"),
+    );
+    expect(ceiling.code).toBe("RATE_LIMIT");
+    expect(ceiling.message).toBe("You've reached your limit for today. Come back tomorrow.");
+
+    const cooldown = friendlyError(
+      new ApiError("POST_COOLDOWN: wait 90 seconds before posting again", 400, "P0001"),
+    );
+    expect(cooldown.code).toBe("RATE_LIMIT");
+    expect(cooldown.message).toBe("You're posting too quickly. Wait a moment, then try again.");
+
+    for (const friendly of [standing, ceiling, cooldown]) {
+      // The protocol token and the server's sentence behind it never surface.
+      expect(friendly.message).not.toMatch(/POST_|POST_NOT|POST_LIMIT|POST_COOLDOWN/);
+    }
+  });
+
+  it("does not leak the feedback ceiling's token either", () => {
+    // A different vocabulary, the same shape: a token in front of a sentence. It used
+    // to reach the feedback form verbatim (delta review R-6).
+    const limit = friendlyError(
+      new ApiError("FEEDBACK_LIMIT_REACHED: you have reached today's feedback limit", 429, "P0001"),
+    );
+    expect(limit.code).toBe("RATE_LIMIT");
+    expect(limit.message).toBe("You've reached today's feedback limit. Come back tomorrow.");
+    expect(limit.message).not.toMatch(/FEEDBACK_LIMIT_REACHED/);
+  });
+
+  it("keeps the standing refusal's fact when a service rethrows it as 403", () => {
+    const standing = friendlyError(
+      new ApiError("POST_NOT_AVAILABLE: your account cannot post or comment right now", 403, "P0001"),
+    );
+    // Not the generic "you do not have permission to do that": the server
+    // volunteered one fact and the reader gets it.
+    expect(standing.message).toBe("Your account can't post or reply right now.");
+  });
+
   it("does not show a raw catalogue error as if the server had said it", () => {
     const raw = friendlyError(
       new ApiError('duplicate key value violates unique constraint "content_reports_pkey"', 409, "23505"),

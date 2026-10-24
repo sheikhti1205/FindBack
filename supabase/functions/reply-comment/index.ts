@@ -49,12 +49,14 @@ export function statusForReason(reason: string): number {
 }
 
 /**
- * The two words the interaction-limit guard raises when it refuses a write.
+ * The three words the interaction-limit guard raises when it refuses a write.
  *
- * Both are `P0001` with the word in front of the message. They are the same two
- * words the app recognises on its own write path (`INTERACTION_LIMIT_REFUSALS`
- * in `apps/mobile/src/services/trust.ts`), so a reply refused here is classified
- * exactly like a refused post or comment.
+ * Each is `P0001` with the word in front of the message. They are the same three
+ * words the app recognises on its own write path — owned in
+ * `apps/mobile/src/utils/interactionRefusal.ts` and re-exported by
+ * `apps/mobile/src/services/trust.ts` — so a reply refused here is classified
+ * exactly like a refused post or comment. The zero-limit word is a standing fact
+ * (403), not a wait, which is why it is not in this map's 429 family.
  */
 export const RAISED_REFUSALS: Record<string, { reason: string; retryAfterSeconds?: number }> = {
   POST_COOLDOWN: { reason: "rate_limited", retryAfterSeconds: 30 },

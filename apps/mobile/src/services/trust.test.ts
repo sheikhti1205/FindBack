@@ -307,6 +307,36 @@ describe("rating the other participant", () => {
     }
   });
 
+  it("tells a standing refusal from a wait, in the status it answers", async () => {
+    // The guard's zero-limit word is a fact about the account, so it is not the
+    // 429 a quota answers with (R3 F-1's classification, on the client side).
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: {
+        message: "POST_NOT_AVAILABLE: your account cannot post or comment right now",
+        code: "P0001",
+      },
+    });
+    await expect(rateReturn({ returnId: "ret-1", score: 5 })).rejects.toMatchObject({
+      status: 403,
+      code: "P0001",
+      message: "POST_NOT_AVAILABLE: your account cannot post or comment right now",
+    });
+
+    // The two waits keep the wait status, and the word is not rewritten.
+    for (const message of [
+      "POST_LIMIT_REACHED: you have reached today's limit of 5",
+      "POST_COOLDOWN: wait 90 seconds before posting again",
+    ]) {
+      clientMock.rpc.mockResolvedValue({ data: null, error: { message, code: "P0001" } });
+      await expect(rateReturn({ returnId: "ret-1", score: 5 })).rejects.toMatchObject({
+        status: 429,
+        code: "P0001",
+        message,
+      });
+    }
+  });
+
   it("keeps the server's words on a refusal", async () => {
     clientMock.rpc.mockResolvedValue({
       data: null,

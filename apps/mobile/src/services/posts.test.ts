@@ -661,6 +661,30 @@ describe("addComment", () => {
     });
     await expect(addComment("missing", "hi")).rejects.toMatchObject({ status: 404 });
   });
+
+  it("classifies the guard's refusal words instead of answering 400 for all of them", async () => {
+    // The comment path is one of the two that actually carry these words, so the
+    // 403/429 split belongs here and not only in trust.ts (delta review R-4).
+    clientMock.rpc.mockResolvedValue({
+      data: null,
+      error: {
+        message: "POST_NOT_AVAILABLE: your account cannot post or comment right now",
+        code: "P0001",
+      },
+    });
+    await expect(addComment("p1", "hi")).rejects.toMatchObject({
+      status: 403,
+      message: "POST_NOT_AVAILABLE: your account cannot post or comment right now",
+    });
+
+    for (const message of [
+      "POST_LIMIT_REACHED: you have reached today's limit of 5",
+      "POST_COOLDOWN: wait 90 seconds before posting again",
+    ]) {
+      clientMock.rpc.mockResolvedValue({ data: null, error: { message, code: "P0001" } });
+      await expect(addComment("p1", "hi")).rejects.toMatchObject({ status: 429, message });
+    }
+  });
 });
 
 describe("deleteComment", () => {

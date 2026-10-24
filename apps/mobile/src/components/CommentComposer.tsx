@@ -40,6 +40,7 @@ import {
 import type { CommentAttachmentDescriptor } from "../services/posts";
 import { ApiError } from "../services/session";
 import { friendlyError } from "../utils/friendlyErrors";
+import { interactionRefusalCopy } from "../utils/interactionRefusal";
 
 /**
  * C3 compact social comment composer: avatar + expandable input + send icon.
@@ -75,6 +76,11 @@ import { friendlyError } from "../utils/friendlyErrors";
  * mapper message is never shown (it can carry provider/transport text). An
  * offline device or an expired session is the one case where a plain "try
  * again" would be a lie, so the sentence gains that single instruction.
+ *
+ * The interaction-limit guard's refusals are the other case, and they get their
+ * own sentence from the shared vocabulary instead of the fixed one: the standing
+ * refusal (a zero limit) must not be answered with an invitation to try again,
+ * and a spent day is not a transport failure. This is R3-delta's N-4.
  */
 function commentSendFailureCopy(err: unknown, hasReport: boolean): string {
   // P0002 also names a missing parent. Never ask a text-only sender to remove
@@ -82,6 +88,8 @@ function commentSendFailureCopy(err: unknown, hasReport: boolean): string {
   if (hasReport && err instanceof ApiError && err.code === "P0002") {
     return "Report unavailable — remove the reference to post your comment.";
   }
+  const refusal = interactionRefusalCopy(err);
+  if (refusal) return refusal;
   switch (friendlyError(err).code) {
     case "OFFLINE":
       return "Couldn't post your comment. Check your connection and try again.";

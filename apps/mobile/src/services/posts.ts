@@ -12,6 +12,7 @@ import type {
 import { assertWritableReactionKind, reactionSummaryFromRow } from "./reactions";
 import { mapCommentAttachmentRefs } from "./commentAttachments";
 import { ApiError } from "./session";
+import { refusalStatus } from "../utils/interactionRefusal";
 import { getSupabase } from "./supabaseClient";
 import { createPost, createPostMulti, type CreatePostInput } from "./postsCreate";
 import {
@@ -528,7 +529,14 @@ function mapClientComment(row: ClientCommentRow): CommentItem {
   };
 }
 
-function socialErrorStatus(code: string | undefined): number {
+function socialErrorStatus(code: string | undefined, message = ""): number {
+  // The interaction-limit guard's own words, classified before the SQLSTATE table:
+  // a zero self-derived limit is a standing fact (403 — the account cannot write at
+  // all), while the spent day and the 30 s clock are waits (429). This is the mapper
+  // the comment and reaction paths actually use, which is why the split has to live
+  // here and not only in trust.ts (delta review R-4).
+  const refusal = refusalStatus(message);
+  if (refusal !== null) return refusal;
   if (code === "42501") return 403;
   if (code === "P0002") return 404;
   if (code === "28000") return 401;
@@ -547,7 +555,7 @@ export async function fetchComments(postId: string): Promise<CommentItem[]> {
   const { data, error } = await getSupabase().rpc("findback_list_comments_client", {
     p_post_id: postId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code, error.message), error.code);
   return ((data ?? []) as ClientCommentRow[]).map(mapClientComment);
 }
 
@@ -623,12 +631,12 @@ export async function addComment(
       name: "social.comment",
       fields: {
         ok: false,
-        code: String(socialErrorStatus(error.code)),
+        code: String(socialErrorStatus(error.code, error.message)),
         attachmentCount,
         attachmentKind,
       },
     });
-    throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
+    throw new ApiError(error.message, socialErrorStatus(error.code, error.message), error.code);
   }
   const row = ((data ?? []) as ClientCommentRow[])[0];
   if (!row) {
@@ -649,7 +657,7 @@ export async function deleteComment(_postId: string, commentId: string): Promise
   const { error } = await getSupabase().rpc("findback_delete_comment_client", {
     p_comment_id: commentId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code, error.message), error.code);
 }
 
 export interface ReactionResult {
@@ -686,9 +694,9 @@ export async function reactToPost(
   if (error) {
     recordOperation({
       name: "social.reaction",
-      fields: { ok: false, code: String(socialErrorStatus(error.code)), kind },
+      fields: { ok: false, code: String(socialErrorStatus(error.code, error.message)), kind },
     });
-    throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
+    throw new ApiError(error.message, socialErrorStatus(error.code, error.message), error.code);
   }
   const row = ((data ?? []) as ClientReactionRow[])[0];
   if (!row) {
@@ -728,7 +736,7 @@ export async function fetchSocialState(
   const { data, error } = await getSupabase().rpc("findback_post_social_state_client", {
     p_post_id: postId,
   });
-  if (error) throw new ApiError(error.message, socialErrorStatus(error.code), error.code);
+  if (error) throw new ApiError(error.message, socialErrorStatus(error.code, error.message), error.code);
   const row = ((data ?? []) as { my_reaction: string | null; my_rating: number | null }[])[0];
   // L-CONSOLIDATE: the caller's reaction parses through the ONE row
   // aggregator, so a legacy LIKE hydrates as canonical LOVE (exactly like

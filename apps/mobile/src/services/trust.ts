@@ -80,12 +80,15 @@
  *   INSERT trigger on item_posts and comments, revoked from every client role
  *   [line 928] and returning `trigger` [line 875]. The client never calls it:
  *   the guard fires on the write itself and refuses with P0001
- *   'POST_LIMIT_REACHED' or 'POST_COOLDOWN'. `isInteractionLimitRefusal()`
- *   recognises exactly those two words.
+ *   'POST_LIMIT_REACHED', 'POST_COOLDOWN' or 'POST_NOT_AVAILABLE'.
+ *   `isInteractionLimitRefusal()` recognises those words and
+ *   `isStandingRefusal()` separates the zero-limit fact from the two waits;
+ *   the vocabulary itself lives in utils/interactionRefusal.ts.
  */
 import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { SANCTION_KINDS, type SanctionKind } from "./moderation";
+import { isStandingRefusalMessage } from "../utils/interactionRefusal";
 
 /** The three helper kinds the server accepts for a recovery (MC D25). */
 export const RECOVERY_HELPER_KINDS = ["FINDBACK_USER", "OUTSIDE", "SELF_OR_PRIVATE"] as const;
@@ -260,7 +263,8 @@ export function isTrustUnavailable(error: unknown): boolean {
  *   P0002  the recovery, the report or the helper does not exist (404);
  *   23505  the row already exists — a second recovery, a second rating in the
  *           same direction (409);
- *   P0001  a limit refusal — POST_LIMIT_REACHED / POST_COOLDOWN (429);
+ *   P0001  a guard refusal — POST_NOT_AVAILABLE is a standing fact (403),
+ *           POST_LIMIT_REACHED / POST_COOLDOWN are waits (429);
  *   PGRST202 / 42883  the function is not there for this client at all (501,
  *           the typed unavailable outcome).
  *
@@ -273,7 +277,14 @@ function trustError(message: string, code?: string): ApiError {
   if (code === "28000") return new ApiError(message, 401, code);
   if (code === "P0002") return new ApiError(message, 404, code);
   if (code === "23505") return new ApiError(message, 409, code);
-  if (code === "P0001") return new ApiError(message, 429, code);
+  if (code === "P0001") {
+    // The guard's words mean different things, so the status says which. A zero
+    // self-derived limit is a standing fact ("you cannot write"), not a quota
+    // ("wait"): it answers 403 with the word intact, the same way reply-comment
+    // maps account_restricted. The two waits keep 429.
+    if (isStandingRefusalMessage(message)) return new ApiError(message, 403, code);
+    return new ApiError(message, 429, code);
+  }
   // The server's own words here are a schema term ("could not find the
   // function ... in the schema cache"), so the reader gets a plain sentence
   // and the type carries the truth.
@@ -520,8 +531,9 @@ export async function fetchReputationTier(userId: string): Promise<ReputationTie
 /**
  * The limit the server enforces on the caller's own writes.
  *
- * A limit of zero means every write is refused; the refusal itself arrives on
- * the write as P0001 'POST_LIMIT_REACHED'.
+ * A limit of zero means every write is refused, and that refusal carries its own
+ * word — P0001 'POST_NOT_AVAILABLE', not 'POST_LIMIT_REACHED', because a zero limit
+ * is a standing fact rather than a spent day (R3 F-1).
  */
 export async function fetchPostLimit(): Promise<InteractionLimit> {
   const { data, error } = await getSupabase().rpc("findback_post_limit", {});
@@ -594,23 +606,25 @@ export async function fetchActiveSanctionKind(userId: string): Promise<SanctionK
 }
 
 /**
- * The two words the interaction-limit guard uses when it refuses a write.
+ * The interaction-limit guard's refusal vocabulary.
  *
  * The guard is a server-side trigger on the write itself, so the client never
- * calls it: it recognises the refusal when a post or a comment comes back
- * refused.
- */
-export const INTERACTION_LIMIT_REFUSALS = ["POST_LIMIT_REACHED", "POST_COOLDOWN", "POST_NOT_AVAILABLE"] as const;
-
-/**
- * Is this error the interaction-limit guard refusing a write?
+ * calls it: it recognises the refusal when a post, a comment or a rating comes
+ * back refused. The vocabulary and its reader-facing sentences live in
+ * `utils/interactionRefusal.ts` (one owner, shared with `friendlyError`); the
+ * two predicates below are re-exported from there so existing callers keep this
+ * import path. The sentences are *not* re-exported — they travel as
+ * `interactionRefusalCopy()`, so there is no second place a refusal sentence
+ * could be edited.
  *
- * The refusals arrive as P0001 with the word in front of the message; the
- * feedback ceiling uses a different word, so it is not mistaken for one.
- * `POST_NOT_AVAILABLE` is the zero-limit case (a standing fact), which used to be
- * indistinguishable from the day's ceiling — see R3 F-1.
+ * The three words: `POST_NOT_AVAILABLE` is the zero-limit case — a **standing**
+ * fact, not a spent day, which is the R3 F-1 repair — while
+ * `POST_LIMIT_REACHED` (the day's ceiling) and `POST_COOLDOWN` (the 30 s clock)
+ * are waits. `isStandingRefusal()` is the one to ask when a surface must not
+ * invite a retry.
  */
-export function isInteractionLimitRefusal(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false;
-  return INTERACTION_LIMIT_REFUSALS.some((word) => error.message.includes(word));
-}
+export {
+  INTERACTION_LIMIT_REFUSALS,
+  isInteractionLimitRefusal,
+  isStandingRefusal,
+} from "../utils/interactionRefusal";

@@ -1,4 +1,5 @@
 import { ApiError } from "../services/session";
+import { interactionRefusalCopy, isStandingRefusal } from "./interactionRefusal";
 
 /**
  * Central error taxonomy: raw failures become one clear human message plus a
@@ -49,6 +50,31 @@ export function friendlyError(err: unknown): FriendlyError {
   // "the server is having trouble".
   if (err instanceof ApiError && err.code === "RPC_UNAVAILABLE") {
     return { code: "UNAVAILABLE", message: "This feature is not available in this build." };
+  }
+  // The interaction-limit guard's refusals go through the shared vocabulary
+  // rather than through "keep the server's words": the `P0001` message carries a
+  // protocol token ("POST_NOT_AVAILABLE: your account cannot post or comment
+  // right now"), and the three words mean three different things. The standing
+  // case is a fact and not a wait, so it answers PERMISSION; none of the three
+  // invites a retry that cannot succeed. This is checked before the status
+  // branches because the same refusal arrives as 400 (a table write) or 403 (the
+  // guard's word re-thrown by a service), and a generic "no permission to do
+  // that" would lose the fact the server volunteered.
+  const refusalCopy = interactionRefusalCopy(err);
+  if (refusalCopy) {
+    return {
+      code: isStandingRefusal(err) ? "PERMISSION" : "RATE_LIMIT",
+      message: refusalCopy,
+    };
+  }
+  // The feedback ceiling has the same shape as a guard refusal — a token in front
+  // of a sentence — and reached the form verbatim through the P0001 echo below
+  // (delta review R-6). It is a real quota, so it is a wait with a real end.
+  if (err instanceof ApiError && err.message.includes("FEEDBACK_LIMIT_REACHED")) {
+    return {
+      code: "RATE_LIMIT",
+      message: "You've reached today's feedback limit. Come back tomorrow.",
+    };
   }
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return { code: "OFFLINE", message: "You are offline. Check your connection and try again." };
