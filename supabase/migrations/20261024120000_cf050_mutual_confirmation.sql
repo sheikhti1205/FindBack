@@ -23,6 +23,9 @@ create policy match_confirmations_owner on public.match_confirmations
   with check (owner_id = auth.uid()::text);
 
 -- 2. Redefine confirm_match to require mutual confirmation
+-- The previous signature returns void; PostgreSQL cannot replace its return type.
+-- RESTRICT is intentional: unexpected dependencies abort this whole transaction.
+drop function public.findback_confirm_match(text);
 create or replace function public.findback_confirm_match(p_match_id text)
 returns text  -- returns 'PARTIAL' or 'MATCHED'
 language plpgsql

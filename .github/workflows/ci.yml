@@ -185,7 +185,7 @@ jobs:
         # SELECT/WITH probes must return exactly one row: errors AND empty
         # assertions are fatal. Fixtures run once in one session and roll back.
         # Platform stubs are local-only, not hosted or JWT acceptance evidence.
-        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql --probe supabase/tests/verify_notification_helper_regressions.sql
+        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql --probe supabase/tests/verify_notification_helper_regressions.sql --probe supabase/tests/verify_cf050_upgrade.sql
 
   roles-capabilities-sql:
     name: Full-chain roles and invitation SQL behavior
