@@ -10,7 +10,7 @@ const { posts, viewer, handlers, report } = vi.hoisted(() => ({
 }));
 vi.mock("../services/posts", () => posts);
 vi.mock("../auth", () => ({ useAuth: () => viewer }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: async () => ({ available: true, candidatesConsidered: 0, matches: [] }) }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: async () => ({ available: true, candidatesConsidered: 0, matches: [] }), applyMatchesEngineToRuntime: () => true }));
 vi.mock("../services/realtime", () => ({ joinPostRoom: vi.fn(), leavePostRoom: vi.fn(),
   onRealtime: (e: string, h: (p: Record<string, unknown>) => void) => { handlers.set(e, h); return () => { handlers.delete(e); }; },
 }));

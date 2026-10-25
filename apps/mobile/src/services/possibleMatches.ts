@@ -12,6 +12,18 @@ import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch,
  * better without measured evidence. */
 export type MatchingBackend = "use" | "needle";
 
+/** Apply the persisted matching choice at its service owner, never via a
+ * settings screen. The native owner refuses Needle without a verified install;
+ * callers receive false rather than a thrown error or a claimed switch. */
+export function applyMatchesEngineToRuntime(choice: MatchingBackend): boolean {
+  try {
+    getApplicationAi().selectMatchingBackend(choice);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveMatchingBackend(
   aiService?: { matchingBackend?: unknown } | null,
 ): MatchingBackend {

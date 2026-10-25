@@ -75,6 +75,20 @@ it("uses concise fixed failure copy instead of rendering an exception that could
   expect((await screen.findByRole("alert")).textContent).toBe("Couldn’t save the key. Check your storage or unlock phrase and try again.");
   expect(document.body.textContent).not.toContain("unsafe");
 });
+it("edits and removes a generic endpoint only for the current account", async () => {
+  render(tree());
+  fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "generic" } });
+  fireEvent.click(screen.getByText("Advanced"));
+  fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://first.example.test/v1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save base URL" }));
+  expect(loadGenericEndpoint("account-a")).toBe("https://first.example.test/v1");
+  fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "http://localhost:11434/v1/" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save base URL" }));
+  expect(loadGenericEndpoint("account-a")).toBe("http://localhost:11434/v1");
+  fireEvent.click(screen.getByRole("button", { name: "Delete base URL" }));
+  expect(loadGenericEndpoint("account-a")).toBeNull();
+  expect(loadGenericEndpoint("account-b")).toBeNull();
+});
 it("saves a manual model ID for the generic provider as the account default", async () => {
   render(tree());
   fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "generic" } });

@@ -6,11 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostItem } from "@findback/shared";
 import type { PossibleMatchesResult } from "../services/possibleMatches";
 
-const state = vi.hoisted(() => ({ account: "viewer-a" as string | null, find: vi.fn(), preferences: vi.fn() }));
+const state = vi.hoisted(() => ({ account: "viewer-a" as string | null, find: vi.fn(), preferences: vi.fn(), apply: vi.fn() }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: state.account ? { id: state.account } : null }) }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: state.find }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: state.find, applyMatchesEngineToRuntime: state.apply }));
 vi.mock("../services/ai/aiPreferences", () => ({ loadAiPreferences: state.preferences }));
-vi.mock("../screens/AiModels", () => ({ applyMatchesEngineToRuntime: vi.fn() }));
 
 import { PossibleMatches } from "./PossibleMatches";
 
@@ -40,6 +39,7 @@ beforeEach(() => {
   state.account = "viewer-a";
   beforePaint.length = 0;
   state.find.mockReset();
+  state.apply.mockReset().mockReturnValue(true);
   state.preferences.mockReset().mockReturnValue({ matchesEngine: "use" });
 });
 afterEach(cleanup);
@@ -50,12 +50,16 @@ describe("PossibleMatches viewer-scoped results", () => {
     state.find.mockResolvedValueOnce(result("Visible only in A pool")).mockReturnValueOnce(next.promise);
     const { rerender } = render(view());
     expect(await screen.findByText("Visible only in A pool")).toBeTruthy();
+    expect(state.apply).toHaveBeenLastCalledWith("use");
 
     state.account = "viewer-b";
+    state.preferences.mockReturnValue({ matchesEngine: "needle" });
+    state.apply.mockReturnValue(false);
     rerender(view());
     expect(beforePaint).toEqual([false]);
     expect(screen.queryByText("Visible only in A pool")).toBeNull();
     expect(state.preferences).toHaveBeenLastCalledWith("viewer-b");
+    expect(state.apply).toHaveBeenLastCalledWith("needle");
     expect(state.find).toHaveBeenCalledTimes(2);
     await act(async () => { next.resolve(result("B pool")); });
     expect(screen.getByText("B pool")).toBeTruthy();

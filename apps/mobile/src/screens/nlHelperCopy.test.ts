@@ -23,7 +23,6 @@ import {
   nlSearchAppliedNote,
   nlSearchRefusedNote,
 } from "./nlHelperCopy";
-import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
 
 const STATES: readonly NlHelperState[] = [
   "ready",
@@ -46,7 +45,7 @@ describe("local-helper copy", () => {
 
   it("speaks the canonical device truth where no install can help", () => {
     for (const notes of MAPS) {
-      expect(notes["unsupported-platform"]).toBe(OFFLINE_NEEDS_ANDROID);
+      expect(notes["unsupported-platform"]).toBe("On-device AI requires the Android app.");
       expect(notes["unsupported-device"]).toBe(DEVICE_INCOMPATIBLE_REASON);
     }
   });

@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { findMock } = vi.hoisted(() => ({ findMock: vi.fn() }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, applyMatchesEngineToRuntime: () => true }));
 
 import { PossibleMatches } from "./PossibleMatches";
 

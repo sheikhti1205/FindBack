@@ -40,7 +40,7 @@ vi.mock("../services/realtime", () => ({
   }),
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, applyMatchesEngineToRuntime: () => true }));
 vi.mock("../services/supabaseClient", () => ({
   getSupabase: () => ({ rpc: rpcMock }),
 }));

@@ -22,7 +22,8 @@
  */
 import { DEVICE_INCOMPATIBLE_REASON } from "../services/ai/applicationAi";
 import type { NlHelperState } from "../services/liveNarrowTasks";
-import { OFFLINE_NEEDS_ANDROID } from "./AiModels";
+
+const OFFLINE_NEEDS_ANDROID = "On-device AI requires the Android app.";
 
 /**
  * Smart Search's not-set-up sentence. It names the one thing that can change

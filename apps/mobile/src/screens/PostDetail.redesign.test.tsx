@@ -32,7 +32,7 @@ vi.mock("../services/realtime", () => ({
   onRealtime: vi.fn(() => () => {}),
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, applyMatchesEngineToRuntime: () => true }));
 
 import { PostDetail } from "./PostDetail";
 import { DEFAULT_APPEARANCE, saveAppearance } from "../appearance";

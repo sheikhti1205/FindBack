@@ -7,8 +7,7 @@ import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
 import { PhotoLightbox } from "./PhotoLightbox";
 import { loadAiPreferences } from "../services/ai/aiPreferences";
-import { applyMatchesEngineToRuntime } from "../screens/AiModels";
-import { findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
+import { applyMatchesEngineToRuntime, findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
 import { MATCH_RESULT_LIMIT, type MatchCandidate, type PossibleMatch } from "../services/similarity";
 

@@ -16,15 +16,9 @@
  * never thrown, never guessed, never crossed between accounts. No key
  * material or secrets live here — preference ids only.
  *
- * Ownership contract:
- * - Settings (AiModels) reads AND writes this store.
- * - AiConnection accepts a persistent `selectedId` / `onSelectModel`
- *   binding built from this store (see `createAssistantModelBinding`), so a
- *   permitted choice genuinely changes that account's Assistant default.
- *   Paid-model consent + price-fingerprint gates still live in AiConnection
- *   and are never bypassed by this binding.
- * - Help keeps a session-only temporary override: it READS the persisted
- *   default (via `resolvePreferredModelId`) on load and never owns it.
+ * Legacy preference compatibility and retained matching choices live here.
+ * Consumer cloud Chat/provider defaults are owned by cloudModelPreferences;
+ * the retired local assistant UI must not be imported to read old choices.
  */
 
 import { DEFAULT_MODEL_ID } from "./modelPolicy";
@@ -132,11 +126,10 @@ export function preferenceToAssistantMode(
 }
 
 /**
- * Legacy key format (mirrors `assistantModeKey` in screens/AiModels, which
- * stays the migration-source reader). Kept here so the seeded read below
- * never imports the screens layer (no UI ↔ store cycle).
+ * Original migration-source key. No production writer: the seeded read below
+ * adopts it once into the account preference store without importing UI.
  */
-function legacyAssistantModeKey(accountId: string): string {
+export function legacyAssistantModeKey(accountId: string): string {
   return `findback.ai.assistantMode.v1.${accountId}`;
 }
 

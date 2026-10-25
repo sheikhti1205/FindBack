@@ -111,7 +111,7 @@ vi.mock("../services/aiCredentials", () => ({
   },
 }));
 
-import { assistantModeKey } from "./AiModels";
+import { legacyAssistantModeKey as assistantModeKey } from "../services/ai/aiPreferences";
 import { Settings } from "./Settings";
 import { AccountSettings } from "./AccountSettings";
 import { AiSettings } from "./AiSettings";

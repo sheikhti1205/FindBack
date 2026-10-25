@@ -38,7 +38,7 @@ vi.mock("../services/realtime", () => ({
   onRealtime: vi.fn(() => () => {}),
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
-vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock }));
+vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, applyMatchesEngineToRuntime: () => true }));
 
 // The recovery sheet has its own suite; this stand-in proves the detail
 // screen opens it for a LOST report instead of writing a bare status.

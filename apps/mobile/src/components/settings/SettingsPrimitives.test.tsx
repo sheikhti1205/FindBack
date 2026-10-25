@@ -27,6 +27,19 @@ describe("settings foundation semantics", () => {
     expect(row.querySelectorAll("button,a,input").length).toBe(0);
   });
 
+  it("returns focus to the retained invoker when a settings page unmounts", () => {
+    const tree = (open: boolean) => <MemoryRouter><button type="button">Open settings</button>
+      {open && <SettingsPage title="Local intelligence">Content</SettingsPage>}
+    </MemoryRouter>;
+    const view = render(tree(false));
+    const invoker = screen.getByRole("button", { name: "Open settings" });
+    invoker.focus();
+    view.rerender(tree(true));
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Local intelligence" }));
+    view.rerender(tree(false));
+    expect(document.activeElement).toBe(invoker);
+  });
+
   it("offers a history-aware back control when requested", () => {
     render(<MemoryRouter><SettingsPage title="Appearance" backTo="/settings" backLabel="Back to Settings">Content</SettingsPage></MemoryRouter>);
     expect(screen.getByRole("button", { name: "Back to Settings" })).toBeTruthy();
