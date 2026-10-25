@@ -4,15 +4,18 @@
  *
  * `npm audit` is the authority for live advisories, but it needs the registry
  * and can be noisy/slow. This tripwire closes the specific high findings that
- * the v0.9.0-beta.1 wave fixed, by parsing `package-lock.json` and failing if
- * any *installed* copy of a patched package is below its fixed version:
+ * reviewed security waves fixed, by parsing `package-lock.json` and failing if
+ * any locked dependency copy of a patched package is below its fixed version:
  *
- *   * @graphql-tools/utils < 12.0.1  — CVE-2026-104852 / GHSA-7mx3-vvmw-hjmv
- *     (prototype pollution in `mergeDeep`), pulled in through graphql-yoga.
+ *   * @graphql-tools/utils < 12.0.2 — incremental-result path coercion;
+ *     also preserves the earlier 12.0.1 mergeDeep pollution fix.
  *   * sharp < 0.35.5 — CVE-2026-96889 / GHSA-wq5f-xc86-pv6w
  *     (librsvg memory-safety), the API's image normalizer.
+ *   * zod, body-parser, multer, undici, vite and vitest/mocker — CF-SECURITY-020.
+ * These are the project's chosen supported release floors, not a general
+ * advisory range solver for every historical major/backport line.
  *
- * Every installed copy is checked, including nested ones under other
+ * Every locked copy is checked, including nested ones under other
  * `node_modules/` paths, so a re-hoist cannot silently reintroduce the
  * vulnerable version.
  *
@@ -30,15 +33,22 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 
-/** Advisory baselines closed by this wave. Never remove without re-auditing. */
+/** Supported package floors. Never remove without re-auditing. */
 export const ADVISORIES = [
   {
     package: "@graphql-tools/utils",
-    fixedAt: "12.0.1",
-    cve: "CVE-2026-104852",
-    ghsa: "GHSA-7mx3-vvmw-hjmv",
-    reason: "prototype pollution in mergeDeep",
+    fixedAt: "12.0.2",
+    cve: "CVE-2026-114604",
+    ghsa: "GHSA-c4qx-w738-7hr3",
+    reason: "prototype pollution in incremental-result paths (also retains mergeDeep fix)",
   },
+  { package: "zod", fixedAt: "4.6.6", cve: "CVE-2023-54404", ghsa: "GHSA-mrhx-c7xc-m3w5", reason: "unbounded collection validation issues" },
+  { package: "body-parser", fixedAt: "2.4.0", cve: "CVE-2026-111181", ghsa: "GHSA-27r3-jxmh-p828", reason: "unhandled compressed-body stream errors" },
+  { package: "multer", fixedAt: "2.5.0", cve: "CVE-2026-113872", ghsa: "GHSA-q7qp-rjg7-q26m", reason: "pending async file filter after teardown" },
+  { package: "undici", fixedAt: "8.12.2", cve: "CVE-2026-109869", ghsa: "GHSA-xjj6-f33q-929c", reason: "orphaned response stream on excessive content encodings" },
+  { package: "vite", fixedAt: "8.2.4", cve: "CVE-2026-112946", ghsa: "GHSA-rq7h-c2jc-7f22", reason: "development server filesystem and cross-origin fixes, including bundled editor fixes" },
+  { package: "@vitest/mocker", fixedAt: "5.0.3", cve: "CVE-2026-112949", ghsa: "GHSA-qxg6-89mg-rqv8", reason: "development manual mock code injection" },
+  { package: "vitest", fixedAt: "5.0.3", cve: "CVE-2026-112949", ghsa: "GHSA-qxg6-89mg-rqv8", reason: "requires patched mocker dependency" },
   {
     package: "sharp",
     fixedAt: "0.35.5",
@@ -51,10 +61,13 @@ export const ADVISORIES = [
 /** Numeric core of a semver, ignoring build metadata; prerelease sorts lower. */
 export function parseVersion(version) {
   if (typeof version !== "string") return null;
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(version.trim());
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version.trim());
   if (!match) return null;
+  const parts = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (!parts.every(Number.isSafeInteger)) return null;
+  if (match[4]?.split(".").some(part => /^0\d+$/.test(part))) return null;
   return {
-    parts: [Number(match[1]), Number(match[2]), Number(match[3])],
+    parts,
     prerelease: match[4] ?? null,
   };
 }
@@ -82,23 +95,23 @@ export function packageNameFromPath(path) {
 
 /**
  * Pure core: given the `packages` map of a package-lock.json, return every
- * installed copy that violates an advisory baseline.
+ * locked copy that violates an advisory baseline.
  */
 export function findViolations(packages, advisories = ADVISORIES) {
   const violations = [];
-  if (!packages || typeof packages !== "object") return violations;
+  if (!packages || typeof packages !== "object" || Array.isArray(packages)) {
+    throw new TypeError("package-lock.json must contain a packages object");
+  }
   for (const [path, meta] of Object.entries(packages)) {
     if (typeof path !== "string" || !path.includes("node_modules/")) continue;
-    if (!meta || typeof meta.version !== "string") continue;
-    const name = typeof meta.name === "string" ? meta.name : packageNameFromPath(path);
-    if (name === null) continue;
+    const name = packageNameFromPath(path);
     for (const advisory of advisories) {
-      if (name !== advisory.package) continue;
-      if (compareVersions(meta.version, advisory.fixedAt) < 0) {
+      if (name !== advisory.package && meta?.name !== advisory.package) continue;
+      if (parseVersion(meta?.version) === null || compareVersions(meta.version, advisory.fixedAt) < 0) {
         violations.push({
           path,
-          package: name,
-          version: meta.version,
+          package: advisory.package,
+          version: meta?.version ?? "missing",
           fixedAt: advisory.fixedAt,
           cve: advisory.cve,
           ghsa: advisory.ghsa,
@@ -118,14 +131,14 @@ function main() {
     console.error("check-security-baseline: --lock requires a path");
     process.exit(1);
   }
-  let lock;
+  let violations;
   try {
-    lock = JSON.parse(readFileSync(lockPath, "utf8"));
+    const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+    violations = findViolations(lock.packages);
   } catch (error) {
     console.error(`check-security-baseline: cannot read ${lockPath}: ${error.message}`);
     process.exit(1);
   }
-  const violations = findViolations(lock.packages);
   if (violations.length > 0) {
     for (const v of violations) {
       console.error(
@@ -136,7 +149,7 @@ function main() {
     process.exit(1);
   }
   console.log(
-    `check-security-baseline: PASS (no installed copy below: ${ADVISORIES.map((a) => `${a.package}@${a.fixedAt} [${a.cve}]`).join(", ")})`,
+    `check-security-baseline: PASS (no locked copy below: ${ADVISORIES.map((a) => `${a.package}@${a.fixedAt} [${a.cve}]`).join(", ")})`,
   );
 }
 
