@@ -699,7 +699,6 @@ export const APPLICATION_INTEGRATION_FILES = {
   serviceSource: "apps/mobile/src/services/ai/applicationAi.ts",
   providersSource: "apps/mobile/src/services/ai/providerRegistry.ts",
   modelsSource: "apps/mobile/src/screens/AiModelsRoute.tsx",
-  advancedSource: "apps/mobile/src/screens/AiAdvanced.tsx",
   helpSource: "apps/mobile/src/screens/Help.tsx",
   matchesSource: "apps/mobile/src/services/possibleMatches.ts",
   visionNativeSource: "apps/mobile/src/services/ai/vision/native.ts",
@@ -6944,7 +6943,6 @@ export function validateApplicationIntegration(sources) {
     ["modelsSource", /run\(service\.(download|pause|remove)\(modelId\)/, "models route must drive download controls through the shared service"],
     ...["download", "pause", "remove"].map((name) =>
       ["modelsSource", new RegExp(`service\\.${name}\\(`), `models route must connect ${name}`]),
-    ["advancedSource", /service\.measure\(/, "advanced screen must connect measure"],
     ["helpSource", /createProviderAdapter\("offline",/, "Help must list installed offline models through registry"],
     ["helpSource", /sendProvider\s*===\s*"offline"\s*\?\s*null/, "offline sends must bypass credential lookup"],
     ["matchesSource", /resolveMatchingBackend\([^)]*\)\s*===\s*"needle"[\s\S]{0,200}embedNeedle\(/, "matching must reach selected Needle service"],

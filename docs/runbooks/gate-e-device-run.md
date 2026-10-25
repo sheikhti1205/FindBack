@@ -17,10 +17,16 @@ and does not validate this integration wave. Run only when device work is author
   GPU** run `smol-color-plate-v1` (red and blue generated PNGs, greedy sampling,
   24-token cap). Both arms use the CPU language decoder; only the vision backend
   changes. Counters are real LiteRT `BenchmarkInfo`, not word/chunk estimates.
+  **2026-10-25:** the consumer benchmark screen was deleted (owner: no CPU/GPU
+  vocabulary on consumer surfaces). Until the background self-check ships,
+  exercise both arms through `service.measure('cpu'|'gpu')` from a device
+  harness; there is no in-app button for it.
 - Fresh passing records can select a backend in this session. GPU init failure
   revokes its record, announces an explicit CPU retry, and never routes to cloud.
 - **Inspect hardware** discovers NNAPI/Vulkan/OpenCL; discovery is not proof that
-  those APIs execute Smol or Needle. There is no NNAPI timing arm.
+  those APIs execute Smol or Needle. There is no NNAPI timing arm. Its only UI
+  entry point was the deleted Advanced screen; use `service.facts()` from a
+  device harness.
 - Report → Analyze photo is the consented SmolVLM2 local-first path (on-device
   default with OpenRouter cloud fallback). Do not use
   the retired GPU-preferred `vlmPlugin.ts` flow or retired `scripts/devprep` harnesses.
@@ -68,10 +74,10 @@ screenshots/logs and reason; do not fill performance values before measuring.
 | D2 | Kill/relaunch during a partial download, resume; restart after a completed install. | Partial bytes recover as resumable; completed installs rehash against current pin. Corrupt/truncated weights must not enter the picker. Never restore resident state from disk. |
 | D3 | Remove each model, repeat; attempt removal during inference or measurement. | Runtime ownership prevents deletion while busy; remove releases resident then staged/installed/journal files and revokes availability. Missing files are idempotent; failures remain visible. |
 | V1 | Install Smol, remove cloud keys; Help → Choose model → installed Smol → explicitly approve red/blue and real object photos → send. | CPU cold-load and image description work offline after install. Unapproved images excluded, no provider-key request/network fallback. Retain prompts, image fixture hashes, raw answers and correctness judgment. |
-| V2 | Measure CPU, then Measure GPU; repeat with a driver/init failure or unsupported GPU. | Valid counters + correctness per arm, or explicit unavailable/error. Fast wrong output never wins. If a measured GPU later fails load, show CPU retry notice; fail visibly if CPU also fails. |
+| V2 | Measure CPU, then Measure GPU (service seam; the in-app screen is gone); repeat with a driver/init failure or unsupported GPU. | Valid counters + correctness per arm, or explicit unavailable/error. Fast wrong output never wins. If a measured GPU later fails load, show CPU retry notice; fail visibly if CPU also fails. |
 | N1 | Needle Help prompt: supplied item title/description/location details. Include ambiguous and unsupported questions. | Native structured extraction only; preserve uncertainty and supplied details. Do not evaluate Needle as a general chatbot or auto-apply fields. |
 | N2 | Seed fixed opposite-type open report candidates; evaluate Possible Matches with USE, then explicitly select installed Needle. | Real native vectors; transparent top-3 ranking; no wrong-type/closed posts. Record candidate IDs/texts and rankings for both arms; no automatic Needle promotion. Remove Needle/restart → default USE. |
-| H1 | Inspect hardware; correlate output with Android/driver facts. | Record NNAPI devices, Vulkan/OpenCL availability and discovery errors. Do not label discovery as executed inference, correctness, or speed. |
+| H1 | Inspect hardware (`service.facts()`); correlate output with Android/driver facts. | Record NNAPI devices, Vulkan/OpenCL availability and discovery errors. Do not label discovery as executed inference, correctness, or speed. |
 | P1 | CPU/GPU measurements from cold start, then at least five warm repeats, same fixtures/model/OS. | Raw records: TTFT ms, decode tokens/s, correctness, corpus/probe/revision. Separate model-load wall time from SDK TTFT. Report median/range; missing counters are unavailable, never zero-filled. |
 | R1 | Sample process memory before load, after Needle, after Smol, after unload/remove; exercise low-memory/restart. | RAM/peak footprint and release behavior, no overlapping generative residents or false readiness after eviction. Capture `adb shell dumpsys meminfo com.findback.app` per phase. |
 | L1 | Smol stream → Stop; switch screen/model, background/foreground, rotate, force-stop/relaunch. Retry after cancellation/error. | Correct generation-ID isolation, no stale chunks, listener cleanup, no double engines/native crash; restored verified files require a fresh runtime load. Needle Stop must suppress late output; its bounded native call has no token-level cancellation API. |

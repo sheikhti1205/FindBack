@@ -5,7 +5,6 @@ import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { MotionConfig } from "framer-motion";
 import { AiModelsRoute } from "../../apps/mobile/src/screens/AiModelsRoute";
-import { AdvancedModelSupply } from "../../apps/mobile/src/screens/AiModelsRouteAdvanced";
 import { ApplicationAiService } from "../../apps/mobile/src/services/ai/applicationAi";
 import { QWEN_TEXT_MODEL_ID, NEEDLE_DESCRIPTOR } from "../../apps/mobile/src/services/ai/modelDescriptors";
 import { StateSwap } from "../../apps/mobile/src/components/uiPrimitives";
@@ -70,7 +69,7 @@ window.review = {
     applyTheme({ theme: theme === "light" ? "light" : "dark", trueBlackDark: theme === "amoled" });
     applyAppearance({ ...DEFAULT_APPEARANCE, textScale: scale, reduceMotion: reduce ? "reduce" : "full" });
     root.render(<MemoryRouter><MotionConfig reducedMotion={reduce ? "always" : "never"}>
-      {surface === "models" ? <AiModelsRoute service={service} /> : surface === "advanced" ? <AdvancedModelSupply service={service} /> : <MotionReview scrolled={surface === "scrolled"} />}
+      {surface === "models" ? <AiModelsRoute service={service} /> : <MotionReview scrolled={surface === "scrolled"} />}
     </MotionConfig></MemoryRouter>);
   },
   install: () => {

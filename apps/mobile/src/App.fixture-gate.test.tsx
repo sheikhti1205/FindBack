@@ -73,7 +73,6 @@ vi.mock("./screens/MediaSettings", () => ({ MediaSettings: marker("MediaSettings
 vi.mock("./screens/NotificationPreferences", () => ({ NotificationPreferences: marker("NotificationPreferences") }));
 vi.mock("./screens/PrivacySettings", () => ({ PrivacySettings: marker("PrivacySettings") }));
 vi.mock("./screens/AiSettings", () => ({ AiSettings: marker("AiSettings") }));
-vi.mock("./screens/AiAdvanced", () => ({ AiAdvanced: marker("AiAdvanced") }));
 vi.mock("./screens/HelpGuide", () => ({ HelpGuide: marker("HelpGuide") }));
 vi.mock("./screens/Diagnostics", () => ({ Diagnostics: marker("Diagnostics") }));
 vi.mock("./fixture/FixtureRoute", () => ({ FixtureRoute: () => <p>Fixture screen</p> }));

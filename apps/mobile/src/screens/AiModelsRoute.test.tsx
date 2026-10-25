@@ -176,20 +176,20 @@ describe("AiModelsRoute consumer cards", () => {
     }
     expectNormalTierCopy(view.container);
   });
-  it("uses the safest-option line until performance is measured on this phone", async () => {
+  it("offers no benchmark, performance or engineering route on the consumer page", async () => {
     const { service } = androidService();
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-    expect(
-      screen.getByText(
-        /findback uses the safest available option until performance has been measured on this phone/i,
-      ),
-    ).toBeTruthy();
-    expect(screen.getByRole("link", { name: /measure performance/i }).getAttribute("href")).toBe(
-      "/settings/ai/advanced",
-    );
-    expectNormalTierCopy(view.container);
+    // Positive anchor first: the catalogue itself still renders.
     await waitFor(() => expect(view.container.textContent).toContain("Photo analysis"));
+    for (const name of [/measure performance/i, /advanced/i, /performance/i, /diagnostics/i]) {
+      expect(screen.queryAllByRole("link", { name })).toHaveLength(0);
+      expect(screen.queryAllByRole("button", { name })).toHaveLength(0);
+    }
+    for (const route of view.container.querySelectorAll("a[href]")) {
+      expect(route.getAttribute("href")).not.toMatch(/advanced|performance|diagnostics|__/);
+    }
+    expectNormalTierCopy(view.container);
   });
 
   it("names an incompatible device instead of offering a dead download", async () => {
@@ -226,7 +226,7 @@ describe("AiModelsRoute consumer cards", () => {
     expectNormalTierCopy(view.container);
   });
 
-  it("derives Recommended rows and Advanced choices from the same registry", async () => {
+  it("offers only the verified consumer catalogue, never the lab tier", async () => {
     const extra = {
       modelId: "test-extra-model", displayName: "Test extra", consumerTitle: "Test extra",
       consumerDetail: "Test", runtimeId: "test-extra-runtime", format: "cact" as const,
@@ -264,34 +264,44 @@ describe("AiModelsRoute consumer cards", () => {
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
     expect(await screen.findByRole("heading", { name: "Test extra" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Download Test extra" })).toBeTruthy();
-    // Lab metadata is not in the ordinary consumer tier.
-    expect(screen.queryByRole("button", { name: "Download Lab hidden" })).toBeNull();
+    // Lab metadata is not in the ordinary consumer tier, and the consumer
+    // route no longer carries any engineering disclosure that could reach it.
+    expect(screen.queryByRole("heading", { name: "Lab hidden" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Lab hidden" })).toBeNull();
     expectNormalTierCopy(view.container);
-    fireEvent.click(screen.getByRole("button", { name: "Open Advanced" }));
-    expect(screen.getByRole("option", { name: "Lab hidden" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Import model files" })).toBeTruthy();
   });
 
-  it("keeps evaluation and import controls behind an explicit Advanced action", async () => {
+  it("never offers model import, URL/mirror entry or evaluation on the consumer route", async () => {
     const { service } = androidService();
     await service.ready;
     const view = render(<MemoryRouter><AiModelsRoute service={service} /></MemoryRouter>);
-    // Recommended Qwen row: consumer title, role summary, tier badge, download.
+    // Consumer rows keep their plain title, role summary and download action.
     expect(await screen.findByRole("heading", { name: /on-device assistant/i })).toBeTruthy();
     // Qwen-only install is a chat model: report filling belongs to Needle.
     expect(screen.getByText("Answers questions")).toBeTruthy();
     expect(screen.queryByText("Answers questions · Fills in reports")).toBeNull();
     expect(screen.getByRole("button", { name: "Download On-device assistant" })).toBeTruthy();
-    expect(screen.getAllByText("Recommended").length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryByRole("button", { name: "Import model files" })).toBeNull();
+    // Packet 07 §20 / 13 "REMOVE FROM CONSUMER": none of the acquisition or
+    // evaluation controls may be reachable from a consumer screen.
+    for (const name of [
+      "Open Advanced",
+      "Import model files",
+      "Import local file",
+      "Import URL",
+      "Download model",
+      "Run evaluation",
+      "Choose evaluation photo",
+    ]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
     expect(screen.queryByLabelText("Model")).toBeNull();
-    expectNormalTierCopy(view.container);
-    fireEvent.click(screen.getByRole("button", { name: "Open Advanced" }));
-    expect(await screen.findByLabelText("Model")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Download model" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Import model files" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Run evaluation" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Close Advanced" }));
+    expect(screen.queryByLabelText("Evaluation prompt")).toBeNull();
+    expect(screen.queryByLabelText("Expected SHA-256")).toBeNull();
+    expect(screen.queryByLabelText("Exact byte count")).toBeNull();
+    expect(screen.queryByLabelText("Model URL")).toBeNull();
+    // Engineering tooling routes must never be linked from a consumer page
+    // (packet 07 §20, 13 "REMOVE FROM CONSUMER"). Guards reintroduction.
+    expect(view.container.querySelector('a[href*="__model-supply"]')).toBeNull();
     expectNormalTierCopy(view.container);
   });
 });

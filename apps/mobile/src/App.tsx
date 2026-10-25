@@ -46,7 +46,6 @@ import { NotificationPreferences } from "./screens/NotificationPreferences";
 import { PrivacySettings } from "./screens/PrivacySettings";
 import { AiSettings } from "./screens/AiSettings";
 import { AiPrivacy } from "./screens/AiPrivacy";
-import { AiAdvanced } from "./screens/AiAdvanced";
 import { HelpGuide } from "./screens/HelpGuide";
 import { AdminTeam } from "./screens/AdminTeam";
 import { AdminBootstrap } from "./screens/AdminBootstrap";
@@ -216,7 +215,6 @@ function AppRouteTree() {
               <Route path="/settings/ai/models" element={<AiModelsRoute />} />
               <Route path="/settings/local-intelligence" element={<LocalIntelligence />} />
               <Route path="/settings/local-intelligence/downloads" element={<DownloadedModels />} />
-              <Route path="/settings/ai/advanced" element={<AiAdvanced />} />
               <Route path="/settings/help" element={<HelpGuide />} />
               {/* Staff console. The Settings row is role-gated and these routes
                   are guarded too, so a typed URL never reaches the console. */}

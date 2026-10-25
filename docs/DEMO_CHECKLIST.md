@@ -80,9 +80,11 @@ version/certificate, device/OS and model pins before claiming any result.
 - [ ] Settings → AI & models → On-device AI (`/settings/ai/models`): explicit
   Needle/Smol downloads, progress/Pause/Resume/checksum/install/remove/corruption/
   kill-relaunch. Startup must not auto-download/load/benchmark.
-- [ ] CPU is first-class/default; Measure CPU/GPU correctness/real counters, GPU
-  unavailable/error and explicit CPU retry. Decoder stays CPU on both arms;
-  hardware discovery is not proof of acceleration or performance.
+- [ ] CPU is first-class/default; CPU/GPU measurement correctness/real counters,
+  GPU unavailable/error and explicit CPU retry. Decoder stays CPU on both arms;
+  hardware discovery is not proof of acceleration or performance. There is no
+  in-app measurement button since 2026-10-25 (owner: no CPU/GPU vocabulary on
+  consumer surfaces) — run it through `service.measure('cpu'|'gpu')`.
 - [ ] Explicit installed Needle challenger selection for session only; fixed
   candidate comparison to USE, remove/restart defaults, no automatic promotion.
 - [ ] Help uses chosen direct BYOK model or installed specialized model where

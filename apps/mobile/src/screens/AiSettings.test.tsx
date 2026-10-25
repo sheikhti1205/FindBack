@@ -75,9 +75,6 @@ describe("AiSettings consumer root", () => {
     expect(screen.getByRole("link", { name: /on-device ai/i }).getAttribute("href")).toBe(
       "/settings/ai/models",
     );
-    expect(screen.getByRole("link", { name: /advanced/i }).getAttribute("href")).toBe(
-      "/settings/ai/advanced",
-    );
     expect(screen.getByRole("button", { name: /back to settings/i })).toBeTruthy();
     await waitFor(() => expect(mocks.get).toHaveBeenCalled());
     expectNormalTierCopy(view.container);
@@ -85,7 +82,7 @@ describe("AiSettings consumer root", () => {
 
   it("groups the rows by what the reader is choosing", () => {
     renderSettings();
-    for (const name of ["AI Chat", "On this device", "More"]) {
+    for (const name of ["AI Chat", "On this device"]) {
       expect(screen.getByRole("region", { name })).toBeTruthy();
     }
     // The local download owner is reached from the local row, not from a

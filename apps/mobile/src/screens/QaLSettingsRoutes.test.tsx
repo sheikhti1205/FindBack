@@ -95,7 +95,6 @@ const BACK_TO_ROUTES = [
   "/settings/diagnostics",
   "/settings/ai/models",
   "/settings/ai/connections",
-  "/settings/ai/advanced",
   "/settings/local-intelligence",
   "/settings/local-intelligence/downloads",
   "/onboarding?replay=1",
@@ -172,15 +171,21 @@ describe("QA L: consumer-tier AI screens render no raw technical terms", () => {
     },
   );
 
-  it("Advanced keeps the exact technical evidence reachable", async () => {
+  it("no consumer route reaches a benchmark or CPU/GPU screen any more", async () => {
+    // Owner direction 2026-10-25: the benchmark/CPU-GPU surface is not a
+    // consumer surface at all, so the route must not exist and no consumer
+    // screen may link to it.
     renderAt("/settings/ai/advanced");
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Advanced" })).not.toBeNull();
+      expect(screen.queryByRole("heading", { name: "Advanced" })).toBeNull();
     });
-    for (const name of ["Measure CPU", "Measure GPU", "Inspect hardware", "Export diagnostics"]) {
-      expect(screen.getByRole("button", { name })).not.toBeNull();
+    for (const route of ["/settings/ai", "/settings/ai/models", "/settings/local-intelligence"]) {
+      renderAt(route);
+      await waitFor(() => {
+        expect(document.body.textContent!.length).toBeGreaterThan(0);
+      });
+      expect(screen.queryByText(/measure performance|run speed tests/i)).toBeNull();
+      expect(screen.queryByRole("link", { name: /advanced/i })).toBeNull();
     }
-    expect(screen.getAllByText("Checksum", { exact: false }).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Revision:", { exact: false }).length).toBeGreaterThan(0);
   });
 });

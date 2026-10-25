@@ -96,7 +96,7 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
   {
     id: "ai",
     title: "AI & models",
-    keywords: "ai local on device model cpu gpu cloud chat providers",
+    keywords: "ai local on device model cloud chat providers",
     group: "Intelligence",
     route: "/settings/ai",
     description: "Intelligence",

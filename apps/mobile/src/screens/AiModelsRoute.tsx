@@ -1,5 +1,5 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { Cpu, Gauge } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { Cpu } from "lucide-react";
 import { Button } from "../components/Button";
 import {
   SettingsGroup,
@@ -12,11 +12,9 @@ import {
   getApplicationAi,
   type ApplicationAiService,
 } from "../services/ai/applicationAi";
-import { tierOf, type ModelDescriptor } from "../services/ai/modelDescriptors";
+import { type ModelDescriptor } from "../services/ai/modelDescriptors";
 import { isLocalIntelligenceOwnedModel } from "../services/ai/localIntelligenceView";
 import { qualifiedUiRolesForOfflineModel } from "../services/ai/uiModelRoles";
-import { canShowAuto } from "../services/ai/uiGates";
-import { AdvancedModelSupply } from "./AiModelsRouteAdvanced";
 
 function formatMegabytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} MB`;
@@ -25,8 +23,8 @@ function formatMegabytes(bytes: number): string {
 /**
  * Consumer role summary: what the user can do with this model, in plain
  * words. Derived from the descriptor's qualified UI roles — never ids,
- * hashes, or runtime terms. Unmeasured Advanced rows (no qualified roles
- * yet) name the modality only, never invented capabilities.
+ * hashes, or runtime terms. A descriptor with no qualified role yet names the
+ * modality only, never an invented capability.
  */
 const ROLE_SUMMARY: Readonly<Record<string, string>> = {
   chat: "Answers questions",
@@ -88,18 +86,14 @@ function ConsumerCard({
   descriptor,
   service,
   reportError,
-  advanced = false,
 }: {
   descriptor: ModelDescriptor;
   service: ApplicationAiService;
   reportError: (message: string) => void;
-  /** Advanced rows: truthful state, never a download/dead action. */
-  advanced?: boolean;
 }) {
   const modelId = descriptor.modelId;
   const title = descriptor.consumerTitle;
   const detail = descriptor.consumerDetail;
-  const tier = tierOf(descriptor);
   const roleSummary = roleSummaryFor(descriptor);
   const totalBytes = descriptor.bytes > 0 ? descriptor.bytes : null;
   const status = service.manager.statusOf(modelId);
@@ -134,7 +128,7 @@ function ConsumerCard({
   // Not-offered rows keep a SHORT pill state and carry the full legal /
   // verification reason as wrapping body copy. Putting the whole sentence in
   // the pill forced a wide, unshrinkable row that overflowed phone widths.
-  const notOffered = advanced || !descriptor.downloadable;
+  const notOffered = !descriptor.downloadable;
   const reasonNote = notOffered
     ? ((descriptor.distributionNote ?? "").trim() !== ""
       ? (descriptor.distributionNote as string)
@@ -159,34 +153,30 @@ function ConsumerCard({
   // either as a notice (e.g. a storage shortfall reads "Needs more storage"
   // once).
   const showNotice = notice !== null && !ready && !notOffered && notice !== stateLine;
-  const showActions = !advanced && descriptor.downloadable;
+  const showActions = descriptor.downloadable;
 
   return (
     <article aria-labelledby={`ai-tool-${modelId}`} className="flex flex-col gap-2 p-1">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-col">
-          <h3 id={`ai-tool-${modelId}`} className="text-sm font-semibold">
+      <div className="flex flex-col gap-1">
+        {/* The state sits with the title and wraps under it when the text is
+            large or the phone is narrow. A right-hand column used to squeeze
+            this text to a near-zero width at 200% (measured at 320dp: the
+            title broke one character per line). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <h3 id={`ai-tool-${modelId}`} className="break-words text-sm font-semibold">
             {title}
           </h3>
-          <p className="text-xs text-on-surface-variant">{detail}</p>
-          {roleSummary !== null ? (
-            <p className="text-xs text-on-surface-variant">{roleSummary}</p>
-          ) : null}
-          {totalBytes === null ? (
-            <p className="text-xs text-on-surface-variant">Size unavailable</p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          <span
-            data-testid={`ai-tier-${modelId}`}
-            className="rounded-m3-xs border border-outline-variant px-1.5 py-0.5 text-xs font-medium uppercase tracking-wide text-on-surface-variant"
-          >
-            {tier === "recommended" ? "Recommended" : "Advanced"}
-          </span>
           <StatusPill tone={ready ? "success" : download === "failed" ? "error" : "neutral"}>
             {stateLine}
           </StatusPill>
         </div>
+        <p className="break-words text-xs text-on-surface-variant">{detail}</p>
+        {roleSummary !== null ? (
+          <p className="break-words text-xs text-on-surface-variant">{roleSummary}</p>
+        ) : null}
+        {totalBytes === null ? (
+          <p className="break-words text-xs text-on-surface-variant">Size unavailable</p>
+        ) : null}
       </div>
       {download === "downloading" && percent !== null ? (
         <div
@@ -302,9 +292,6 @@ function ConsumerCard({
 export function AiModelsRoute({ service = getApplicationAi() }: { service?: ApplicationAiService }) {
   useSyncExternalStore(service.subscribe, service.snapshot);
   const [error, setError] = useState<string | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const advancedId = useId();
-  const measured = canShowAuto(service.probeRecords, service.probeContext);
   // Refresh per-model device compatibility once per service: the snapshot
   // subscription re-renders when the service publishes the results.
   useEffect(() => {
@@ -343,34 +330,11 @@ export function AiModelsRoute({ service = getApplicationAi() }: { service?: Appl
           route="/settings/local-intelligence/downloads"
         />
       </SettingsGroup>
-        <SettingsGroup
-          title="Advanced"
-          description="Import models or try an explicit evaluation. These tests do not change your tools."
-        >
-          <Button type="button" variant="outline" aria-expanded={advancedOpen} aria-controls={advancedId} onClick={() => setAdvancedOpen((value) => !value)}>{advancedOpen ? "Close Advanced" : "Open Advanced"}</Button>
-          {advancedOpen ? <div id={advancedId} className="mt-4 min-w-0"><AdvancedModelSupply service={service} /></div> : null}
-        </SettingsGroup>
       {error !== null ? (
         <p role="alert" className="text-sm text-error">
           {error}
         </p>
       ) : null}
-      <SettingsGroup
-        title="Performance"
-        description={
-          measured
-            ? "Performance has been measured on this phone."
-            : "FindBack uses the safest available option until performance has been measured on this phone."
-        }
-      >
-        <SettingsRow
-          title="Measure performance"
-          description="Run speed tests and see technical details."
-          icon={Gauge}
-          iconTone="ai"
-          route="/settings/ai/advanced"
-        />
-      </SettingsGroup>
     </SettingsPage>
   );
 }

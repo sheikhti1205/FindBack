@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-/** Supply planning only. Weights are acquired through the canonical Android
- * Advanced workflow or the existing baseline fetch scripts, not this command.
+/** Supply planning only. Weights are acquired through the baseline fetch
+ * scripts or an operator's own tooling, not this command; the consumer app has
+ * no import surface (owner direction 2026-10-25).
  * Acquisition is not product qualification; HF aliases are not independent
  * outage mirrors. Language/projector files keep independent immutable pins.
  */
@@ -40,7 +41,7 @@ if (args.includes("--list")) {
   if (!d) { console.error("Unknown model identity"); process.exit(1); }
   line(d);
   if (!gate(d).allowed) process.exit(1);
-  console.log("Plan only: no weights fetched. Use the explicit Advanced acquisition/import workflow; verify every language/projector pin before evaluation.");
+  console.log("Plan only: no weights fetched. Fetch weights with the baseline scripts; verify every language/projector pin before evaluation.");
 } else {
   console.error("usage: fetch-lab-models.mjs --list | --plan [--channel benchmark|download|eval|bundle] | --fetch <modelId> [--channel benchmark]");
   process.exit(2);

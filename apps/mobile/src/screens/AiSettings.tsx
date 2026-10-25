@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, KeyRound, SlidersHorizontal, Smartphone, Sparkles } from "lucide-react";
+import { Cpu, KeyRound, Smartphone, Sparkles } from "lucide-react";
 import { useAuth } from "../auth";
 import {
   SettingsGroup,
@@ -117,18 +117,6 @@ export function AiSettings({ accountId }: { accountId?: string }) {
           icon={Smartphone}
           iconTone="ai"
           route="/settings/ai/models"
-        />
-      </SettingsGroup>
-      <SettingsGroup
-        title="More"
-        description="Technical details and diagnostics."
-      >
-        <SettingsRow
-          title="Advanced"
-          description="Performance tests and technical details."
-          icon={SlidersHorizontal}
-          iconTone="ai"
-          route="/settings/ai/advanced"
         />
       </SettingsGroup>
     </SettingsPage>

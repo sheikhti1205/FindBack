@@ -23,7 +23,7 @@ const SEARCH_MATRIX: ReadonlyArray<{ title: string; keywords: string; route: str
   { title: "Accessibility", keywords: "font text size motion reduce animation", route: "/settings/accessibility" },
   { title: "Media & uploads", keywords: "photo image quality data storage upload", route: "/settings/media" },
   { title: "Notifications", keywords: "push comment mention like status report bell", route: "/settings/notifications" },
-  { title: "AI & models", keywords: "ai local on device model cpu gpu cloud chat providers", route: "/settings/ai" },
+  { title: "AI & models", keywords: "ai local on device model cloud chat providers", route: "/settings/ai" },
   { title: "Providers", keywords: "providers cloud connections openrouter api key provider openai google mistral groq", route: "/settings/ai/connections" },
   { title: "Privacy & permissions", keywords: "privacy location permission sharing", route: "/settings/privacy" },
   { title: "Diagnostics", keywords: "debug build logs export support", route: "/settings/diagnostics" },
@@ -347,10 +347,13 @@ describe("QA L: W4 root groups moved rows without orphaning destinations", () =>
     }
   });
 
-  it("nests moved rows under Advanced and Help & about disclosures", () => {
+  it("nests moved rows under the Advanced, Legal and Help & about disclosures", () => {
     renderSettingsRoot();
     const more = screen.getByRole("region", { name: "More" });
-    expect(more.querySelectorAll("details.fb-settings-nested")).toHaveLength(2);
+    // Three nested groups: Advanced (uploads/troubleshooting), Legal, Help &
+    // about. The expectation said two and had been red on main since the Legal
+    // group landed; the href assertions below were already the real contract.
+    expect(more.querySelectorAll("details.fb-settings-nested")).toHaveLength(3);
     const hrefs = Array.from(document.querySelectorAll("a[href]")).map((a) =>
       (a as HTMLAnchorElement).getAttribute("href"),
     );

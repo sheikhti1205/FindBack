@@ -70,24 +70,6 @@ with sync_playwright() as p:
                     assert not overflow(page)
                 context.close()
 
-    # Advanced acquisition/evaluation is a deliberately disclosed surface: review
-    # it rendered at the same widths/themes/scales and reject horizontal overflow.
-    for width in (320, 360, 390):
-        for theme in ("light", "dark", "amoled"):
-            for scale in ("standard", "xlarge"):
-                context = browser.new_context(viewport={"width": width, "height": 800})
-                page = context.new_page()
-                page.goto(BASE, wait_until="networkidle")
-                page.evaluate("url => import(url)", HARNESS)
-                page.wait_for_function("window.review !== undefined")
-                page.evaluate("([theme, scale]) => window.review.render('advanced', theme, scale)", [theme, scale])
-                page.get_by_role("region", name="Advanced model acquisition and evaluation").wait_for()
-                page.screenshot(path=str(OUT / f"advanced-{width}-{theme}-{scale}.png"), full_page=True)
-                bad = overflow(page)
-                results.append({"surface": "advanced", "width": width, "theme": theme, "scale": scale, "overflow": bad})
-                assert not bad, results[-1]
-                context.close()
-
     # Frame-by-frame flow-height proof: production StateSwap AND PostList.
     for reduce in (False, True):
         context = browser.new_context(viewport={"width": 320, "height": 800}, reduced_motion="reduce" if reduce else "no-preference")

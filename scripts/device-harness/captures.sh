@@ -116,7 +116,10 @@ device-harness: AI benchmark stub (acceptance matrix: Photo AI + Assistant;
   figures feed the performance measurement template — no claim without them).
   Manual steps (record each in NOTES.md + perf summary):
   1. Report -> Analyze photo (SmolVLM2 local-first, consented cloud fallback).
-  2. Settings -> AI & models -> Measure CPU / Measure GPU (smol-color-plate-v1).
+  2. Measurement has no consumer screen since 2026-10-25 (owner: no CPU/GPU
+     vocabulary on consumer surfaces). Exercise it through the service seam
+     (`service.measure('cpu'|'gpu')`, smol-color-plate-v1) until the background
+     self-check ships.
   3. Assistant: slow visible partial, retry single-final, rapid double-send
      single-request, Stop with no late emission, photo-only send, large photo.
   4. LFM/llama.cpp are LAB-ONLY (docs/runbooks/native-model-run.md) — never here.
