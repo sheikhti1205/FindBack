@@ -188,7 +188,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
               ease: motionEasings.out,
               delay: index * motionStagger,
             }}
-            className="flex min-w-0 flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
+            className="flex min-w-0 max-w-full flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
           >
             <div className="flex h-full flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface p-2 transition-colors hover:border-on-surface-variant active:bg-surface-container">
               {match.post.photoUrl ? (
