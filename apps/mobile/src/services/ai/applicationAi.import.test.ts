@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { ApplicationAiService } from "./applicationAi";
 import type { ModelDownloadDriver } from "./download/driver";
 import { olderGenerativeDownloads } from "./localIntelligenceView";
+import { legacyRuntimeRegistry } from "./__tests__/legacyRuntimeRegistry";
 
 const hash = "a".repeat(64);
 const input = { sha256: hash, bytes: 12, format: "gguf" as const, license: "Apache-2.0", url: "https://example.org/model.gguf" };
@@ -32,7 +33,8 @@ function fixture(options: { saveFails?: boolean; downloadFails?: boolean } = {})
   };
   const llama = { bridgeName: "llama-cpp-lab", isLlamaAvailable: async () => true, loadLlamaModel: async () => {}, unloadLlamaModel: async () => {}, cancelGeneration: async () => {}, inferLlama: async function* () {} };
   const smol = { bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false, loadVisionModel: async () => {}, unloadVisionModel: async () => {}, cancelGeneration: async () => {}, describeImage: async function* () {}, collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }) };
-  const service = new ApplicationAiService({ android: true, driver, llama, smol });
+  // Exercise legacy import transactions in isolation, never the current acquisition policy.
+  const service = new ApplicationAiService({ ...legacyRuntimeRegistry, android: true, driver, llama, smol });
   return { service, disk, driver, metadata: () => metadata, llama, smol };
 }
 

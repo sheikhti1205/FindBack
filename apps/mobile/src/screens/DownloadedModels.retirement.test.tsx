@@ -6,19 +6,25 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ApplicationAiService } from "../services/ai/applicationAi";
 import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "../services/ai/modelDescriptors";
 import type { ModelDownloadDriver } from "../services/ai/download/driver";
+import { importedDescriptor, type ImportSpec } from "../services/ai/download/import";
 import { DownloadedModels } from "./DownloadedModels";
 
 afterEach(cleanup);
 
-function fixture(descriptors?: readonly ModelDescriptor[]) {
+function fixture(descriptors?: readonly ModelDescriptor[], previousImports: readonly ImportSpec[] = []) {
   const disk = new Map<string, string>();
+  let metadata = JSON.stringify(previousImports);
+  for (const old of previousImports) {
+    const d = importedDescriptor(old);
+    disk.set(`/private/models/models/${d.modelId}/${d.revision}/${d.fileName}`, d.sha256);
+  }
   const removed: string[] = [];
   const unloadNeedle = vi.fn(async () => {});
   const driver: ModelDownloadDriver = {
     supportedAbis: async () => ["arm64-v8a"], rootDir: async () => "/private/models", freeBytes: async () => 1e10,
     stagedSize: async () => 0, readJournalText: async () => null,
     download: async () => { throw new Error("No download expected"); },
-    readMetadata: async () => null, writeMetadata: async () => {},
+    readMetadata: async () => metadata, writeMetadata: async (_path, value) => { metadata = value; },
     pickAndStage: async ({ stagingPath }) => { disk.set(stagingPath, "a".repeat(64)); return { actualHex: "a".repeat(64), bytes: 12 }; },
     hashFile: async (path) => disk.get(path) ?? "",
     cancelDownload: async () => {},
@@ -148,8 +154,10 @@ it("includes a previously failed generative transfer and allows Escape cancellat
 });
 
 it("allows cleanup of previously imported generative files without showing an import or acquisition UI", async () => {
-  const f = fixture(); await f.service.ready;
-  const imported = await f.service.importLocal({ format: "gguf", license: "Apache-2.0" });
+  const f = fixture(undefined, [{ sha256: "a".repeat(64), bytes: 12, format: "gguf", license: "Apache-2.0" }]);
+  await f.service.ready;
+  const imported = `imported-${"a".repeat(64)}`;
+  expect(f.service.manager.statusOf(imported)?.checksumVerified).toBe(true);
   render(<MemoryRouter><DownloadedModels service={f.service} /></MemoryRouter>);
   const dialog = await openCleanup();
   expect(dialog.textContent).not.toMatch(/imported-|llama|gguf|runtime|SHA/i);

@@ -55,6 +55,8 @@ export type DistributionPolicy = "downloadable" | "license-restricted" | "unavai
 export type ModelTrust = "curated" | "imported";
 
 export interface ModelDescriptor {
+  /** Historical file identity retained for upgrade cleanup, never acquisition or inference. */
+  readonly cleanupOnly?: boolean;
   readonly sources?: readonly string[];
   readonly companions?: readonly ModelArtifact[];
   readonly licenseFacts?: LicenseFacts;
@@ -128,9 +130,22 @@ export function tierOf(descriptor: ModelDescriptor): ModelTier {
 
 /** Machine-readable distribution policy derived from the descriptor. */
 export function distributionPolicyOf(descriptor: ModelDescriptor): DistributionPolicy {
+  if (descriptor.cleanupOnly) return "unavailable";
   if (descriptor.downloadable) return "downloadable";
   if (descriptor.importable === true) return "license-restricted";
   return "unavailable";
+}
+
+/** Owner-retired generation engines only; future narrow runtimes are not retired by exclusion. */
+export function isRetiredGenerativeRuntime(runtimeId: string): boolean {
+  return runtimeId === SMOL_VLM_RUNTIME_ID || runtimeId === QWEN_TEXT_RUNTIME_ID || runtimeId === LLAMA_CPP_RUNTIME_ID;
+}
+
+export const RETIRED_MODEL_NOTICE = "This model is no longer available. Remove its downloaded files in Settings.";
+
+/** Preserve pins, modality and file locations so upgrades can still find and remove bytes. */
+export function cleanupOnlyDescriptor(descriptor: ModelDescriptor): ModelDescriptor {
+  return Object.freeze({ ...descriptor, cleanupOnly: true, downloadable: false, importable: false, taskRoles: Object.freeze([]), distributionNote: RETIRED_MODEL_NOTICE });
 }
 
 export interface ModelRegistry {
@@ -333,22 +348,22 @@ export function createModelRegistry(
       return found;
     },
     visionDescriptor: () =>
-      defaultVisionModelId === undefined ? undefined : frozen.find((item) => item.modelId === defaultVisionModelId),
-    catalogue: () => frozen.filter((item) => item.downloadable && tierOf(item) === "recommended"),
-    advancedCatalogue: () => frozen.filter((item) => tierOf(item) === "advanced"),
+      defaultVisionModelId === undefined ? undefined : frozen.find((item) => item.modelId === defaultVisionModelId && !item.cleanupOnly),
+    catalogue: () => frozen.filter((item) => !item.cleanupOnly && item.downloadable && tierOf(item) === "recommended"),
+    advancedCatalogue: () => frozen.filter((item) => !item.cleanupOnly && tierOf(item) === "advanced"),
   };
 }
 
 let production: ModelRegistry | undefined;
 
 /**
- * Frozen production singleton: the canonical descriptor authority — every
- * product-visible model. The downloadable catalogue is Needle + SmolVLM2
- * vision + Qwen3 text; Advanced candidates are registered lab/evaluation
- * entries whose verified pins are downloadable, while pending,
- * license-restricted, or unmeasured entries stay non-downloadable until
- * their pin/license/measurement gates clear.
+ * Canonical production policy: retained narrow tools are active; rejected
+ * generation records remain only as exact upgrade-cleanup identities. Raw
+ * historical descriptor constants above are not the production catalogue.
  */
 export function productionModelRegistry(): ModelRegistry {
-   return (production ??= createModelRegistry([...ALL_DESCRIPTORS.filter((d) => d.maturity === "production"), ...SUPPLY_CANDIDATES], { defaultVisionModelId: SMOL_VISION_MODEL_ID }));
+  return (production ??= createModelRegistry(
+    [...ALL_DESCRIPTORS.filter((d) => d.maturity === "production"), ...SUPPLY_CANDIDATES]
+      .map((d) => isRetiredGenerativeRuntime(d.runtimeId) ? cleanupOnlyDescriptor(d) : d),
+  ));
 }

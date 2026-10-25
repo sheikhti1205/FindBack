@@ -18,7 +18,7 @@ import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridg
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
 import type { ProductionTextCompletion } from "./orchestrator/productionRuntimes";
-import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, QWEN_TEXT_MODEL_ID, QWEN_TEXT_RUNTIME_ID, LLAMA_CPP_RUNTIME_ID, distributionPolicyOf, modelSupportsAbi, type ModelDescriptor, type ModelRegistry, type ModelRegistryOptions } from "./modelDescriptors";
+import { cleanupOnlyDescriptor, isRetiredGenerativeRuntime, RETIRED_MODEL_NOTICE, createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, SMOL_VLM_RUNTIME_ID, QWEN_TEXT_MODEL_ID, QWEN_TEXT_RUNTIME_ID, LLAMA_CPP_RUNTIME_ID, distributionPolicyOf, modelSupportsAbi, type ModelDescriptor, type ModelRegistry, type ModelRegistryOptions } from "./modelDescriptors";
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
@@ -276,20 +276,23 @@ export class ApplicationAiService {
     const dimension = () => this.embedder?.dimension ?? 0;
     // Seam roles come from the same descriptor registry that owns pins and
     // ABIs: a model serves a task only when its descriptor permits the role.
-    const needleRoles = this.registry.descriptorFor(NEEDLE_MODEL_ID)?.taskRoles ?? [];
-    const qwenRoles = this.registry.descriptorFor(QWEN_TEXT_MODEL_ID)?.taskRoles ?? [];
+    const needleModel = this.registry.descriptorFor(NEEDLE_MODEL_ID);
+    const qwenModel = this.registry.descriptorFor(QWEN_TEXT_MODEL_ID);
+    const needleRoles = needleModel?.cleanupOnly ? [] : needleModel?.taskRoles ?? [];
+    const qwenRoles = qwenModel?.cleanupOnly ? [] : qwenModel?.taskRoles ?? [];
     const textRoles = [...new Set([...needleRoles, ...qwenRoles])];
-    const hasTextEngine = this.needle !== undefined || this.qwenText !== undefined;
+    const hasNeedle = this.needle !== undefined && needleRoles.length > 0;
+    const hasQwen = this.qwenText !== undefined && qwenRoles.length > 0;
     this.boot = bootProductionAi({
       pins: this.registry.descriptors.map((model) => ({ modelId: model.modelId, sha256: model.sha256, downloadBytes: model.bytes, minFreeRamMb: model.minRamMb })),
       managerOptions: this.driver ? { storageProbe: this.driver, storageHeadroomBytes: 64 * 1024 * 1024 } : undefined,
-      ...(hasTextEngine ? {
+      ...(hasNeedle || hasQwen ? {
         text: {
-          modelId: QWEN_TEXT_MODEL_ID,
-          modelIds: [QWEN_TEXT_MODEL_ID, NEEDLE_MODEL_ID],
-          runtimeId: QWEN_TEXT_RUNTIME_ID,
+          modelId: hasQwen ? QWEN_TEXT_MODEL_ID : NEEDLE_MODEL_ID,
+          modelIds: [...(hasQwen ? [QWEN_TEXT_MODEL_ID] : []), ...(hasNeedle ? [NEEDLE_MODEL_ID] : [])],
+          runtimeId: hasQwen ? QWEN_TEXT_RUNTIME_ID : NEEDLE_RUNTIME_ID,
           taskRoles: textRoles,
-          isReady: () => this.ensureAnyText(),
+          isReady: () => hasQwen ? this.ensureAnyText() : this.ensureNeedle(),
           // Prose tasks use the qualified LiteRT-LM text resident. A tool
           // model is never a substitute for an uninstalled prose model.
           completeText: (input: string, signal?: AbortSignal) => this.completeProseText(input, signal),
@@ -302,10 +305,10 @@ export class ApplicationAiService {
           // Structured (tool-constrained) roles are served ONLY by Needle:
           // gating their availability on Needle keeps a Qwen-only install
           // from advertising report/search/classification it cannot serve.
-          structuredModelId: NEEDLE_MODEL_ID,
-          proseModelId: QWEN_TEXT_MODEL_ID,
+          structuredModelId: hasNeedle ? NEEDLE_MODEL_ID : undefined,
+          proseModelId: hasQwen ? QWEN_TEXT_MODEL_ID : undefined,
         },
-        embedding: this.needle ? { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) } : undefined,
+        embedding: hasNeedle ? { modelId: NEEDLE_MODEL_ID, runtimeId: NEEDLE_RUNTIME_ID, taskRoles: needleRoles, get dimension() { return dimension(); }, isReady: () => this.ensureNeedle(), embed: (texts: string[]) => this.embedder!.embedNeedleTexts(texts) } : undefined,
       } : {}),
       ...(this.smol && vision ? { vision: { modelId: vision.modelId, runtimeId: vision.runtimeId, taskRoles: vision.taskRoles, isAvailable: () => this.ensureVision(), describe: async (prompt: string, imageBase64: string, signal: AbortSignal) => {
         let text = "";
@@ -331,13 +334,14 @@ export class ApplicationAiService {
   private async reconcile() {
     if (!this.driver) return;
     this.root = await this.driver.rootDir();
-    for (const d of parseImportedCatalogue(await this.driver.readMetadata?.(`${this.root}/imports.json`) ?? null)) {
+    for (const stored of parseImportedCatalogue(await this.driver.readMetadata?.(`${this.root}/imports.json`) ?? null)) {
+      const d = this.storedDescriptor(stored);
       if (!this.registry.descriptorFor(d.modelId)) {
         this.imported.push(d);
         this.manager.registerImportedAsset({ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: d.minRamMb });
       }
     }
-    for (const model of this.registry.descriptors.filter((d) => d.downloadable || d.trust === "imported")) {
+    for (const model of this.registry.descriptors.filter((d) => d.downloadable || d.cleanupOnly || d.trust === "imported")) {
       const paths = this.paths(model.modelId);
       const actual = await this.driver.hashFile(paths.installedPath).catch(() => "");
       let matches = this.manager.checksumsMatch(model.sha256, actual);
@@ -422,7 +426,17 @@ export class ApplicationAiService {
     }
   }
   private requireInstalled(modelId: string) {
+    this.requireActive(this.registry.requireDescriptor(modelId));
     if (!describeOfflineReadiness(this.manager, modelId).ready) throw new Error("Model is not installed and verified");
+  }
+  private requireActive(descriptor: ModelDescriptor): void {
+    if (descriptor.cleanupOnly) throw new Error(RETIRED_MODEL_NOTICE);
+  }
+  /** Imports from retired engines survive only as cleanup records. Explicit
+   * custom registries can still exercise generic legacy backend contracts. */
+  private storedDescriptor(descriptor: ModelDescriptor): ModelDescriptor {
+    const activeRuntime = this.baseRegistry.descriptors.some((d) => d.runtimeId === descriptor.runtimeId && !d.cleanupOnly);
+    return isRetiredGenerativeRuntime(descriptor.runtimeId) && !activeRuntime ? cleanupOnlyDescriptor(descriptor) : descriptor;
   }
   async download(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
     this.requireAndroid();
@@ -448,6 +462,7 @@ export class ApplicationAiService {
       if (this.coordinator.resetPending) throw new Error("On-device runtime is busy");
       if (this.active.has(modelId) || this.operating.has(modelId)) return;
       const model = this.model(modelId);
+      this.requireActive(model);
       const mirrors = typeof mirror === "string" ? { [model.fileName]: mirror } : mirror ?? {};
       validateArtifactMirrors(model, mirrors);
       // Acquisition eligibility is separate from task qualification. Advanced
@@ -524,7 +539,8 @@ export class ApplicationAiService {
     if (!spec.url) throw new Error("An HTTPS URL is required.");
     if (!this.driver?.writeMetadata) throw new Error("Private import metadata storage is unavailable.");
     if (this.coordinator.inferenceBlocked || this.operating.size || this.active.size) throw new Error("On-device runtime is busy.");
-    const d = importedDescriptor(spec);
+    const d = this.storedDescriptor(importedDescriptor(spec));
+    this.requireActive(d);
     const previousImports = [...this.imported];
     this.registerImported(d);
     if (this.manager.statusOf(d.modelId)?.download === "installed") return d.modelId;
@@ -560,6 +576,12 @@ export class ApplicationAiService {
     if (!this.driver?.pickAndStage || !this.driver.writeMetadata) throw new Error("Native document import is unavailable.");
     if (this.coordinator.inferenceBlocked || this.operating.size || this.active.size) throw new Error("On-device runtime is busy.");
     const known = options.modelId ? this.model(options.modelId) : undefined;
+    if (known) this.requireActive(known);
+    // Refuse retired formats before opening SAF. Old imports are read only by
+    // reconciliation, never reacquired through a filename/format back door.
+    if (!known && !this.baseRegistry.descriptors.some((d) => !d.cleanupOnly && d.format === (options.format ?? "gguf"))) {
+      throw new Error(RETIRED_MODEL_NOTICE);
+    }
     if (known && await this.driver.freeBytes() < acquisitionBytes(known) + 64 * 1024 ** 2) throw new Error("Needs more storage.");
     const stagingRoot = `${this.root}/import-work/${crypto.randomUUID()}`;
     const label = known?.modelId ?? "import";
@@ -1062,7 +1084,7 @@ export class ApplicationAiService {
     const adapter = createOfflineAdapter({ manager: this.manager, bridge, visionBridge, resolveApprovedImage });
     return {
       ...adapter,
-      listModels: async () => { await this.ready; return adapter.listModels!(); },
+      listModels: async () => { await this.ready; return (await adapter.listModels!()).filter((row) => !this.registry.descriptorFor(row.id)?.cleanupOnly); },
       complete: (request: Parameters<typeof adapter.complete>[0]) => this.completeOffline(adapter, request),
     };
   }
@@ -1074,6 +1096,11 @@ export class ApplicationAiService {
   }
   private async *completeOffline(adapter: import("./providerContract").ProviderAdapter, request: import("./providerContract").NormalizedRequest) {
     await this.ready;
+    if (this.registry.descriptorFor(request.selection.modelId)?.cleanupOnly) {
+      yield { kind: "error" as const, attempt: 1, code: "model_retired", retryable: false, message: "On-device Chat is no longer available. Choose a cloud provider in Settings." };
+      yield { kind: "done" as const, attempt: 1, stopReason: "error" as const };
+      return;
+    }
     if (this.operating.size > 0) throw new Error("On-device runtime is busy");
     // Holds the single inference lease for the request lifetime
     // (exclusion + logout abort + native-settlement tracking).

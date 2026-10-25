@@ -66,7 +66,7 @@ describe("offline provider identity", () => {
     expect(OFFLINE_PROVIDER_ID).toBe("offline");
   });
 
-  it("lists registry-qualified roles and consumer names without invoking native inference", async () => {
+  it("keeps historical names but grants no retired roles in the low-level catalogue, without native inference", async () => {
     const pins = [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR].map((descriptor) => ({
       modelId: descriptor.modelId, sha256: descriptor.sha256,
       downloadBytes: descriptor.bytes, minFreeRamMb: descriptor.minRamMb,
@@ -89,7 +89,9 @@ describe("offline provider identity", () => {
     const rows = await adapter.listModels!();
     expect(rows.map(({ displayName, qualifiedRoles }) => ({ displayName, qualifiedRoles }))).toEqual([
       { displayName: "Needle3", qualifiedRoles: ["tools", "embeddings"] },
-      { displayName: "SmolVLM2", qualifiedRoles: ["vision"] },
+      // ApplicationAiService filters cleanup-only rows entirely; this generic
+      // transport owner must not resurrect their old qualification either.
+      { displayName: "SmolVLM2", qualifiedRoles: [] },
     ]);
   });
 });

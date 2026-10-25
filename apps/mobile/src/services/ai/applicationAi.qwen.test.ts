@@ -24,6 +24,7 @@ import type { ModelDownloadDriver } from "./download/driver";
 import type { OfflineVisionNativeBridge } from "./providers/offline";
 import type { QwenTextBridge } from "./applicationAi";
 import type { ModelDescriptor } from "./modelDescriptors";
+import { legacyRuntimeRegistry } from "./__tests__/legacyRuntimeRegistry";
 
 function platform(options?: { qwenChunks?: string[]; qwenAvailable?: boolean }) {
   const disk = new Map<string, string>();
@@ -85,10 +86,10 @@ function platform(options?: { qwenChunks?: string[]; qwenAvailable?: boolean }) 
     },
     cancelGeneration: async () => { calls.push("qwen-cancel"); },
   };
-  return { disk, calls, driver, needle, smol, qwenText, qwenState: () => ({ qwenLoaded, needleResident, visionLoaded }) };
+  return { ...legacyRuntimeRegistry, disk, calls, driver, needle, smol, qwenText, qwenState: () => ({ qwenLoaded, needleResident, visionLoaded }) };
 }
 
-describe("Qwen production runtime", () => {
+describe("isolated legacy Qwen backend contracts (not current production qualification)", () => {
   it("routes prose through Qwen with real provenance and stripped reasoning", async () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });

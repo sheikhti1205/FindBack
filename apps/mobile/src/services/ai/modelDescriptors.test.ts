@@ -23,10 +23,21 @@ import { qualifiedUiRolesForOfflineModel } from "./uiModelRoles";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 
 describe("modelDescriptors", () => {
-  it("production catalogue offers exactly the verified Recommended downloads (Needle + SmolVLM2 vision + Qwen3 text)", () => {
+  it("cannot accidentally re-enable cleanup-only records through an exposed descriptor", () => {
+    const registry = productionModelRegistry();
+    const retired = registry.descriptors.filter((d) => d.cleanupOnly);
+    expect(retired.length).toBeGreaterThan(0);
+    for (const descriptor of retired) {
+      expect(Object.isFrozen(descriptor)).toBe(true);
+      expect(Reflect.set(descriptor, "cleanupOnly", false)).toBe(false);
+      expect(Reflect.set(descriptor, "downloadable", true)).toBe(false);
+      expect(Object.isFrozen(descriptor.taskRoles)).toBe(true);
+    }
+  });
+  it("production catalogue offers the retained helper, not retired generative downloads", () => {
     const registry = productionModelRegistry();
     expect(registry.catalogue().map((item) => item.modelId).sort()).toEqual(
-      [NEEDLE_MODEL_ID, SMOL_VISION_DESCRIPTOR.modelId, QWEN_TEXT_MODEL_ID].sort(),
+      ["needle3-cact-l20"],
     );
     expect(productionModelRegistry()).toBe(registry);
   });
@@ -36,11 +47,9 @@ describe("modelDescriptors", () => {
     const ids = registry.descriptors.map((item) => item.modelId);
     for (const advanced of ADVANCED_DESCRIPTORS) {
       expect(ids).toContain(advanced.modelId);
-      expect(registry.descriptorFor(advanced.modelId)).toBe(advanced);
+      expect(registry.descriptorFor(advanced.modelId)).toMatchObject({ cleanupOnly: true, sha256: advanced.sha256, revision: advanced.revision, fileName: advanced.fileName, taskRoles: [], downloadable: false });
     }
-    expect(registry.advancedCatalogue().map((item) => item.modelId).sort()).toEqual(
-      ADVANCED_DESCRIPTORS.map((item) => item.modelId).sort(),
-    );
+    expect(registry.advancedCatalogue()).toEqual([]);
     // Catalogue and Advanced never overlap: one authority, no double rows.
     const catalogueIds = new Set(registry.catalogue().map((item) => item.modelId));
     for (const advanced of registry.advancedCatalogue()) {
@@ -48,7 +57,8 @@ describe("modelDescriptors", () => {
     }
   });
 
-  it("promotes Qwen3 0.6B as Recommended production text with pins reused from its lab profile", () => {
+  it("retains Qwen's historical byte identity without promoting its former roles or acquisition", () => {
+    const descriptor = productionModelRegistry().requireDescriptor(QWEN_TEXT_MODEL_ID);
     const profile = profileFor(QWEN_TEXT_MODEL_ID);
     expect(profile).toBeDefined();
     expect(QWEN_TEXT_DESCRIPTOR.revision).toBe(profile!.revision);
@@ -56,23 +66,27 @@ describe("modelDescriptors", () => {
     expect(QWEN_TEXT_DESCRIPTOR.format).toBe("litertlm");
     expect(QWEN_TEXT_DESCRIPTOR.maturity).toBe("production");
     expect(tierOf(QWEN_TEXT_DESCRIPTOR)).toBe("recommended");
-    expect(QWEN_TEXT_DESCRIPTOR.downloadable).toBe(true);
-    expect(distributionPolicyOf(QWEN_TEXT_DESCRIPTOR)).toBe("downloadable");
-    expect(QWEN_TEXT_DESCRIPTOR.taskRoles).toContain("answer-help");
+    expect(descriptor.downloadable).toBe(false);
+    expect(distributionPolicyOf(descriptor)).toBe("unavailable");
+    expect(descriptor.taskRoles).toEqual([]);
+    expect(descriptor.cleanupOnly).toBe(true);
     expect(modelSupportsAbi(QWEN_TEXT_DESCRIPTOR, "arm64-v8a")).toBe(true);
     expect(modelSupportsAbi(QWEN_TEXT_DESCRIPTOR, "x86_64")).toBe(false);
   });
 
-  it("offers pinned Advanced acquisition without claiming device qualification or product roles", () => {
+  it("preserves former Advanced pins for cleanup without any acquisition or evaluation offer", () => {
     const registry = productionModelRegistry();
-    for (const descriptor of registry.advancedCatalogue()) {
+    expect(ADVANCED_DESCRIPTORS.length).toBeGreaterThan(0);
+    for (const old of ADVANCED_DESCRIPTORS) {
+      const descriptor = registry.requireDescriptor(old.modelId);
       expect(tierOf(descriptor)).toBe("advanced");
-      expect(descriptor.downloadable).toBe(true);
+      expect(descriptor.downloadable).toBe(false);
       expect(descriptor.taskRoles).toEqual([]);
       expect(descriptor.maturity).toBe("lab");
       expect(descriptor.deviceQualifiedAbis).toEqual([]);
-      expect(distributionPolicyOf(descriptor)).toBe("downloadable");
-      expect(descriptor.importable).toBe(true);
+      expect(distributionPolicyOf(descriptor)).toBe("unavailable");
+      expect(descriptor.importable).toBe(false);
+      expect(descriptor.cleanupOnly).toBe(true);
       expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(descriptor.revision).toMatch(/^[a-f0-9]{40}$/);
       expect(descriptor.bytes).toBeGreaterThan(0);
@@ -94,8 +108,9 @@ describe("modelDescriptors", () => {
     for (const descriptor of registry.descriptors) {
       expect(descriptor.distributionNote ?? "").not.toMatch(PROMISES_IMPORT);
       if (!descriptor.downloadable) {
-        // No install path of any kind: no URL and no fabricated bytes.
-        expect(descriptor.url).toBe("");
+        // Cleanup identities retain their real historical URL/bytes; policy,
+        // not erasing file identity, prevents new acquisition.
+        if (!descriptor.cleanupOnly) expect(descriptor.url).toBe("");
         expect(distributionPolicyOf(descriptor)).not.toBe("downloadable");
       }
     }

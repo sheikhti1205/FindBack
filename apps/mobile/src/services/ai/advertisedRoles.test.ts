@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { ApplicationAiService } from "./applicationAi";
-import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR, SMOL_VISION_DESCRIPTOR } from "./modelDescriptors";
+import { NEEDLE_DESCRIPTOR, productionModelRegistry } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { ModelDownloadDriver } from "./download/driver";
 import { interpreterFor } from "./orchestrator/taskInterpreters";
@@ -155,12 +155,11 @@ describe("advertised Needle roles have real production generators", () => {
     }
   });
 
-  it("every advertised role resolves through real wiring (Needle + Smol)", async () => {
+  it("every retained production role resolves through real Needle wiring", async () => {
     const needle = toolAwareNeedle();
     const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("A red umbrella on a bench.") });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
-    await service.download(SMOL_VISION_DESCRIPTOR.modelId);
     for (const taskId of NEEDLE_DESCRIPTOR.taskRoles) {
       if (taskId === "embed-texts") {
         expect(await service.embedNeedle(["umbrella"])).toEqual([[1, 0]]);
@@ -169,18 +168,11 @@ describe("advertised Needle roles have real production generators", () => {
       const result = await service.route(taskId, { prompt: "a red umbrella" }, { traceId: `trace-needle-${taskId}` });
       expect(result.ok).toBe(true);
     }
-    for (const taskId of SMOL_VISION_DESCRIPTOR.taskRoles) {
-      const result = await service.route(
-        taskId,
-        { prompt: "describe", imageBase64: "aGVsbG8=" },
-        { traceId: `trace-smol-${taskId}` },
-      );
-      expect(result.ok).toBe(true);
-    }
+    expect(service.registry.visionDescriptor()).toBeUndefined();
   });
 
   it("every advertised role has an explicit task interpreter (no implicit success)", () => {
-    for (const descriptor of [NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR]) {
+    for (const descriptor of productionModelRegistry().descriptors) {
       for (const taskId of descriptor.taskRoles) {
         expect(interpreterFor(taskId), `${descriptor.modelId} advertises ${taskId}`).toBeDefined();
       }

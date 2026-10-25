@@ -11,14 +11,11 @@
  *
  * Current qualification:
  * - Needle3 (extract-*, classify-category, embed-texts) → Tools + Embeddings.
- * - SmolVLM2 (analyze-image, ground-objects) → Vision only.
- * - Qwen3 0.6B (answer-help) → Chat only. Structured extraction/
- *   classification runs on Needle's tool schemas, so Qwen does not
- *   advertise the extraction roles.
- * - A VLM advertising answer-help AND analyze-image → Chat + Vision.
+ * - Retired generative records → no roles; modality survives only for cleanup.
+ * - Future roles require explicit qualification, never cached claims.
  */
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
-import { productionModelRegistry, QWEN_TEXT_MODEL_ID, SMOL_VISION_MODEL_ID } from "./modelDescriptors";
+import { productionModelRegistry } from "./modelDescriptors";
 import type { AiTaskId } from "./types";
 import type { ModelRecord, UiModelRole } from "./providerContract";
 import { curatedCloudModelName } from "./providers/catalogueQualification";
@@ -53,7 +50,7 @@ const EMBEDDING_TASK_ROLES: readonly AiTaskId[] = ["embed-texts"];
  */
 export function qualifiedUiRolesForOfflineModel(modelId: string): readonly UiModelRole[] {
   const descriptor = productionModelRegistry().descriptorFor(modelId);
-  if (descriptor === undefined) return [];
+  if (descriptor === undefined || descriptor.cleanupOnly) return [];
   const roles = new Set<UiModelRole>();
   const taskRoles = descriptor.taskRoles;
   if (CHAT_TASK_ROLES.some((task) => taskRoles.includes(task))) roles.add("chat");
@@ -118,14 +115,10 @@ export function displayNameForCatalogRecord(record: Pick<ModelRecord, "id" | "pr
  */
 export const DEFAULT_TOOL_MODEL_ID = NEEDLE_MODEL_ID;
 export const DEFAULT_EMBEDDING_MODEL_ID = NEEDLE_MODEL_ID;
-/**
- * Explicit chat default: Qwen3 0.6B, the first production text engine with
- * an evidence-backed answer-help role. Automatic resolves against installed
- * rows (never catalogue order), so this default applies only when Qwen is
- * installed and verified — otherwise text falls back per the privacy mode.
- */
-export const DEFAULT_CHAT_MODEL_ID: string = QWEN_TEXT_MODEL_ID;
-export const DEFAULT_VISION_MODEL_ID = SMOL_VISION_MODEL_ID;
+/** No active local conversational default. Never relabel the narrow helper or
+ * restore an old installed generation engine as an automatic fallback. */
+export const DEFAULT_CHAT_MODEL_ID: string | undefined = undefined;
+export const DEFAULT_VISION_MODEL_ID: string | undefined = undefined;
 
 export function supportsAssistantMessage(record: ModelRecord, hasImages: boolean): boolean {
   return rolesForCatalogRecord(record).includes(hasImages ? "vision" : "chat");

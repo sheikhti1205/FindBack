@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ApplicationAiService } from "./applicationAi";
-import { LLAMA_CPP_RUNTIME_ID, QWEN_TEXT_RUNTIME_ID, SMOL_VLM_RUNTIME_ID, type ModelDescriptor } from "./modelDescriptors";
+import { isRetiredGenerativeRuntime, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { OfflineModelStatus } from "./offlineModelManager";
 import { acquisitionBytes } from "./modelSupply";
@@ -31,7 +31,7 @@ export function isLocalIntelligenceOwnedModel(modelId: string | undefined | null
 export function olderGenerativeDownloads(service: LocalIntelligenceService): readonly ModelDescriptor[] {
   if (!service.android) return [];
   return service.registry.descriptors.filter((d) => {
-    if (d.runtimeId !== LLAMA_CPP_RUNTIME_ID && d.runtimeId !== QWEN_TEXT_RUNTIME_ID && d.runtimeId !== SMOL_VLM_RUNTIME_ID) return false;
+    if (!isRetiredGenerativeRuntime(d.runtimeId)) return false;
     const status = service.manager.statusOf(d.modelId);
     // An imported record is evidence of an earlier acquisition. Retain its
     // cleanup after a restart if bytes were deleted but metadata saving failed.

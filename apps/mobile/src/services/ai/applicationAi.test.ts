@@ -5,6 +5,7 @@ import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { PROBE_VERSION } from "./deviceProbe";
 import type { ModelDownloadDriver } from "./download/driver";
 import type { OfflineVisionNativeBridge } from "./providers/offline";
+import { legacyRuntimeRegistry } from "./__tests__/legacyRuntimeRegistry";
 
 function platform() {
   const disk = new Map<string, string>();
@@ -62,10 +63,10 @@ function platform() {
     generateText: async function* () { yield { textDelta: "qwen answer" }; },
     cancelGeneration: async () => { calls.push("qwen-cancel"); },
   };
-  return { disk, calls, driver, needle, smol: smolWithFacts, qwenText };
+  return { ...legacyRuntimeRegistry, disk, calls, driver, needle, smol: smolWithFacts, qwenText };
 }
 
-describe("application-owned AI", () => {
+describe("application AI lifecycle with explicit historical engine fixtures (not production availability)", () => {
   it("keeps a corrupt older installed file removable after reconciliation", async () => {
     const p = platform();
     const before = new ApplicationAiService({ android: true, ...p }); await before.ready;
@@ -100,7 +101,7 @@ describe("application-owned AI", () => {
     const p = platform();
     Object.assign(p.driver, { supportedAbis: async () => ["arm64-v8a"] });
     const visionFacts = vi.spyOn(p.smol, "collectDeviceFacts").mockRejectedValue(new Error("vision plugin retired"));
-    const service = new ApplicationAiService({ android: true, ...p, descriptors: [NEEDLE_DESCRIPTOR] });
+    const service = new ApplicationAiService({ android: true, ...p, descriptors: [NEEDLE_DESCRIPTOR], defaultVisionModelId: undefined });
     await service.ready;
     await service.ensureCompatibility();
     expect(service.compatibility(NEEDLE_MODEL_ID).compatible).toBe(true);

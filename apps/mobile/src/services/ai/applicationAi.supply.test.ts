@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 import { ApplicationAiService } from "./applicationAi";
 import type { ModelDownloadDriver } from "./download/driver";
 import type { LlamaNativeBridge } from "./llama/adapter";
-it("acquires Granite, evaluates explicitly using canonical owner and releases residency", async () => {
+import { legacyRuntimeRegistry } from "./__tests__/legacyRuntimeRegistry";
+it("isolated legacy acquisition/evaluation releases residency (not offered in production)", async () => {
   const disk = new Map<string, string>(); const calls: string[] = [];
   const driver: ModelDownloadDriver = {
     supportedAbis: async () => ["arm64-v8a"],
@@ -17,7 +18,7 @@ it("acquires Granite, evaluates explicitly using canonical owner and releases re
     inferLlama: async function* () { calls.push("infer"); yield { textDelta: "hello" }; },
   };
   const smol = { bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false, loadVisionModel: async () => {}, unloadVisionModel: async () => {}, cancelGeneration: async () => {}, describeImage: async function* () {}, collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }) };
-  const service = new ApplicationAiService({ android: true, driver, llama, smol });
+  const service = new ApplicationAiService({ ...legacyRuntimeRegistry, android: true, driver, llama, smol });
   await service.ready;
   await service.download("granite-3.3-2b-instruct-q4_0");
   expect(await service.evaluate("granite-3.3-2b-instruct-q4_0", { optIn: true, prompt: "Say hello" })).toBe("hello");
