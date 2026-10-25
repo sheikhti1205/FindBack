@@ -38,13 +38,6 @@ function MatchPhoto({ post }: { post: MatchCandidate }) {
 }
 
 export function PossibleMatches({ post, onConfirmMatch }: PossibleMatchesProps) {
-  const [result, setResult] = useState<PossibleMatchesResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [attempt, setAttempt] = useState(0);
-  // Canonical PhotoLightbox for match thumbs (single photo each: straight
-  // in). The thumb button is a SIBLING of the detail link, never inside it —
-  // a button nested in a link is invalid DOM (see PostCard home-feed).
-  const [lightboxId, setLightboxId] = useState<string | null>(null);
   // Account for the persisted matches-engine choice. Best effort and never
   // throwing: outside an AuthProvider (some test mounts) this stays "local".
   let account = "local";
@@ -53,6 +46,21 @@ export function PossibleMatches({ post, onConfirmMatch }: PossibleMatchesProps) 
   } catch {
     account = "local";
   }
+
+  // Candidate eligibility is viewer-specific. Reset results AND the photo
+  // viewer before paint; the old instance's pending requests cannot publish
+  // into a new account, even after an A → B → A round trip.
+  return <AccountMatches key={account} account={account} post={post} onConfirmMatch={onConfirmMatch} />;
+}
+
+function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps & { account: string }) {
+  const [result, setResult] = useState<PossibleMatchesResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+  // Canonical PhotoLightbox for match thumbs (single photo each: straight
+  // in). The thumb button is a SIBLING of the detail link, never inside it —
+  // a button nested in a link is invalid DOM (see PostCard home-feed).
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
 
   // Rerun only when the match-relevant content changes, not on every
   // realtime social update that replaces the post object. Ranking depends on
@@ -96,8 +104,11 @@ export function PossibleMatches({ post, onConfirmMatch }: PossibleMatchesProps) 
     return () => {
       mounted = false;
     };
-    // Intentionally keyed on content, not the whole post object.
-  }, [contentKey, attempt]);
+    // Keyed on content, not the whole post object. `account` is not what makes
+    // the switch safe — the parent key remounts this instance before paint —
+    // but restating it here means a future refactor that drops the key still
+    // re-runs the fetch instead of publishing A's candidates into B's session.
+  }, [contentKey, attempt, account]);
 
   if (loading) {
     return <Spinner label="Finding possible matches…" />;
