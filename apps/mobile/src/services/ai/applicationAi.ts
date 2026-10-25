@@ -3,9 +3,8 @@ import { bootProductionAi, type ProductionBoot } from "./production";
 import { ITEM_CATEGORIES } from "./ops/classifyCategory";
 import { CapacitorNeedleBridge, createNativeNeedleEmbedder } from "./needle/native";
 import { NEEDLE_MODEL_ID, type NativeNeedleEmbedder } from "./needle/embedder";
-import { CapacitorSmolVlmBridge } from "./vision/native";
+import type { CapacitorSmolVlmBridge } from "./vision/native";
 import {
-  CapacitorQwenTextBridge,
   QWEN_SESSION_MIN_TOKENS,
   QWEN_TEXT_BRIDGE_NAME,
   createEnvelopeStreamingFilter,
@@ -22,7 +21,7 @@ import { cleanupOnlyDescriptor, isRetiredGenerativeRuntime, RETIRED_MODEL_NOTICE
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { selectBackend } from "./automaticMode";
 import { PROBE_VERSION, validateProbeRecord, type ProbeRecord } from "./deviceProbe";
-import { CapacitorLlamaBridge, type LlamaNativeBridge } from "./llama/adapter";
+import type { LlamaNativeBridge } from "./llama/adapter";
 import { acquisitionArtifacts, acquisitionBytes, sourcesFor, validateArtifactMirrors, type ArtifactMirrors } from "./modelSupply";
 import { runManagedBundle } from "./download/bundle";
 import { importedDescriptor, parseImportedCatalogue, validateImportSpec, type ImportSpec } from "./download/import";
@@ -267,9 +266,12 @@ export class ApplicationAiService {
     if (this.android) {
       this.driver = options.driver ?? new CapacitorModelDownloadDriver();
       this.needle = options.needle ?? new CapacitorNeedleBridge();
-      this.smol = options.smol ?? new CapacitorSmolVlmBridge();
-      this.qwenText = options.qwenText ?? new CapacitorQwenTextBridge();
-      this.llama = options.llama ?? new CapacitorLlamaBridge();
+      // Retired engines have no default production bridge. Explicit injected
+      // historical fixtures still exercise generic transaction contracts;
+      // installed cleanup records never create an engine to remove its files.
+      this.smol = options.smol;
+      this.qwenText = options.qwenText;
+      this.llama = options.llama;
     } else {
       this.qwenText = options.qwenText;
     }
@@ -784,7 +786,7 @@ export class ApplicationAiService {
       case NEEDLE_RUNTIME_ID:
         await this.needle!.unload(); this.embedder = undefined; this.matching = "use"; return;
       case SMOL_VLM_RUNTIME_ID:
-        await this.smol!.unloadVisionModel(); return;
+        await this.smol?.unloadVisionModel(); return;
       case QWEN_TEXT_RUNTIME_ID:
         await this.unloadQwenText(); return;
       case LLAMA_CPP_RUNTIME_ID:
@@ -1073,14 +1075,15 @@ export class ApplicationAiService {
       unload: () => this.unloadQwenText(),
       generate: (prompt, signal) => this.streamQwenText(prompt, signal),
     };
-    const visionBridge: OfflineVisionNativeBridge = {
-      bridgeName: this.smol!.bridgeName,
+    const smol = this.smol;
+    const visionBridge: OfflineVisionNativeBridge | undefined = smol ? {
+      bridgeName: smol.bridgeName,
       isVisionAvailable: () => this.ensureVision(),
       loadVisionModel: async () => {}, // ensureVision above loads the exact verified path/backend.
-      unloadVisionModel: () => this.smol!.unloadVisionModel(),
-      cancelGeneration: (id) => this.smol!.cancelGeneration(id),
+      unloadVisionModel: () => smol.unloadVisionModel(),
+      cancelGeneration: (id) => smol.cancelGeneration(id),
       describeImage: (request, signal) => this.describeOfflineImage(request, signal),
-    };
+    } : undefined;
     const adapter = createOfflineAdapter({ manager: this.manager, bridge, visionBridge, resolveApprovedImage });
     return {
       ...adapter,
@@ -1173,7 +1176,7 @@ export class ApplicationAiService {
       this.changed(); return record;
     } finally { this.coordinator.endExclusive(label); }
   }
-  async facts() { this.requireAndroid(); return this.smol!.collectDeviceFacts?.(); }
+  async facts() { this.requireAndroid(); return this.smol?.collectDeviceFacts?.(); }
 
   /**
    * Account/logout cleanup with a reset barrier.
