@@ -396,6 +396,11 @@ function recoveryFailure(err: unknown): string {
   const raw = err instanceof Error ? err.message : "";
   if (code === "23505") return "This report has already been marked recovered.";
   if (code === "42501") return "Only the owner of a report can mark it recovered.";
+  // A report inside a confirmed match has to be recovered through that link.
+  // The server sentence is precise but uses relationship vocabulary, so it is
+  // phrased here instead of being echoed.
+  if (code === "P0001" && /confirmed match|handover/i.test(raw))
+    return "This report is part of a match, so it can't be marked recovered here.";
   if (code === "22023") {
     if (/unknown helper kind/i.test(raw)) return "Choose who returned the item again.";
     if (/lost-item/i.test(raw)) return "Only a lost-item report can be marked recovered.";

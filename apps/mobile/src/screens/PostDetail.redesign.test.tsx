@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -219,6 +219,18 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(article.contains(manage)).toBe(true);
     const overview = await screen.findByTestId("detail-overview");
     expect(manage.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("refuses a status change on an already-recovered report without a write", async () => {
+    authState.user = { id: "u2", username: "owner" };
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, status: "RECOVERED" });
+    renderDetail();
+    const picker = await screen.findByRole("radiogroup", { name: /post status/i });
+    fireEvent.click(within(picker).getByRole("radio", { name: /^open/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/already recorded as recovered/i),
+    );
+    expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
   });
 
   it("hides owner controls from non-owners", async () => {

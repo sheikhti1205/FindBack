@@ -261,6 +261,25 @@ describe("MyPosts management (owner row actions)", () => {
     );
   });
 
+  it("refuses a status change on an already-recovered report without a write", async () => {
+    fetchFeedMock.mockResolvedValue({
+      items: [post("p1", "RECOVERED"), post("p2")],
+      nextCursor: null,
+      total: 2,
+    });
+    renderMyPosts();
+    await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
+    const menu = openFirstRowMenu();
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /^open/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/already recorded as recovered/i),
+    );
+    expect(updatePostStatusMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("my-posts-status-undo")).toBeNull();
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Recovered");
+  });
+
   it("shows the chosen status immediately and rolls it back when the write fails", async () => {
     let rejectWrite: (error: Error) => void = () => {};
     const pendingWrite = new Promise((_resolve, reject) => {

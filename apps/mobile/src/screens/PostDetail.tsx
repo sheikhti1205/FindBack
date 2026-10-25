@@ -729,6 +729,15 @@ export function PostDetail() {
 
   async function onChangeStatus(status: PostStatus) {
     if (status === current.status) return;
+    // A recorded recovery is terminal: the server refuses any status change on
+    // a report that already has a recovery row, so this says why rather than
+    // offering a control that cannot work.
+    if (current.status === "RECOVERED") {
+      const message = "This report is already recorded as recovered.";
+      setActionError(message);
+      announce(message);
+      return;
+    }
     // Recovered is not a status write: it is the durable recovery
     // relationship (MC D25), so the owner chooses the helper first and the
     // server writes the row and the status together. A FOUND report cannot be

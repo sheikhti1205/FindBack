@@ -298,6 +298,16 @@ export function MyPosts() {
   const changeStatus = useCallback(
     (post: PostItem, status: PostStatus) => {
       if (status === post.status) return;
+      // A recorded recovery is terminal: the server refuses any status change
+      // on a report that already has a recovery row, and reopening it would
+      // leave the recovery describing a report that reads Open. Say so here
+      // instead of spending a round trip on a control that cannot work.
+      if (post.status === "RECOVERED") {
+        const message = "This report is already recorded as recovered.";
+        setActionError(message);
+        announce(message);
+        return;
+      }
       // Recovered is not a status write: it is the durable recovery
       // relationship (MC D25), so the owner chooses the helper first and the
       // server writes the row and the status together. A FOUND report cannot

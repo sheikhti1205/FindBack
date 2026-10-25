@@ -195,6 +195,17 @@ describe("RecoverySheet", () => {
     expect(confirm.hasAttribute("disabled")).toBe(false);
   });
 
+  it("phrases a linked-match refusal as the handover it needs", async () => {
+    mockMarkRecovered.mockRejectedValueOnce(
+      new ApiError("This report is linked to a confirmed match; complete the handover instead", 400, "P0001"),
+    );
+    renderSheet();
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
+    expect(await screen.findByText(/part of a match, so it can.t be marked recovered here/i)).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/P0001|linked to a confirmed match/i);
+  });
+
   it("phrases an ownership refusal without echoing the server", async () => {
     mockMarkRecovered.mockRejectedValueOnce(new ApiError("42501 permission denied", 403, "42501"));
     renderSheet();
