@@ -9,6 +9,7 @@ function fixture(options: { saveFails?: boolean; downloadFails?: boolean } = {})
   const disk = new Map<string, string>();
   let metadata: string | null = null;
   const driver: ModelDownloadDriver = {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private", freeBytes: async () => 1e10,
     stagedSize: async () => 0, readJournalText: async () => null,
     readMetadata: async () => metadata,
@@ -185,7 +186,7 @@ it("an acquisition still awaiting device facts cannot start after an account res
   let arrive!: () => void; let release!: () => void;
   const arrived = new Promise<void>((resolve) => { arrive = resolve; });
   const deferred = new Promise<void>((resolve) => { release = resolve; });
-  f.smol.collectDeviceFacts = async () => { arrive(); await deferred; return { supportedAbis: ["arm64-v8a"] }; };
+  f.driver.supportedAbis = async () => { arrive(); await deferred; return ["arm64-v8a"]; };
   const acquiring = f.service.download("granite-3.3-2b-instruct-q4_0");
   await arrived; await f.service.resetForAccount(); release();
   await expect(acquiring).rejects.toThrow("cancelled");

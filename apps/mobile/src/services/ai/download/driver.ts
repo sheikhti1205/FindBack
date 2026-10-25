@@ -51,8 +51,20 @@ export interface DownloadAttemptResult {
   readonly finalUrl: string;
 }
 
+/** Reject a malformed fact list as a whole; never salvage an eligible ABI
+ * from a partially invalid response. Copy so callers cannot mutate the cache. */
+export function validatedDeviceAbis(raw: unknown): readonly string[] {
+  const abis: unknown[] | null = Array.isArray(raw) ? Array.from(raw) : null;
+  return abis?.every((entry): entry is string =>
+    typeof entry === "string" && entry.trim() === entry && /^[a-z0-9][a-z0-9_-]*$/.test(entry),
+  ) ? abis : [];
+}
+
 /** Platform seam behind every managed download. Faked in tests. */
 export interface ModelDownloadDriver {
+  /** Platform compatibility facts, independent of any optional model runtime.
+   * Missing discovery fails closed in the application service. */
+  supportedAbis?(): Promise<readonly string[]>;
   pickAndStage?(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }>;
   readMetadata?(path: string): Promise<string | null>;
   writeMetadata?(path: string, text: string): Promise<void>;
@@ -360,6 +372,7 @@ function journalFsOverText(text: string | null): {
 }
 
 interface NativeDownloadPlugin {
+  supportedAbis(): Promise<unknown>;
   pickAndStage(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }>;
   writeTextFile(args: { path: string; text: string }): Promise<unknown>;
   getRootDir(): Promise<{ rootDir: string }>;
@@ -409,6 +422,11 @@ export class CapacitorModelDownloadDriver implements ModelDownloadDriver {
   async rootDir(): Promise<string> {
     const { rootDir } = await this.bridge().getRootDir();
     return rootDir;
+  }
+
+  async supportedAbis(): Promise<readonly string[]> {
+    const payload = await this.bridge().supportedAbis();
+    return validatedDeviceAbis(payload && typeof payload === "object" && "abis" in payload ? payload.abis : null);
   }
 
   async pickAndStage(args: { stagingPath: string; maxBytes: number; expectedBytes?: number; expectedSha256?: string; format: string }): Promise<{ actualHex: string; bytes: number }> {

@@ -5,6 +5,7 @@ import type { LlamaNativeBridge } from "./llama/adapter";
 it("acquires Granite, evaluates explicitly using canonical owner and releases residency", async () => {
   const disk = new Map<string, string>(); const calls: string[] = [];
   const driver: ModelDownloadDriver = {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private", freeBytes: async () => 1e10, stagedSize: async () => 0, readJournalText: async () => null,
     hashFile: async (p) => disk.get(p) ?? "", cancelDownload: async () => {}, removeFile: async (p) => { disk.delete(p); },
     promoteFile: async (a, b) => { disk.set(b, disk.get(a)!); },

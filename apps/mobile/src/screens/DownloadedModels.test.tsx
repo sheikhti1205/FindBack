@@ -18,6 +18,7 @@ function device({ failStorage = false, abi = "arm64-v8a" } = {}) {
   const removed: string[] = [];
   let unloaded = false;
   const service = new ApplicationAiService({ android: true, driver: {
+    supportedAbis: async () => [abi],
     rootDir: async () => { if (failStorage) throw new Error("disk unavailable"); return "/private/models"; }, freeBytes: async () => 2e9,
     stagedSize: async () => staged, readJournalText: async () => journal,
     download: async (attempt) => {

@@ -40,6 +40,7 @@ function androidService() {
   let journal: string | null = null;
   const offsets: number[] = [];
   const service = new ApplicationAiService({ android: true, driver: {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private/ai-models", freeBytes: async () => 2e9,
     stagedSize: async () => staged, readJournalText: async () => journal,
     download: async (attempt) => {

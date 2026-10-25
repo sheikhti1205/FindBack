@@ -66,6 +66,7 @@ function activeAi(unload = vi.fn(async () => {})) {
   const service = new ApplicationAiService({
     android: true,
     driver: {
+      supportedAbis: async () => ["arm64-v8a"],
       rootDir: async () => "/private/account-switch-test",
       freeBytes: async () => 2_000_000_000,
       stagedSize: async (path) => disk.has(path) ? 1 : 0,

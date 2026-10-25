@@ -20,6 +20,7 @@ import { interpreterFor } from "./orchestrator/taskInterpreters";
 function driver(): ModelDownloadDriver {
   const disk = new Map<string, string>();
   return {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private/ai-models",
     freeBytes: async () => 2_000_000_000,
     stagedSize: async (path) => (disk.has(path) ? 1 : 0),

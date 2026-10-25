@@ -1,6 +1,7 @@
 package com.findback.app.download
 
 import android.os.StatFs
+import android.os.Build
 import android.util.Log
 import android.app.Activity
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.provider.OpenableColumns
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.JSObject
+import com.getcapacitor.JSArray
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
@@ -43,6 +45,12 @@ class ModelDownloadPlugin : Plugin() {
 
     private val active = ConcurrentHashMap<String, DownloadTask>()
     private val imports = ConcurrentHashMap<String, AtomicBoolean>()
+
+    /** Download/run eligibility must not depend on an optional model plugin. */
+    @PluginMethod
+    fun supportedAbis(call: PluginCall) {
+        call.resolve(JSObject().put("abis", JSArray(Build.SUPPORTED_ABIS.toList())))
+    }
 
     @PluginMethod
     fun pickAndStage(call: PluginCall) {

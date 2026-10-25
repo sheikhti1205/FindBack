@@ -10,6 +10,7 @@ function platform() {
   const disk = new Map<string, string>();
   const calls: string[] = [];
   const driver: ModelDownloadDriver = {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private/ai-models",
     freeBytes: async () => 2_000_000_000,
     stagedSize: async (path) => disk.has(path) ? 1 : 0,
@@ -65,6 +66,56 @@ function platform() {
 }
 
 describe("application-owned AI", () => {
+  it("downloads and runs Needle without consulting the retiring vision facts bridge", async () => {
+    const p = platform();
+    Object.assign(p.driver, { supportedAbis: async () => ["arm64-v8a"] });
+    const visionFacts = vi.spyOn(p.smol, "collectDeviceFacts").mockRejectedValue(new Error("vision plugin retired"));
+    const service = new ApplicationAiService({ android: true, ...p, descriptors: [NEEDLE_DESCRIPTOR] });
+    await service.ready;
+    await service.ensureCompatibility();
+    expect(service.compatibility(NEEDLE_MODEL_ID).compatible).toBe(true);
+    await service.download(NEEDLE_MODEL_ID);
+    expect(await service.embedNeedle(["red umbrella"])).toEqual([[1, 0]]);
+    expect(p.calls).toContain("needle-load");
+    expect(visionFacts).not.toHaveBeenCalled();
+  });
+
+  it("refuses an incompatible download even when vision facts claim a supported ABI", async () => {
+    const p = platform();
+    Object.assign(p.driver, { supportedAbis: async () => ["x86_64"] });
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+  });
+
+  it.each([null, {}, [42], [""], [" arm64-v8a "], ["arm64-v8a", 42], ["arm64-v8a", null], ["arm64-v8a", ""], ["arm64-v8a", " arm64-v8a "], ["arm64-v8a", "arm64-v8a\n"], Object.assign(new Array<unknown>(2), { 0: "arm64-v8a" })])("fails closed for malformed neutral ABI facts: %j", async (raw) => {
+    const p = platform();
+    Object.assign(p.driver, { supportedAbis: async () => raw });
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+  });
+
+  it("does not fall back to vision facts when neutral ABI discovery fails", async () => {
+    const p = platform();
+    Object.assign(p.driver, { supportedAbis: async () => { throw new Error("platform unavailable"); } });
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+  });
+
+  it("fails closed when the shared platform has no ABI discovery method", async () => {
+    const p = platform();
+    delete p.driver.supportedAbis;
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+  });
+
   it("blocks inference and measurement while a removal owns runtime residency", async () => {
     const p = platform();
     const service = new ApplicationAiService({ android: true, ...p });
@@ -472,11 +523,8 @@ describe("application-owned AI", () => {
 
   it("refuses downloads on ABI-incompatible Android without staging bytes", async () => {
     const p = platform();
-    const x86smol = {
-      ...p.smol,
-      collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
-    };
-    const service = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol, qwenText: p.qwenText });
+    p.driver.supportedAbis = async () => ["x86_64"];
+    const service = new ApplicationAiService({ android: true, ...p });
     await service.ready;
     await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
     expect(service.notice(NEEDLE_MODEL_ID)).toBe(DEVICE_INCOMPATIBLE_REASON);
@@ -490,11 +538,8 @@ describe("application-owned AI", () => {
     await first.ready;
     await first.download(NEEDLE_MODEL_ID);
     // Same files, but the device now reports an unverified ABI.
-    const x86smol = {
-      ...p.smol,
-      collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["x86_64"] }),
-    };
-    const second = new ApplicationAiService({ android: true, driver: p.driver, needle: p.needle, smol: x86smol, qwenText: p.qwenText });
+    p.driver.supportedAbis = async () => ["x86_64"];
+    const second = new ApplicationAiService({ android: true, ...p });
     await second.ready;
     expect(second.manager.statusOf(NEEDLE_MODEL_ID)?.checksumVerified).toBe(true);
     await expect(second.embedNeedle(["umbrella"])).rejects.toThrow(/not installed and verified|not resident/);

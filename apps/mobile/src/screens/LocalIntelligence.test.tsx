@@ -11,6 +11,7 @@ afterEach(cleanup);
 
 function nativeService() {
   return new ApplicationAiService({ android: true, driver: {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private/models", freeBytes: async () => 2e9,
     stagedSize: async () => 0, readJournalText: async () => null,
     download: async () => { throw new Error("Unexpected transfer"); },

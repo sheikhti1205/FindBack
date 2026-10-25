@@ -13,7 +13,7 @@ import {
   type QwenTextNativeBridge,
 } from "./text/litertLmText";
 import { profileFor } from "./modelProfiles";
-import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, type ModelDownloadDriver } from "./download/driver";
+import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, validatedDeviceAbis, type ModelDownloadDriver } from "./download/driver";
 import { createOfflineAdapter, describeOfflineReadiness, type OfflineNativeBridge, type OfflineVisionNativeBridge } from "./providers/offline";
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
@@ -364,16 +364,16 @@ export class ApplicationAiService {
   private requireAndroid() { if (!this.android || !this.driver) throw new Error("On-device AI requires the Android app."); }
   private bridges() { return { needle: this.needle !== undefined, smol: this.smol !== undefined, qwenText: this.qwenText !== undefined, llama: this.llama !== undefined }; }
   /**
-   * Device ABI set from the native facts bridge. Unreadable or absent
-   * facts yield an empty set, which no descriptor verifies — fail-closed.
+   * Device ABI set from the shared platform/download bridge, not a model
+   * runtime that can be retired. Unreadable or absent facts yield an empty
+   * set, which no descriptor verifies — fail-closed, with no vision fallback.
    */
   private async deviceAbis(): Promise<readonly string[]> {
     if (this.deviceAbiCache === undefined) {
       let abis: readonly string[] = [];
       try {
-        const facts = (await this.smol?.collectDeviceFacts?.()) as Record<string, unknown> | undefined;
-        const raw = facts?.["supportedAbis"];
-        if (Array.isArray(raw)) abis = raw.filter((entry): entry is string => typeof entry === "string");
+        const raw: unknown = await this.driver?.supportedAbis?.();
+        abis = validatedDeviceAbis(raw);
       } catch {
         abis = [];
       }

@@ -29,6 +29,7 @@ function platform(options?: { qwenChunks?: string[]; qwenAvailable?: boolean }) 
   const disk = new Map<string, string>();
   const calls: string[] = [];
   const driver: ModelDownloadDriver = {
+    supportedAbis: async () => ["arm64-v8a"],
     rootDir: async () => "/private/ai-models",
     freeBytes: async () => 2_000_000_000,
     stagedSize: async (path) => (disk.has(path) ? 1 : 0),
