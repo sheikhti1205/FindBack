@@ -72,9 +72,7 @@ describe("AiSettings consumer root", () => {
     expect(screen.getByRole("link", { name: /local intelligence/i }).getAttribute("href")).toBe(
       "/settings/local-intelligence",
     );
-    expect(screen.getByRole("link", { name: /on-device ai/i }).getAttribute("href")).toBe(
-      "/settings/ai/models",
-    );
+    expect(screen.queryByRole("link", { name: /on-device ai/i })).toBeNull();
     expect(screen.getByRole("button", { name: /back to settings/i })).toBeTruthy();
     await waitFor(() => expect(mocks.get).toHaveBeenCalled());
     expectNormalTierCopy(view.container);

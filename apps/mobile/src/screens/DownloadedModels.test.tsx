@@ -94,9 +94,8 @@ describe("Downloaded models", () => {
     expect(screen.getByRole("region", { name: "Matching" })).toBeTruthy();
     await screen.findByText("Downloads need the Android app.");
     expect(container.textContent).not.toMatch(/Qwen|Smol|checksum|runtime|SHA|Balanced|Best/);
-    // The disclosure must not mischaracterise the other recognised downloads
-    // as "older files": they are managed on the on-device AI screen.
-    expect(screen.getByText(/other on-device models are managed under AI & models/i)).toBeTruthy();
+    // No stale pointer to the retired generative catalogue on a clean install.
+    expect(container.textContent).not.toMatch(/other on-device models|AI & models/);
     expect(container.textContent).not.toMatch(/older files may also use space/i);
   });
   it("removes an unfinished download as the confirmation promises", async () => {

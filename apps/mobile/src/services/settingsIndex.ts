@@ -134,16 +134,6 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
     iconTone: "ai",
   },
   {
-    id: "on-device-models",
-    title: "On-device AI",
-    keywords: "on device models photo analysis catalogue download local",
-    group: "Intelligence",
-    route: "/settings/ai/models",
-    description: "Intelligence · AI & models",
-    icon: Sparkles,
-    iconTone: "ai",
-  },
-  {
     id: "connections",
     title: "Providers",
     keywords: "providers cloud connections openrouter api key provider openai google mistral groq",

@@ -330,23 +330,23 @@ export async function removeManagedModel(
   modelId: string,
   revision: string,
   fileName: string,
-  options: { unload?: () => Promise<void> } = {},
+  options: { unload?: () => Promise<void>; additionalPaths?: readonly string[] } = {},
 ): Promise<void> {
+  // Revoke inference readiness before cancellation/unload. A failure below is
+  // still removable, never a claim that the bytes are gone.
   manager.dispatch(modelId, { type: "DELETE" });
-  await driver.cancelDownload(manager.stagingPathsFor(rootDir, modelId, revision, fileName).stagingPath);
-  await options.unload?.();
-  const paths = manager.stagingPathsFor(rootDir, modelId, revision, fileName);
-  for (const path of installedFileCandidates(paths)) {
-    try {
-      await driver.removeFile(path);
-    } catch {
-      // Idempotent delete: a missing file is already deleted.
-    }
-  }
   try {
+    const paths = manager.stagingPathsFor(rootDir, modelId, revision, fileName);
+    await driver.cancelDownload(paths.stagingPath);
+    await options.unload?.();
+    for (const path of [...installedFileCandidates(paths), ...(options.additionalPaths ?? [])]) {
+      // removeFile is idempotent for absence; other errors are not success.
+      await driver.removeFile(path);
+    }
     manager.dispatch(modelId, { type: "DELETE" });
-  } catch {
-    // Already removed; the disk state above is authoritative.
+  } catch (error) {
+    manager.dispatch(modelId, { type: "FAIL", reason: "removal failed" });
+    throw error;
   }
 }
 

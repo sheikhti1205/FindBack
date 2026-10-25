@@ -65,7 +65,6 @@ vi.mock("./screens/About", () => ({ About: () => <p>About screen</p> }));
 vi.mock("./screens/MyPosts", () => ({ MyPosts: () => <p>MyPosts screen</p> }));
 vi.mock("./screens/Help", () => ({ Help: () => <p>Help screen</p> }));
 vi.mock("./screens/AiConnection", () => ({ AiConnection: () => <p>AiConnection screen</p> }));
-vi.mock("./screens/AiModelsRoute", () => ({ AiModelsRoute: () => <p>AiModelsRoute screen</p> }));
 vi.mock("./screens/LocalIntelligence", () => ({ LocalIntelligence: () => <p>LocalIntelligence screen</p> }));
 vi.mock("./screens/DownloadedModels", () => ({ DownloadedModels: () => <p>DownloadedModels screen</p> }));
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <p>Notifications screen</p> }));
@@ -283,7 +282,7 @@ describe("consumer route map", () => {
     ["/settings/returns", "Returns screen"],
     ["/settings/ai", "AiSettings screen"],
     ["/settings/ai/connections", "AiConnection screen"],
-    ["/settings/ai/models", "AiModelsRoute screen"],
+    ["/settings/ai/models", "LocalIntelligence screen"],
     ["/settings/local-intelligence", "LocalIntelligence screen"],
     ["/settings/local-intelligence/downloads", "DownloadedModels screen"],
     ["/settings/help", "HelpGuide screen"],
@@ -294,7 +293,7 @@ describe("consumer route map", () => {
     ["/notifications", "Notifications screen"],
     ["/search", "Search screen"],
     ["/report", "CreateReport screen"],
-    ["/ai-models", "AiModelsRoute screen"],
+    ["/ai-models", "LocalIntelligence screen"],
   ])("renders signed route %s inside the shell", (route, markerText) => {
     signedIn();
     renderAt(route);
@@ -321,7 +320,7 @@ describe("consumer route map", () => {
   it("keeps the /offline-ai redirect on the canonical on-device settings area", () => {
     signedIn();
     renderAt("/offline-ai");
-    expect(screen.getByText("AiModelsRoute screen")).toBeTruthy();
+    expect(screen.getByText("LocalIntelligence screen")).toBeTruthy();
   });
 
   it("renders the public shared report without auth", () => {

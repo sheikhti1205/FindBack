@@ -11,7 +11,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { searchSettings } from "../services/settingsIndex";
-import { toConsumerNotice } from "./AiModelsRoute";
+import { localOperationNotice } from "../services/ai/localIntelligenceView";
 
 /* ------------------------------------------------------------------ */
 /* 1. Search index against packet matrix settings_search_index.csv      */
@@ -292,16 +292,16 @@ describe("QA L: account sign-out surfaces failures instead of swallowing them", 
 describe("QA L: normal-tier notices never leak technical wording", () => {
   it("translates every known service reason to consumer copy", () => {
     const outputs = [
-      toConsumerNotice("Installed and checksum verified."),
-      toConsumerNotice("checksum mismatch against catalogue pin"),
-      toConsumerNotice("no catalogue checksum pin for this model"),
-      toConsumerNotice("checksum verification failed"),
-      toConsumerNotice("transfer failed"),
-      toConsumerNotice("not enough free storage for this download"),
-      toConsumerNotice("downloads start only on explicit user action"),
-      toConsumerNotice("model installed"),
-      toConsumerNotice("unknown model smolvlm2-q4"),
-      toConsumerNotice("Model storage could not be verified. Retry from AI & Models."),
+      localOperationNotice("Installed and checksum verified."),
+      localOperationNotice("checksum mismatch against catalogue pin"),
+      localOperationNotice("no catalogue checksum pin for this model"),
+      localOperationNotice("checksum verification failed"),
+      localOperationNotice("transfer failed"),
+      localOperationNotice("not enough free storage for this download"),
+      localOperationNotice("downloads start only on explicit user action"),
+      localOperationNotice("model installed"),
+      localOperationNotice("unknown model smolvlm2-q4"),
+      localOperationNotice("Model storage could not be verified. Retry from AI & Models."),
     ];
     for (const output of outputs) {
       expect(output ?? "").not.toMatch(/checksum|sha|catalogue|unknown model \S+|transfer/i);
@@ -309,8 +309,10 @@ describe("QA L: normal-tier notices never leak technical wording", () => {
   });
 
   it("keeps friendly consumer wording for storage and verification outcomes", () => {
-    expect(toConsumerNotice("not enough free storage for this download")).toContain("storage");
-    expect(toConsumerNotice("checksum mismatch against catalogue pin")).toMatch(/verif/i);
+    expect(localOperationNotice("not enough free storage for this download")).toBe("Free some space on this device, then try again.");
+    expect(localOperationNotice("checksum mismatch against catalogue pin")).toBe("The downloaded file couldn't be checked. Download it again.");
+    expect(localOperationNotice("Installed and checksum verified.")).toBeNull();
+    expect(localOperationNotice("native /data/files/private unknown-model ABI")).toBe("Couldn't finish. Please try again.");
   });
 });
 

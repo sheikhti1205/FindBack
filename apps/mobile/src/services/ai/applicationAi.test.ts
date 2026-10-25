@@ -66,6 +66,36 @@ function platform() {
 }
 
 describe("application-owned AI", () => {
+  it("keeps a corrupt older installed file removable after reconciliation", async () => {
+    const p = platform();
+    const before = new ApplicationAiService({ android: true, ...p }); await before.ready;
+    const d = SMOL_VISION_DESCRIPTOR;
+    const path = before.manager.stagingPathsFor("/private/ai-models", d.modelId, d.revision, d.fileName).installedPath;
+    p.disk.set(path, "a".repeat(64));
+    const restarted = new ApplicationAiService({ android: true, ...p }); await restarted.ready;
+    expect(restarted.manager.statusOf(d.modelId)).toMatchObject({ download: "failed", checksumVerified: false, lastError: "checksum verification failed" });
+    await restarted.remove(d.modelId);
+    expect(p.disk.has(path)).toBe(false);
+    expect(restarted.manager.statusOf(d.modelId)?.download).toBe("not-installed");
+  });
+  it("retains removable failed state if final directory cleanup fails after model-file deletion", async () => {
+    const p = platform();
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready; await service.download(NEEDLE_MODEL_ID);
+    let fail = true;
+    const remove = p.driver.removeFile;
+    p.driver.removeFile = async (path) => {
+      if (fail && path.endsWith(`/models/${NEEDLE_MODEL_ID}`)) throw new Error("private directory failure");
+      await remove(path);
+    };
+    await expect(service.remove(NEEDLE_MODEL_ID)).rejects.toThrow();
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)).toMatchObject({ download: "failed", checksumVerified: false, lastError: "removal failed" });
+    await expect(service.embedNeedle(["umbrella"])).rejects.toThrow();
+    fail = false;
+    await service.remove(NEEDLE_MODEL_ID);
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.download).toBe("not-installed");
+  });
+
   it("downloads and runs Needle without consulting the retiring vision facts bridge", async () => {
     const p = platform();
     Object.assign(p.driver, { supportedAbis: async () => ["arm64-v8a"] });

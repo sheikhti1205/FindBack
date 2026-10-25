@@ -32,7 +32,6 @@ import { SavedReports } from "./screens/SavedReports";
 import { Help } from "./screens/Help";
 import { AiConnection } from "./screens/AiConnection";
 import { CloudModels } from "./screens/CloudModels";
-import { AiModelsRoute } from "./screens/AiModelsRoute";
 import { LocalIntelligence } from "./screens/LocalIntelligence";
 import { DownloadedModels } from "./screens/DownloadedModels";
 import { Notifications } from "./screens/Notifications";
@@ -190,8 +189,8 @@ function AppRouteTree() {
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
-               <Route path="/ai-models" element={<AiModelsRoute />} />
-              <Route path="/offline-ai" element={<Navigate to="/settings/ai/models" replace />} />
+                <Route path="/ai-models" element={<Navigate to="/settings/local-intelligence" replace />} />
+               <Route path="/offline-ai" element={<Navigate to="/settings/local-intelligence" replace />} />
               <Route path="/settings" element={<Settings />} />
               {/* Eligibility and the claim itself are server-controlled. An
                   existing admin role must not be required to reach setup. */}
@@ -212,7 +211,7 @@ function AppRouteTree() {
               <Route path="/settings/ai/connections" element={<AiConnection />} />
               <Route path="/settings/ai/chat-models" element={<CloudModels />} />
               <Route path="/settings/ai/privacy" element={<AiPrivacy />} />
-              <Route path="/settings/ai/models" element={<AiModelsRoute />} />
+               <Route path="/settings/ai/models" element={<Navigate to="/settings/local-intelligence" replace />} />
               <Route path="/settings/local-intelligence" element={<LocalIntelligence />} />
               <Route path="/settings/local-intelligence/downloads" element={<DownloadedModels />} />
               <Route path="/settings/help" element={<HelpGuide />} />

@@ -197,8 +197,8 @@ export type NlHelperSource = Pick<
  * here yet" — and reporting the second as the first is a lie about why nothing
  * happened. This asks the routing seam's OWN predicates, the same ones
  * `applicationAi` enforces before it serves a task (`applicationAi.ts:409`) and
- * the same compatibility snapshot the models screen renders
- * (`AiModelsRoute.tsx:126`), so this cannot drift from what routing will do.
+ * the same compatibility snapshot the Local intelligence helper row renders,
+ * so this cannot drift from what routing will do.
  *
  * Terminal states are separated because an install offer is a promise:
  *

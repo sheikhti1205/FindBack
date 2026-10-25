@@ -5,7 +5,7 @@ import { SettingsGroup, SettingsPage, SettingsRow } from "../components/settings
 import { getApplicationAi } from "../services/ai/applicationAi";
 import type { ModelDescriptor } from "../services/ai/modelDescriptors";
 import {
-  localOperationNotice, localSearchHelperView, useLocalIntelligenceService,
+  localOperationNotice, localSearchHelperView, olderGenerativeDownloads, useLocalIntelligenceService,
   type LocalAssetAction, type LocalIntelligenceService,
 } from "../services/ai/localIntelligenceView";
 
@@ -117,6 +117,8 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
 }) {
   const { helper, phase } = useLocalIntelligenceService(service);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removalKind, setRemovalKind] = useState<"helper" | "older">("helper");
+  const olderDownloads = olderGenerativeDownloads(service);
   const [removing, setRemoving] = useState(false);
   const removingRef = useRef(false);
   const removalSucceeded = useRef(false);
@@ -125,14 +127,23 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
   const feedbackRef = useRef<HTMLParagraphElement>(null);
 
   function remove() {
-    if (!helper || removingRef.current) return;
+    if (removingRef.current) return;
+    const targets = removalKind === "helper" ? (helper ? [helper] : []) : olderDownloads;
+    if (targets.length === 0) return;
     removingRef.current = true; setRemoving(true); setError(null);
-    void service.remove(helper.modelId).then(() => {
+    void (async () => { for (const target of targets) await service.remove(target.modelId); })().then(() => {
       removalSucceeded.current = true;
-      setConfirmRemove(false); setFeedback("Local search helper removed. Normal search is still available.");
+      setConfirmRemove(false); setFeedback(removalKind === "helper"
+        ? "Local search helper removed. Normal search is still available."
+        : "Older downloads removed. Your local search helper is unchanged.");
     }).catch((reason: unknown) => {
       setError(localOperationNotice(reason instanceof Error ? reason.message : "unknown"));
     }).finally(() => { removingRef.current = false; setRemoving(false); });
+  }
+
+  function confirm(kind: "helper" | "older") {
+    removalSucceeded.current = false; setError(null); setFeedback(null);
+    setRemovalKind(kind); setConfirmRemove(true);
   }
 
   return <>
@@ -140,10 +151,9 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
       <SettingsPage title="Downloaded models" description="Manage the local tools stored on this device." backTo={backTo} backLabel="Back to Local intelligence">
         <div className="px-1 text-sm text-on-surface-variant">
           <p>Total storage use unavailable</p>
-          <p className="mt-1">This screen lists the local search helper. Other on-device models are managed under AI &amp; models.</p>
         </div>
         <SettingsGroup title="Smart Search">
-          <LocalSearchHelperRow service={service} descriptor={helper} phase={phase} onRemove={() => { removalSucceeded.current = false; setError(null); setFeedback(null); setConfirmRemove(true); }} />
+          <LocalSearchHelperRow service={service} descriptor={helper} phase={phase} onRemove={() => confirm("helper")} />
         </SettingsGroup>
         <SettingsGroup title="Matching" description="Possible Matches suggests reports using text, category, date and location — not photos.">
           <p className="px-1 text-sm text-on-surface-variant">Photo matching isn't available in this app yet, so there's no matching download to manage.</p>
@@ -151,17 +161,23 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
         <SettingsGroup title="Built-in">
           <SettingsRow title="Semantic text matching" description={service.android ? "Included with FindBack · Not removable separately" : "Included with the Android app · Unavailable here"} />
         </SettingsGroup>
+        {phase !== "checking" && olderDownloads.length > 0 && <SettingsGroup title="Older downloads">
+          <p className="px-1 text-sm text-on-surface-variant">FindBack no longer uses these on-device chat and photo tools. Remove them to free space. Your local search helper stays.</p>
+          <Button variant="text" onClick={() => confirm("older")}>Remove older downloads</Button>
+        </SettingsGroup>}
         <p className="px-1 text-sm text-on-surface-variant">Downloaded tools stay on this device when you sign out.</p>
         {feedback && <p ref={feedbackRef} tabIndex={-1} role="status" className="text-sm text-on-surface-variant">{feedback}</p>}
       </SettingsPage>
     </div>
-    <BottomSheet open={confirmRemove} title="Remove local search helper?" description="Normal search will still work. Smart Search and report text assistance, including category suggestions, will need another download." height="medium" dismissible={!removing} onClose={() => { if (!removingRef.current) setConfirmRemove(false); }}>
+    <BottomSheet open={confirmRemove} title={removalKind === "helper" ? "Remove local search helper?" : "Remove older downloads?"} description={removalKind === "helper"
+      ? "Normal search will still work. Smart Search and report text assistance, including category suggestions, will need another download."
+      : "Your local search helper and saved reports stay. This only removes older on-device chat and photo tools."} height="medium" dismissible={!removing} onClose={() => { if (!removingRef.current) setConfirmRemove(false); }}>
       <RemovalFocusReturn completed={removalSucceeded} target={feedbackRef} />
-      <p className="text-sm text-on-surface-variant">This removes the helper's downloaded files and any unfinished download.</p>
+      <p className="text-sm text-on-surface-variant">{removalKind === "helper" ? "This removes the helper's downloaded files and any unfinished download." : "Any unfinished downloads for these older tools are removed too."}</p>
       {error && <p role="alert" className="mt-2 text-sm text-error">{error}</p>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant="outline" disabled={removing} onClick={() => setConfirmRemove(false)}>Keep helper</Button>
-        <Button variant="error" loading={removing} onClick={remove}>Remove helper</Button>
+        <Button variant="outline" disabled={removing} onClick={() => setConfirmRemove(false)}>{removalKind === "helper" ? "Keep helper" : "Keep downloads"}</Button>
+        <Button variant="error" loading={removing} onClick={remove}>{removalKind === "helper" ? "Remove helper" : "Remove older downloads"}</Button>
       </div>
     </BottomSheet>
   </>;

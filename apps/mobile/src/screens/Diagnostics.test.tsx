@@ -48,8 +48,8 @@ describe("Diagnostics", () => {
       screen.getByText(/monitoring self-test isn't enabled in this build/i) ||
         screen.getByRole("button", { name: /send monitoring test signal/i }),
     ).toBeTruthy();
-    expect(screen.getByRole("link", { name: /ai & models/i }).getAttribute("href")).toBe(
-      "/ai-models",
+    expect(screen.getByRole("link", { name: /downloaded models/i }).getAttribute("href")).toBe(
+      "/settings/local-intelligence/downloads",
     );
     // Fixture data must never render secret-shaped strings.
     const text = container.textContent ?? "";

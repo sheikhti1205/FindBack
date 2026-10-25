@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ApplicationAiService } from "./applicationAi";
-import type { ModelDescriptor } from "./modelDescriptors";
+import { LLAMA_CPP_RUNTIME_ID, QWEN_TEXT_RUNTIME_ID, SMOL_VLM_RUNTIME_ID, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { OfflineModelStatus } from "./offlineModelManager";
 import { acquisitionBytes } from "./modelSupply";
@@ -16,17 +16,27 @@ export type LocalAssetAction = "download" | "pause" | "verify";
 /**
  * THE ONE consumer owner of the local search helper.
  *
- * The on-device catalogue (`AiModelsRoute`) and this surface used to offer the
- * same artifact under two names with two download buttons. The helper is
- * managed HERE, so the catalogue must not offer it again: the catalogue's job
- * is the other residents (photo analysis, on-device assistant) until the
- * local-generative cleanup removes them from the consumer tree.
+ * Local intelligence owns the helper lifecycle; older generative downloads
+ * are shown only for cleanup, never as another acquisition catalogue.
  */
 export const LOCAL_SEARCH_HELPER_MODEL_ID = NEEDLE_MODEL_ID;
 
 /** True when the local intelligence surface owns this model's lifecycle. */
 export function isLocalIntelligenceOwnedModel(modelId: string | undefined | null): boolean {
   return modelId === LOCAL_SEARCH_HELPER_MODEL_ID;
+}
+
+/** Cleanup only. Future narrow-tool runtimes are not retired merely for being
+ * different from the search helper. File operations remain service-owned. */
+export function olderGenerativeDownloads(service: LocalIntelligenceService): readonly ModelDescriptor[] {
+  if (!service.android) return [];
+  return service.registry.descriptors.filter((d) => {
+    if (d.runtimeId !== LLAMA_CPP_RUNTIME_ID && d.runtimeId !== QWEN_TEXT_RUNTIME_ID && d.runtimeId !== SMOL_VLM_RUNTIME_ID) return false;
+    const status = service.manager.statusOf(d.modelId);
+    // An imported record is evidence of an earlier acquisition. Retain its
+    // cleanup after a restart if bytes were deleted but metadata saving failed.
+    return status !== undefined && (d.trust === "imported" || status.download !== "not-installed" || status.downloadedBytes > 0);
+  });
 }
 
 export type LocalIntelligencePhase = "checking" | "ready" | "storage-unverified" | "failed";
@@ -115,12 +125,13 @@ export function localSearchHelperView(descriptor: ModelDescriptor, status: Offli
       primary = { action: "download", label: "Resume" };
       break;
     case "failed":
-      state = /not enough free storage|free space|free_bytes|out of space/i.test(problem ?? "")
+      state = problem === "removal failed" ? "Removal didn't finish"
+        : /not enough free storage|free space|free_bytes|out of space/i.test(problem ?? "")
         ? "Needs more storage"
         : integrityFailed
           ? "Needs repair"
           : "Download interrupted";
-      primary = { action: "download", label: integrityFailed ? "Download again" : "Retry" };
+      primary = problem === "removal failed" ? null : { action: "download", label: integrityFailed ? "Download again" : "Retry" };
       break;
     default:
       state = repair ? "Needs repair" : "Not downloaded";

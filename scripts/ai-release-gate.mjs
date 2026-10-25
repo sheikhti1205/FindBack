@@ -105,7 +105,7 @@ export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/providerRegistry.ts",
   "apps/mobile/src/services/ai/vision/native.ts",
   "apps/mobile/src/services/ai/download/driver.ts",
-  "apps/mobile/src/screens/AiModelsRoute.tsx",
+  "apps/mobile/src/screens/DownloadedModels.tsx",
   "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
   "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
   "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
@@ -584,7 +584,7 @@ function checkDescriptorRegistry() {
   try {
     descriptors = read("apps/mobile/src/services/ai/modelDescriptors.ts");
     service = read("apps/mobile/src/services/ai/applicationAi.ts");
-    models = read("apps/mobile/src/screens/AiModelsRoute.tsx");
+    models = read("apps/mobile/src/screens/DownloadedModels.tsx");
     runtimes = read("apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts");
     orchestrator = read("apps/mobile/src/services/ai/orchestrator/AiOrchestrator.ts");
     interpreters = read("apps/mobile/src/services/ai/orchestrator/taskInterpreters.ts");
@@ -698,7 +698,7 @@ export const APPLICATION_INTEGRATION_FILES = {
   appSource: "apps/mobile/src/App.tsx",
   serviceSource: "apps/mobile/src/services/ai/applicationAi.ts",
   providersSource: "apps/mobile/src/services/ai/providerRegistry.ts",
-  modelsSource: "apps/mobile/src/screens/AiModelsRoute.tsx",
+  modelsSource: "apps/mobile/src/screens/DownloadedModels.tsx",
   helpSource: "apps/mobile/src/screens/Help.tsx",
   matchesSource: "apps/mobile/src/services/possibleMatches.ts",
   visionNativeSource: "apps/mobile/src/services/ai/vision/native.ts",
@@ -6939,10 +6939,11 @@ export function validateApplicationIntegration(sources) {
     ["serviceSource", /runManagedDownload\(this\.manager,\s*this\.driver/, "downloads must use shared manager and driver"],
     ["providersSource", /KNOWN_PROVIDERS[^;]+SUPPORTED_AI_PROVIDERS,\s*"offline"/, "provider guard must accept offline"],
     ["providersSource", /case\s*"offline":\s*return\s*\(options\.offlineService\s*\?\?\s*getApplicationAi\(\)\)\.offlineAdapter\(/, "offline provider must reach application service"],
-    ["appSource", /path="\/ai-models"\s+element=\{<AiModelsRoute\s*\/>\}/, "product models route must mount its controls owner"],
-    ["modelsSource", /run\(service\.(download|pause|remove)\(modelId\)/, "models route must drive download controls through the shared service"],
-    ...["download", "pause", "remove"].map((name) =>
-      ["modelsSource", new RegExp(`service\\.${name}\\(`), `models route must connect ${name}`]),
+    ...["ai-models", "offline-ai", "settings/ai/models"].map((route) =>
+      ["appSource", new RegExp(`path="/${route}"\\s+element=\\{<Navigate to="/settings/local-intelligence" replace\\s*/>\\}`), "legacy models routes must redirect to Local intelligence"]),
+    ["appSource", /path="\/settings\/local-intelligence\/downloads"\s+element=\{<DownloadedModels\s*\/>\}/, "downloaded models route must mount its canonical manager"],
+    ["modelsSource", /service\[action\]\(modelId\)/, "helper actions must use the canonical service"],
+    ["modelsSource", /service\.remove\(target\.modelId\)/, "removal must use the canonical service"],
     ["helpSource", /createProviderAdapter\("offline",/, "Help must list installed offline models through registry"],
     ["helpSource", /sendProvider\s*===\s*"offline"\s*\?\s*null/, "offline sends must bypass credential lookup"],
     ["matchesSource", /resolveMatchingBackend\([^)]*\)\s*===\s*"needle"[\s\S]{0,200}embedNeedle\(/, "matching must reach selected Needle service"],

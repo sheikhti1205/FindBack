@@ -25,7 +25,6 @@ describe("settingsIndex", () => {
         // local-download owner; they postdate that route map too.
         "/settings/local-intelligence/downloads",
         "/settings/ai/chat-models",
-        "/settings/ai/models",
         "/settings/help",
         "/settings/media",
         "/settings/notifications",

@@ -350,15 +350,18 @@ class ModelDownloadPlugin : Plugin() {
             return
         }
         val file = File(path)
-        if (isUnderAppFiles(file)) {
-            try {
-                imports[path]?.set(true)
-                active[downloadKey(path)]?.let { it.cancelled.set(true); it.connection?.disconnect() }
-                if (file.isDirectory) file.deleteRecursively() else file.delete()
-            } catch (_: Exception) {
-            }
+        if (!isUnderAppFiles(file)) {
+            call.reject("invalid_request")
+            return
         }
-        call.resolve()
+        try {
+            imports[path]?.set(true)
+            active[downloadKey(path)]?.let { it.cancelled.set(true); it.connection?.disconnect() }
+            deleteModelFile(file)
+            call.resolve()
+        } catch (_: Exception) {
+            call.reject("delete_failed")
+        }
     }
 
     @PluginMethod

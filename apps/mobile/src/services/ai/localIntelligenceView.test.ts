@@ -45,6 +45,12 @@ describe("local search helper presentation", () => {
     expect(view({ download: "failed", lastError: "checksum mismatch against catalogue pin" }).primary?.label).toBe("Download again");
     expect(view({}, "The installed file is missing. Download it again.").state).toBe("Needs repair");
   });
+  it("does not present incomplete removal as an interrupted download or offer a new download", () => {
+    const failedRemoval = view({ download: "failed", lastError: "removal failed" });
+    expect(failedRemoval.state).toBe("Removal didn't finish");
+    expect(failedRemoval.primary).toBeNull();
+    expect(failedRemoval.removable).toBe(true);
+  });
   it("never advertises a removal it would refuse", () => {
     expect(view({ download: "queued" }).removable).toBe(false);
     expect(view({ download: "verifying" }).removable).toBe(false);

@@ -358,6 +358,9 @@ export class ApplicationAiService {
           this.manager.dispatch(model.modelId, { type: "PROGRESS", downloadedBytes: staged });
           this.manager.dispatch(model.modelId, { type: "CANCEL" });
         }
+        // A present but invalid installed file is not a clean installation.
+        // Keep it visible for repair/removal, including after a restart.
+        if (actual !== "") this.manager.dispatch(model.modelId, { type: "FAIL", reason: "checksum verification failed" });
       }
     }
   }
@@ -497,9 +500,9 @@ export class ApplicationAiService {
     await active.work;
   }
 
-  private async saveImported(): Promise<void> {
+  private async saveImported(descriptors: readonly ModelDescriptor[] = this.imported): Promise<void> {
     if (!this.driver?.writeMetadata) throw new Error("Private import metadata storage is unavailable.");
-    await this.driver.writeMetadata(`${this.root}/imports.json`, JSON.stringify(this.imported.map((d) => ({ sha256: d.sha256, bytes: d.bytes, format: d.format, modality: d.capabilities.includes("vision") ? "vision" : "text", license: d.license }))));
+    await this.driver.writeMetadata(`${this.root}/imports.json`, JSON.stringify(descriptors.map((d) => ({ sha256: d.sha256, bytes: d.bytes, format: d.format, modality: d.capabilities.includes("vision") ? "vision" : "text", license: d.license }))));
   }
   private registerImported(d: ModelDescriptor): void {
     const existing = this.registry.descriptorFor(d.modelId);
@@ -729,13 +732,23 @@ export class ApplicationAiService {
         const descriptor = this.model(modelId);
         await removeManagedModel(this.manager, this.driver!, this.root, modelId, descriptor.revision, descriptor.fileName, {
           unload: () => this.unloadDescriptor(descriptor),
+          additionalPaths: [
+            `${this.root}/models/${modelId}`,
+            `${this.root}/bundle-work/models/${modelId}`,
+            `${this.root}/bundle-work/staging/${modelId}`,
+          ],
         });
-        await this.driver!.removeFile(`${this.root}/models/${modelId}`);
-        await this.driver!.removeFile(`${this.root}/bundle-work/models/${modelId}`);
-        await this.driver!.removeFile(`${this.root}/bundle-work/staging/${modelId}`);
-        if (descriptor.trust === "imported") { this.imported = this.imported.filter((d) => d.modelId !== modelId); await this.saveImported(); }
+        if (descriptor.trust === "imported") {
+          const remaining = this.imported.filter((d) => d.modelId !== modelId);
+          await this.saveImported(remaining);
+          this.imported = remaining;
+        }
         this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
         this.probeRecords = []; this.notices.delete(modelId);
+      } catch (error) {
+        this.manager.dispatch(modelId, { type: "DELETE" });
+        this.manager.dispatch(modelId, { type: "FAIL", reason: "removal failed" });
+        throw error;
       } finally { this.coordinator.endExclusive(label); }
     } finally { this.operating.delete(modelId); this.changed(); }
   }

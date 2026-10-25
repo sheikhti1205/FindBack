@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-OUT = Path(os.environ.get("FINDBACK_REVIEW_OUT", "/tmp/opencode/ai-motion-evidence"))
-OUT.mkdir(exist_ok=True)
+OUT = Path(os.environ["FINDBACK_REVIEW_OUT"])
+OUT.mkdir(parents=True, exist_ok=True)
 CHROME = "/home/sheikh/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome"
 CHROME = os.environ.get("FINDBACK_REVIEW_CHROME", CHROME)
 BASE = os.environ.get("FINDBACK_REVIEW_URL", "http://localhost:5199")
@@ -56,19 +56,72 @@ with sync_playwright() as p:
                 page.evaluate("url => import(url)", HARNESS)
                 page.wait_for_function("window.review !== undefined")
                 page.evaluate("([theme, scale]) => window.review.render('models', theme, scale)", [theme, scale])
-                page.get_by_role("heading", name="On-device AI", exact=True).wait_for()
+                page.get_by_role("heading", name="Downloaded models", exact=True).wait_for()
+                page.get_by_text("Not downloaded", exact=True).wait_for()
                 page.screenshot(path=str(OUT / f"models-{width}-{theme}-{scale}.png"), full_page=True)
                 bad = overflow(page)
                 results.append({"surface": "models", "width": width, "theme": theme, "scale": scale, "overflow": bad})
                 assert not bad, results[-1]
                 # Progress / success and keyboard-visible control states.
                 if width == 320 and scale == "standard":
-                    page.evaluate("window.review.install(); window.review.progress()")
-                    page.get_by_role("button", name="Verify Local text tools").wait_for()
+                    page.evaluate("window.review.install()")
+                    page.get_by_role("button", name="Remove local search helper").wait_for()
                     page.keyboard.press("Tab")
                     page.screenshot(path=str(OUT / f"models-{width}-{theme}-lifecycle.png"), full_page=True)
                     assert not overflow(page)
+                    page.evaluate("window.review.progress()")
+                    page.get_by_role("button", name="Pause", exact=True).wait_for()
+                    page.screenshot(path=str(OUT / f"models-{width}-{theme}-progress.png"), full_page=True)
+                    assert not overflow(page)
                 context.close()
+
+    # Canonical cleanup, confirmation, error/retry, helper survival and focus.
+    for theme in ("light", "dark", "amoled"):
+        for scale in ("standard", "xlarge"):
+            context = browser.new_context(viewport={"width": 320, "height": 800})
+            page = context.new_page()
+            page.goto(BASE, wait_until="networkidle")
+            page.evaluate("url => import(url)", HARNESS)
+            page.wait_for_function("window.review !== undefined")
+            page.evaluate("([theme, scale]) => { window.review.install(); window.review.older(); window.review.render('models', theme, scale); }", [theme, scale])
+            page.get_by_role("button", name="Remove older downloads", exact=True).click()
+            dialog = page.get_by_role("dialog", name="Remove older downloads?", exact=True)
+            dialog.wait_for()
+            # Keyboard containment and non-destructive initial focus.
+            page.wait_for_function("document.querySelector('[role=dialog]')?.contains(document.activeElement)")
+            initial_focus = page.evaluate("document.activeElement?.getAttribute('aria-label') || document.activeElement?.textContent")
+            assert initial_focus in ("Close", "Keep downloads"), initial_focus
+            page.keyboard.press("Shift+Tab")
+            assert dialog.evaluate("el => el.contains(document.activeElement)")
+            page.keyboard.press("Tab")
+            assert dialog.evaluate("el => el.contains(document.activeElement)")
+            remove_button = dialog.get_by_role("button", name="Remove older downloads", exact=True)
+            remove_button.scroll_into_view_if_needed()
+            box = remove_button.bounding_box()
+            assert box and box["y"] >= 0 and box["y"] + box["height"] <= 801, box
+            # Fixed sheets are viewport surfaces; full-page screenshots stitch
+            # background outside the viewport and misrepresent the scrim.
+            page.screenshot(path=str(OUT / f"cleanup-{theme}-{scale}-confirm.png"))
+            assert not overflow(page)
+            page.evaluate("window.review.failRemoval(true)")
+            dialog.get_by_role("button", name="Remove older downloads", exact=True).click()
+            dialog.get_by_role("alert").wait_for()
+            assert "private" not in dialog.inner_text()
+            remove_button.scroll_into_view_if_needed()
+            box = remove_button.bounding_box()
+            assert box and box["y"] >= 0 and box["y"] + box["height"] <= 801, box
+            page.screenshot(path=str(OUT / f"cleanup-{theme}-{scale}-error.png"))
+            assert not overflow(page)
+            page.evaluate("window.review.failRemoval(false)")
+            dialog.get_by_role("button", name="Remove older downloads", exact=True).click()
+            dialog.wait_for(state="detached")
+            page.get_by_text("Older downloads removed. Your local search helper is unchanged.", exact=True).wait_for()
+            page.wait_for_function("document.activeElement?.textContent === 'Older downloads removed. Your local search helper is unchanged.'")
+            page.get_by_text("Installed", exact=True).wait_for()
+            page.screenshot(path=str(OUT / f"cleanup-{theme}-{scale}-success.png"), full_page=True)
+            assert not overflow(page)
+            results.append({"surface": "cleanup", "width": 320, "theme": theme, "scale": scale, "confirmation": True, "failureRetry": True, "focus": True, "helperPreserved": True})
+            context.close()
 
     # Frame-by-frame flow-height proof: production StateSwap AND PostList.
     for reduce in (False, True):

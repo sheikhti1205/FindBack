@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, KeyRound, Smartphone, Sparkles } from "lucide-react";
+import { Cpu, KeyRound, Sparkles } from "lucide-react";
 import { useAuth } from "../auth";
 import {
   SettingsGroup,
@@ -110,13 +110,6 @@ export function AiSettings({ accountId }: { accountId?: string }) {
           icon={Cpu}
           iconTone="ai"
           route="/settings/local-intelligence"
-        />
-        <SettingsRow
-          title="On-device AI"
-          description="Photo analysis and other models that run on this phone."
-          icon={Smartphone}
-          iconTone="ai"
-          route="/settings/ai/models"
         />
       </SettingsGroup>
     </SettingsPage>

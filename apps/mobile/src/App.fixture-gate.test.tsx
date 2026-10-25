@@ -62,7 +62,6 @@ vi.mock("./screens/About", () => ({ About: () => <p>About screen</p> }));
 vi.mock("./screens/MyPosts", () => ({ MyPosts: () => <p>MyPosts screen</p> }));
 vi.mock("./screens/Help", () => ({ Help: () => <p>Help screen</p> }));
 vi.mock("./screens/AiConnection", () => ({ AiConnection: () => <p>AiConnection screen</p> }));
-vi.mock("./screens/AiModelsRoute", () => ({ AiModelsRoute: () => <p>AiModelsRoute screen</p> }));
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <p>Notifications screen</p> }));
 vi.mock("./screens/SharedReport", () => ({ SharedReport: () => <p>SharedReport screen</p> }));
 vi.mock("./screens/Settings", () => ({ Settings: marker("Settings") }));

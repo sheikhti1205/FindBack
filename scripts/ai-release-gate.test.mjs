@@ -46,7 +46,7 @@ const REAL = {
   interpretersSource: read("apps/mobile/src/services/ai/orchestrator/taskInterpreters.ts"),
   routeValidationSource: read("apps/mobile/src/services/ai/orchestrator/routeValidation.ts"),
   providersSource: read("apps/mobile/src/services/ai/providerRegistry.ts"),
-  modelsSource: read("apps/mobile/src/screens/AiModelsRoute.tsx"),
+  modelsSource: read("apps/mobile/src/screens/DownloadedModels.tsx"),
   helpSource: read("apps/mobile/src/screens/Help.tsx"),
   matchesSource: read("apps/mobile/src/services/possibleMatches.ts"),
   visionNativeSource: read("apps/mobile/src/services/ai/vision/native.ts"),
@@ -78,9 +78,6 @@ describe("validateApplicationIntegration", () => {
     ["unconstructed Smol bridge", "serviceSource", (source) => source.replace(/new CapacitorSmolVlmBridge\(/g, "fakeSmol(")],
     ["offline id excluded by provider guard", "providersSource", (source) => source.replace('...SUPPORTED_AI_PROVIDERS, "offline"', "...SUPPORTED_AI_PROVIDERS")],
     ["offline provider hard refusal", "providersSource", (source) => source.replace(/\.offlineAdapter\(/g, ".refuseOffline(")],
-    ["plain models screen at product route", "appSource", (source) => source.replace(/<AiModelsRoute\s*\/>/g, "<AiModels />")],
-    ["absent route download controls", "modelsSource", (source) => source.replace(/run\(service\.(download|pause|remove)\(modelId\)/g, "run(fakeService.$1(modelId)")],
-    ["download button disconnected from driver", "modelsSource", (source) => source.replace(/service\.download\(/g, "fakeDownload(")],
     ["Help without installed offline catalogue", "helpSource", (source) => source.replace(/createProviderAdapter\("offline",/g, "fakeOffline(")],
     ["matching never calls Needle", "matchesSource", (source) => source.replace(/ai\.embedNeedle\(/g, "fakeEmbed(")],
     ["native Smol binding disconnected", "visionNativeSource", (source) => source.replace('"FindbackSmolVlm"', '"MissingPlugin"')],
@@ -103,6 +100,20 @@ describe("validateApplicationIntegration", () => {
       const broken = mutate(REAL[field]);
       ok(broken !== REAL[field], `${label}: mutation must change its input`);
       ok(validateApplicationIntegration({ ...REAL, [field]: broken }).length > 0, label);
+    });
+  }
+
+  for (const [label, key, mutate, expected] of [
+    ["legacy catalogue mounting", "appSource", (s) => s.replace('path="/ai-models" element={<Navigate to="/settings/local-intelligence" replace />}', 'path="/ai-models" element={<AiModelsRoute />}'), "legacy models routes must redirect to Local intelligence"],
+    ["missing canonical manager route", "appSource", (s) => s.replace("<DownloadedModels />", "<AiModelsRoute />"), "downloaded models route must mount its canonical manager"],
+    ["disconnected helper lifecycle", "modelsSource", (s) => s.replace("service[action](modelId)", "fakeService[action](modelId)"), "helper actions must use the canonical service"],
+    ["disconnected removal", "modelsSource", (s) => s.replace("service.remove(target.modelId)", "fakeService.remove(target.modelId)"), "removal must use the canonical service"],
+  ]) {
+    it(`rejects ${label} for its own concrete reason`, () => {
+      const changed = mutate(REAL[key]);
+      ok(changed !== REAL[key], `${label} mutation did not apply`);
+      const errors = validateApplicationIntegration({ ...REAL, [key]: changed });
+      ok(errors.some((error) => error.includes(expected)), `${label}: ${errors.join("\n")}`);
     });
   }
 });

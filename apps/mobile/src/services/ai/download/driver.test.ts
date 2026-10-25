@@ -235,4 +235,21 @@ describe("managed downloads", () => {
     expect(driver.removed).toHaveLength(5);
     expect(mgr.statusOf(PIN.modelId)?.download).toBe("not-installed");
   });
+
+  it.each(["cancel", "unload", "delete"])("keeps a removal failure retryable when %s fails", async (stage) => {
+    const mgr = manager();
+    const driver = fakeDriver();
+    let fail = true;
+    const cancel = driver.cancelDownload;
+    driver.cancelDownload = async (path) => { if (stage === "cancel" && fail) throw new Error("private cancel detail"); await cancel(path); };
+    const remove = driver.removeFile;
+    driver.removeFile = async (path) => { if (stage === "delete" && fail) throw new Error("private delete detail"); await remove(path); };
+    const unload = async () => { if (stage === "unload" && fail) throw new Error("private unload detail"); };
+    await expect(removeManagedModel(mgr, driver, "/root/ai-models", PIN.modelId, "dad030b6", "model.litertlm", { unload })).rejects.toThrow();
+    expect(mgr.statusOf(PIN.modelId)).toMatchObject({ download: "failed", checksumVerified: false, lastError: "removal failed" });
+    if (stage !== "delete") expect(driver.removed).toEqual([]);
+    fail = false;
+    await removeManagedModel(mgr, driver, "/root/ai-models", PIN.modelId, "dad030b6", "model.litertlm", { unload });
+    expect(mgr.statusOf(PIN.modelId)?.download).toBe("not-installed");
+  });
 });

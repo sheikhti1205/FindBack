@@ -174,13 +174,13 @@ export function Diagnostics() {
         />
       </SettingsGroup>
 
-      <SettingsGroup title="On-device AI">
+      <SettingsGroup title="Local intelligence">
         <SettingsRow
-          title="AI & models"
-          description="Installed models and measurements live here."
+          title="Downloaded models"
+          description="Manage local tools and remove older downloads."
           icon={Bot}
           iconTone="ai"
-          route="/ai-models"
+          route="/settings/local-intelligence/downloads"
         />
       </SettingsGroup>
 

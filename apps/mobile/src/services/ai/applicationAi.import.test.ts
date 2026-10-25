@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ApplicationAiService } from "./applicationAi";
 import type { ModelDownloadDriver } from "./download/driver";
+import { olderGenerativeDownloads } from "./localIntelligenceView";
 
 const hash = "a".repeat(64);
 const input = { sha256: hash, bytes: 12, format: "gguf" as const, license: "Apache-2.0", url: "https://example.org/model.gguf" };
@@ -69,6 +70,26 @@ it("keeps imported identity across restart without retaining its acquisition URL
   await restarted.ready;
   expect(restarted.registry.requireDescriptor(modelId)).toMatchObject({ trust: "imported", maturity: "lab", url: "", taskRoles: [], untrustedImport: true });
   expect(restarted.manager.statusOf(modelId)?.download).toBe("installed");
+});
+
+it("retains imported identity for a retry until removal metadata is durably saved", async () => {
+  const options = { saveFails: false };
+  const f = fixture(options); await f.service.ready;
+  const modelId = await f.service.importUrl(input);
+  options.saveFails = true;
+  await expect(f.service.remove(modelId)).rejects.toThrow();
+  expect(f.service.registry.descriptorFor(modelId)?.trust).toBe("imported");
+  expect(f.service.manager.statusOf(modelId)).toMatchObject({ download: "failed", checksumVerified: false, lastError: "removal failed" });
+  expect(f.metadata()).toContain(hash);
+  // The disk deletion completed but metadata failed. A restart must not hide
+  // the retained imported record merely because it now has no model bytes.
+  const restarted = new ApplicationAiService({ android: true, driver: f.driver });
+  await restarted.ready;
+  expect(olderGenerativeDownloads(restarted).map((d) => d.modelId)).toContain(modelId);
+  options.saveFails = false;
+  await f.service.remove(modelId);
+  expect(f.service.registry.descriptorFor(modelId)).toBeUndefined();
+  expect(f.metadata()).toBe("[]");
 });
 
 it("never registers an untrusted import as a production task backend", async () => {
