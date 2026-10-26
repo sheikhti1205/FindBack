@@ -113,9 +113,9 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
         applicationId "com.findback.app"
-        // Pinned NDK + CMake for the `findback_probe` capability library
-        // (dlopen-only NNAPI/Vulkan/OpenCL probes). Pinned exact in
-        // variables.gradle — never floating.
+        // Pinned NDK + CMake for the retained Needle engine (libfindback_needle.so)
+        // and the MediaPipe embedding JNI. Pinned exact in variables.gradle —
+        // never floating.
         ndkVersion rootProject.ext.ndkPinnedVersion
         // Release metadata is DERIVED, never duplicated: minSdk/target come
         // from rootProject.ext (variables.gradle), compileSdk likewise, and
@@ -266,17 +266,6 @@ tasks.register("fetchNeedleEngine", Exec) {
 tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
     .configureEach { dependsOn("fetchNeedleEngine") }
 
-// Fetch pinned llama.cpp lab source (v0.5.0 tarball, size+SHA verified)
-// before any native build. Weights are NEVER fetched here: lab GGUF files
-// install at lab time through the verified downloader, and LFM-licensed
-// arms stay blocked from production distribution by the license gate.
-tasks.register("fetchLlamaCpp", Exec) {
-    commandLine "node", new File(repoRoot, "scripts/fetch-llama-cpp.mjs").absolutePath
-    outputs.dir(new File(projectDir, "src/main/cpp/third_party/llama.cpp"))
-}
-tasks.matching { it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake") }
-    .configureEach { dependsOn("fetchLlamaCpp") }
-
 // A direct Gradle package of stale Capacitor assets cannot bypass the web
 // build gate. This checks the actual staged JS against the effective public
 // config; missing or mismatched values stop APK/AAB packaging. JVM-only tests
@@ -382,13 +371,6 @@ dependencies {
     implementation "androidx.credentials:credentials-play-services-auth:1.6.0"
     implementation "com.google.android.libraries.identity.googleid:googleid:1.2.1"
     implementation "androidx.exifinterface:exifinterface:$androidxExifInterfaceVersion"
-    // On-device vision: LiteRT-LM Android (SmolVLM2-500M `.litertlm`).
-    // GPU is selected via EngineConfig backend — no separate GPU-delegate
-    // coordinate exists for the LM path; the natives ship in this AAR.
-    implementation "com.google.ai.edge.litertlm:litertlm-android:$litertLmVersion"
-    // Structured concurrency for the vision plugin's load/infer jobs
-    // (Scope + Flow collection). Aligned with Kotlin 2.2.x.
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
     testImplementation "org.jetbrains.kotlin:kotlin-test-junit:2.4.0"
     // Real org.json so Capacitor JSObject/JSArray serialization is exercised on
     // the JVM instead of the throwing mockable android.jar stubs.

@@ -106,9 +106,9 @@ export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/vision/native.ts",
   "apps/mobile/src/services/ai/download/driver.ts",
   "apps/mobile/src/screens/DownloadedModels.tsx",
-  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
-  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
-  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
+  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/EmbeddingPlugin.kt",
+  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/UniversalSentenceEmbedder.kt",
+  "apps/mobile/android/app/src/main/java/com/findback/app/vlm/Diag.kt",
 ];
 
 const MARKER_RE = /\bTODO\b|\bFIXME\b|not\s+wired/i;
@@ -702,9 +702,9 @@ export const APPLICATION_INTEGRATION_FILES = {
   helpSource: "apps/mobile/src/screens/Help.tsx",
   matchesSource: "apps/mobile/src/services/possibleMatches.ts",
   visionNativeSource: "apps/mobile/src/services/ai/vision/native.ts",
-  probeSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt",
-  timingSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt",
-  pluginSource: "apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt",
+  nativeRegistrationSource: "apps/mobile/android/app/src/main/java/com/findback/app/MainActivity.java",
+  nativeBuildSource: "apps/mobile/android/app/build.gradle",
+  nativeCmakeSource: "apps/mobile/android/app/src/main/cpp/CMakeLists.txt",
   aiConnectionSource: "apps/mobile/src/screens/AiConnection.tsx",
   aiPreferencesSource: "apps/mobile/src/services/ai/aiPreferences.ts",
   searchScreenSource: "apps/mobile/src/screens/SearchScreen.tsx",
@@ -6929,11 +6929,25 @@ export function validateReportFieldHelperWired(sources) {
   return errors;
 }
 
+export function validateRetiredNativeIntegration(sources) {
+  const errors = [];
+  for (const [key, pattern] of [
+    ["serviceSource", /new\s+(?:CapacitorSmolVlmBridge|CapacitorQwenTextBridge|CapacitorLlamaBridge)\s*\(/],
+    ["nativeRegistrationSource", /registerPlugin\((?:SmolVlmPlugin|QwenTextPlugin|FindbackLlama)\.class\)/],
+    ["nativeBuildSource", /litertlm-android|fetchLlamaCpp/],
+    ["nativeCmakeSource", /findback_llama|third_party\/llama\.cpp/],
+  ]) if (pattern.test(sources?.[key] ?? "")) errors.push(`application-integration: retired native dispatch/build owner in ${key}`);
+  for (const name of ["FindbackNeedle", "EmbeddingPlugin", "FindBackDiagPlugin", "ModelDownloadPlugin"]) {
+    if (!new RegExp(`registerPlugin\\(${name}\\.class\\)`).test(sources?.nativeRegistrationSource ?? "")) errors.push(`application-integration: retained native registration missing: ${name}`);
+  }
+  return errors;
+}
+
 export function validateApplicationIntegration(sources) {
   const requirements = [
     ["mainSource", /(?:void\s+|await\s+)initializeApplicationAi\(\)/, "application startup must initialize shared AI"],
     ["serviceSource", /this\.boot\s*=\s*bootProductionAi\(/, "shared service must boot production runtimes"],
-    ...["CapacitorNeedleBridge", "CapacitorSmolVlmBridge", "CapacitorModelDownloadDriver"].map((name) =>
+    ...["CapacitorNeedleBridge", "CapacitorModelDownloadDriver"].map((name) =>
       ["serviceSource", new RegExp(`new ${name}\\(`), `shared service must construct ${name}`]),
     ["serviceSource", /Capacitor\.isNativePlatform\(\)[\s\S]{0,100}===\s*"android"/, "offline service must gate native Android"],
     ["serviceSource", /runManagedDownload\(this\.manager,\s*this\.driver/, "downloads must use shared manager and driver"],
@@ -6947,12 +6961,6 @@ export function validateApplicationIntegration(sources) {
     ["helpSource", /createProviderAdapter\("offline",/, "Help must list installed offline models through registry"],
     ["helpSource", /sendProvider\s*===\s*"offline"\s*\?\s*null/, "offline sends must bypass credential lookup"],
     ["matchesSource", /resolveMatchingBackend\([^)]*\)\s*===\s*"needle"[\s\S]{0,200}embedNeedle\(/, "matching must reach selected Needle service"],
-    ["visionNativeSource", /registerPlugin<SmolPlugin>\("FindbackSmolVlm"\)/, "Smol TS bridge must bind registered native plugin"],
-    ["visionNativeSource", /this\.plugin\(\)\.measureBackend\(args\)/, "TS measurement must invoke native runner"],
-    ["probeSource", /override fun timing\(\): TimingRunner\s*=\s*RuntimeTimingRunner\.forInstalledSmol\(appContext\)/, "production timing provider cannot be null"],
-    ["timingSource", /conversation\.getBenchmarkInfo\(\)/, "timing must use runtime counters, not synthetic token estimates"],
-    ["timingSource", /correctnessPass\s*=\s*correctness/, "timing must report tested correctness"],
-    ["pluginSource", /fun measureBackend\([\s\S]+DeviceProbe\.collect(Detailed)?\(/, "native plugin must expose measurement runner"],
     // CF-020 §12 removed the consumer-facing report-photo analysis flow and the
     // assistant→search handoff; CF-070 R1 removed the guided report/search
     // workflow. Their modules are gone (see RETIRED_REPORT_PHOTO_AI_FILES and
@@ -7054,8 +7062,11 @@ export function validateApplicationIntegration(sources) {
       "summary grounding guard must stay connected to compaction",
     ],
   ];
-  return requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
-    .map(([, , message]) => `application-integration: ${message}`);
+  return [
+    ...requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
+      .map(([, , message]) => `application-integration: ${message}`),
+    ...validateRetiredNativeIntegration(sources),
+  ];
 }
 
 function checkApplicationIntegration() {

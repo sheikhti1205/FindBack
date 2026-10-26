@@ -16,6 +16,8 @@ export interface HumanMessage {
 
 export interface StoredHumanMessage extends HumanMessage {
   server?: { eventId: string; sequence: number };
+  /** Present when the author unsent this message; `body` is then empty. */
+  unsentAt?: number;
 }
 
 export interface OutboxEntry {

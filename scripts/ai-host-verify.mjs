@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, rmdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { effectiveSupabaseConfig } from "./check-mobile-build-config.mjs";
+import { checkNativeRetirement } from "./check-native-retirement.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // The coordinator owns this shared lock, including its owner metadata and
@@ -33,11 +34,12 @@ try {
     run("node", ["scripts/check-release-config.mjs"]);
     run("node", ["scripts/check-mobile-build-config.mjs", "--assets", "apps/mobile/dist/assets"]);
   } else if (mode === "--native") {
-    for (const input of ["third_party/needle/arm64-v8a/libneedle.a", "third_party/needle/arm64-v8a/needle.h", "third_party/llama.cpp/CMakeLists.txt"]) {
+    const retirementErrors = checkNativeRetirement(root);
+    if (retirementErrors.length) throw new Error(retirementErrors.join("\n"));
+    for (const input of ["third_party/needle/arm64-v8a/libneedle.a", "third_party/needle/arm64-v8a/needle.h"]) {
       if (!existsSync(resolve(root, "apps/mobile/android/app/src/main/cpp", input))) throw new Error("Required pinned native build input missing; refusing a skipped-runtime success.");
     }
-    run("./gradlew", [":app:compileDebugKotlin", ":app:externalNativeBuildDebug", ":app:testDebugUnitTest", "--no-daemon", "--max-workers=2", "-Pandroid.injected.build.abi=arm64-v8a", "-x", "fetchNeedleEngine", "-x", "fetchLlamaCpp", "-x", "fetchUseModel"], resolve(root, "apps/mobile/android"));
-    run("./gradlew", [":app:dependencyInsight", "--dependency", "litertlm-android", "--configuration", "debugRuntimeClasspath", "--no-daemon", "--max-workers=2"], resolve(root, "apps/mobile/android"));
-    run("./gradlew", [":app:dependencyInsight", "--dependency", "kotlinx-coroutines-android", "--configuration", "debugRuntimeClasspath", "--no-daemon", "--max-workers=2"], resolve(root, "apps/mobile/android"));
+    run("./gradlew", [":app:compileDebugKotlin", ":app:externalNativeBuildDebug", ":app:testDebugUnitTest", "--no-daemon", "--max-workers=2", "-Pandroid.injected.build.abi=arm64-v8a", "-x", "fetchNeedleEngine", "-x", "fetchUseModel"], resolve(root, "apps/mobile/android"));
+    // Coroutines may legitimately remain transitively through retained Android SDKs.
   }
 } finally { rmdirSync(lock); }

@@ -2,9 +2,9 @@ import type {
   HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope,
   OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage,
 } from "./history";
+import { copyMessage, sameMessage, uuid } from "./validation";
 
 const STORES = ["messages", "outbox", "events", "mailbox"];
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const LEASE_MS = 60_000;
 
 interface EventIdentity {
@@ -12,28 +12,6 @@ interface EventIdentity {
   conversationId: string;
   sequence: number;
   messageId: string;
-}
-
-function uuid(value: string): string {
-  if (typeof value !== "string" || !UUID.test(value)) throw new Error("Invalid messaging UUID");
-  return value;
-}
-
-function copyMessage(value: HumanMessage): HumanMessage {
-  if (!value || typeof value.body !== "string" || !value.body.trim() || value.body.length > 100_000) {
-    throw new Error("Invalid messaging text");
-  }
-  const message = {
-    id: uuid(value.id), conversationId: uuid(value.conversationId),
-    authorId: uuid(value.authorId), recipientId: uuid(value.recipientId), body: value.body,
-  };
-  if (message.authorId === message.recipientId) throw new Error("Invalid messaging participants");
-  return message;
-}
-
-function sameMessage(a: HumanMessage, b: HumanMessage): boolean {
-  return a.id === b.id && a.conversationId === b.conversationId && a.authorId === b.authorId
-    && a.recipientId === b.recipientId && a.body === b.body;
 }
 
 function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {

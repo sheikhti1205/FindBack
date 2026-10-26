@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { validateNativePackage, retiredDexOwners, classifyPackageEntry } from "./native-package-policy.mjs";
 
 const strict = process.argv.includes("--strict");
 const apkArg = process.argv.slice(2).find((a) => !a.startsWith("--"));
@@ -12,40 +13,19 @@ if (!fs.existsSync(apk)) { console.error(`scan-apk: APK not found at ${apk}`); p
 const unzip = (args, opts = {}) => execFileSync("unzip", args, { maxBuffer: 256 * 1024 * 1024, ...opts });
 const entries = unzip(["-Z1", apk]).toString("utf8").split("\n").filter(Boolean);
 
-const useAsset = "assets/models/use/universal_sentence_encoder.tflite";
-const forbidden = entries.filter((e) => /\.(litertlm|tflite)$/i.test(e) && e !== useAsset);
-if (forbidden.length) { console.error(`scan-apk: forbidden model asset(s): ${forbidden.join(", ")}`); process.exit(1); }
-if (strict) {
-  if (!entries.includes(useAsset)) { console.error(`scan-apk: required USE asset missing: ${useAsset}`); process.exit(1); }
-  // The retained non-generative similarity bridge must actually ship, for
-  // every ABI this APK carries. Release artifacts are ABI-split (one ABI per
-  // APK) while debug/universal carry all, so a hardcoded arm64-v8a path wrongly
-  // failed the v7a/x86_64 splits. The embedding JNI must exist for each ABI
-  // present, and at least one ABI must be present at all.
-  const abis = [...new Set(entries.map((e) => /^lib\/([^/]+)\//.exec(e)?.[1]).filter(Boolean))];
-  if (abis.length === 0) { console.error("scan-apk: no native libraries present"); process.exit(1); }
-  // The sanctioned on-device vision runtime (SmolVLM2-500M via LiteRT-LM,
-  // `com.google.ai.edge.litertlm:litertlm-android`) must actually ship its
-  // JNI for every 64-bit ABI this APK carries — same per-ABI rule as the
-  // embedding bridge below. Upstream ships arm64-v8a + x86_64 only, so
-  // 32-bit ABIs (armeabi-v7a, x86) are explicitly excluded: those builds
-  // stay text-only and the vision bridge reports unavailable there.
-  // Weights (`.litertlm`) are still never bundled (see the forbidden-asset
-  // rule above); they install post-consent via the verified downloader.
-  const visionAbis = abis.filter((abi) => abi === "arm64-v8a" || abi === "x86_64");
-  const missingVision = visionAbis.filter((abi) => !entries.includes(`lib/${abi}/liblitertlm_jni.so`));
-  if (missingVision.length) { console.error(`scan-apk: vision JNI missing for ABI(s): ${missingVision.join(", ")}`); process.exit(1); }
-  const missingEmbed = abis.filter((abi) => !entries.includes(`lib/${abi}/libmediapipe_tasks_jni.so`));
-  if (missingEmbed.length) { console.error(`scan-apk: embedding JNI missing for ABI(s): ${missingEmbed.join(", ")}`); process.exit(1); }
-}
+const packageErrors = validateNativePackage(entries, { strict });
+if (packageErrors.length) { console.error(`scan-apk: ${packageErrors.join("\nscan-apk: ")}`); process.exit(1); }
 
 const secretPrefix = ["sb", "secret"].join("_") + "_";
 const serviceRoleName = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
 const SECRETS = [new RegExp(`${secretPrefix}[A-Za-z0-9_-]+`), new RegExp(serviceRoleName), /eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/, /sk-or-v1-[A-Za-z0-9]{32,}/, /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/];
-const scanEntries = entries.filter((e) => /^classes\d*\.dex$/.test(e) || e.startsWith("assets/") || e.startsWith("res/raw/"));
+const scanEntries = entries.filter((e) => classifyPackageEntry(e).isTextScan);
 const secretHits = [];
 for (const entry of scanEntries) {
   const text = unzip(["-p", apk, entry]).toString("latin1");
+  if (classifyPackageEntry(entry).isDex && retiredDexOwners(text).length) {
+    console.error(`scan-apk: retired runtime class ownership in ${entry}`); process.exit(1);
+  }
   for (const pattern of SECRETS) if (pattern.test(text)) secretHits.push(`${entry}: ${pattern}`);
 }
 if (secretHits.length) { console.error(`scan-apk: embedded secret hit(s):\n${secretHits.join("\n")}`); process.exit(1); }

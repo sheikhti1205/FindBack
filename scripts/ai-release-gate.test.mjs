@@ -24,6 +24,7 @@ import {
   validateRuntimeWiring,
   validateVisionTruth,
   validateApplicationIntegration,
+  validateRetiredNativeIntegration,
 } from "./ai-release-gate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -50,9 +51,9 @@ const REAL = {
   helpSource: read("apps/mobile/src/screens/Help.tsx"),
   matchesSource: read("apps/mobile/src/services/possibleMatches.ts"),
   visionNativeSource: read("apps/mobile/src/services/ai/vision/native.ts"),
-  probeSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/DeviceProbe.kt"),
-  timingSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/RuntimeTimingRunner.kt"),
-  pluginSource: read("apps/mobile/android/app/src/main/java/com/findback/app/vlm/SmolVlmPlugin.kt"),
+  nativeRegistrationSource: read("apps/mobile/android/app/src/main/java/com/findback/app/MainActivity.java"),
+  nativeBuildSource: read("apps/mobile/android/app/build.gradle"),
+  nativeCmakeSource: read("apps/mobile/android/app/src/main/cpp/CMakeLists.txt"),
   aiConnectionSource: read("apps/mobile/src/screens/AiConnection.tsx"),
   aiPreferencesSource: read("apps/mobile/src/services/ai/aiPreferences.ts"),
   searchScreenSource: read("apps/mobile/src/screens/SearchScreen.tsx"),
@@ -75,15 +76,14 @@ describe("validateApplicationIntegration", () => {
     ["disconnected startup", "mainSource", (source) => source.replace(/initializeApplicationAi\(\)/g, "Promise.resolve()")],
     ["manager without production boot", "serviceSource", (source) => source.replace(/bootProductionAi\(/g, "fakeBoot(")],
     ["unconstructed Needle bridge", "serviceSource", (source) => source.replace(/new CapacitorNeedleBridge\(/g, "fakeNeedle(")],
-    ["unconstructed Smol bridge", "serviceSource", (source) => source.replace(/new CapacitorSmolVlmBridge\(/g, "fakeSmol(")],
+    ["retired Smol bridge reinstated", "serviceSource", (source) => source + "\nnew CapacitorSmolVlmBridge()"],
     ["offline id excluded by provider guard", "providersSource", (source) => source.replace('...SUPPORTED_AI_PROVIDERS, "offline"', "...SUPPORTED_AI_PROVIDERS")],
     ["offline provider hard refusal", "providersSource", (source) => source.replace(/\.offlineAdapter\(/g, ".refuseOffline(")],
     ["Help without installed offline catalogue", "helpSource", (source) => source.replace(/createProviderAdapter\("offline",/g, "fakeOffline(")],
     ["matching never calls Needle", "matchesSource", (source) => source.replace(/ai\.embedNeedle\(/g, "fakeEmbed(")],
-    ["native Smol binding disconnected", "visionNativeSource", (source) => source.replace('"FindbackSmolVlm"', '"MissingPlugin"')],
-    ["null production timing runner", "probeSource", (source) => source.replace(/RuntimeTimingRunner\.forInstalledSmol\(appContext\)/g, "null")],
-    ["synthetic token estimates", "timingSource", (source) => source.replace(/conversation\.getBenchmarkInfo\(\)/g, "wordEstimates()")],
-    ["no native timing endpoint", "pluginSource", (source) => source.replace(/fun measureBackend\(/g, "fun disconnectedMeasurement(")],
+    ["retired native plugin registered", "nativeRegistrationSource", (source) => source + "\nregisterPlugin(SmolVlmPlugin.class);"],
+    ["retired SDK dependency reinstated", "nativeBuildSource", (source) => source + "\nimplementation 'com.google.ai.edge.litertlm:litertlm-android'"],
+    ["retired llama native target reinstated", "nativeCmakeSource", (source) => source + "\nadd_library(findback_llama SHARED bridge.cpp)"],
     ["settings model preference display-only (binding removed)", "aiPreferencesSource", (source) => source.replace(/export function createAssistantModelBinding/g, "export function droppedBinding")],
     ["settings model preference display-only (sheet not forwarded)", "aiConnectionSource", (source) => source.replace(/selectedId=\{effectiveSelectedId\}/g, "selectedId={null}")],
     ["settings model preference display-only (selection never persisted)", "aiConnectionSource", (source) => source.replace(/onSelectModel\?\.\(record\.id\)/g, "void record.id")],
@@ -114,6 +114,29 @@ describe("validateApplicationIntegration", () => {
       ok(changed !== REAL[key], `${label} mutation did not apply`);
       const errors = validateApplicationIntegration({ ...REAL, [key]: changed });
       ok(errors.some((error) => error.includes(expected)), `${label}: ${errors.join("\n")}`);
+    });
+  }
+});
+
+describe("retired native integration policy", () => {
+  it("retained native owners and no default retired construction pass", () => {
+    deepStrictEqual(validateRetiredNativeIntegration(REAL), []);
+  });
+  for (const [key, fragment] of [
+    ["serviceSource", "new CapacitorSmolVlmBridge()"],
+    ["serviceSource", "new CapacitorQwenTextBridge()"],
+    ["serviceSource", "new CapacitorLlamaBridge()"],
+    ["nativeRegistrationSource", "registerPlugin(QwenTextPlugin.class)"],
+    ["nativeBuildSource", "litertlm-android"],
+    ["nativeCmakeSource", "add_subdirectory(third_party/llama.cpp)"],
+  ]) it(`rejects retired owner in ${key}: ${fragment}`, () => {
+    ok(validateRetiredNativeIntegration({ ...REAL, [key]: REAL[key] + "\n" + fragment }).some((error) => error.includes(`retired native dispatch/build owner in ${key}`)));
+  });
+  for (const owner of ["FindbackNeedle", "EmbeddingPlugin", "FindBackDiagPlugin", "ModelDownloadPlugin"]) {
+    it(`retained native registration ${owner} cannot disappear`, () => {
+      const source = REAL.nativeRegistrationSource.replace(`registerPlugin(${owner}.class)`, "omitted()");
+      ok(source !== REAL.nativeRegistrationSource);
+      ok(validateRetiredNativeIntegration({ ...REAL, nativeRegistrationSource: source }).some((e) => e.includes(`retained native registration missing: ${owner}`)));
     });
   }
 });
