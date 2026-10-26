@@ -183,16 +183,16 @@ describe("ModelCatalogSheet assistant picker (U3)", () => {
     expect(screen.queryByRole("heading", { name: "Chat" })).toBeNull();
   });
 
-  it("shows SmolVLM2 only under Vision despite a stale cached Chat claim", () => {
+  it("does not resurrect a retired offline generative model from a stale cached Chat claim", () => {
+    // The cached `qualifiedRoles` claim is not evidence: offline roles come from
+    // the live registry, and the retired generative descriptor is cleanup-only.
     renderAssistant([freeRecord("offline", SMOL_VISION_MODEL_ID)]);
-    // FBX-020: the row title is the consumer vision name, never the raw
-    // engine id — placement (Vision-only) and identity (model id in
-    // technical details) assertions below are unchanged.
-    expect(screen.getByText("Photo analysis")).toBeTruthy();
+    expect(screen.queryByText("Photo analysis")).toBeNull();
     expect(screen.queryByText("SmolVLM2")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Vision" })).toBeTruthy();
+    expect(screen.queryByText(SMOL_VISION_MODEL_ID)).toBeNull();
     expect(screen.queryByRole("heading", { name: "Chat" })).toBeNull();
-    expect(screen.getByText(SMOL_VISION_MODEL_ID).closest("details")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Vision" })).toBeNull();
+    expect(screen.getByText(/No conversational models loaded/)).toBeTruthy();
   });
 
   it("cross-lists a Chat + Vision row in both sections", () => {

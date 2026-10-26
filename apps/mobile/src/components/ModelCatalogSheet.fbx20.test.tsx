@@ -45,7 +45,7 @@ describe("ModelCatalogSheet assistant picker FBX-020 (models lead, provider is m
     expect(screen.getByTestId("model-provider-groq").textContent).toMatch(/via Groq/);
   });
 
-  it("never shows a raw engine id as a model title", () => {
+  it("never shows a retired generative engine as a titled or selectable row", () => {
     renderAssistant([
       {
         provider: "offline",
@@ -59,10 +59,13 @@ describe("ModelCatalogSheet assistant picker FBX-020 (models lead, provider is m
         entitlement: "untested",
       },
     ]);
+    // Neither the raw engine id nor the retired consumer title may appear, and
+    // the cached vision claim may not create a selectable row.
     expect(screen.queryByText("SmolVLM2")).toBeNull();
-    // The consumer vision title leads; On-device is the locality metadata.
-    expect(screen.getByText("Photo analysis")).toBeTruthy();
-    expect(screen.getByTestId("model-provider-offline").textContent).toMatch(/via On-device/);
+    expect(screen.queryByText("Photo analysis")).toBeNull();
+    expect(screen.queryByText(SMOL_VISION_MODEL_ID)).toBeNull();
+    expect(screen.queryByTestId("model-provider-offline")).toBeNull();
+    expect(screen.getByText(/No conversational models loaded/)).toBeTruthy();
   });
 
   it("never lists providers or the Automatic choice as flat model rows", () => {

@@ -642,7 +642,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     examples: ["How do I upload a photo from my gallery?", "How do I upload a photo?"],
     objectSlots: [/\bof\s+my\s+[A-Za-z]+\b/gi],
     answer:
-      "You can attach a photo while preparing a report. It is uploaded when you publish. AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.",
+      "You can attach a photo while preparing a report. It is uploaded when you publish the report. There is no AI photo analysis in the app, and a report photo is never sent to an AI provider.",
   },
   {
     id: "notifications",

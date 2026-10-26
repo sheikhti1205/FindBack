@@ -23,7 +23,7 @@ export interface VersionedText {
 }
 
 export const SYSTEM_POLICY_VERSION = "policy-2026-09-25.1";
-export const KNOWLEDGE_VERSION = "kb-2026-10-06.1";
+export const KNOWLEDGE_VERSION = "kb-2026-10-26.1";
 
 /** Mirrors `MAX_PROMPT` in services/openRouter.ts (checkedPrompt). */
 export const MAX_PROMPT_CHARS = 2_400;
@@ -69,6 +69,10 @@ export const UNAVAILABLE_FEATURES: ReadonlyArray<{
     pattern: /\b(?:automatic|auto|background)[- ]match\w*\b|\bmatch\w* (?:my |our )?(?:items|reports) (?:automatically|in the background)\b/i,
   },
   {
+    label: "AI photo analysis",
+    pattern: /\b(?:ai|automatic)\s+photo\s+analy\w*|\banaly[sz]e\s+(?:my\s+|the\s+|this\s+)?photos?\b|\bphoto\s+analy\w*/i,
+  },
+  {
     label: "phone verification",
     pattern: /\bphone verification\b|\bverify (?:my |our )?phone\b|\bsms (?:verification|codes?)\b|\btext (?:me )?(?:a )?code\b/i,
   },
@@ -98,13 +102,12 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
     "Report: Lost or Found — title, description, category, date, photo, location, YouTube link; statuses OPEN, MATCHED, RECOVERED, CLOSED",
     "Comments, 1–5 star ratings, one reaction per user; up to 3 Possible Matches by similarity, not probability",
     "Notifications for reactions, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
-    "Photo analysis only on consent",
     "Account deletion under Settings",
     "Search: listing text, category, status, sort, Lost/Found; results are listings, not AI",
   ]),
   privacy: Object.freeze([
     "photos stay on the device until publish",
-    "Help text and a confirmed photo go to the AI provider you connect with your key",
+    "Help text goes to the AI provider you connect with your key",
   ]),
   unavailable: UNAVAILABLE_FEATURES.map((entry) => entry.label),
   verification:

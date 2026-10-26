@@ -46,16 +46,18 @@ describe("capability docs", () => {
     }
   });
 
-  it("describes explicit verified Android installs, specialized offline tasks and measurement limits", () => {
+  it("describes explicit verified Android installs and specialized offline tasks only", () => {
     for (const copy of [mobileCopy, edgeSummary]) {
       expect(copy).toMatch(/Android/);
       expect(copy).toMatch(/Needle/);
-      expect(copy).toMatch(/SmolVLM2/);
       expect(copy).toMatch(/checksum/);
-      expect(copy).toMatch(/pause and resume/i);
-      expect(copy).toMatch(/CPU/);
-      expect(copy).toMatch(/measurement/);
+      expect(copy).toMatch(/pause, resume|pause and resume/i);
       expect(copy).toMatch(/web.*(unavailable|does not)/i);
+      // The retired generative runtimes and their benchmark controls must not
+      // reappear in consumer copy.
+      expect(copy).not.toMatch(/SmolVLM/);
+      expect(copy).not.toMatch(/Measure (?:CPU|GPU)/);
+      expect(copy).not.toMatch(/tokens per second/i);
     }
   });
 
@@ -75,25 +77,22 @@ describe("capability docs", () => {
     }
   });
 
-  it("keeps photos consented and off the server unless the user asks", () => {
-    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/consent/i);
+  it("keeps report photos off the server until the user publishes", () => {
+    expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/upload only when you publish/i);
     expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/until you publish/i);
   });
 
-  it("states local-first photo analysis with on-device-only/cloud-only semantics", () => {
+  it("states that photo analysis is not available instead of describing a retired engine", () => {
     const photoCopy = APP_CAPABILITIES.photoAnalysis.join(" ");
-    expect(photoCopy).toMatch(/local-first/i);
-    expect(photoCopy).toMatch(/SmolVLM2/);
-    expect(photoCopy).toMatch(/automatic mode/i);
-    expect(photoCopy).toMatch(/fall ?back/i);
-    expect(photoCopy).toMatch(/on-device-only/i);
-    expect(photoCopy).toMatch(/cloud-only/i);
-    expect(photoCopy).toMatch(/never sends the photo to/i);
-    expect(photoCopy).toMatch(/skips local inference/i);
+    expect(photoCopy).toMatch(/photo analysis isn't available/i);
+    expect(photoCopy).toMatch(/no photo is sent to an AI provider/i);
     for (const copy of [photoCopy, edgeSummary]) {
-      expect(copy).toMatch(/local-first/i);
-      expect(copy).toMatch(/on-device-only/i);
-      expect(copy).toMatch(/cloud-only/i);
+      expect(copy).not.toMatch(/local-first/i);
+      expect(copy).not.toMatch(/on-device-only/i);
+      expect(copy).not.toMatch(/skips local inference/i);
+      expect(copy).not.toMatch(/automatic mode/i);
+      expect(copy).not.toMatch(/SmolVLM/);
+      expect(copy).not.toMatch(/Measure (?:CPU|GPU)/);
     }
   });
 
@@ -118,9 +117,9 @@ describe("capability docs", () => {
 
 describe("capability corpus containment", () => {
   it("has no production consumer, so its stale AI entries cannot reach a surface", () => {
-    // The corpus still describes retired surfaces (photo assistant, AI modes,
-    // free-only price policy). It is rewritten or deleted in the
-    // local-generative pruning wave; until then nothing may consume it.
+    // The corpus is legacy text with no production consumer. Its AI entries
+    // have been corrected, but nothing may start consuming it: the live
+    // surfaces own their own copy.
     const srcRoot = join(repoRoot, "apps", "mobile", "src");
     const offenders: string[] = [];
     const walk = (dir: string) => {

@@ -38,6 +38,8 @@ const REAL = {
   offlineSource: read("apps/mobile/src/services/ai/providers/offline.ts"),
   capabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
   clientCapabilitiesSource: read("apps/mobile/src/services/appCapabilities.ts"),
+  knowledgeSource: read("apps/mobile/src/services/ai/appKnowledge.ts"),
+  faqSource: read("apps/mobile/src/services/helpFaq.ts"),
   serverCapabilitiesSource: read("supabase/functions/ai-help/capabilities.ts"),
   aboutSource: read("apps/mobile/src/screens/About.tsx"),
   mainSource: read("apps/mobile/src/main.tsx"),
@@ -79,15 +81,18 @@ describe("validateApplicationIntegration", () => {
     ["retired Smol bridge reinstated", "serviceSource", (source) => source + "\nnew CapacitorSmolVlmBridge()"],
     ["offline id excluded by provider guard", "providersSource", (source) => source.replace('...SUPPORTED_AI_PROVIDERS, "offline"', "...SUPPORTED_AI_PROVIDERS")],
     ["offline provider hard refusal", "providersSource", (source) => source.replace(/\.offlineAdapter\(/g, ".refuseOffline(")],
-    ["Help without installed offline catalogue", "helpSource", (source) => source.replace(/createProviderAdapter\("offline",/g, "fakeOffline(")],
+    ["Help reintroduces an offline chat path", "helpSource", (source) => `${source}\nconst legacy = createProviderAdapter("offline", {});`],
+    ["Help loses the cloud model picker", "helpSource", (source) => source.replace(/CloudModelPicker/g, "LegacyPicker")],
+    ["benchmark controls reintroduced on Help", "helpSource", (source) => `${source}\nconst bench = "Measure GPU reports tokens per second.";`],
     ["matching never calls Needle", "matchesSource", (source) => source.replace(/ai\.embedNeedle\(/g, "fakeEmbed(")],
     ["retired native plugin registered", "nativeRegistrationSource", (source) => source + "\nregisterPlugin(SmolVlmPlugin.class);"],
     ["retired SDK dependency reinstated", "nativeBuildSource", (source) => source + "\nimplementation 'com.google.ai.edge.litertlm:litertlm-android'"],
     ["retired llama native target reinstated", "nativeCmakeSource", (source) => source + "\nadd_library(findback_llama SHARED bridge.cpp)"],
     ["settings model preference display-only (binding removed)", "aiPreferencesSource", (source) => source.replace(/export function createAssistantModelBinding/g, "export function droppedBinding")],
-    ["settings model preference display-only (sheet not forwarded)", "aiConnectionSource", (source) => source.replace(/selectedId=\{effectiveSelectedId\}/g, "selectedId={null}")],
-    ["settings model preference display-only (selection never persisted)", "aiConnectionSource", (source) => source.replace(/onSelectModel\?\.\(record\.id\)/g, "void record.id")],
-    ["Help ignores persisted default selection", "helpSource", (source) => source.replace(/defaultSelection\(accountId\)/g, "null")],
+    ["AiConnection mounts the retired on-device catalogue sheet", "aiConnectionSource", (source) => `${source}\nconst sheet = ModelCatalogSheet;`],
+    ["AiConnection stops writing the credential", "aiConnectionSource", (source) => source.replace(/aiCredentials\.connect\(/g, "noop(")],
+    ["AiConnection loses the cloud provider list", "aiConnectionSource", (source) => source.replace(/CLOUD_PROVIDERS/g, "LEGACY_PROVIDERS")],
+    ["benchmark controls reintroduced on AiConnection", "aiConnectionSource", (source) => `${source}\nconst bench = "Measure CPU reports tokens per second.";`],
     ["NL search stops importing the validated seam", "searchScreenSource", (source) => source.replace(/services\/search\/nlFilters/g, "services/search/missing")],
     ["SearchScreen stops consuming validated URL query", "searchScreenSource", (source) => source.replace(/useUrlParam\("q"\)/g, 'useUrlParam("zzz")')],
     ["category confirm-or-override module removed", "categorySuggestionSource", (source) => source.replace(/export function resolveCategorySuggestion/g, "export function droppedResolver")],
@@ -3945,45 +3950,702 @@ describe("validatePhotoAnalysisTruth", () => {
       validatePhotoAnalysisTruth({
         clientCapabilitiesSource: REAL.clientCapabilitiesSource,
         serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+        knowledgeSource: REAL.knowledgeSource,
+        faqSource: REAL.faqSource,
       }),
       [],
     );
   });
 
-  it("fails on the stale never-claim-offline-inference instruction", () => {
+  it("fails when the grounded knowledge facts re-advertise photo analysis", () => {
     const errors = validatePhotoAnalysisTruth({
       clientCapabilitiesSource: REAL.clientCapabilitiesSource,
-      serverCapabilitiesSource:
-        `${REAL.serverCapabilitiesSource}\nNever claim the create-report Analyze photo button uses offline inference; its consented path is the connected cloud provider.`,
-    });
-    ok(errors.some((e) => e.includes("stale cloud-only")), `expected stale-claim complaint, got: ${errors}`);
-  });
-
-  it("fails on the stale connected-provider-as-the-photo-path copy", () => {
-    const errors = validatePhotoAnalysisTruth({
-      clientCapabilitiesSource:
-        "With that consent the selected photo is sent to your connected AI provider for that one request.",
       serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: `${REAL.knowledgeSource}\n    "Photo analysis only on consent",`,
+      faqSource: REAL.faqSource,
     });
-    ok(errors.some((e) => e.includes("stale cloud-only")), `expected stale-claim complaint, got: ${errors}`);
+    ok(errors.some((e) => e.includes("app knowledge facts")), `expected knowledge complaint, got: ${errors}`);
   });
 
-  it("fails when local-first engine truth is missing", () => {
-    const errors = validatePhotoAnalysisTruth({
-      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(/local-first/gi, "cloud"),
-      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
-    });
-    ok(errors.some((e) => e.includes("missing required photo truth")), `expected missing-truth complaint, got: ${errors}`);
-  });
-
-  it("fails when on-device-only/cloud-only semantics are missing", () => {
+  it("fails when the Help FAQ sends a report photo to the AI provider", () => {
     const errors = validatePhotoAnalysisTruth({
       clientCapabilitiesSource: REAL.clientCapabilitiesSource,
-      serverCapabilitiesSource: REAL.serverCapabilitiesSource
-        .replace(/on-device-only/gi, "offline")
-        .replace(/cloud-only/gi, "remote"),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: `${REAL.faqSource}\n      "AI photo analysis is optional and sends the selected image to your connected AI provider only with your consent.",`,
     });
-    ok(errors.some((e) => e.includes("missing required photo truth")), `expected missing-truth complaint, got: ${errors}`);
+    ok(errors.some((e) => e.includes("help FAQ")), `expected FAQ complaint, got: ${errors}`);
+  });
+
+  it("fails when a knowledge source mentions photo analysis without the denial", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: `${REAL.knowledgeSource}\n    "Photo analysis handles your report photos",`,
+      faqSource: REAL.faqSource,
+    });
+    ok(
+      errors.some((e) => e.includes("app knowledge facts") && e.includes("without an unconditional denial")),
+      `expected denial complaint, got: ${errors}`,
+    );
+  });
+
+  it("fails when a retired cloud-only photo path is described again", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource.replace(
+        /"USE text embeddings are the default[^"]*",/,
+        '"With that consent the selected photo is sent to your connected AI provider for that one request.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("retired photo-analysis claim")), `expected retired-claim complaint, got: ${errors}`);
+  });
+
+  it("fails when local-first/engine copy returns", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        /"Report photos upload only when you publish a report[^"]*",/,
+        '"Analyze photo is local-first when the verified SmolVLM2 runtime is available.",',
+      ),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    });
+    ok(errors.some((e) => e.includes("retired photo-analysis claim")), `expected retired-claim complaint, got: ${errors}`);
+  });
+
+  it("fails when a CPU/GPU benchmark control is advertised again", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource.replace(
+        /"USE text embeddings are the default[^"]*",/,
+        '"Measure GPU reports tokens per second.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("retired photo-analysis claim")), `expected retired-claim complaint, got: ${errors}`);
+  });
+
+  it("fails when the not-available statement is dropped", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(/photo analysis (?:isn't|is not) available/gi, "photo analysis is supported"),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource,
+    });
+    ok(errors.some((e) => e.includes("without an unconditional denial")), `expected claim complaint, got: ${errors}`);
+  });
+});
+
+describe("photo truth survives contradictory copy (review r1 counterexamples)", () => {
+  const denial = "Photo analysis isn't available in this app: there is no Analyze photo action, no on-device photo model, and no photo is sent to an AI provider.";
+  const claim = "Photo analysis fills title, category and description from your report image.";
+
+  it("rejects a client claim that sits beside the real denial", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        /"Report photos upload only when you publish a report[^"]*",/,
+        `"${claim}",`,
+      ),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    });
+    ok(errors.some((e) => e.includes("client capabilities") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a server claim that sits beside its own denial", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource.replace(
+        /"USE text embeddings are the default[^"]*",/,
+        `"${claim}",`,
+      ),
+    });
+    ok(errors.some((e) => e.includes("server capabilities") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a denial scoped to offline mode", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(`"${denial}"`, `"Photo analysis isn't available offline. When connected, photo analysis fills in your report details."`),
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    });
+    ok(errors.some((e) => e.includes("limits photo analysis to one mode")), errors.join("\n"));
+  });
+
+  it("rejects a claim that uses a different action name", () => {
+    const errors = validateUserFacingPhotoTruth({
+      aboutSource: REAL.aboutSource,
+      helpSource: REAL.helpSource.replace(
+        /Your selected provider receives your messages and conversation context when you send\. Chat does not run on this device\./,
+        "Tap Analyze image to have AI fill in your report details.",
+      ),
+    });
+    ok(errors.some((e) => e.includes("Help") && e.includes("claims photo analysis")), errors.join("\n"));
+  });
+
+  it("rejects a claim split across a template literal", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource.replace(
+        /"You can attach a photo while preparing a report[^"]*",/,
+        "`Photo\nanalysis fills title, category and description from your report image.`,",
+      ),
+    });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a claim built by concatenation", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource.replace(
+        /"You can attach a photo while preparing a report[^"]*",/,
+        '"Photo " + "analysis fills title, category and description from your report image.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a claim that shares a line with a declaration key", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource.replace(
+        / {4}id: "photo",\n/,
+        `    id: "photo", answer: "${claim}",\n`,
+      ),
+    });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a claim whose wording contains a declaration keyword", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource.replace(
+        /"Comments, 1–5 star ratings[^"]*",/,
+        '"Use the label: Photo analysis fills in your report details.",',
+      ),
+      faqSource: REAL.faqSource,
+    });
+    ok(errors.some((e) => e.includes("app knowledge facts") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a denial-lookalike that denies only a limit", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource.replace(
+        /"You can attach a photo while preparing a report[^"]*",/,
+        '"There is no AI photo analysis limit: it processes every report image.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("fails closed when a mandatory corpus is omitted instead of treating it as clean", () => {
+    ok(validatePhotoAnalysisTruth({ serverCapabilitiesSource: REAL.serverCapabilitiesSource }).some((e) => e.includes("client capabilities was not provided")));
+    ok(validatePhotoAnalysisTruth({ clientCapabilitiesSource: REAL.clientCapabilitiesSource }).some((e) => e.includes("server capabilities was not provided")));
+    ok(validateUserFacingPhotoTruth({ helpSource: REAL.helpSource }).some((e) => e.includes("About was not provided")));
+    ok(validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource }).some((e) => e.includes("Help was not provided")));
+  });
+
+  it("fails closed on a relevant expression it cannot resolve", () => {
+    const errors = validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+      faqSource: REAL.faqSource.replace(
+        /"You can attach a photo while preparing a report[^"]*",/,
+        '`Photo analysis ${mode} your report image.`,',
+      ),
+    });
+    ok(errors.some((e) => e.includes("unresolvable photo-analysis expression")), errors.join("\n"));
+  });
+
+  it("still accepts About/Help silence and a plain denial", () => {
+    deepStrictEqual(
+      validateUserFacingPhotoTruth({
+        aboutSource: REAL.aboutSource,
+        helpSource: REAL.helpSource,
+      }),
+      [],
+    );
+    deepStrictEqual(
+      validateUserFacingPhotoTruth({
+        aboutSource: `${REAL.aboutSource}`,
+        helpSource: REAL.helpSource.replace(
+          /Your selected provider receives your messages and conversation context when you send\. Chat does not run on this device\./,
+          "Photo analysis isn't available in this app.",
+        ),
+      }),
+      [],
+    );
+  });
+});
+
+describe("photo truth survives the r2 attack matrix (CF-TRUTH-028 r3)", () => {
+  const realPhoto = {
+    clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+    serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    knowledgeSource: REAL.knowledgeSource,
+    faqSource: REAL.faqSource,
+  };
+  const faqPhotoAnswer = / {6}"You can attach a photo while preparing a report\.[^\n]*",/;
+  const helpSentence = /Your selected provider receives your messages and conversation context when you send\. Chat does not run on this device\./;
+
+  it("rejects a claim that sits in the same value as a denial", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        '"Report photos upload only when you publish a report, and they stay on your device until then.",',
+        '"Photo analysis is not available. Photo analysis fills title, category and description from your report image.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("client capabilities") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a denial scoped to this version", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      faqSource: REAL.faqSource.replace(
+        faqPhotoAnswer,
+        '      "Photo analysis is not available in this version. Connect a provider to analyze report photos.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("limits photo analysis to one mode")), errors.join("\n"));
+  });
+
+  it("rejects a denial scoped to a missing provider key", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      faqSource: REAL.faqSource.replace(
+        faqPhotoAnswer,
+        '      "Photo analysis isn\'t available without a provider key; with a key it fills in your report details.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("limits photo analysis to one mode")), errors.join("\n"));
+  });
+
+  it("rejects a claim built by array join", () => {
+    const faq = REAL.faqSource
+      .replace(faqPhotoAnswer, "      PHOTO_ANSWER,")
+      .replace(/^/, 'const PHOTO_ANSWER = ["Photo", "analysis fills title, category and description from your report image."].join(" ");\n');
+    ok(faq !== REAL.faqSource);
+    const errors = validatePhotoAnalysisTruth({ ...realPhoto, faqSource: faq });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a claim concatenated through a local constant", () => {
+    const faq = REAL.faqSource
+      .replace(faqPhotoAnswer, '      "Photo " + PHOTO_NOUN + " fills in your report details.",')
+      .replace(/^/, 'const PHOTO_NOUN = "analysis";\n');
+    ok(faq !== REAL.faqSource);
+    const errors = validatePhotoAnalysisTruth({ ...realPhoto, faqSource: faq });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a claim split across a JSX emphasis element", () => {
+    const help = REAL.helpSource.replace(
+      "Chat does not run on this device.</p>",
+      "Chat does not run on this device.</p>\n        <p>Photo <strong>analysis</strong> fills in your report details.</p>",
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("Help") && e.includes("Photo analysis fills in your report details")), errors.join("\n"));
+  });
+
+  it("rejects consumer copy whose helper name says instructions", () => {
+    const help = REAL.helpSource.replace(
+      "  const modelChipTitle = selectedTitle;\n",
+      '  const modelChipTitle = selectedTitle;\n  const photoInstructions = () => "Photo analysis fills in your report details.";\n',
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("Help") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("still treats the unavailable-feature label as a name, not copy", () => {
+    deepStrictEqual(validatePhotoAnalysisTruth(realPhoto), []);
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      knowledgeSource: REAL.knowledgeSource.replace(
+        /"Comments, 1–5 star ratings[^"]*",/,
+        '"label: Photo analysis fills in your report details.",',
+      ),
+    });
+    ok(errors.length > 0, "a rendered value outside the unavailable list must still be judged");
+  });
+
+  it("fails closed when the knowledge or FAQ corpus is omitted", () => {
+    ok(validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+    }).some((e) => e.includes("app knowledge facts was not provided")));
+    ok(validatePhotoAnalysisTruth({
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+      serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+      knowledgeSource: REAL.knowledgeSource,
+    }).some((e) => e.includes("help FAQ was not provided")));
+  });
+
+  it("rejects a denial followed by an affirmative sentence about the same feature", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        '"Report photos upload only when you publish a report, and they stay on your device until then.",',
+        '"Photo analysis is not available. It fills in your report details.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects a claim split across sibling elements", () => {
+    const help = REAL.helpSource.replace(
+      "Chat does not run on this device.</p>",
+      "Chat does not run on this device.</p>\n        <div><span>Photo</span> <span>analysis</span> fills in your report details.</div>",
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("Help") && e.includes("Photo analysis fills in your report details")), errors.join("\n"));
+  });
+
+  it("rejects a claim that a JSX expression renders", () => {
+    const help = REAL.helpSource.replace(
+      "Chat does not run on this device.</p>",
+      'Chat does not run on this device.</p>\n        <p>{"Photo analysis fills in your report details."}</p>',
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("Help") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("fails closed when a copy field holds an imported identifier", () => {
+    const faq = REAL.faqSource
+      .replace(faqPhotoAnswer, "      PHOTO_CLAIM,")
+      .replace(/^/, 'import { PHOTO_CLAIM } from "./photoClaim";\n');
+    ok(faq !== REAL.faqSource);
+    const errors = validatePhotoAnalysisTruth({ ...realPhoto, faqSource: faq });
+    ok(errors.some((e) => e.includes("help FAQ") && e.includes("unresolvable copy value")), errors.join("\n"));
+  });
+
+  it("judges a name that is not the unavailable-feature label", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      knowledgeSource: REAL.knowledgeSource.replace(
+        /"Comments, 1–5 star ratings[^"]*",/,
+        '"name": "Photo analysis fills in your report details.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("app knowledge facts") && e.includes("without an unconditional denial")), errors.join("\n"));
+  });
+
+  it("rejects a denial and a claim separated by an em dash", () => {
+    const help = REAL.helpSource.replace(
+      "Chat does not run on this device.</p>",
+      "Chat does not run on this device.</p>\n        <p>Photo analysis isn't available — it fills in your report details.</p>",
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects a denial and a claim separated by a colon", () => {
+    const help = REAL.helpSource.replace(
+      "Chat does not run on this device.</p>",
+      "Chat does not run on this device.</p>\n        <p>Photo analysis isn't available: it fills in your report details.</p>",
+    );
+    ok(help !== REAL.helpSource);
+    const errors = validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: help });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects a denial and a claim separated by a comma", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        '"Report photos upload only when you publish a report, and they stay on your device until then.",',
+        '"Photo analysis isn\'t available, but it fills in your report details.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects a denial and a claim on separate lines of one template", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      faqSource: REAL.faqSource.replace(
+        faqPhotoAnswer,
+        "      `Photo analysis isn't available.\nIt fills in your report details.`,",
+      ),
+    });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects the FAQ answer when the two clauses share an em dash", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      faqSource: REAL.faqSource.replace(
+        faqPhotoAnswer,
+        '      "Photo analysis isn\'t available — it fills in your report details.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("denies photo analysis and also says it works")), errors.join("\n"));
+  });
+
+  it("rejects a denial scoped to a country", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        '"Photo analysis isn\'t available in this app: there is no Analyze photo action, no on-device photo model, and no photo is sent to an AI provider.",',
+        '"Photo analysis isn\'t available in the EU.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("limits photo analysis to one mode")), errors.join("\n"));
+  });
+
+  it("rejects a denial scoped to this build", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      clientCapabilitiesSource: REAL.clientCapabilitiesSource.replace(
+        '"Photo analysis isn\'t available in this app: there is no Analyze photo action, no on-device photo model, and no photo is sent to an AI provider.",',
+        '"Photo analysis isn\'t available in this build.",',
+      ),
+    });
+    ok(errors.some((e) => e.includes("limits photo analysis to one mode")), errors.join("\n"));
+  });
+
+  it("rejects a claim assembled by map and join", () => {
+    const errors = validatePhotoAnalysisTruth({
+      ...realPhoto,
+      faqSource: REAL.faqSource.replace(
+        faqPhotoAnswer,
+        '      ["Photo", "analysis fills in your report details."].map((part) => part).join(" "),',
+      ),
+    });
+    ok(errors.some((e) => e.includes("unresolvable photo-analysis expression")), errors.join("\n"));
+  });
+
+  it("accepts the real Help sentence it was told to leave alone", () => {
+    deepStrictEqual(
+      validateUserFacingPhotoTruth({ aboutSource: REAL.aboutSource, helpSource: REAL.helpSource }),
+      [],
+    );
+    ok(helpSentence.test(REAL.helpSource), "the anchor sentence must exist for the mutations above");
+  });
+});
+
+describe("liveness defeats dead branches and aliases (CF-TRUTH-028 r3)", () => {
+  const pickerLine = /<CloudModelPicker [^\n]*\/>/;
+  const providerOption = "{CLOUD_PROVIDERS.map((id) => <option key={id} value={id}>{CLOUD_PROVIDER_LABELS[id]}</option>)}";
+  const keyWrite = "await aiCredentials.connect(accountId, key.trim(), { provider, remember, ...(remember && phrase ? { passphrase: phrase } : {}) });";
+  const adapterLine = "const adapter = deps?.createAdapter?.(selected.provider) ?? createProviderAdapter(selected.provider, {";
+  const chipAnchor = "  const modelChipTitle = selectedTitle;\n";
+
+  const expectIntegration = (field, source, message) => {
+    ok(source !== REAL[field], `${field}: mutation did not apply`);
+    const errors = validateApplicationIntegration({ ...REAL, [field]: source });
+    ok(errors.some((e) => e.includes(message)), `${field}: expected "${message}", got: ${errors}`);
+  };
+
+  it("passes on the real tree", () => {
+    deepStrictEqual(validateApplicationIntegration(REAL), []);
+  });
+
+  it("rejects a picker behind a constant-false guard", () => {
+    const source = REAL.helpSource
+      .replace(pickerLine, "{showModelPicker && <CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={() => {}} />}")
+      .replace(chipAnchor, `${chipAnchor}  const showModelPicker = false;\n`);
+    expectIntegration("helpSource", source, "must mount the cloud model picker outside a dead branch");
+  });
+
+  it("rejects a picker in the untaken arm of a folded ternary", () => {
+    const source = REAL.helpSource.replace(
+      pickerLine,
+      "{false ? <CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={() => {}} /> : null}",
+    );
+    expectIntegration("helpSource", source, "must mount the cloud model picker outside a dead branch");
+  });
+
+  it("rejects a default read that does not drive state", () => {
+    const source = REAL.helpSource
+      .replaceAll("loadCloudModelPreferences(accountId).defaultModel ?? CLOUD_DEFAULT_ROUTE", "CLOUD_DEFAULT_ROUTE")
+      .replace(chipAnchor, `${chipAnchor}  void loadCloudModelPreferences(accountId).defaultModel;\n`);
+    expectIntegration("helpSource", source, "must read the persisted cloud model default into component state");
+  });
+
+  it("rejects the provider list behind a dead branch", () => {
+    const source = REAL.aiConnectionSource.replace(providerOption, `{false && ${providerOption}}`);
+    expectIntegration("aiConnectionSource", source, "must render the supported cloud providers from the list");
+  });
+
+  it("rejects the credential write behind a dead branch", () => {
+    const source = REAL.aiConnectionSource.replace(keyWrite, `if (false) ${keyWrite}`);
+    expectIntegration("aiConnectionSource", source, "must write provider keys through the credentials service");
+  });
+
+  it("rejects the offline adapter reached through a local alias", () => {
+    const source = REAL.helpSource.replace(
+      adapterLine,
+      `const makeAdapter = createProviderAdapter;\n      const adapter = deps?.createAdapter?.(selected.provider) ?? makeAdapter("offline", {`,
+    );
+    expectIntegration("helpSource", source, "must not offer an offline chat path");
+  });
+
+  it("rejects a picker behind a negated constant guard", () => {
+    const source = REAL.helpSource
+      .replace(pickerLine, "{!hidePicker && <CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={() => {}} />}")
+      .replace(chipAnchor, `${chipAnchor}  const hidePicker = true;\n`);
+    expectIntegration("helpSource", source, "must mount the cloud model picker outside a dead branch");
+  });
+
+  it("rejects a picker in the null arm of a folded ternary", () => {
+    const source = REAL.helpSource.replace(
+      pickerLine,
+      "{true ? null : <CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={() => {}} />}",
+    );
+    expectIntegration("helpSource", source, "must mount the cloud model picker outside a dead branch");
+  });
+
+  it("rejects the credential write behind a constant-false if", () => {
+    const source = REAL.aiConnectionSource.replace(
+      keyWrite,
+      `const disabled = false;\n    const creds = aiCredentials;\n    if (disabled) await creds.connect(accountId, key.trim(), { provider, remember, ...(remember && phrase ? { passphrase: phrase } : {}) });`,
+    );
+    expectIntegration("aiConnectionSource", source, "must write provider keys through the credentials service");
+  });
+
+  it("rejects an adapter rebound as an object property", () => {
+    const source = REAL.helpSource.replace(
+      adapterLine,
+      `const factories = { make: createProviderAdapter };\n      const adapter = deps?.createAdapter?.(selected.provider) ?? factories.make("offline", {`,
+    );
+    expectIntegration("helpSource", source, "must not rebind the provider adapter factory");
+  });
+
+  it("rejects an offline provider name built by concatenation", () => {
+    const source = REAL.helpSource.replace(
+      "?? createProviderAdapter(selected.provider, {",
+      '?? createProviderAdapter("off" + "line", {',
+    );
+    expectIntegration("helpSource", source, "must not offer an offline chat path");
+  });
+
+  it("rejects a picker that lives in a component nobody renders", () => {
+    const source = REAL.helpSource
+      .replace(pickerLine, "{null}")
+      .replace(chipAnchor, `${chipAnchor}  const UnusedPicker = () => (<CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={() => {}} />);\n`);
+    expectIntegration("helpSource", source, "must mount the cloud model picker outside a dead branch");
+  });
+
+  it("rejects a credential write that lives in a handler nobody calls", () => {
+    const source = REAL.aiConnectionSource.replace(
+      keyWrite,
+      `const saveUnused = async () => { ${keyWrite} };`,
+    );
+    expectIntegration("aiConnectionSource", source, "must write provider keys through the credentials service");
+  });
+
+  it("rejects a credential write whose handler is only discarded", () => {
+    const source = REAL.aiConnectionSource.replace(
+      keyWrite,
+      `const saveUnused = async () => { ${keyWrite} }; void saveUnused;`,
+    );
+    expectIntegration("aiConnectionSource", source, "must write provider keys through the credentials service");
+  });
+
+  for (const [label, wiring] of [
+    ["only assigned to an unused alias", "const ref = saveKey;"],
+    ["only assigned through unused aliases", "const ref = saveKey; const next = ref;"],
+    ["only referenced by an uncalled helper", "const helper = () => saveKey; const ref = helper;"],
+    ["only called by an uncalled helper", "const helper = () => saveKey(); const ref = helper;"],
+    ["only called in a false branch through an alias", "const ref = saveKey; if (false) ref();"],
+    ["only called by a recursive helper cycle", "function a() { saveKey(); b(); } function b() { a(); }"],
+    ["only supplied in an array", "const refs = [saveKey];"],
+  ]) {
+    it(`rejects a credential handler ${label}`, () => {
+      const source = REAL.aiConnectionSource.replace(
+        keyWrite,
+        `const saveKey = async () => { ${keyWrite} }; ${wiring}`,
+      );
+      expectIntegration("aiConnectionSource", source, "must write provider keys through the credentials service");
+    });
+  }
+
+  for (const [label, wiring] of [
+    ["directly", "await saveKey();"],
+    ["through a called alias", "const ref = saveKey; await ref();"],
+    ["through called alias chains", "const ref = saveKey; const next = ref; await next();"],
+    ["through a called helper", "const helper = () => saveKey(); await helper();"],
+  ]) {
+    it(`accepts a credential handler invoked ${label}`, () => {
+      const source = REAL.aiConnectionSource.replace(
+        keyWrite,
+        `const saveKey = async () => { ${keyWrite} }; ${wiring}`,
+      );
+      ok(source !== REAL.aiConnectionSource);
+      deepStrictEqual(validateApplicationIntegration({ ...REAL, aiConnectionSource: source }), []);
+    });
+  }
+
+  it("accepts a credential submit handler wired through a JSX alias", () => {
+    const source = REAL.aiConnectionSource.replace(
+      'return <SettingsGroup title={label}',
+      'const submit = save; return <SettingsGroup title={label}',
+    ).replace('onSubmit={(event) => void save(event)}', 'onSubmit={submit}');
+    ok(source !== REAL.aiConnectionSource);
+    deepStrictEqual(validateApplicationIntegration({ ...REAL, aiConnectionSource: source }), []);
+  });
+
+  it("rejects the offline adapter reached through a destructured alias", () => {
+    const source = REAL.helpSource
+      .replace(/^/, "const { createProviderAdapter: make } = adapters;\n")
+      .replace("createProviderAdapter(selected.provider, {", 'make("offline", {');
+    expectIntegration("helpSource", source, "must not offer an offline chat path");
+  });
+
+  it("rejects a default read that lives in a function nobody invokes", () => {
+    const source = REAL.helpSource
+      .replaceAll("loadCloudModelPreferences(accountId).defaultModel ?? CLOUD_DEFAULT_ROUTE", "CLOUD_DEFAULT_ROUTE")
+      .replace(chipAnchor, `${chipAnchor}  const UnusedRead = () => useState(() => loadCloudModelPreferences(accountId).defaultModel ?? CLOUD_DEFAULT_ROUTE);\n`);
+    expectIntegration("helpSource", source, "must read the persisted cloud model default into component state");
+  });
+
+  it("rejects the offline adapter reached through a renamed import", () => {
+    const source = REAL.helpSource
+      .replace(/^/, 'import { createProviderAdapter as makeAdapter } from "../services/ai/providerRegistry";\n')
+      .replace(adapterLine, "const adapter = deps?.createAdapter?.(selected.provider) ?? makeAdapter(\"offline\", {");
+    expectIntegration("helpSource", source, "must not offer an offline chat path");
+  });
+
+  it("does not treat a destructured parameter as copy", () => {
+    const faq = `${REAL.faqSource}\nexport function renderEntry({ answer: copy }: { answer: string }) { return { answer: copy }; }\n`;
+    deepStrictEqual(
+      validatePhotoAnalysisTruth({
+        clientCapabilitiesSource: REAL.clientCapabilitiesSource,
+        serverCapabilitiesSource: REAL.serverCapabilitiesSource,
+        knowledgeSource: REAL.knowledgeSource,
+        faqSource: faq,
+      }),
+      [],
+    );
+  });
+
+  it("does not ban a memoised factory or a dependency array", () => {
+    const source = REAL.helpSource.replace(
+      chipAnchor,
+      `${chipAnchor}  const memoFactory = useMemo(() => createProviderAdapter, []);\n  const deps = [createProviderAdapter];\n`,
+    );
+    deepStrictEqual(validateApplicationIntegration({ ...REAL, helpSource: source }), []);
+  });
+
+  it("rejects an offline send branch compared through a constant", () => {
+    const source = REAL.helpSource.replace(
+      chipAnchor,
+      `${chipAnchor}  const OFFLINE_PROVIDER = "offline";\n  const legacySend = (sendProvider: string) => sendProvider == OFFLINE_PROVIDER;\n`,
+    );
+    expectIntegration("helpSource", source, "must not branch to an offline send path");
   });
 });
 
@@ -3998,40 +4660,47 @@ describe("validateUserFacingPhotoTruth", () => {
     );
   });
 
-  it("fails on stale cloud-only photo phrasing in About copy", () => {
+  it("fails on a retired photo claim in About copy", () => {
     const errors = validateUserFacingPhotoTruth({
-      aboutSource:
-        "With your consent a selected report photo is sent to your connected AI provider for suggestions.",
+      aboutSource: REAL.aboutSource.replace(
+        /Optional AI features use a provider key[^<]*/,
+        "Photo analysis is local-first on Android.",
+      ),
       helpSource: REAL.helpSource,
     });
-    ok(errors.some((e) => e.includes("About") && e.includes("stale cloud-only")), `expected About stale-claim complaint, got: ${errors}`);
+    ok(errors.some((e) => e.includes("About") && e.includes("retired photo-analysis claim")), `expected About retired-claim complaint, got: ${errors}`);
   });
 
-  it("fails on stale cloud-only photo phrasing in Help copy", () => {
+  it("fails on a retired photo claim in Help copy", () => {
     const errors = validateUserFacingPhotoTruth({
       aboutSource: REAL.aboutSource,
-      helpSource:
+      helpSource: REAL.helpSource.replace(
+        /Your selected provider receives your messages and conversation context when you send\. Chat does not run on this device\./,
         "Its consented path is the connected cloud provider for that one request.",
+      ),
     });
-    ok(errors.some((e) => e.includes("Help") && e.includes("stale cloud-only")), `expected Help stale-claim complaint, got: ${errors}`);
+    ok(errors.some((e) => e.includes("Help") && e.includes("retired photo-analysis claim")), `expected Help retired-claim complaint, got: ${errors}`);
   });
 
-  it("fails when About copy loses local-first/fallback semantics", () => {
+  it("fails when a surface mentions photo analysis without the denial", () => {
     const errors = validateUserFacingPhotoTruth({
-      aboutSource: REAL.aboutSource.replace(/local-first/gi, "cloud"),
+      aboutSource: REAL.aboutSource.replace(
+        /Optional AI features use a provider key[^<]*/,
+        "Photo analysis handles your report photos.",
+      ),
       helpSource: REAL.helpSource,
     });
-    ok(errors.some((e) => e.includes("About") && e.includes("missing required photo truth")), `expected About missing-truth complaint, got: ${errors}`);
+    ok(errors.some((e) => e.includes("About") && e.includes("without an unconditional denial")), `expected denial complaint, got: ${errors}`);
   });
 
-  it("fails when Help copy loses on-device-only/cloud-only semantics", () => {
-    const errors = validateUserFacingPhotoTruth({
-      aboutSource: REAL.aboutSource,
-      helpSource: REAL.helpSource
-        .replace(/on-device-only/gi, "offline")
-        .replace(/cloud-only/gi, "remote"),
-    });
-    ok(errors.some((e) => e.includes("Help") && e.includes("missing required photo truth")), `expected Help missing-truth complaint, got: ${errors}`);
+  it("accepts a surface that states photo analysis is unavailable", () => {
+    deepStrictEqual(
+      validateUserFacingPhotoTruth({
+        aboutSource: `${REAL.aboutSource}\nPhoto analysis isn't available in this app.`,
+        helpSource: REAL.helpSource,
+      }),
+      [],
+    );
   });
 });
 

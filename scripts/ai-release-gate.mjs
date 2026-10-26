@@ -38,13 +38,15 @@
  *   8. needle-telemetry — Needle telemetry defaults ON or bypasses the global
  *                        diag gate (must be off unless BOTH the global diag
  *                        gate and the explicit per-seam opt-in are set)
- *   9. photo-analysis-truth — the shipped Analyze-photo capability copy
- *                        (client + server) still carries the stale cloud-only
- *                        claim, or lost the local-first / engine truth
- *                        (local-first, automatic fallback, on-device-only,
- *                        cloud-only); the same truth is required on the
- *                        user-facing surfaces (About + Help privacy copy),
- *                        which must not carry cloud-only photo phrasing
+ *   9. photo-analysis-truth — report-photo analysis was removed from the
+ *                        product, so no copy value may present it as working.
+ *                        Every value in the client + server capability
+ *                        corpora, the grounded knowledge facts, the Help FAQ,
+ *                        About and Help is judged on its own: a claim, a
+ *                        mode-scoped denial ("isn't available offline") and an
+ *                        unresolvable relevant expression all fail, and both
+ *                        capability corpora must carry the explicit
+ *                        "photo analysis is not available" denial
  *   10. secrets        — delegates to scripts/scan-secrets.mjs (non-zero fails)
  *   12. application-integration — a shipped AI seam is disconnected (startup,
  *                        provider registry, model routes, matching, timing,
@@ -277,28 +279,36 @@ function checkVisionTruth() {
 }
 
 /**
- * Photo-analysis truth detector for the Analyze-photo capability copy.
- * Fails when either truth source (client `appCapabilities.ts` or server
- * `supabase/functions/ai-help/capabilities.ts`):
- * - still carries the stale cloud-only claim (the "never claim offline
- *   inference" instruction or the connected-cloud-provider-as-the-photo-path
- *   copy), or
- * - lost the local-first / engine truth: Analyze photo is local-first on
- *   Android when the verified SmolVLM2 runtime is available; automatic mode
- *   may fall back to the connected provider after local failure;
- *   on-device-only never sends the photo to cloud; cloud-only skips local.
+ * Photo-analysis truth detector.
+ *
+ * Photo analysis was removed from the product (CF-020 §12, and the native
+ * SmolVLM/LiteRT-LM owners in CF-NATIVE-CLOSURE-024). The capability copy that
+ * used to describe it — local-first, on-device-only/cloud-only modes, automatic
+ * fallback, SmolVLM2, CPU/GPU measurement — is now a false claim about a feature
+ * that does not exist. This detector therefore asserts the opposite of what it
+ * asserted before:
+ * - no truth source may describe a retired photo-analysis/benchmark capability,
+ * - both truth sources must state that photo analysis is not available.
+ *
+ * "Chat is cloud-only" and "there is no Analyze photo action" remain honest and
+ * are deliberately not matched.
  */
-export const STALE_PHOTO_ANALYSIS_CLAIM_RES = [
+export const RETIRED_PHOTO_ANALYSIS_CLAIM_RES = [
+  /photo assistant/i,
+  /local-first/i,
+  /on-device-only/i,
+  /skips local inference/i,
+  /automatic mode/i,
+  /SmolVLM/i,
+  /fall\s?back to the connected provider/i,
+  /Measure (?:CPU|GPU)/i,
   /never claim[^.]{0,200}offline inference/i,
   /consented path is the connected cloud provider/i,
-  /selected photo is sent to (your connected|the connected) AI provider/i,
+  /selected photo is sent to (?:your connected|the connected) AI provider/i,
 ];
 
 export const REQUIRED_PHOTO_ANALYSIS_TRUTH_RES = [
-  /local-first/i,
-  /on-device-only/i,
-  /cloud-only/i,
-  /fall\s?back/i,
+  /photo analysis (?:isn't|is not) available/i,
 ];
 
 /**
@@ -595,64 +605,517 @@ function checkDescriptorRegistry() {
   return validateDescriptorRegistry({ descriptorsSource: descriptors, serviceSource: service, modelsSource: models, runtimesSource: runtimes, orchestratorSource: orchestrator, interpretersSource: interpreters, routeValidationSource: routeValidation });
 }
 
-export function validatePhotoAnalysisTruth({ clientCapabilitiesSource, serverCapabilitiesSource }) {
-  const errors = [];
-  for (const [label, source] of [
-    ["client", clientCapabilitiesSource],
-    ["server", serverCapabilitiesSource],
-  ]) {
-    for (const pattern of STALE_PHOTO_ANALYSIS_CLAIM_RES) {
-      if (pattern.test(source ?? "")) {
-        errors.push(`photo-analysis-truth: stale cloud-only photo claim in ${label} capabilities (${pattern})`);
+/* ---------------------------------------------------------------------------
+ * Copy-value analysis (TypeScript AST).
+ *
+ * Raw-line scanning cannot see a claim split across a template, a
+ * concatenation or a JSX emphasis element, and it cannot tell a declaration
+ * key from a rendered answer. These helpers resolve the actual string values a
+ * file can produce — through local `const` initializers, array `.join`, and
+ * adjacent JSX text — so the truth checks judge rendered copy instead of
+ * source layout. A relevant value that cannot be resolved statically fails
+ * closed.
+ * ------------------------------------------------------------------------- */
+
+/** Keys that name something instead of saying something, in every structure. */
+const COPY_STRUCTURAL_KEYS = new Set([
+  "id", "topic", "key", "pattern", "matcher", "ownWords", "examples",
+  "route", "path", "fileName", "url", "sha256", "modelId", "runtimeId",
+  "format", "license", "version",
+]);
+
+/**
+ * Keys that name something only inside the structure that defines them as
+ * names. `label` is the unavailable-feature name and nothing else today, so it
+ * is excluded there instead of globally; a rendered `label` elsewhere is copy.
+ */
+const COPY_STRUCTURAL_KEYS_BY_STRUCTURE = new Map([
+  ["UNAVAILABLE_FEATURES", new Set(["label", "name"])],
+]);
+
+/** Property names that hold consumer-visible text. */
+const COPY_TEXT_KEYS = new Set([
+  "answer", "answers", "text", "copy", "summary", "message", "description",
+  "body", "title", "content", "faq", "reply", "response", "note", "hint",
+  "explanation", "detail", "details",
+]);
+
+/**
+ * Instruction text addresses the model, not a consumer: it may forbid a claim
+ * in the imperative ("Never claim photo analysis … exists"). The allowlist is
+ * explicit, so a consumer-copy helper is never skipped because its name
+ * happens to contain "prompt" or "instruction".
+ */
+const INSTRUCTION_OWNERS = new Set([
+  "buildSystemPrompt",
+  "buildGroundedPrompt",
+  "POLICY_TEXT",
+  "SYSTEM_POLICY",
+]);
+
+function copySourceFile(text, fileName) {
+  return ts.createSourceFile(
+    fileName,
+    text ?? "",
+    ts.ScriptTarget.Latest,
+    true,
+    /\.tsx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+/** Every local `const`/`let` initializer, by name. Ambiguity is unresolved. */
+function buildConstMap(file) {
+  const map = new Map();
+  walkAst(file, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || !node.initializer) return;
+    const list = map.get(node.name.text) ?? [];
+    list.push(node.initializer);
+    map.set(node.name.text, list);
+  });
+  return map;
+}
+
+/** Every name a binding pattern introduces (`{ a, b: c }`, `[x, y]`). */
+function bindingNames(pattern, names) {
+  if (ts.isIdentifier(pattern)) {
+    names.add(pattern.text);
+    return;
+  }
+  if (ts.isObjectBindingPattern(pattern) || ts.isArrayBindingPattern(pattern)) {
+    for (const element of pattern.elements) {
+      if (ts.isBindingElement(element)) bindingNames(element.name, names);
+    }
+  }
+}
+
+/**
+ * Names bound at run time (parameters, locals, destructured state): their value
+ * is a prop or a state read, never shipped copy.
+ */
+function runtimeBoundNames(file) {
+  const names = new Set();
+  const isFunctionLike = (node) =>
+    ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node);
+  const walk = (node, insideFunction) => {
+    if (ts.isParameter(node)) bindingNames(node.name, names);
+    const nested = insideFunction || isFunctionLike(node);
+    if (ts.isVariableDeclaration(node) && nested) bindingNames(node.name, names);
+    ts.forEachChild(node, (child) => walk(child, nested));
+  };
+  walk(file, false);
+  return names;
+}
+
+/**
+ * Statically known value of an expression: string, string[] or boolean.
+ * `{ ok: false }` means "cannot be known", which callers treat as fail-closed
+ * when the position is relevant.
+ */
+function resolveCopyValue(node, constMap, seen = new Set()) {
+  if (!node) return { ok: false };
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return { ok: true, value: node.text };
+  if (ts.isParenthesizedExpression(node)) return resolveCopyValue(node.expression, constMap, seen);
+  if (ts.isTemplateExpression(node)) {
+    let out = node.head.text;
+    for (const span of node.templateSpans) {
+      const part = resolveCopyValue(span.expression, constMap, seen);
+      if (!part.ok || typeof part.value !== "string") return { ok: false };
+      out += part.value + span.literal.text;
+    }
+    return { ok: true, value: out };
+  }
+  if (ts.isBinaryExpression(node)) {
+    if (node.operatorToken.kind !== ts.SyntaxKind.PlusToken) return { ok: false };
+    const left = resolveCopyValue(node.left, constMap, seen);
+    const right = resolveCopyValue(node.right, constMap, seen);
+    if (!left.ok || !right.ok || typeof left.value !== "string" || typeof right.value !== "string") return { ok: false };
+    return { ok: true, value: left.value + right.value };
+  }
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return { ok: true, value: true };
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return { ok: true, value: false };
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    const inner = resolveCopyValue(node.operand, constMap, seen);
+    return inner.ok && typeof inner.value === "boolean" ? { ok: true, value: !inner.value } : { ok: false };
+  }
+  if (ts.isConditionalExpression(node)) {
+    const test = resolveCopyValue(node.condition, constMap, seen);
+    if (!test.ok || typeof test.value !== "boolean") return { ok: false };
+    return resolveCopyValue(test.value ? node.whenTrue : node.whenFalse, constMap, seen);
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    const parts = [];
+    for (const element of node.elements) {
+      const part = resolveCopyValue(element, constMap, seen);
+      if (!part.ok || typeof part.value !== "string") return { ok: false };
+      parts.push(part.value);
+    }
+    return { ok: true, value: parts };
+  }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "join") {
+    const base = resolveCopyValue(node.expression.expression, constMap, seen);
+    if (!base.ok || !Array.isArray(base.value)) return { ok: false };
+    const separator = node.arguments.length === 0
+      ? { ok: true, value: "," }
+      : resolveCopyValue(node.arguments[0], constMap, seen);
+    if (!separator.ok || typeof separator.value !== "string") return { ok: false };
+    return { ok: true, value: base.value.join(separator.value) };
+  }
+  if (ts.isIdentifier(node)) {
+    if (seen.has(node.text)) return { ok: false };
+    const initializers = constMap.get(node.text);
+    if (!initializers || initializers.length !== 1) return { ok: false };
+    const next = new Set(seen);
+    next.add(node.text);
+    return resolveCopyValue(initializers[0], constMap, next);
+  }
+  return { ok: false };
+}
+
+/** Resolve a string-valued expression, or null when it cannot be known. */
+function resolveStringValue(node, constMap) {
+  const resolved = resolveCopyValue(node, constMap ?? new Map());
+  return resolved.ok && typeof resolved.value === "string" ? resolved.value : null;
+}
+
+/** A source expression whose rendered form is a string. */
+function isCopyStringExpression(node) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) return true;
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return true;
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "join") return true;
+  return ts.isParenthesizedExpression(node) && isCopyStringExpression(node.expression);
+}
+
+function isStructuralKey(key, structure) {
+  if (!key) return false;
+  if (COPY_STRUCTURAL_KEYS.has(key)) return true;
+  return Boolean(COPY_STRUCTURAL_KEYS_BY_STRUCTURE.get(structure)?.has(key));
+}
+
+/**
+ * The rendered text of a JSX element: adjacent text, emphasis markup and
+ * statically known expression containers read as one string, because that is
+ * what the user sees.
+ */
+function renderJsxText(node, constMap) {
+  const parts = [];
+  const push = (value) => {
+    const collapsed = value.replace(/\s+/g, " ").trim();
+    if (collapsed) parts.push(collapsed);
+  };
+  const collect = (child) => {
+    if (ts.isJsxText(child)) return push(child.text);
+    if (ts.isJsxExpression(child)) {
+      if (!child.expression) return;
+      const value = resolveCopyValue(child.expression, constMap);
+      if (value.ok && typeof value.value === "string") return push(value.value);
+      if (ts.isConditionalExpression(child.expression)) {
+        for (const branch of [child.expression.whenTrue, child.expression.whenFalse]) {
+          const resolved = resolveCopyValue(branch, constMap);
+          if (resolved.ok && typeof resolved.value === "string") push(resolved.value);
+        }
+      }
+      return;
+    }
+    if (ts.isJsxElement(child) || ts.isJsxFragment(child)) {
+      for (const grandchild of child.children) collect(grandchild);
+    }
+  };
+  for (const child of node.children ?? []) collect(child);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Every copy value a file can render, plus the expressions whose value is not
+ * statically resolvable. `relevant` marks a copy field that must not silently
+ * disappear from the check.
+ */
+export function collectCopyValues(text, fileName) {
+  const file = copySourceFile(text, fileName);
+  const constMap = buildConstMap(file);
+  const runtimeBound = runtimeBoundNames(file);
+  const values = [];
+  const unresolved = [];
+
+  const visit = (node, ctx) => {
+    if (ts.isJsxText(node)) return; // already part of an element reconstruction
+
+    if (ts.isJsxElement(node) || ts.isJsxFragment(node)) {
+      const rendered = renderJsxText(node, constMap);
+      if (rendered) {
+        values.push({ ownerKey: null, instruction: ctx.instruction, structure: ctx.structure, value: rendered });
       }
     }
-    for (const pattern of REQUIRED_PHOTO_ANALYSIS_TRUTH_RES) {
-      if (!pattern.test(source ?? "")) {
-        errors.push(`photo-analysis-truth: ${label} capabilities missing required photo truth (${pattern})`);
+
+    if (ts.isJsxAttribute(node) && node.initializer && ts.isStringLiteral(node.initializer)) {
+      values.push({
+        ownerKey: node.name.getText(file),
+        instruction: ctx.instruction,
+        structure: ctx.structure,
+        value: node.initializer.text,
+      });
+      return;
+    }
+
+    if (isCopyStringExpression(node)) {
+      const resolved = resolveCopyValue(node, constMap);
+      const entry = { ownerKey: ctx.ownerKey, instruction: ctx.instruction, structure: ctx.structure };
+      if (resolved.ok && typeof resolved.value === "string") values.push({ ...entry, value: resolved.value });
+      else unresolved.push({ ...entry, text: node.getText(file), literalHint: literalText(node), relevant: false });
+      return;
+    }
+
+    let next = ctx;
+    if (ts.isPropertyAssignment(node) && node.initializer) {
+      const key = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : null;
+      next = { ...ctx, ownerKey: key };
+      if (key && COPY_TEXT_KEYS.has(key) && !isStructuralKey(key, ctx.structure)) {
+        const resolved = resolveCopyValue(node.initializer, constMap);
+        if (!resolved.ok && ts.isIdentifier(node.initializer) && !runtimeBound.has(node.initializer.text)) {
+          unresolved.push({
+            ownerKey: key,
+            instruction: ctx.instruction,
+            structure: ctx.structure,
+            text: node.initializer.getText(file),
+            literalHint: "",
+            relevant: true,
+          });
+        } else if (!resolved.ok && ts.isCallExpression(node.initializer)) {
+          // A copy field built by a call is not statically known; its own
+          // literal fragments still must not spell the claim.
+          unresolved.push({
+            ownerKey: key,
+            instruction: ctx.instruction,
+            structure: ctx.structure,
+            text: node.initializer.getText(file),
+            literalHint: literalText(node.initializer),
+            relevant: false,
+          });
+        }
       }
+    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      if (INSTRUCTION_OWNERS.has(node.name.text)) next = { ...next, instruction: true };
+      if (COPY_STRUCTURAL_KEYS_BY_STRUCTURE.has(node.name.text)) next = { ...next, structure: node.name.text };
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name &&
+        INSTRUCTION_OWNERS.has(node.name.getText(file))) {
+      next = { ...next, instruction: true };
+    }
+    ts.forEachChild(node, (child) => visit(child, next));
+  };
+
+  visit(file, { ownerKey: null, instruction: false, structure: null });
+  const keep = (entry) => !isStructuralKey(entry.ownerKey, entry.structure);
+  return { values: values.filter(keep), unresolved: unresolved.filter(keep) };
+}
+
+/** Every string literal inside a node, joined: the text a fragment chain can render. */
+function literalText(node) {
+  const parts = [];
+  const visit = (current) => {
+    if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+      parts.push(current.text);
+      return;
+    }
+    if (ts.isTemplateExpression(current)) {
+      parts.push(current.head.text);
+      for (const span of current.templateSpans) {
+        visit(span.expression);
+        parts.push(span.literal.text);
+      }
+      return;
+    }
+    ts.forEachChild(current, visit);
+  };
+  visit(node);
+  return parts.join(" ");
+}
+
+function preview(value) {
+  return String(value).replace(/\s+/g, " ").trim().slice(0, 110);
+}
+
+/** Any wording that presents the retired report-photo feature as a thing that works. */
+const PHOTO_FEATURE_MENTION = new RegExp([
+  String.raw`photo\s+analy`,
+  String.raw`analy[sz]e\s+(?:(?:a|an|the|this|my|your|report|uploaded|attached)\s+){0,2}(?:photos?|images?|pictures?)`,
+  String.raw`photo\s+assistant`,
+].join("|"), "i");
+
+/** An unconditional statement that the feature does not exist. */
+const ABSOLUTE_FEATURE_DENIAL = new RegExp([
+  String.raw`(?:ai\s+)?photo\s+analy\w*\s+(?:is|are)\s+not\s+available`,
+  String.raw`(?:ai\s+)?photo\s+analy\w*\s+isn['\u2019]?t\s+available`,
+  String.raw`there\s+is\s+no\s+(?:ai\s+)?photo\s+analy\w*(?=\s*(?:[:.,;]|$|\s+(?:in|on|for|that|which|anywhere)\b))`,
+  String.raw`no\s+(?:ai\s+)?photo\s+analy\w*\s+(?:exists|is\s+offered|is\s+available)`,
+  String.raw`(?:there\s+is\s+)?no\s+(?:ai\s+)?analy[sz]e\s+photo(?:\s+(?:action|button|feature|control))?(?=\s*(?:[:.,;]|$|\s+(?:in|on|for|that|which|anywhere)\b))`,
+].join("|"), "i");
+
+/**
+ * A qualifier after "not available" narrows the denial to one mode, which still
+ * implies the feature works elsewhere — so it is itself a claim. The qualifier
+ * vocabulary is open (a country, a build, a version, a key), so this inverts
+ * the rule: any qualifier scopes the denial unless it names the whole app.
+ */
+const WHOLE_APP_SCOPE = /^(?:in\s+(?:this|the)\s+(?:app|application|product)|in\s+findback|on\s+findback|anywhere|at\s+all)\b/i;
+
+/** A preposition or mode word that turns an absolute denial into a scoped one. */
+const SCOPE_QUALIFIER = /^(?:in|on|for|with|without|when|unless|to|from|by|under|inside|outside|during|after|before|if|where|while|at|across|within|offline|on[- ]device|locally|only|just)\b/i;
+
+const AVAILABILITY_DENIAL = /(?:is|are)\s+not\s+available|isn['\u2019]?t\s+available/i;
+const NO_FEATURE_EXISTS = /no\s+(?:ai\s+)?photo\s+analy\w*\s+(?:exists|is\s+offered|is\s+available)/i;
+const ABSENCE_DENIAL = /(?:there\s+is\s+)?no\s+(?:ai\s+)?(?:photo\s+analy\w*|analy[sz]e\s+photo(?:\s+(?:action|button|feature|control))?)/i;
+
+/**
+ * How a clause denies the feature: `absolute`, `scoped` (a qualifier limits it,
+ * so the feature still exists somewhere) or null (it does not deny at all).
+ */
+function denialKind(clause) {
+  for (const pattern of [AVAILABILITY_DENIAL, NO_FEATURE_EXISTS, ABSENCE_DENIAL]) {
+    const match = pattern.exec(clause);
+    if (!match) continue;
+    const rest = clause.slice(match.index + match[0].length).trim();
+    if (rest === "" || /^[:.,;!?)]/.test(rest)) return "absolute";
+    if (WHOLE_APP_SCOPE.test(rest)) return "absolute";
+    if (SCOPE_QUALIFIER.test(rest)) return "scoped";
+    return null;
+  }
+  return null;
+}
+
+/**
+ * True when a clause denies and says nothing else about the feature. The denial
+ * phrases are removed first, so "Photo analysis is supported: there is no
+ * Analyze photo action" is not rescued by its own denial clause.
+ */
+function isPureDenialClause(clause) {
+  if (denialKind(clause) !== "absolute") return false;
+  const stripped = clause.replace(new RegExp(ABSOLUTE_FEATURE_DENIAL.source, "gi"), " ");
+  return !PHOTO_FEATURE_MENTION.test(stripped);
+}
+
+/** Affirmative things photo analysis would do, in the present tense. */
+const AFFIRMATIVE_FEATURE_ACTION = /\b(?:fills?\s+(?:in|out)|auto-?fills?|extracts?|suggests?|generates?|writes?|summari[sz]es?|detects?|analy[sz]es?|transcribes?)\b/i;
+
+/** A clause that already says a thing does not happen. */
+const CLAUSE_NEGATION = /\b(?:no|not|never|cannot|can't|doesn't|don't|isn't|aren't|won't|without)\b/i;
+
+/**
+ * Clause boundaries a writer can use to make one sentence into two thoughts:
+ * sentence punctuation, an em/en dash, a colon, a comma, a line break and an
+ * opening parenthesis. A denial in one clause cannot license a claim in the
+ * next, whatever the separator was.
+ */
+function splitClauses(value) {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?;])\s+|\s*[—–]\s*|:(?!\/\/)\s*|,\s+|\(\s*/)
+    .map((clause) => clause.replace(/[)\s]+$/, "").trim())
+    .filter(Boolean);
+}
+
+/**
+ * Truth check over one or more copy corpora.
+ *
+ * Every copy value is judged on its own, and every clause inside it: a denial
+ * in one string cannot license a claim in another, a denial in one clause
+ * cannot license a claim in the next, and a denial scoped to one mode is a
+ * claim that the feature exists elsewhere.
+ */
+function validatePhotoCopySources(sources) {
+  const errors = [];
+  const seen = new Set();
+  const push = (message) => {
+    if (seen.has(message)) return;
+    seen.add(message);
+    errors.push(message);
+  };
+  for (const { label, source, fileName, requiresDenial, required } of sources) {
+    if (source === undefined) {
+      // A missing mandatory corpus must not read as "nothing to check".
+      if (required) push(`photo-analysis-truth: ${label} was not provided to the check`);
+      continue;
+    }
+    const { values, unresolved } = collectCopyValues(source, fileName);
+    let hasDenial = false;
+    for (const { value, instruction } of values) {
+      const clauses = splitClauses(value);
+      let deniesHere = false;
+      for (const pattern of RETIRED_PHOTO_ANALYSIS_CLAIM_RES) {
+        if (pattern.test(value)) {
+          push(`photo-analysis-truth: retired photo-analysis claim in ${label} (${pattern})`);
+        }
+      }
+      if (instruction) continue;
+      for (const clause of clauses) {
+        if (!PHOTO_FEATURE_MENTION.test(clause)) continue;
+        if (denialKind(clause) === "scoped") {
+          push(`photo-analysis-truth: ${label} limits photo analysis to one mode, which still claims it exists (${preview(clause)})`);
+          continue;
+        }
+        if (isPureDenialClause(clause)) {
+          hasDenial = true;
+          deniesHere = true;
+          continue;
+        }
+        push(`photo-analysis-truth: ${label} claims photo analysis without an unconditional denial (${preview(clause)})`);
+      }
+      // A denial in one sentence does not license an affirmative one next to
+      // it, even when the second sentence only says "it".
+      if (deniesHere) {
+        for (const clause of clauses) {
+          if (CLAUSE_NEGATION.test(clause)) continue;
+          if (AFFIRMATIVE_FEATURE_ACTION.test(clause)) {
+            push(`photo-analysis-truth: ${label} denies photo analysis and also says it works (${preview(clause)})`);
+          }
+        }
+      }
+    }
+    for (const entry of unresolved) {
+      if (entry.relevant) {
+        push(`photo-analysis-truth: ${label} has an unresolvable copy value (${preview(entry.text)})`);
+      } else if (PHOTO_FEATURE_MENTION.test(entry.text) ||
+          (entry.literalHint && PHOTO_FEATURE_MENTION.test(entry.literalHint))) {
+        push(`photo-analysis-truth: ${label} has an unresolvable photo-analysis expression (${preview(entry.text)})`);
+      }
+    }
+    if (requiresDenial && !hasDenial) {
+      push(`photo-analysis-truth: ${label} is missing the explicit "photo analysis is not available" denial`);
     }
   }
   return errors;
 }
 
+export function validatePhotoAnalysisTruth({
+  clientCapabilitiesSource,
+  serverCapabilitiesSource,
+  knowledgeSource,
+  faqSource,
+}) {
+  return validatePhotoCopySources([
+    { label: "client capabilities", source: clientCapabilitiesSource, fileName: "apps/mobile/src/services/appCapabilities.ts", requiresDenial: true, required: true },
+    { label: "server capabilities", source: serverCapabilitiesSource, fileName: "supabase/functions/ai-help/capabilities.ts", requiresDenial: true, required: true },
+    { label: "app knowledge facts", source: knowledgeSource, fileName: "apps/mobile/src/services/ai/appKnowledge.ts", requiresDenial: false, required: true },
+    { label: "help FAQ", source: faqSource, fileName: "apps/mobile/src/services/helpFaq.ts", requiresDenial: false, required: true },
+  ]);
+}
+
 /**
- * User-facing photo-truth detector for the About + Help explainer copy.
- * Fails when either surface:
- * - still carries cloud-only photo phrasing (a selected photo sent straight
- *   to the connected provider as the whole story), or
- * - lost the local-first / engine truth markers (local-first, automatic
- *   fallback, on-device-only, cloud-only).
+ * User-facing photo-truth detector for About + Help.
+ *
+ * Neither surface may describe the retired photo-analysis feature. Silence is
+ * allowed; a mention must be an unconditional denial, and a denial scoped to
+ * one mode is a claim.
  */
-export const STALE_USER_FACING_PHOTO_CLAIM_RES = [
-  /selected (report )?photo is sent to (your connected|the connected) AI provider/i,
-  /consented path is the connected cloud provider/i,
-];
-
-export const REQUIRED_USER_FACING_PHOTO_TRUTH_RES = [
-  /local-first/i,
-  /on-device-only/i,
-  /cloud-only/i,
-  /fall\s?back/i,
-];
-
 export function validateUserFacingPhotoTruth({ aboutSource, helpSource }) {
-  const errors = [];
-  for (const [label, source] of [
-    ["About", aboutSource],
-    ["Help", helpSource],
-  ]) {
-    for (const pattern of STALE_USER_FACING_PHOTO_CLAIM_RES) {
-      if (pattern.test(source ?? "")) {
-        errors.push(`photo-analysis-truth: stale cloud-only photo claim in ${label} copy (${pattern})`);
-      }
-    }
-    for (const pattern of REQUIRED_USER_FACING_PHOTO_TRUTH_RES) {
-      if (!pattern.test(source ?? "")) {
-        errors.push(`photo-analysis-truth: ${label} copy missing required photo truth (${pattern})`);
-      }
-    }
-  }
-  return errors;
+  return validatePhotoCopySources([
+    { label: "About", source: aboutSource, fileName: "apps/mobile/src/screens/About.tsx", requiresDenial: false, required: true },
+    { label: "Help", source: helpSource, fileName: "apps/mobile/src/screens/Help.tsx", requiresDenial: false, required: true },
+  ]);
 }
 
 function checkPhotoAnalysisTruth() {
@@ -660,11 +1123,15 @@ function checkPhotoAnalysisTruth() {
   let server;
   let about;
   let help;
+  let knowledge;
+  let faq;
   try {
     client = read("apps/mobile/src/services/appCapabilities.ts");
     server = read("supabase/functions/ai-help/capabilities.ts");
     about = read("apps/mobile/src/screens/About.tsx");
     help = read("apps/mobile/src/screens/Help.tsx");
+    knowledge = read("apps/mobile/src/services/ai/appKnowledge.ts");
+    faq = read("apps/mobile/src/services/helpFaq.ts");
   } catch (error) {
     return [`photo-analysis-truth: cannot read capability source (${error.message})`];
   }
@@ -672,6 +1139,8 @@ function checkPhotoAnalysisTruth() {
     ...validatePhotoAnalysisTruth({
       clientCapabilitiesSource: client,
       serverCapabilitiesSource: server,
+      knowledgeSource: knowledge,
+      faqSource: faq,
     }),
     ...validateUserFacingPhotoTruth({ aboutSource: about, helpSource: help }),
   ];
@@ -6943,6 +7412,380 @@ export function validateRetiredNativeIntegration(sources) {
   return errors;
 }
 
+/* ---------------------------------------------------------------------------
+ * Liveness checks (AST).
+ *
+ * An import, a destructured identifier or a dead branch is not a working seam.
+ * These checks look for the actual call, the mounted element, the argument
+ * value and the state the value flows into, so removing the behaviour while
+ * keeping the identifier is a failure.
+ * ------------------------------------------------------------------------- */
+
+function walkAst(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walkAst(child, visit));
+}
+
+function calleeName(callee) {
+  if (ts.isIdentifier(callee)) return callee.text;
+  if (ts.isPropertyAccessExpression(callee)) return callee.name.text;
+  return null;
+}
+
+/** Calls whose callee resolves to `name` (identifier or property name). */
+function callsTo(file, name) {
+  const calls = [];
+  walkAst(file, (node) => {
+    if (ts.isCallExpression(node) && calleeName(node.expression) === name) calls.push(node);
+  });
+  return calls;
+}
+
+/** Calls of `object.method(...)`, including through a one-hop local alias. */
+function methodCallsTo(file, object, method) {
+  const aliases = new Set([object]);
+  walkAst(file, (node) => {
+    if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || !node.initializer) return;
+    if (ts.isIdentifier(node.initializer) && aliases.has(node.initializer.text)) aliases.add(node.name.text);
+  });
+  const calls = [];
+  walkAst(file, (node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === method &&
+        aliases.has(node.expression.expression.getText(file))) {
+      calls.push(node);
+    }
+  });
+  return calls;
+}
+
+/**
+ * Fold a guard to a value, resolving local `const` bindings. The reachability
+ * evaluator deliberately models no file-level constants; a seam hidden behind
+ * `const enabled = false` is still a dead seam, so the liveness checks add that
+ * one hop.
+ */
+function foldWithConsts(node, constMap, seen = new Set()) {
+  if (!node) return UNKNOWN_STATIC_VALUE;
+  const inner = unwrapExpression(node);
+  if (inner === undefined) return UNKNOWN_STATIC_VALUE;
+  if (ts.isIdentifier(inner)) {
+    if (seen.has(inner.text)) return UNKNOWN_STATIC_VALUE;
+    const initializers = constMap.get(inner.text);
+    if (initializers && initializers.length === 1) {
+      const next = new Set(seen);
+      next.add(inner.text);
+      return foldWithConsts(initializers[0], constMap, next);
+    }
+    return staticValue(inner);
+  }
+  if (ts.isPrefixUnaryExpression(inner) && inner.operator === ts.SyntaxKind.ExclamationToken) {
+    const operand = foldWithConsts(inner.operand, constMap, seen);
+    return operand === UNKNOWN_STATIC_VALUE ? UNKNOWN_STATIC_VALUE : !operand;
+  }
+  if (ts.isBinaryExpression(inner)) {
+    const operator = inner.operatorToken.kind;
+    if (operator === ts.SyntaxKind.AmpersandAmpersandToken || operator === ts.SyntaxKind.BarBarToken) {
+      const left = foldWithConsts(inner.left, constMap, seen);
+      if (left === UNKNOWN_STATIC_VALUE) return UNKNOWN_STATIC_VALUE;
+      if (operator === ts.SyntaxKind.AmpersandAmpersandToken) {
+        return left ? foldWithConsts(inner.right, constMap, seen) : left;
+      }
+      return left ? left : foldWithConsts(inner.right, constMap, seen);
+    }
+    return staticValue(inner);
+  }
+  if (ts.isConditionalExpression(inner)) {
+    const test = foldWithConsts(inner.condition, constMap, seen);
+    if (test === UNKNOWN_STATIC_VALUE) return UNKNOWN_STATIC_VALUE;
+    return foldWithConsts(test ? inner.whenTrue : inner.whenFalse, constMap, seen);
+  }
+  return staticValue(inner);
+}
+
+/**
+ * True when the node only runs behind a guard the compiler folds away: the
+ * existing reachability walk plus the logical and ternary spellings it does not
+ * cover (`false && …`, `x || …` with a truthy left, either arm of a folded
+ * ternary), with local constants resolved.
+ */
+function seamIsDead(node, constMap, file, visiting = new Set()) {
+  if (hasStaticallyFalseAncestor(node)) return true;
+  if (file && isInsideNeverInvokedFunction(node, file, constMap, visiting)) return true;
+  let descendant = node;
+  let current = node.parent;
+  while (current) {
+    if (ts.isBinaryExpression(current) && descendant === current.right) {
+      const left = foldWithConsts(current.left, constMap);
+      if (left !== UNKNOWN_STATIC_VALUE) {
+        const operator = current.operatorToken.kind;
+        if (operator === ts.SyntaxKind.AmpersandAmpersandToken && !left) return true;
+        if (operator === ts.SyntaxKind.BarBarToken && left) return true;
+      }
+    }
+    if (ts.isConditionalExpression(current) && descendant !== current.condition) {
+      const test = foldWithConsts(current.condition, constMap);
+      if (test !== UNKNOWN_STATIC_VALUE) {
+        const taken = test ? current.whenTrue : current.whenFalse;
+        if (descendant !== taken) return true;
+      }
+    }
+    if (ts.isIfStatement(current) && descendant !== current.expression) {
+      const test = foldWithConsts(current.expression, constMap);
+      if (test !== UNKNOWN_STATIC_VALUE) {
+        const taken = test ? current.thenStatement : current.elseStatement;
+        if (!taken || descendant !== taken) return true;
+      }
+    }
+    if ((ts.isWhileStatement(current) || ts.isForStatement(current)) && current.condition &&
+        descendant !== current.condition) {
+      const test = foldWithConsts(current.condition, constMap);
+      if (test !== UNKNOWN_STATIC_VALUE && !test) return true;
+    }
+    descendant = current;
+    current = current.parent;
+  }
+  return false;
+}
+
+/** Function-like nodes: a seam inside one of these is only live if it runs. */
+function isFunctionLikeNode(node) {
+  return ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node);
+}
+
+/** True when the declaration, or the statement that holds it, is exported. */
+function hasExportModifier(node) {
+  let current = node;
+  while (current) {
+    if (ts.canHaveModifiers(current)) {
+      const modifiers = ts.getModifiers(current) ?? [];
+      if (modifiers.some((m) =>
+        m.kind === ts.SyntaxKind.ExportKeyword || m.kind === ts.SyntaxKind.DefaultKeyword)) return true;
+    }
+    if (ts.isVariableStatement(current) || ts.isFunctionDeclaration(current) ||
+        ts.isClassDeclaration(current) || ts.isSourceFile(current)) break;
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * A bounded in-file invocation path, not a count of mentions. Direct calls,
+ * component mounts and JSX event registrations are execution edges. A local
+ * alias is only an edge when the alias itself reaches execution. Call sites
+ * inside uncalled helpers or folded branches cannot be roots; cycles without
+ * a live caller cannot prove their own liveness.
+ */
+function hasInvocationOutside(file, name, declaration, constMap, visiting) {
+  if (visiting.has(declaration)) return false;
+  const next = new Set(visiting).add(declaration);
+  let invoked = false;
+  walkAst(file, (node) => {
+    if (invoked || !ts.isIdentifier(node) || node.text !== name) return;
+    for (let up = node; up; up = up.parent) if (up === declaration) return;
+    let value = node;
+    while (value.parent && (ts.isParenthesizedExpression(value.parent) ||
+      ts.isAsExpression(value.parent) || ts.isNonNullExpression(value.parent) ||
+      ts.isSatisfiesExpression(value.parent))) value = value.parent;
+    const parent = value.parent;
+    if (!parent) return;
+    if (ts.isVariableDeclaration(parent) && parent.initializer === value && ts.isIdentifier(parent.name)) {
+      if (!seamIsDead(parent, constMap, file, next) &&
+          hasInvocationOutside(file, parent.name.text, parent, constMap, next)) invoked = true;
+      return;
+    }
+    const called = ts.isCallExpression(parent) && parent.expression === value;
+    const mounted = (ts.isJsxSelfClosingElement(parent) || ts.isJsxOpeningElement(parent)) &&
+      parent.tagName === value;
+    const registered = ts.isJsxExpression(parent) && parent.expression === value &&
+      ts.isJsxAttribute(parent.parent) && /^on[A-Z]/.test(parent.parent.name.getText(file));
+    if ((called || mounted || registered) && !seamIsDead(parent, constMap, file, next)) invoked = true;
+  });
+  return invoked;
+}
+
+/**
+ * True when the node sits inside a named function or function-valued constant
+ * that has no in-file invocation path. Extracting a component or a handler and
+ * forgetting to mount it leaves the seam exactly as dead as a folded branch.
+ * Exported declarations, inline callbacks and JSX handlers are live: their
+ * caller is outside this file or is a render.
+ */
+function isInsideNeverInvokedFunction(node, file, constMap, visiting) {
+  let current = node.parent;
+  while (current) {
+    if (isFunctionLikeNode(current) && !hasExportModifier(current)) {
+      let bindingName = null;
+      let declaration = current;
+      if ((ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) && current.name) {
+        bindingName = current.name.getText(file);
+      } else {
+        const parent = current.parent;
+        if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+          bindingName = parent.name.text;
+          declaration = parent;
+        } else if (parent && ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) {
+          bindingName = parent.name.text;
+          declaration = parent;
+        }
+      }
+      if (bindingName && !hasInvocationOutside(file, bindingName, declaration, constMap, visiting)) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/** True when the node sits inside a call to `name`. */
+function isInsideCall(node, name) {
+  for (let current = node.parent; current; current = current.parent) {
+    if (ts.isCallExpression(current) && calleeName(current.expression) === name) return true;
+  }
+  return false;
+}
+
+/** Mounted JSX elements with this tag that are not behind a folded guard. */
+function liveJsxMounts(file, tagName, constMap) {
+  const mounts = [];
+  walkAst(file, (node) => {
+    if ((ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) &&
+        node.tagName.getText(file) === tagName && !seamIsDead(node, constMap, file)) {
+      mounts.push(node);
+    }
+  });
+  return mounts;
+}
+
+/**
+ * Every local name bound to `createProviderAdapter` (or to another such alias),
+ * so the retired path cannot be reached through a one-line rename.
+ */
+function adapterCalleeNames(file) {
+  const names = new Set(["createProviderAdapter"]);
+  // `import { createProviderAdapter as makeAdapter }` binds a new local name.
+  walkAst(file, (node) => {
+    if (ts.isImportSpecifier(node) && node.propertyName?.text === "createProviderAdapter") {
+      names.add(node.name.text);
+    }
+  });
+  walkAst(file, (node) => {
+    if (!ts.isVariableDeclaration(node) || !node.initializer) return;
+    // `const { createProviderAdapter: make } = adapters`
+    if (ts.isObjectBindingPattern(node.name)) {
+      for (const element of node.name.elements) {
+        if (element.propertyName?.getText(file) === "createProviderAdapter" && ts.isIdentifier(element.name)) {
+          names.add(element.name.text);
+        }
+      }
+      return;
+    }
+    if (!ts.isIdentifier(node.name)) return;
+    const initializer = node.initializer;
+    const target = ts.isIdentifier(initializer)
+      ? initializer.text
+      : ts.isPropertyAccessExpression(initializer) ? initializer.name.text : null;
+    if (target && names.has(target)) names.add(node.name.text);
+  });
+  return names;
+}
+
+/**
+ * Live cloud seams in Help and AiConnection. Each requirement names the
+ * behaviour and the state it feeds, not the identifier: a retained import, a
+ * dead branch or a discarded read cannot satisfy it.
+ */
+function validateLiveCloudSeams(sources) {
+  const errors = [];
+  const help = copySourceFile(sources.helpSource ?? "", "apps/mobile/src/screens/Help.tsx");
+  const connection = copySourceFile(sources.aiConnectionSource ?? "", "apps/mobile/src/screens/AiConnection.tsx");
+  const helpConsts = buildConstMap(help);
+  const connectionConsts = buildConstMap(connection);
+
+  // The per-account persisted default must initialize component state, not be
+  // read into a discarded expression.
+  const defaultReads = callsTo(help, "loadCloudModelPreferences").filter(
+    (call) => call.arguments.length >= 1 &&
+      ts.isPropertyAccessExpression(call.parent) && call.parent.name.text === "defaultModel" &&
+      isInsideCall(call, "useState") && !seamIsDead(call, helpConsts, help),
+  );
+  if (defaultReads.length === 0) {
+    errors.push("application-integration: Help must read the persisted cloud model default into component state");
+  }
+  if (liveJsxMounts(help, "CloudModelPicker", helpConsts).length === 0) {
+    errors.push("application-integration: Help must mount the cloud model picker outside a dead branch");
+  }
+  // Provider choices must be rendered from the list, not just referenced.
+  if (methodCallsTo(connection, "CLOUD_PROVIDERS", "map")
+    .filter((call) => !seamIsDead(call, connectionConsts, connection)).length === 0) {
+    errors.push("application-integration: AiConnection must render the supported cloud providers from the list");
+  }
+  if (liveJsxMounts(connection, "ProviderKeyForm", connectionConsts).length === 0) {
+    errors.push("application-integration: AiConnection must render the provider key form outside a dead branch");
+  }
+  // The key must be written through the credentials service, not read only.
+  if (methodCallsTo(connection, "aiCredentials", "connect")
+    .filter((call) => !seamIsDead(call, connectionConsts, connection)).length === 0) {
+    errors.push("application-integration: AiConnection must write provider keys through the credentials service");
+  }
+  return errors;
+}
+
+/**
+ * Retired on-device seams in Help: an offline adapter call (through any local
+ * alias, quote style or spacing) and an offline send branch. Both are inspected
+ * as call/argument values, so reformatting the source cannot hide them.
+ */
+function validateRetiredPhotoSeams(sources) {
+  const errors = [];
+  const help = copySourceFile(sources.helpSource ?? "", "apps/mobile/src/screens/Help.tsx");
+  const helpConsts = buildConstMap(help);
+  for (const name of adapterCalleeNames(help)) {
+    for (const call of callsTo(help, name)) {
+      if (call.arguments.length === 0) continue;
+      if (resolveStringValue(call.arguments[0], helpConsts) === "offline") {
+        errors.push("application-integration: Help must not offer an offline chat path (retired on-device generation)");
+      }
+    }
+  }
+  // Binding the factory to another name hides the call from the tripwire above,
+  // so a variable initializer or an object property may not hold it. Calls,
+  // arguments (a memo factory, a dependency array), array elements and inline
+  // returns stay allowed: they do not introduce a name.
+  walkAst(help, (node) => {
+    if (!ts.isIdentifier(node) || node.text !== "createProviderAdapter") return;
+    const parent = node.parent;
+    const binds =
+      (parent && ts.isVariableDeclaration(parent) && parent.initializer === node) ||
+      (parent && ts.isPropertyAssignment(parent) && parent.initializer === node);
+    if (binds) {
+      errors.push("application-integration: Help must not rebind the provider adapter factory (retired offline path)");
+    }
+  });
+  walkAst(help, (node) => {
+    if (!ts.isBinaryExpression(node)) return;
+    const operator = node.operatorToken.kind;
+    if (operator !== ts.SyntaxKind.EqualsEqualsEqualsToken && operator !== ts.SyntaxKind.EqualsEqualsToken) return;
+    for (const [probe, other] of [[node.left, node.right], [node.right, node.left]]) {
+      if (probe.getText(help) === "sendProvider" && resolveStringValue(other, helpConsts) === "offline") {
+        errors.push("application-integration: Help must not branch to an offline send path (retired)");
+      }
+    }
+  });
+  // Benchmark controls are copy, not identifiers: a comment cannot trip this.
+  for (const [label, source, fileName] of [
+    ["Help", sources.helpSource, "apps/mobile/src/screens/Help.tsx"],
+    ["AiConnection", sources.aiConnectionSource, "apps/mobile/src/screens/AiConnection.tsx"],
+  ]) {
+    const { values } = collectCopyValues(source ?? "", fileName);
+    if (values.some((entry) => /Measure\s+(?:CPU|GPU)/i.test(entry.value))) {
+      errors.push(`application-integration: no CPU/GPU benchmark controls on a consumer surface (${label})`);
+    }
+  }
+  return errors;
+}
+
 export function validateApplicationIntegration(sources) {
   const requirements = [
     ["mainSource", /(?:void\s+|await\s+)initializeApplicationAi\(\)/, "application startup must initialize shared AI"],
@@ -6958,8 +7801,6 @@ export function validateApplicationIntegration(sources) {
     ["appSource", /path="\/settings\/local-intelligence\/downloads"\s+element=\{<DownloadedModels\s*\/>\}/, "downloaded models route must mount its canonical manager"],
     ["modelsSource", /service\[action\]\(modelId\)/, "helper actions must use the canonical service"],
     ["modelsSource", /service\.remove\(target\.modelId\)/, "removal must use the canonical service"],
-    ["helpSource", /createProviderAdapter\("offline",/, "Help must list installed offline models through registry"],
-    ["helpSource", /sendProvider\s*===\s*"offline"\s*\?\s*null/, "offline sends must bypass credential lookup"],
     ["matchesSource", /resolveMatchingBackend\([^)]*\)\s*===\s*"needle"[\s\S]{0,200}embedNeedle\(/, "matching must reach selected Needle service"],
     // CF-020 §12 removed the consumer-facing report-photo analysis flow and the
     // assistant→search handoff; CF-070 R1 removed the guided report/search
@@ -6980,26 +7821,6 @@ export function validateApplicationIntegration(sources) {
       "aiPreferencesSource",
       /selectedId: load(?:Seeded)?AiPreferences\(accountId\)\.preferredAssistantModel/,
       "binding selectedId must read the persisted per-account default",
-    ],
-    [
-      "aiConnectionSource",
-      /load(?:Seeded)?AiPreferences\(account\)\.preferredAssistantModel/,
-      "AiConnection must show the persisted default when no explicit selection wins",
-    ],
-    [
-      "aiConnectionSource",
-      /selectedId=\{effectiveSelectedId\}/,
-      "AiConnection must forward the effective persisted selection to the catalogue sheet",
-    ],
-    [
-      "aiConnectionSource",
-      /onSelectModel\?\.\(record\.id\)/,
-      "AiConnection must persist the gated selection via onSelectModel",
-    ],
-    [
-      "helpSource",
-      /defaultSelection\(accountId\)/,
-      "Help must read the persisted default-selection seam (ignoring the default is a regression)",
     ],
     [
       "searchScreenSource",
@@ -7062,9 +7883,19 @@ export function validateApplicationIntegration(sources) {
       "summary grounding guard must stay connected to compaction",
     ],
   ];
+  // Retired surfaces must stay absent, not merely unasserted. Each of these was
+  // a real shipped seam before the on-device generative runtimes were removed.
+  const forbidden = [
+    ["aiConnectionSource", /preferredAssistantModel/, "AiConnection must not offer an on-device assistant model (retired)"],
+    ["aiConnectionSource", /ModelCatalogSheet/, "AiConnection must not mount the on-device catalogue sheet (retired)"],
+  ];
   return [
     ...requirements.filter(([key, pattern]) => !pattern.test(sources[key] ?? ""))
       .map(([, , message]) => `application-integration: ${message}`),
+    ...forbidden.filter(([key, pattern]) => pattern.test(sources[key] ?? ""))
+      .map(([, , message]) => `application-integration: ${message}`),
+    ...validateLiveCloudSeams(sources),
+    ...validateRetiredPhotoSeams(sources),
     ...validateRetiredNativeIntegration(sources),
   ];
 }
@@ -7194,7 +8025,7 @@ checks (any failure exits 1):
   model-notices     exact source-linked license/attribution/NOTICE text and artifact digests
   abi-artifacts     ABI split config carries every supported ABI
    vision-truth      production vision seam + registration present, copy honest
-   photo-analysis-truth  Analyze-photo copy local-first, no stale cloud-only claim (capabilities + About/Help)
+   photo-analysis-truth  no copy claims the removed photo analysis; both corpora deny it
   runtime-wiring    every spec runtime has a production adapter, no lab routes
   descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency, enforced ABIs, role-gated selection, raw text boundary, exhaustive interpreters, explicit default
   application-integration  real boot, provider, controls, matching, timing, retained report-field helper, retired photo AI stays removed
