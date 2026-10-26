@@ -1,7 +1,39 @@
 # Human messaging local persistence and relationship policy
 
-This is a **text-only, non-UI foundation**, independent of AI chat. It is not full
-chat delivery or release acceptance. No production caller is wired yet.
+This is a **text-only, non-UI messaging service**, independent of AI chat. It is not
+full chat or release acceptance. No consumer screen/session-owner caller is wired yet.
+
+## Request and text-delivery service
+
+`createSupabaseMessagingSession(scope, history)` uses the existing auth SDK and
+either durable history adapter. The app session owner must call `start(platform)`
+to register its random installation identity, and `close()` on sign-out/switch.
+There is no new auth owner or automatic in-memory history fallback.
+
+- `request`, `accept`, `end`, `block` call participant-scoped server transitions.
+- `send` durably queues immutable text; `flush` retries the same client UUID.
+  Only a persisted authoritative mailbox echo clears the outbox; HTTP success
+  alone cannot. `sync` processes a bounded page of at most 100 envelopes.
+- ACK follows `persistInboundAndAck`, never fetch or an in-memory render. A failed
+  ACK leaves an idempotently replayable envelope; a failed durable write sends none.
+- Every RPC carries the captured account identity and the server rejects an SDK
+  account switch. The server checks the expected recipient before sending.
+- SQL enforces initiator-only request messages, recipient-only acceptance, canonical
+  private blocks, mutually opted-in CONNECTED receipts, per-device delivery,
+  sender echoes and removal of ACKed/expired mailbox payloads. Direct chat table
+  grants remain revoked. Legacy non-idempotent send and account-only ACK RPCs are
+  revoked in favor of this scoped exchange contract. The idempotent SEND helper is
+  internal too: authenticated callers cannot bypass the exchange's device and
+  expected-recipient checks by invoking it directly.
+
+This batch does **not** provide consumer screens/navigation, background retry/wake
+scheduling, the physical Android SQLite bridge, media, backup/history-gap resend,
+or server unsend-tombstone fanout. `first_approach` records the one quiet-request
+nudge eligibility; a push worker is not yet connected. Legacy BLOCKED rows remain
+quarantined because the old schema did not record who blocked; no unblock direction
+is guessed. Permission-first request mode is the only current initiation mode;
+open-inbox opt-in remains to be integrated. Receipt privacy is server-enforced,
+but a consumer Read-status projection and per-conversation progress are unfinished.
 
 `policy.ts` is pure R3 relationship/safety policy (§2, §3, §11 of the R3 chat
 design); `history.ts`/`indexedDbHistory.ts` are the local storage contract and web
