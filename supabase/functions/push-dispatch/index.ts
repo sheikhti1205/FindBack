@@ -19,6 +19,18 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateReplyToken, hashToken, REPLY_TOKEN_TTL_MS } from "../_shared/replyTokens.ts";
+import { runDispatchLanes, type LaneResponse } from "../_shared/dispatchLanes.ts";
+
+/**
+ * Service-role client factory. Lane helpers take `AdminClient` — the exact
+ * inferred return type of this call — instead of `ReturnType<typeof createClient>`,
+ * whose generic default instantiation loses the RPC argument and row types.
+ */
+function createAdminClient(url: string, key: string) {
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
 
 const BATCH_LIMIT = 100;
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -328,7 +340,7 @@ async function getAccessToken(serviceAccount: {
   client_email: string;
   private_key: string;
   token_uri?: string;
-}): Promise<string> {
+}, signal?: AbortSignal): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claims = base64Url(
@@ -344,6 +356,7 @@ async function getAccessToken(serviceAccount: {
   const assertion = `${header}.${claims}.${signature}`;
   const response = await fetch(serviceAccount.token_uri ?? GOOGLE_TOKEN_URL, {
     method: "POST",
+    signal,
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -397,15 +410,267 @@ async function sendMessage(
   projectId: string,
   accessToken: string,
   message: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<SendResult> {
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
     method: "POST",
+    signal,
     headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ message }),
   });
   if (response.ok) return { ok: true, prune: false, status: response.status };
   const body = await response.text();
   return { ok: false, prune: shouldPruneToken(response.status, body), status: response.status };
+}
+
+export interface ChatWakeDelivery {
+  wakeId: string;
+  recipientId: string;
+  conversationId: string;
+  kind: "CHAT_REQUEST" | "CHAT_CONNECTED";
+  token: string;
+}
+
+/** Data-only, content-free; a stable wake ID supports collapse/native dedupe. */
+export function buildChatFcmMessage(delivery: ChatWakeDelivery): Record<string, unknown> {
+  return {
+    token: delivery.token,
+    data: { type: delivery.kind, recipientId: delivery.recipientId,
+      conversationId: delivery.conversationId, notificationId: delivery.wakeId },
+    android: { priority: "normal", ttl: "86400s", collapse_key: delivery.wakeId },
+  };
+}
+
+interface ChatClaim { wake_id: string; device_id: string; claim_token: string }
+
+async function dispatchChatWakes(admin: AdminClient, projectId: string, senderJson: string) {
+  let accessToken: string | null = null;
+  let claimed = 0;
+  let sent = 0;
+  let failed = 0;
+  // Claim immediately before work: a large sequential batch must not let
+  // later devices' leases expire while earlier network calls are in flight.
+  for (let i = 0; i < BATCH_LIMIT; i += 1) {
+    const { data, error } = await admin.rpc("findback_claim_chat_external_wakes", { p_limit: 1 });
+    if (error || !Array.isArray(data)) throw new Error("Chat wake claim unavailable");
+    if (data.length === 0) break;
+    const claim = data[0] as ChatClaim;
+    claimed += 1;
+    let disposition: "SENT" | "SUPPRESSED" | "INVALID" | "RETRY" = "RETRY";
+    let delivery: ChatWakeDelivery | null = null;
+    try {
+      const result = await admin.rpc("findback_chat_external_wake_delivery", {
+        p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token,
+      });
+      if (result.error) throw new Error("Chat wake eligibility unavailable");
+      if (result.data === null) disposition = "SUPPRESSED";
+      else {
+        const value = result.data as Record<string, unknown>;
+        if (value.wakeId !== claim.wake_id || typeof value.recipientId !== "string"
+          || typeof value.conversationId !== "string" || typeof value.token !== "string"
+          || (value.kind !== "CHAT_REQUEST" && value.kind !== "CHAT_CONNECTED")) {
+          throw new Error("Invalid chat wake delivery");
+        }
+        delivery = value as unknown as ChatWakeDelivery;
+        accessToken ??= await getAccessToken(JSON.parse(senderJson), AbortSignal.timeout(30_000));
+        // Recheck after OAuth, immediately before each device send.
+        const recheck = await admin.rpc("findback_chat_external_wake_delivery", {
+          p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token,
+        });
+        if (recheck.error) throw new Error("Chat wake eligibility unavailable");
+        if (recheck.data === null) disposition = "SUPPRESSED";
+        else if (JSON.stringify(recheck.data) !== JSON.stringify(value)) throw new Error("Chat wake changed");
+        else {
+          const result = await sendMessage(projectId, accessToken, buildChatFcmMessage(delivery), AbortSignal.timeout(30_000));
+          disposition = result.ok ? "SENT" : result.prune ? "INVALID" : "RETRY";
+          if (result.ok) sent += 1;
+          else failed += 1;
+        }
+      }
+    } catch { failed += 1; }
+    const finish = await admin.rpc("findback_finish_chat_external_wake", {
+      p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token, p_result: disposition,
+    });
+    if (finish.error || finish.data !== true) throw new Error("Chat wake disposition unavailable");
+    if (disposition === "INVALID" && delivery) {
+      // Never prune a token that has changed owner since the eligibility check.
+      await admin.from("device_tokens").delete().eq("id", claim.device_id)
+        .eq("user_id", delivery.recipientId).eq("token", delivery.token);
+    }
+  }
+  return { claimed, sent, failed };
+}
+
+/**
+ * The legacy report-notification lane: scan pending notifications, resolve
+ * eligibility from stored rows, honour preferences and device tokens, mint
+ * single-use reply tokens, send FCM, then apply the terminal disposition.
+ *
+ * Returns the status and body this lane decided. The shared seam merges the
+ * additive chat fields and never rewrites this status, and a chat failure can
+ * never reach this function.
+ */
+async function dispatchReportLane(
+  admin: AdminClient,
+  env: { projectId: string; origin: string; senderJson: string },
+): Promise<LaneResponse> {
+  const { projectId, origin, senderJson } = env;
+  const { data: pending, error: readError } = await admin
+    .from("notifications")
+    .select("id, user_id, type, post_id, comment_id, created_at, reaction_kind")
+    .is("pushed_at", null)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: true })
+    .limit(BATCH_LIMIT);
+  if (readError) {
+    console.error("push-dispatch: could not read pending notifications. No notifications were sent.");
+    return { status: 500, body: { error: "read failed", scanned: 0, sent: 0 } };
+  }
+
+  const scanned = (pending ?? []) as DispatchNotification[];
+  if (scanned.length === 0) return { status: 200, body: { scanned: 0, sent: 0, pruned: 0, failed: 0 } };
+
+  // Service-role scans bypass RLS. Resolve eligibility from the stored row's
+  // recipient/subject, never a caller-supplied actor. An unknown answer is not
+  // permission and must remain retryable, not become a terminal disposition.
+  const allowed = async (id: string): Promise<boolean> => {
+    const { data, error } = await admin.rpc("findback_notification_delivery_allowed", { p_notification_id: id });
+    if (error || typeof data !== "boolean") throw new Error("Delivery eligibility unavailable");
+    return data;
+  };
+  const notifications: DispatchNotification[] = [];
+  const suppressed = new Set<string>();
+  const deferred = new Set<string>();
+  try {
+    for (const row of scanned) {
+      if (await allowed(row.id)) notifications.push(row);
+      else suppressed.add(row.id);
+    }
+  } catch {
+    return { status: 503, body: { error: "eligibility unavailable", scanned: scanned.length, sent: 0 } };
+  }
+  if (notifications.length === 0) {
+    const { error } = await admin.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", [...suppressed]);
+    if (error) return { status: 503, body: { error: "disposition failed", sent: 0 } };
+    return { status: 200, body: { scanned: scanned.length, suppressed: suppressed.size, sent: 0, pruned: 0, failed: 0 } };
+  }
+
+  const userIds = [...new Set(notifications.map((n) => n.user_id))];
+  const [{ data: prefs }, { data: tokens }] = await Promise.all([
+    admin.from("notification_preferences").select("*").in("user_id", userIds),
+    admin.from("device_tokens").select("user_id, token").in("user_id", userIds),
+  ]);
+
+  const deliveries = planDeliveries(
+    notifications,
+    (prefs ?? []) as PreferenceRow[],
+    (tokens ?? []) as DeviceTokenRow[],
+  );
+
+  let accessToken = "";
+  try {
+    accessToken = await getAccessToken(JSON.parse(senderJson));
+  } catch {
+    console.error("push-dispatch: FIREBASE_SERVICE_ACCOUNT_JSON is invalid or FCM authentication failed. No notifications were sent.");
+    return { status: 502, body: { error: "fcm auth failed", scanned: notifications.length, sent: 0 } };
+  }
+
+  // One single-use reply token per COMMENT notification, shared by that user's
+  // devices so a reply sent from any device consumes it once. Only minted for
+  // notifications that will actually be pushed (at least one planned
+  // delivery): a user with no eligible device must not leave orphan tokens.
+  const replyTokens = new Map<string, string>();
+  const tokenCreatedAt = new Date().toISOString();
+  const tokenExpiresAt = new Date(Date.now() + REPLY_TOKEN_TTL_MS).toISOString();
+  for (const notification of notifiableReplyTargets(notifications, deliveries)) {
+    if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) continue;
+    try {
+      if (!await allowed(notification.id)) { suppressed.add(notification.id); continue; }
+    } catch { deferred.add(notification.id); continue; }
+    const raw = generateReplyToken();
+    const row = buildReplyTokenRow(
+      notification,
+      await hashToken(raw),
+      tokenCreatedAt,
+      tokenExpiresAt,
+    );
+    if (!row) continue;
+    const { error } = await admin.from("push_reply_tokens").insert(row);
+    if (!error) replyTokens.set(notification.id, raw);
+  }
+
+  let sent = 0;
+  let failed = 0;
+  const pruned: string[] = [];
+  const outcomes: SendOutcome[] = [];
+  for (const delivery of deliveries) {
+    if (suppressed.has(delivery.notificationId)) continue;
+    if (deferred.has(delivery.notificationId)) {
+      outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
+      continue;
+    }
+    // Eligibility can change while OAuth or token writes are in flight. Check
+    // again immediately before each external send; no stale scan can permit it.
+    try {
+      if (!await allowed(delivery.notificationId)) {
+        suppressed.add(delivery.notificationId);
+        await admin.from("push_reply_tokens").delete().eq("notification_id", delivery.notificationId).is("used_at", null);
+        replyTokens.delete(delivery.notificationId);
+        continue;
+      }
+    } catch {
+      deferred.add(delivery.notificationId);
+      outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
+      continue;
+    }
+    const result = await sendMessage(
+      projectId,
+      accessToken,
+      buildFcmMessage(delivery, origin, replyTokens.get(delivery.notificationId)),
+    );
+    outcomes.push({ notificationId: delivery.notificationId, ok: result.ok, prune: result.prune });
+    if (result.ok) sent += 1;
+    else {
+      failed += 1;
+      if (result.prune) pruned.push(delivery.token);
+    }
+  }
+
+  // Terminal disposition only: a notification with no eligible device, one
+  // delivered anywhere, or only invalid-token failures is stamped. A
+  // notification whose only failures were transient stays pending so the next
+  // scheduled run retries it, up to MAX_PUSH_ATTEMPTS.
+  const { handled, retry } = planDispatchOutcomes(scanned, outcomes);
+  const pushedAt = new Date().toISOString();
+  if (handled.length > 0) {
+    await admin.from("notifications").update({ pushed_at: pushedAt }).in("id", handled);
+  }
+  let retired = 0;
+  if (retry.length > 0) {
+    const { data } = await admin.rpc("findback_record_push_failure", {
+      p_ids: retry,
+      p_error: "temporary FCM failure",
+      p_max_attempts: MAX_PUSH_ATTEMPTS,
+    });
+    retired = Number(data ?? 0);
+  }
+
+  if (pruned.length > 0) {
+    await admin.from("device_tokens").delete().in("token", [...new Set(pruned)]);
+  }
+
+  return {
+    status: 200,
+    body: {
+      scanned: scanned.length,
+      suppressed: suppressed.size,
+      sent,
+      pruned: pruned.length,
+      failed,
+      retried: retry.length,
+      retired,
+    },
+  };
 }
 
 export default {
@@ -433,162 +698,15 @@ export default {
     // never a result that looks like a successful send.
     if (missing.length > 0) return configurationFailure(missing);
 
-    const admin = createClient(supabaseUrl!, serviceKey!, { auth: { persistSession: false } });
-    const { data: pending, error: readError } = await admin
-      .from("notifications")
-      .select("id, user_id, type, post_id, comment_id, created_at, reaction_kind")
-      .is("pushed_at", null)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true })
-      .limit(BATCH_LIMIT);
-    if (readError) {
-      console.error("push-dispatch: could not read pending notifications. No notifications were sent.");
-      return Response.json({ error: "read failed", scanned: 0, sent: 0 }, { status: 500 });
-    }
-
-    const scanned = (pending ?? []) as DispatchNotification[];
-    if (scanned.length === 0) return Response.json({ scanned: 0, sent: 0, pruned: 0, failed: 0 });
-
-    // Service-role scans bypass RLS. Resolve eligibility from the stored row's
-    // recipient/subject, never a caller-supplied actor. An unknown answer is not
-    // permission and must remain retryable, not become a terminal disposition.
-    const allowed = async (id: string): Promise<boolean> => {
-      const { data, error } = await admin.rpc("findback_notification_delivery_allowed", { p_notification_id: id });
-      if (error || typeof data !== "boolean") throw new Error("Delivery eligibility unavailable");
-      return data;
-    };
-    const notifications: DispatchNotification[] = [];
-    const suppressed = new Set<string>();
-    const deferred = new Set<string>();
-    try {
-      for (const row of scanned) {
-        if (await allowed(row.id)) notifications.push(row);
-        else suppressed.add(row.id);
-      }
-    } catch {
-      return Response.json({ error: "eligibility unavailable", scanned: scanned.length, sent: 0 }, { status: 503 });
-    }
-    if (notifications.length === 0) {
-      const { error } = await admin.from("notifications").update({ pushed_at: new Date().toISOString() }).in("id", [...suppressed]);
-      if (error) return Response.json({ error: "disposition failed", sent: 0 }, { status: 503 });
-      return Response.json({ scanned: scanned.length, suppressed: suppressed.size, sent: 0, pruned: 0, failed: 0 });
-    }
-
-    const userIds = [...new Set(notifications.map((n) => n.user_id))];
-    const [{ data: prefs }, { data: tokens }] = await Promise.all([
-      admin.from("notification_preferences").select("*").in("user_id", userIds),
-      admin.from("device_tokens").select("user_id, token").in("user_id", userIds),
-    ]);
-
-    const deliveries = planDeliveries(
-      notifications,
-      (prefs ?? []) as PreferenceRow[],
-      (tokens ?? []) as DeviceTokenRow[],
-    );
-
-    let accessToken = "";
-    try {
-      accessToken = await getAccessToken(JSON.parse(senderJson!));
-    } catch {
-      console.error("push-dispatch: FIREBASE_SERVICE_ACCOUNT_JSON is invalid or FCM authentication failed. No notifications were sent.");
-      return Response.json(
-        { error: "fcm auth failed", scanned: notifications.length, sent: 0 },
-        { status: 502 },
-      );
-    }
-
-    // One single-use reply token per COMMENT notification, shared by that user's
-    // devices so a reply sent from any device consumes it once. Only minted for
-    // notifications that will actually be pushed (at least one planned
-    // delivery): a user with no eligible device must not leave orphan tokens.
-    const replyTokens = new Map<string, string>();
-    const tokenCreatedAt = new Date().toISOString();
-    const tokenExpiresAt = new Date(Date.now() + REPLY_TOKEN_TTL_MS).toISOString();
-    for (const notification of notifiableReplyTargets(notifications, deliveries)) {
-      if (notification.type !== "COMMENT" || !notification.comment_id || !notification.post_id) continue;
-      try {
-        if (!await allowed(notification.id)) { suppressed.add(notification.id); continue; }
-      } catch { deferred.add(notification.id); continue; }
-      const raw = generateReplyToken();
-      const row = buildReplyTokenRow(
-        notification,
-        await hashToken(raw),
-        tokenCreatedAt,
-        tokenExpiresAt,
-      );
-      if (!row) continue;
-      const { error } = await admin.from("push_reply_tokens").insert(row);
-      if (!error) replyTokens.set(notification.id, raw);
-    }
-
-    let sent = 0;
-    let failed = 0;
-    const pruned: string[] = [];
-    const outcomes: SendOutcome[] = [];
-    for (const delivery of deliveries) {
-      if (suppressed.has(delivery.notificationId)) continue;
-      if (deferred.has(delivery.notificationId)) {
-        outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
-        continue;
-      }
-      // Eligibility can change while OAuth or token writes are in flight. Check
-      // again immediately before each external send; no stale scan can permit it.
-      try {
-        if (!await allowed(delivery.notificationId)) {
-          suppressed.add(delivery.notificationId);
-          await admin.from("push_reply_tokens").delete().eq("notification_id", delivery.notificationId).is("used_at", null);
-          replyTokens.delete(delivery.notificationId);
-          continue;
-        }
-      } catch {
-        deferred.add(delivery.notificationId);
-        outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
-        continue;
-      }
-      const result = await sendMessage(
-        projectId!,
-        accessToken,
-        buildFcmMessage(delivery, origin!, replyTokens.get(delivery.notificationId)),
-      );
-      outcomes.push({ notificationId: delivery.notificationId, ok: result.ok, prune: result.prune });
-      if (result.ok) sent += 1;
-      else {
-        failed += 1;
-        if (result.prune) pruned.push(delivery.token);
-      }
-    }
-
-    // Terminal disposition only: a notification with no eligible device, one
-    // delivered anywhere, or only invalid-token failures is stamped. A
-    // notification whose only failures were transient stays pending so the next
-    // scheduled run retries it, up to MAX_PUSH_ATTEMPTS.
-    const { handled, retry } = planDispatchOutcomes(scanned, outcomes);
-    const pushedAt = new Date().toISOString();
-    if (handled.length > 0) {
-      await admin.from("notifications").update({ pushed_at: pushedAt }).in("id", handled);
-    }
-    let retired = 0;
-    if (retry.length > 0) {
-      const { data } = await admin.rpc("findback_record_push_failure", {
-        p_ids: retry,
-        p_error: "temporary FCM failure",
-        p_max_attempts: MAX_PUSH_ATTEMPTS,
-      });
-      retired = Number(data ?? 0);
-    }
-
-    if (pruned.length > 0) {
-      await admin.from("device_tokens").delete().in("token", [...new Set(pruned)]);
-    }
-
-    return Response.json({
-      scanned: scanned.length,
-      suppressed: suppressed.size,
-      sent,
-      pruned: pruned.length,
-      failed,
-      retried: retry.length,
-      retired,
+    const admin = createAdminClient(supabaseUrl!, serviceKey!);
+    // One seam runs both lanes: chat first and additive, then the report lane
+    // that owns the status. See `_shared/dispatchLanes.ts`.
+    const lanes = await runDispatchLanes({
+      dispatchChat: () => dispatchChatWakes(admin, projectId!, senderJson!),
+      dispatchReports: () =>
+        dispatchReportLane(admin, { projectId: projectId!, origin: origin!, senderJson: senderJson! }),
+      log: (message) => console.error(`push-dispatch: ${message}`),
     });
+    return Response.json(lanes.body, { status: lanes.status });
   },
 };
