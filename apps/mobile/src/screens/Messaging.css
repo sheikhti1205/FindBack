@@ -1,8 +1,12 @@
 .fb-chat-page { display:flex; flex-direction:column; height:100%; min-height:0; background:var(--fb-surface); color:var(--fb-on-surface); }
 .fb-chat-header { display:flex; align-items:center; gap:.35rem; flex:none; padding:.4rem .6rem; border-bottom:1px solid var(--fb-outline-variant); padding-top:max(.4rem, env(safe-area-inset-top)); }
-.fb-chat-header h1 { font-size:1.05rem; font-weight:650; min-width:0; overflow-wrap:anywhere; flex:1; margin:0; }
+.fb-chat-header h1 { font-size:1.05rem; font-weight:650; min-width:0; margin:0; }
 .fb-chat-heading { flex:1; min-width:0; }
 .fb-chat-heading p { margin:.1rem 0 0; }
+.fb-chat-identity { display:flex; align-items:center; gap:4px; width:100%; min-height:44px; text-align:start; }
+.fb-chat-identity span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fb-chat-identity svg { flex:none; }
+.fb-chat-full-name { padding:16px; overflow-wrap:anywhere; }
 .fb-chat-icon { display:inline-flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; flex:none; border-radius:50%; }
 .fb-chat-icon:hover, .fb-chat-icon:active { background:var(--fb-surface-container); }
 .fb-chat-page button:disabled { opacity:.5; cursor:default; }
@@ -37,7 +41,7 @@
 .fb-chat-message p { white-space:pre-wrap; margin:0; line-height:1.45; font-size:.95rem; }
 .fb-chat-message-status { display:block; font-size:.75rem; text-align:end; margin-top:.25rem; }
 .fb-chat-message-status button { text-decoration:underline; min-height:44px; min-width:44px; }
-.fb-chat-composer { display:flex; align-items:flex-end; gap:.4rem; flex:none; padding:.5rem .75rem; border-top:1px solid var(--fb-outline-variant); padding-bottom:max(.5rem, env(safe-area-inset-bottom)); }
+.fb-chat-composer { display:flex; align-items:flex-end; gap:.4rem; flex:none; padding:8px 12px; border-top:1px solid var(--fb-outline-variant); padding-bottom:max(8px, env(safe-area-inset-bottom)); }
 .fb-chat-composer textarea { flex:1; min-width:0; min-height:44px; max-height:9rem; resize:vertical; border:1px solid var(--fb-control-outline); border-radius:1.25rem; padding:.6rem .9rem; background:var(--fb-surface-container); color:var(--fb-on-surface); font-size:1rem; }
 .fb-chat-error { font-size:.875rem; color:var(--fb-error); padding:.5rem 1rem; }
 .fb-chat-sheet { display:flex; flex-direction:column; gap:.6rem; padding:1rem; }

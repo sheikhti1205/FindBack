@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, Bell, Ellipsis, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, Ellipsis, RefreshCw, Send } from "lucide-react";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
 import { BottomSheet } from "../components/BottomSheet";
@@ -28,6 +28,26 @@ function useLabels(peerIds: string[]) {
     return () => { cancelled = true; };
   }, [key]);
   return labels;
+}
+
+/** Compact heading; the complete name remains available to every user. */
+export function ChatIdentity({ name, status }: { name?: string; status: string }) {
+  const [open, setOpen] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const label = name ? `@${name}` : "Conversation";
+  useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
+  return <>
+    <div className="fb-chat-heading">
+      <h1 ref={heading} tabIndex={-1}>{name
+        ? <button type="button" className="fb-chat-identity" onClick={() => setOpen(true)}><span>{label}</span><ChevronDown size={16} aria-hidden="true" /></button>
+        : <span className="fb-chat-identity"><span>{label}</span></span>}
+      </h1>
+      <p className="fb-chat-secondary">{status}</p>
+    </div>
+    {name && <BottomSheet open={open} onClose={() => setOpen(false)} title="Conversation participant" height="large">
+      <p className="fb-chat-full-name">{label}</p>
+    </BottomSheet>}
+  </>;
 }
 
 function RetrySync({ accountId }: { accountId: string }) {
@@ -130,14 +150,13 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [reportOpen, setReportOpen] = useState(false);
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
   const [receipt, setReceipt] = useState<{ projections: typeof chat.currentProjections; readIds: Set<string> } | null>(null);
-  const heading = useRef<HTMLHeadingElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
   const lastMarked = useRef(0);
   const alive = useRef(true);
   useEffect(() => {
-    alive.current = true; heading.current?.focus();
+    alive.current = true;
     return () => { alive.current = false; };
   }, []);
   useEffect(() => {
@@ -316,8 +335,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     <header className="fb-chat-header">
       <Link to="/connections" className="fb-chat-icon" aria-label="Back to connections"><ArrowLeft size={22} aria-hidden="true" /></Link>
       <UserAvatar username={name} size={32} />
-      <div className="fb-chat-heading"><h1 ref={heading} tabIndex={-1}>{name ? `@${name}` : "Conversation"}</h1>
-        <p className="fb-chat-secondary">{!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"}</p></div>
+      <ChatIdentity name={name} status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
       <button type="button" className="fb-chat-icon" aria-label="Conversation options" onClick={() => setSheet("actions")}><Ellipsis size={22} aria-hidden="true" /></button>
     </header>
     <div className="fb-chat-messages" ref={scroll}>
