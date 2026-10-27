@@ -16,6 +16,31 @@ import com.findback.app.R
  */
 class NotificationPresenter(private val context: Context) {
 
+    /** No sender, text, report URL or inline reply on the private request nudge. */
+    fun showChatRequest(push: ChatPushData, tap: String) {
+        if (!notificationsAllowed()) return
+        PushChannels.ensureCreated(context)
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = ChatPushState.ACTION_TAP
+            data = Uri.Builder().scheme("findback-chat").authority("tap").appendPath(tap).build()
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pending = PendingIntent.getActivity(context, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val notification = NotificationCompat.Builder(context, PushChannels.CHAT_REQUESTS)
+            .setSmallIcon(R.drawable.ic_stat_findback)
+            .setContentTitle(context.getString(R.string.findback_chat_request_title))
+            .setContentText(context.getString(R.string.findback_chat_request_body))
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .build()
+        NotificationManagerCompat.from(context).notify("chat:" + push.notificationId, 0, notification)
+    }
+
     fun show(push: PushData) {
         if (!notificationsAllowed()) return
         PushChannels.ensureCreated(context)

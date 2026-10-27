@@ -107,7 +107,7 @@ export function describeEvidence(evidence: Record<string, unknown> | null): Targ
   };
   push("Title", read("title"));
   push("Details", read("description_excerpt"));
-  push("Comment", read("body_excerpt"));
+  push(evidence.target_type === "MESSAGE" ? "Message" : "Comment", read("body_excerpt"));
   push("Name", read("display_name"));
   push("Username", read("username"));
   return lines;

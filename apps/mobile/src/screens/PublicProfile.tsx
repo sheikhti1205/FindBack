@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
 import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
 import { fetchFeed } from "../services/posts";
@@ -10,6 +10,8 @@ import { SafetyActions } from "../components/SafetyActions";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
 import { useAuth } from "../auth";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
+import { requestMessagingConversation } from "../services/messaging/runtime";
+import { useMessaging } from "../services/messaging/useMessaging";
 
 /** "Joined January 2026" from an ISO timestamp; tolerant of bad input. */
 function formatJoined(createdAt: string): string {
@@ -34,7 +36,12 @@ export function PublicProfile() {
 }
 
 function PublicProfileSession({ username }: { username: string }) {
+  const { user } = useAuth();
+  const chat = useMessaging();
+  const navigate = useNavigate();
   const alive = useSafetyLifetime();
+  const [openingChat, setOpeningChat] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const pageInFlight = useRef(false);
   const [profile, setProfile] = useState<PublicProfileShape | null>(null);
   const [reports, setReports] = useState<PostItem[]>([]);
@@ -153,6 +160,20 @@ function PublicProfileSession({ username }: { username: string }) {
             {profile.locationLabel && (
               <p className="break-words text-sm text-on-surface-variant">{profile.locationLabel}</p>
             )}
+            {user && profile.id !== user.id && <>
+              <button type="button" disabled={openingChat || chat.status === "opening" || chat.status === "closed" || chat.status === "error"}
+                className="mt-2 min-h-[44px] self-start rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container disabled:opacity-50"
+                onClick={() => {
+                  if (openingChat) return;
+                  setOpeningChat(true); setChatError(null);
+                  void requestMessagingConversation(user.id, profile.id).then((id) => {
+                    if (alive.current) navigate(`/connections/${id}`);
+                  }).catch(() => {
+                    if (alive.current) setChatError("Could not open this conversation. Check your connection and try again.");
+                  }).finally(() => { if (alive.current) setOpeningChat(false); });
+                }}>{openingChat ? "Opening…" : "Message"}</button>
+              {chatError && <p role="alert" className="text-sm text-error">{chatError}</p>}
+            </>}
             </div>
           </section>
 

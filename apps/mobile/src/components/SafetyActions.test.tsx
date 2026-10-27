@@ -78,7 +78,7 @@ describe("the safety overflow on a report or comment", () => {
       targetId: "comment-1",
       reason: "HARASSMENT",
       detail: null,
-    });
+    }, expect.any(AbortSignal));
   });
 });
 
@@ -102,7 +102,7 @@ describe("the safety overflow on a profile", () => {
       targetId: "user-2",
       reason: "HARASSMENT",
       detail: null,
-    });
+    }, expect.any(AbortSignal));
   });
 
   it("has no guest or self-target actions", () => {

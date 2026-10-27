@@ -33,7 +33,7 @@ const NAV = [
   { to: "/notifications", label: "Notifications", icon: Bell },
 ] as const;
 
-const HIDE_NAV = ["/help", "/posts/", "/ai-connection"];
+const HIDE_NAV = ["/help", "/posts/", "/ai-connection", "/connections/"];
 
 /**
  * Surfaces designed for a wide canvas (packet `09` §1/§2/§21).
@@ -52,7 +52,7 @@ export function Shell() {
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
   const wideCanvas = WIDE_CANVAS.includes(pathname);
   const ownsInternalScroll =
-    pathname === "/" || pathname === "/search" || pathname.startsWith("/help");
+    pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections");
   // Owner ruling 4(e): the stored preference only becomes a side rail at the
   // compact breakpoint and up. The rail is an in-flow sibling of the content,
   // so it takes layout space and never covers what the reader is reading.

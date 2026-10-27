@@ -12,8 +12,8 @@
  *    `senderVisibleState` are the only projections a surface may render, and they
  *    are derived from the mode and the local request session, never from which
  *    negative action the recipient chose.
- * 3. Acceptance requires an *active* request whose initiator is the other person,
- *    so End/Decline (which clear the initiator) cannot be self-accepted.
+ * 3. Acceptance requires an *active* request whose initiator is the other person.
+ *    End clears the initiator; private Decline does not terminate that request.
  *
  * Nothing here authorizes anything on a server. The caller must still pass
  * server-validated, current relationship state; local policy cannot grant delivery,
@@ -23,7 +23,7 @@
 export type RelationshipMode = "REQUEST" | "CONNECTED";
 
 /** Recipient-side negative choices. None of them is disclosed precisely. */
-export type RecipientAction = "ACCEPT" | "DECLINE" | "HIDE" | "REPORT" | "BLOCK";
+export type RecipientAction = "ACCEPT" | "DECLINE" | "HIDE" | "UNHIDE" | "REPORT" | "BLOCK";
 
 export interface PairState {
   /** The two participants. Order carries no meaning. */
@@ -31,7 +31,7 @@ export interface PairState {
   readonly mode: RelationshipMode;
   /**
    * Participant who opened the current request, or null when the pair has no
-   * active approach (fresh pair, after End, or after a decline). Null means
+   * active approach (fresh pair or after End). Null means
    * either participant may approach next, and acceptance is not possible.
    */
   readonly initiatorId: string | null;
@@ -39,6 +39,8 @@ export interface PairState {
   readonly blockedBy: readonly string[];
   /** Recipients who muted this request in their own inbox. Recipient-private. */
   readonly hiddenBy: readonly string[];
+  /** Private dismissal, independent of hiding and not a sender-visible outcome. */
+  readonly declinedBy: readonly string[];
   /** Text messages sent during the current request session. */
   readonly requestMessageCount: number;
   /** Whether the current request session already produced its one external nudge. */
@@ -253,6 +255,7 @@ function withState(state: PairState, patch: Partial<PairState>): PairState {
   merged.participants = Object.freeze([...merged.participants]) as unknown as [string, string];
   merged.blockedBy = Object.freeze([...merged.blockedBy]) as unknown as string[];
   merged.hiddenBy = Object.freeze([...merged.hiddenBy]) as unknown as string[];
+  merged.declinedBy = Object.freeze([...merged.declinedBy]) as unknown as string[];
   return Object.freeze(merged) as PairState;
 }
 
@@ -315,9 +318,9 @@ export function applySend(state: PairState, actorId: string, draft: OutgoingDraf
 /**
  * Recipient-side decision.
  * - BLOCK is allowed in either mode and preserves every participant's own choice.
- * - ACCEPT/DECLINE/HIDE/REPORT require an *active* request (non-null initiator)
- *   where the actor is the recipient. End/Decline clear the initiator, so they can
- *   never be re-accepted without a new approach.
+ * - HIDE/UNHIDE are caller-private inbox controls in either mode.
+ * - ACCEPT/DECLINE/REPORT require an *active* request where the actor is the
+ *   recipient. Decline leaves the request active and may be followed by Accept.
  * - A block anywhere withholds acceptance; the actor sees an ordinary "not
  *   connected" state, never the other participant's private block.
  */
@@ -333,6 +336,14 @@ export function applyRecipientAction(state: PairState, actorId: string, action: 
     };
   }
 
+  if (action === "HIDE" || action === "UNHIDE") {
+    const hidden = state.hiddenBy.includes(actorId);
+    return { ok: true, applied: hidden !== (action === "HIDE"),
+      state: withState(state, { hiddenBy: action === "HIDE"
+        ? (hidden ? [...state.hiddenBy] : [...state.hiddenBy, actorId])
+        : state.hiddenBy.filter((id) => id !== actorId) }) };
+  }
+
   if (state.mode !== "REQUEST" || state.initiatorId === null || state.initiatorId === actorId) {
     return REJECTED;
   }
@@ -345,27 +356,21 @@ export function applyRecipientAction(state: PairState, actorId: string, action: 
         state: withState(state, {
           mode: "CONNECTED",
           initiatorId: null,
-          hiddenBy: [],
+          hiddenBy: state.hiddenBy.filter((id) => id !== actorId),
+          declinedBy: state.declinedBy.filter((id) => id !== actorId),
           requestMessageCount: 0,
           nudged: true,
         }),
         applied: true,
       };
     case "DECLINE":
-      // Keep the request session's nudge state so the sender cannot tell a decline
-      // from a hide or report through the next message's nudge bit.
+      // Do not change the initiator, hidden bit or nudge state. Private dismissal
+      // cannot turn a follow-up into a new approach or reveal a rejection.
       return {
         ok: true,
-        state: withState(state, { initiatorId: null, hiddenBy: [] }),
-        applied: true,
-      };
-    case "HIDE":
-      return {
-        ok: true,
-        state: withState(state, {
-          hiddenBy: state.hiddenBy.includes(actorId) ? [...state.hiddenBy] : [...state.hiddenBy, actorId],
-        }),
-        applied: true,
+        state: withState(state, { declinedBy: state.declinedBy.includes(actorId)
+          ? [...state.declinedBy] : [...state.declinedBy, actorId] }),
+        applied: !state.declinedBy.includes(actorId),
       };
     case "REPORT":
       // Reporting never upgrades the relationship and never closes it for the sender.
@@ -385,7 +390,7 @@ export function applyEnd(state: PairState, actorId: string): StateResult & { his
     state: withState(state, {
       mode: "REQUEST",
       initiatorId: null,
-      hiddenBy: [],
+      declinedBy: [],
       requestMessageCount: 0,
       nudged: false,
     }),

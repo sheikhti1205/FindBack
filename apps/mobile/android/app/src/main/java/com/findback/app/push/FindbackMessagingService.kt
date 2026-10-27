@@ -18,6 +18,14 @@ import com.google.firebase.messaging.RemoteMessage
 class FindbackMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
+        if (message.data["type"].orEmpty().startsWith("CHAT_")) {
+            val chat = ChatPushData.fromData(message.data) ?: return
+            val foreground = FindbackApp.foreground && PushNotificationsPlugin.getPushNotificationsInstance() != null
+            try {
+                ChatPushState.deliver(this, chat, foreground) { PushNotificationsPlugin.sendRemoteMessage(message) }
+            } catch (_: Exception) { /* Cached admission/persistence failed: never forward or present. */ }
+            return
+        }
         // Always forward: foreground JS events, and the plugin's lastMessage
         // stash for a cold/background launch.
         PushNotificationsPlugin.sendRemoteMessage(message)

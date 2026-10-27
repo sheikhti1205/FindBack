@@ -3,6 +3,7 @@ import { clearNearbySession } from "./nearby";
 import { clearPhotoStore } from "./photoStore";
 import { resetLocalAiForAccount } from "./ai/applicationAi";
 import { clearDraft } from "./reportDraft";
+import { clearMessagingRuntime } from "./messaging/runtime";
 
 /**
  * Drops all user-scoped local data: the in-memory report draft, stashed
@@ -16,6 +17,7 @@ import { clearDraft } from "./reportDraft";
  * logout never wipes verified model files.
  */
 export function clearUserScopedLocalState(): void {
+  clearMessagingRuntime();
   clearDraft();
   clearPhotoStore();
   clearFeedCaches();

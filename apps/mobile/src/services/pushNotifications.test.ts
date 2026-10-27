@@ -49,6 +49,10 @@ beforeEach(() => {
 });
 
 describe("reportUrlFromPushData", () => {
+  it("never routes a chat-shaped payload as a public report", () => {
+    expect(reportUrlFromPushData({ type: "CHAT_REQUEST", url: "https://findbackapp.social/r/abc" })).toBeNull();
+    expect(reportUrlFromPushData({ type: "CHAT_UNKNOWN", postId: "abc" })).toBeNull();
+  });
   it("prefers an explicit url and falls back to a postId report link", () => {
     expect(reportUrlFromPushData({ url: "https://findbackapp.social/r/abc" })).toBe(
       "https://findbackapp.social/r/abc",
@@ -59,6 +63,27 @@ describe("reportUrlFromPushData", () => {
 });
 
 describe("createPushController", () => {
+  it("admits current-account foreground chat wakes only, never report fallback or chat action extras", async () => {
+    const { adapter, handles } = fakeAdapter();
+    const account = "11111111-1111-4111-8111-111111111111";
+    const other = "22222222-2222-4222-8222-222222222222";
+    const chat = { type: "CHAT_CONNECTED", recipientId: account, conversationId: other, notificationId: other };
+    const chatWake = vi.fn();
+    const emitReceived = vi.fn();
+    const openReportUrl = vi.fn();
+    const controller = createPushController({ adapter, chatAccount: () => account, chatWake, emitReceived, openReportUrl });
+    await controller.start();
+    handles.received[0]!(chat);
+    handles.received[0]!({ ...chat, recipientId: other });
+    handles.received[0]!({ ...chat, url: "https://findbackapp.social/r/abc" });
+    handles.action[0]!(chat);
+    expect(chatWake).toHaveBeenCalledExactlyOnceWith(account);
+    expect(emitReceived).not.toHaveBeenCalled();
+    expect(openReportUrl).not.toHaveBeenCalled();
+    await controller.stop();
+    handles.received[0]!(chat);
+    expect(chatWake).toHaveBeenCalledOnce();
+  });
   it("does not request permission or register after stop interrupts a permission check", async () => {
     let finish!: (permission: "prompt") => void;
     const requestPermission = vi.fn(async () => "granted" as const);

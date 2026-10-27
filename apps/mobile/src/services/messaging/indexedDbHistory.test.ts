@@ -2,12 +2,14 @@
 import { IDBFactory, IDBDatabase, IDBObjectStore, IDBTransaction, forceCloseDatabase } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as adapter from "./indexedDbHistory";
-import type { HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope, OutgoingAttempt } from "./history";
+import type { HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope, OutgoingAttempt, StoredHumanMessage } from "./history";
+import type { StateChangeEnvelope } from "./stateChanges";
 
 const A = "00000000-0000-4000-8000-000000000001";
 const B = "00000000-0000-4000-8000-000000000002";
 const DEVICE = "00000000-0000-4000-8000-000000000003";
 const OTHER_DEVICE = "00000000-0000-4000-8000-000000000004";
+const C = "00000000-0000-4000-8000-00000000000f";
 const MESSAGE = "00000000-0000-4000-8000-000000000005";
 const CONVERSATION = "00000000-0000-4000-8000-000000000006";
 const EVENT = "00000000-0000-4000-8000-000000000007";
@@ -410,4 +412,103 @@ describe("strict durability capability fails closed before storage actions", () 
       });
     }
   }
+});
+
+const MESSAGE_2 = "00000000-0000-4000-8000-00000000000a";
+const EVENT_2 = "00000000-0000-4000-8000-00000000000b";
+const MAILBOX_2 = "00000000-0000-4000-8000-00000000000c";
+const STATE = "00000000-0000-4000-8000-00000000000d";
+const STATE_2 = "00000000-0000-4000-8000-00000000000e";
+
+const DB_NAME = `findback-human-history-v1:${A}:${DEVICE}`;
+
+async function rawDatabase(): Promise<IDBDatabase> {
+  return await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open(DB_NAME, 3);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function rawMessage(id = MESSAGE): Promise<StoredHumanMessage | undefined> {
+  const db = await rawDatabase();
+  const request = db.transaction("messages", "readonly").objectStore("messages").get(id);
+  const value = await new Promise<StoredHumanMessage | undefined>((resolve) => {
+    request.onsuccess = () => resolve(request.result as StoredHumanMessage | undefined);
+  });
+  db.close();
+  return value;
+}
+
+async function rawDeleteMessage(id = MESSAGE): Promise<void> {
+  const db = await rawDatabase();
+  const tx = db.transaction("messages", "readwrite");
+  tx.objectStore("messages").delete(id);
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
+  });
+  db.close();
+}
+
+function state(change: StateChangeEnvelope["change"]): StateChangeEnvelope {
+  return { ...scope, change };
+}
+
+describe("server-authoritative erasure state (web parity with SQLite)", () => {
+  it("applies an author unsend as a body-less tombstone and rejects a wrong recipient", async () => {
+    const one = await open();
+    await one.persistInbound(envelope());
+
+    await expect(one.applyStateChange(state({
+      kind: "UNSEND", eventId: STATE, sequence: 1, conversationId: CONVERSATION, occurredAt: 10,
+      messageId: MESSAGE, authorId: B, recipientId: C, messageSequence: 1,
+    }))).rejects.toThrow(/participant mismatch|identity conflict/);
+    expect((await one.getMessage(MESSAGE))?.body).toBe("Please help me find my bag.");
+
+    await one.applyStateChange(state({
+      kind: "UNSEND", eventId: STATE_2, sequence: 2, conversationId: CONVERSATION, occurredAt: 11,
+      messageId: MESSAGE, authorId: B, recipientId: A, messageSequence: 1,
+    }));
+    expect(await one.getMessage(MESSAGE)).toMatchObject({ body: "", unsentAt: 11 });
+  });
+
+  it("applies delete-for-me as local erasure of the stored body", async () => {
+    const one = await open();
+    await one.persistInbound(envelope());
+    await one.applyStateChange(state({
+      kind: "DELETE_FOR_ME", eventId: STATE, sequence: 1, conversationId: CONVERSATION, occurredAt: 10,
+      messageId: MESSAGE, authorId: B, recipientId: A, messageSequence: 1,
+    }));
+    expect(await one.getMessage(MESSAGE)).toBeNull();
+    expect(await one.listMessages(CONVERSATION)).toEqual([]);
+    expect((await rawMessage())?.body).toBe("");
+  });
+
+  it("applies clear-for-me through a sequence and erases only the covered bodies", async () => {
+    const one = await open();
+    await one.persistInbound(envelope());
+    const second: HumanMessage = { ...text, id: MESSAGE_2, authorId: B, recipientId: A, body: "second" };
+    await one.persistInbound({ ...scope, mailboxId: MAILBOX_2,
+      event: { kind: "TEXT", eventId: EVENT_2, sequence: 2, message: second } });
+
+    await one.applyStateChange(state({
+      kind: "CLEAR_FOR_ME", eventId: STATE, sequence: 1, conversationId: CONVERSATION,
+      occurredAt: 10, peerId: B, throughSequence: 1,
+    }));
+    expect(await one.getMessage(MESSAGE)).toBeNull();
+    expect((await one.listMessages(CONVERSATION)).map((message) => message.body)).toEqual(["second"]);
+    expect((await rawMessage())?.body).toBe("");
+  });
+
+  it("does not resurrect a message when a recorded envelope is replayed after local deletion", async () => {
+    const one = await open();
+    await one.persistInbound(envelope());
+    await rawDeleteMessage();
+    expect(await one.getMessage(MESSAGE)).toBeNull();
+
+    await one.persistInbound(envelope());
+    expect(await one.getMessage(MESSAGE)).toBeNull();
+    expect(await rawMessage()).toBeUndefined();
+  });
 });

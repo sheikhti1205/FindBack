@@ -22,10 +22,10 @@ import {
 import { isMissingServerFunction } from "../utils/safetyService";
 
 /** What is being reported. One shape for all three kinds. */
-export interface ReportTarget {
-  targetType: ReportTargetType;
-  targetId: string;
-}
+export type ReportTarget = { targetId: string } & (
+  | { targetType: Exclude<ReportTargetType, "MESSAGE"> }
+  | { targetType: "MESSAGE"; accountId: string; body: string }
+);
 
 export interface ReportSheetProps {
   open: boolean;
@@ -63,6 +63,7 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
   const { user } = useAuth();
   const alive = useSafetyLifetime();
   const generation = useRef(0);
+  const requestScope = useRef<AbortController | null>(null);
   const [reason, setReason] = useState<ReportReason | "">("");
   const [detail, setDetail] = useState("");
   const [sending, setSending] = useState(false);
@@ -74,6 +75,8 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
   // paint. Keep the canonical sheet mounted so its exit motion is preserved.
   useLayoutEffect(() => {
     generation.current += 1;
+    const controller = new AbortController();
+    requestScope.current = controller;
     if (open) {
       setReason("");
       setDetail("");
@@ -81,7 +84,7 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
       setSent(false);
       setSending(false);
     }
-    return () => { generation.current += 1; };
+    return () => { controller.abort(); generation.current += 1; };
   }, [open, target?.targetType, target?.targetId, user?.id]);
 
   if (!target) return null;
@@ -101,11 +104,10 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
     setError(null);
     try {
       const { reportId } = await submitReport({
-        targetType: target.targetType,
-        targetId: target.targetId,
+        ...target,
         reason,
         detail: detail.trim() === "" ? null : detail.trim(),
-      });
+      }, requestScope.current?.signal);
       if (!isCurrent()) return;
       setSent(true);
       announce("Report sent.");

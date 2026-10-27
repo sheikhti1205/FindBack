@@ -26,7 +26,10 @@ it("opens the canonical report sheet for the actual comment id and restores focu
   fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
   fireEvent.click(screen.getByRole("button", { name: "Send report" }));
   await screen.findByTestId("report-receipt");
-  expect(submit).toHaveBeenCalledWith({ targetType: "COMMENT", targetId: "comment-7", reason: "HARASSMENT", detail: null });
+  expect(submit).toHaveBeenCalledWith(
+    { targetType: "COMMENT", targetId: "comment-7", reason: "HARASSMENT", detail: null },
+    expect.any(AbortSignal),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions for comment by Sam" })));
 });

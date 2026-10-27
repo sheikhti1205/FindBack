@@ -1,3 +1,6 @@
+import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
+import type { StateChangeEnvelope, StateCursor } from "./stateChanges";
+
 /** Human-to-human text history. Deliberately separate from services/ai/chatStore. */
 export interface MessagingScope {
   accountId: string;
@@ -55,11 +58,67 @@ export interface PersistenceReceipt extends MessagingScope {
   eventId: string;
 }
 
-/** Storage contract for an eventual SQLite adapter; no platform auto-selection. */
+/**
+ * Portable history data. Deliberately plain: no adapter, no device identity and
+ * no cursor. A restore must never claim to have applied metadata it does not
+ * have, so the state cursor is not part of a backup.
+ *
+ * `body: null` means suppressed (unsent or deleted-for-me). An empty string is
+ * not a valid body, so the two adapters — which store suppression as NULL and
+ * as `""` respectively — normalise to this one representation.
+ */
+export interface SnapshotConversation {
+  id: string;
+  lastSequence: number;
+  /** Non-null: both SQLite columns are NOT NULL, and web exports no conversations. */
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SnapshotMessage {
+  id: string;
+  conversationId: string;
+  authorId: string;
+  recipientId: string;
+  body: string | null;
+  /** Only accepted messages are portable; a pending send is not history. */
+  serverEventId: string;
+  serverSequence: number;
+  unsentAt: number | null;
+  /** `null` when the adapter never observed one; 0 means unknown after normalisation. */
+  createdAt: number | null;
+}
+
+export interface HistorySnapshot {
+  conversations: SnapshotConversation[];
+  messages: SnapshotMessage[];
+  tombstones: { messageId: string; conversationId: string; recipientId: string | null;
+    unsentAt: number; unsentBy: string }[];
+  deletedForMe: { messageId: string; conversationId: string | null; deletedAt: number }[];
+  clears: { conversationId: string; throughSequence: number; clearedAt: number }[];
+}
+
+export interface ImportReport {
+  conversations: number;
+  messages: number;
+  tombstones: number;
+  deletedForMe: number;
+  clears: number;
+}
+
+/** Canonical account/device-local history on SQLite or IndexedDB. */
 export interface MessagingHistory {
   enqueueOutgoing(message: HumanMessage): Promise<void>;
   getMessage(id: string): Promise<StoredHumanMessage | null>;
   listMessages(conversationId: string): Promise<StoredHumanMessage[]>;
+  /** Local inbox remains enumerable offline, including cached relationship rows. */
+  listConversations(): Promise<ConversationSummary[]>;
+  cacheConversation(projection: ConversationProjection): Promise<void>;
+  /** Local reading is independent of whether public read receipts are enabled. */
+  markConversationRead(conversationId: string, throughSequence: number): Promise<void>;
+  /** Body-free erasure metadata survives temporary message-mailbox expiry. */
+  getStateCursor(): Promise<StateCursor | null>;
+  applyStateChange(envelope: StateChangeEnvelope): Promise<StateCursor>;
   listOutbox(): Promise<OutboxEntry[]>;
   /** A 60-second durable lease; expired SENDING is eligible after crash/reopen. */
   claimNextOutgoing(): Promise<OutgoingAttempt | null>;
@@ -68,6 +127,12 @@ export interface MessagingHistory {
   /** Requires accepted strict write durability, then transaction completion. Echo confirms sent. */
   persistInbound(envelope: MailboxEnvelope): Promise<PersistenceReceipt>;
   persistInboundAndAck(envelope: MailboxEnvelope, ack: (receipt: PersistenceReceipt) => Promise<void>): Promise<void>;
+  /** Portable history data for a backup. Never includes mailbox receipts, the
+   * outbox or per-device read state. */
+  exportSnapshot(): Promise<HistorySnapshot>;
+  /** Merge a normalised snapshot in one transaction. Never creates send work,
+   * mailbox receipts or state events, and never resurrects a suppressed body. */
+  importSnapshot(snapshot: HistorySnapshot): Promise<ImportReport>;
   /** Session owner must close on sign-out/account switch; cancels active work. */
-  close(): void;
+  close(): void | Promise<void>;
 }

@@ -195,27 +195,181 @@ pair state, and the server must independently enforce the same rules. The existi
 `20261024*_r3_chat_*` migrations do **not** yet enforce several of them; see
 `CF-CHAT-POLICY-025-SERVER-GAPS.md` in the session evidence directory.
 
-## Deliberately open
+## Storage boundaries closed in the current source
 
-The **web** adapter still does not apply tombstones/delete-for-me/clear/unsend; only
-the SQLite adapter does. Tombstone dominance, cross-device personal deletion and
-backup non-resurrection must be integrated on both before shipping private chat.
-This text-only foundation does not claim backup safety.
+The r2 review recorded four SQLite limits. All four are now fixed, with
+regression coverage in `sqliteHistory.test.ts`:
 
-Known SQLite limits, recorded from the r2 review and **not** fixed here. They must
-be closed before the schema ships or the Capacitor bridge is chosen, because the
-schema is unreleased and a version bump is still free:
+1. **A future schema version is rejected before mutation.** The stored version is
+   read from `messaging_meta` before the pragmas or any DDL run, and again under
+   the binding transaction. A file labelled with an unknown version is never
+   reshaped into a current database. (The test that claimed to cover this wrote
+   legacy version `2`, which is accepted; it now writes an actual future version.)
+2. **A tombstone binds the recipient.** Schema v4 adds `tombstones.recipient_id`
+   and every new tombstone records conversation, author *and* recipient; an
+   identity match requires all three. v1–v3 files are migrated additively
+   (`alter table ... add column`), legacy rows keep a NULL recipient, and a later
+   authoritative state change binds it (`bindTombstoneRecipient`).
+3. **Delete-for-me cancels an unsent message.** `deleteForMe` erases the local
+   body and, for a message the server has never accepted, deletes its outbox row,
+   so it can never be delivered after the user deleted it. A send already claimed
+   by a sender may still complete; the echo then re-erases the body.
+4. **A mailbox replay cannot resurrect content.** `mailbox_seen` and the message
+   row commit in one transaction, so a recorded envelope with no stored row means
+   deliberate local deletion: the replay is acknowledged and applied to nothing.
+   Neither the message nor the conversation shell is recreated. The web adapter
+   enforces the same rule.
 
-1. A file labelled with a **future schema version is mutated before it is rejected**
-   (the pragmas run and missing v1 tables are recreated, then the version check
-   throws). Move the version read ahead of DDL, or refuse to touch an unrecognised
-   file at all.
-2. A tombstone binds conversation and author but **not recipient**, so a
-   wrong-recipient tombstone can poison a message id.
-3. `deleteForMe` on a pending send hides it while its outbox entry stays claimable;
-   the §9 personal-delete semantics and §10 unsend semantics need an explicit
-   decision on cancellation.
-4. A mailbox replay after a raw conversation delete can resurrect one message.
+Server-authoritative erasure state (`STATE_SYNC`: `UNSEND`, `DELETE_FOR_ME`,
+`CLEAR_FOR_ME`) is applied by **both** adapters. A state change is metadata, not
+the message's TEXT event: it never stamps a synthetic server event identity on the
+message, so a state change that arrives before or after the authoritative echo
+cannot block it. Web coverage for all three kinds was added in
+`indexedDbHistory.test.ts`; it exposed and fixed an identity check that rejected a
+normal delete-for-me after a text echo.
+
+## Portable history backup (SQLite)
+
+`backup.ts` defines a transport-agnostic snapshot. It is **history, not a database
+image**: only accepted messages (`server_event_id` and `server_sequence` both
+present) travel, and `mailbox_seen`, the outbox and per-device read state are
+excluded. A restore is not a send, not an acknowledgement and not metadata
+application, so it never creates send work, mailbox receipts or state events and
+never claims a state cursor.
+
+```
+{ format: "findback.chat.backup", version: 1, accountId, deviceId, exportedAt,
+  snapshot: { conversations, messages, tombstones, deletedForMe, clears },
+  digest }                                    // sha256 over canonical JSON, minus digest
+```
+
+**Integrity is not authenticity.** The digest is unkeyed SHA-256. It detects
+corruption and accidental mixing of two files; it cannot detect forgery, because
+anyone can recompute it. Every record is therefore validated on its own terms
+(uuid, positive sequence, participant sanity, body bounds) exactly as if the digest
+had passed on an attacker's file, and the account check is the only cross-account
+guard. Drive authorization and encryption belong to the transport, not here.
+
+**Normalisation.** The two adapters differ in two ways the snapshot must absorb:
+
+- suppression is `NULL` in SQLite and `""` in IndexedDB, and `""` is never a valid
+  body — so the snapshot uses `body: null` for "suppressed" and converts at the
+  boundary;
+- the web adapter keeps no message timestamp, so `createdAt` is nullable and
+  normalises to the constant `0`, meaning "unknown, never observed". `0` is a
+  constant rather than a wall-clock fallback precisely so the merge cannot become
+  direction-dependent. Accepted messages are ordered by their unique
+  `server_sequence` first, so `created_at` only breaks ties that cannot exist.
+
+**Merge is commutative.** Every rule is min, max, union or "suppressed wins":
+`lastSequence` and `updatedAt` take the max, `createdAt` the min, tombstones and
+personal deletions union by message id, a clear takes the max boundary, and a
+suppressed body always wins over a visible one. Merging A into B and B into A
+therefore reach the same state; the test suite asserts that directly rather than
+arguing it.
+
+**Fail closed.** A contradiction is never resolved by picking a side: the same
+message id with a different conversation, author, recipient, event or sequence; a
+tombstone with a different conversation or author, or a different *non-null*
+recipient; a snapshot claiming a conversation sequence another message already
+uses; or a different body for the same accepted message. The whole import is one
+transaction, so a failure leaves nothing behind. A local *unbound* legacy tombstone
+(`recipient_id` NULL) may still be bound from the snapshot, the same way an inbound
+state change binds it.
+
+**A tombstone may only suppress the message it describes.** The backstop matches on
+message id, so a tombstone is checked against the message before it is stored and
+again when a message arrives for an existing tombstone: the conversation and the
+author must agree, the recipient must agree when the tombstone is bound, and two
+*known* unsend times must be equal. A tombstone that names a different author would
+otherwise erase a message the user can still read. When the message carries no unsend
+time, it adopts the tombstone's, so one unsend stays one event whichever of the two
+arrives first. An *unbound* legacy tombstone (`recipient_id` NULL) is still accepted
+and is bound from the recipient the message actually has, exactly as the inbound state
+path does.
+
+**The input is untrusted data, not a JavaScript value.** The record arrays must be
+plain and dense: a sparse array, a hole compensated for by an extra property, a
+`{length: 1}` object or a hostile accessor is rejected as `backup: invalid snapshot`
+rather than allowed to fail later inside the adapter.
+
+**Caller data is read exactly once.** `readSnapshot` copies every field into plain
+records under one guard, and that copy is what the digest, the record checks, the merge
+and the returned envelope all use. A stateful getter therefore cannot answer a valid
+value to validation and a different one to the merge, and cannot throw outside the
+documented error boundary. Two consequences are load-bearing:
+
+- the adapter's `importSnapshot` normalises **before** the serial queue clones its
+  arguments, because `structuredClone` invokes accessors — a guard placed after the
+  clone is not a guard at all;
+- that wrapper is `async`, so a rejected import is a rejected promise like every other
+  method, not a synchronous throw.
+
+Values are copied verbatim, never normalised, so the copy stays byte-identical to what
+the caller sealed and the digest still means what it says. That equality holds for every
+input this module accepts, because an **unknown key is rejected**: the copy keeps only
+the known fields, so a sealed record with an extra field would otherwise hash differently
+and be reported as `digest mismatch` when the real problem is an unknown field. Both the
+envelope and every record type therefore have an exact own-key set.
+
+"Own" is meant literally, and it is enforced at the level of property **descriptors**,
+because every cheaper check is a question the caller's object answers about itself:
+
+- `Object.keys` cannot see fields supplied by a prototype, so a record built with
+  `Object.create(schema)` has no own keys at all;
+- `hasOwnProperty` is answered by the object too, so a `Proxy` can report the schema names
+  through `ownKeys`/`getOwnPropertyDescriptor` and still resolve ordinary reads through
+  its target's prototype;
+- ordinary property access (`row.body`) follows the prototype chain and invokes getters.
+
+So no field is read by ordinary access. Each one is taken from
+`Object.getOwnPropertyDescriptor(row, key)`, which must exist and must be a **data**
+descriptor (`value`, not `get`/`set`). An inherited field has no own descriptor; an
+accessor has one without a value. Both are `backup: invalid snapshot`, and an accessor is
+rejected **without being invoked** — a serialized backup has no accessors, so there is no
+reason to run caller code to discover that.
+
+A Proxy can still lie about its own descriptors, but a lie is then indistinguishable from
+a plain object that owns those values, which is a legal backup shape: the copy contains
+the descriptor-declared value and never the inherited one, so no privilege is gained. The
+rule is about ownership, not about a particular prototype — a `null`-prototype record that
+owns every field is accepted, because that is what a defensive parser produces.
+
+The same rule applies to the snapshot object itself and to every array: the five top-level
+names are an exact own-key set, and an array must own every index with nothing but indices
+and `length`, so a hole cannot be compensated for by an added property and an element is
+never read by ordinary access either.
+
+`length` is read from its descriptor as well. `value.length` is an ordinary read, and a
+`get` trap can answer `0` while the target still holds rows — the copy would then be an
+empty array and the supplied rows would vanish with no error at all, which matters most for
+the adapter's direct `importSnapshot` (no envelope, no digest, so an empty import looks
+like a successful one). The declared length must be a non-negative safe integer and must
+agree with the reported index set, and every index below it must be an own data property.
+
+`createBackup` follows the same rule in the outbound direction: it normalises the
+adapter's export once and validates, digests and returns that same plain copy. An adapter
+that supplies a field through an accessor is rejected like any other caller input, and the
+returned snapshot is this module's own copy — a later mutation of the adapter's object
+cannot change what was hashed.
+
+**Anti-resurrection backstop.** After the merge, in the same transaction, the body
+is forced to `NULL` for every message named by a tombstone, present in
+`deleted_for_me`, carrying an `unsent_at`, or covered by a clear
+(`server_sequence <= through_sequence`) — even when the snapshot supplied a body.
+That is what makes an old backup safe to restore onto a newer device.
+
+**Not implemented yet:** the IndexedDB adapter's `exportSnapshot`/`importSnapshot`
+reject loudly rather than silently dropping history; Drive transport, encryption and
+linked-device transfer are separate waves.
+
+## Still open
+
+The web adapter has no local pre-sync mutation methods (`recordUnsend`,
+`deleteForMe`, `clearThrough`); it applies the authoritative state change after
+`syncState`, while the SQLite adapter supports both local and authoritative
+application. Offline web mutation is therefore not yet durable. Web backup parity is
+also still open (above).
 
 Also open: the Capacitor SQLite bridge and Android build/device proof, device
 identity lifecycle/registry, transport validator and server stable-client-ID/

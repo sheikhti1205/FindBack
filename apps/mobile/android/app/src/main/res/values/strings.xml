@@ -14,6 +14,10 @@
     <string name="findback_channel_updates">Report updates</string>
     <string name="findback_channel_updates_description">Status changes on reports.</string>
     <string name="findback_reply_label">Reply</string>
+    <string name="findback_channel_chat_requests">Message requests</string>
+    <string name="findback_channel_chat_requests_description">A quiet notification for a new message request.</string>
+    <string name="findback_chat_request_title">Message request</string>
+    <string name="findback_chat_request_body">Open FindBack to view your requests.</string>
     <string name="findback_reply_sent">Reply sent</string>
     <string name="findback_reply_failed">Reply failed — open FindBack to try again</string>
     <string name="findback_reply_too_fast">Too fast — reply again in %1$ds</string>

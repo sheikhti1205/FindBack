@@ -53,6 +53,13 @@ const MIGRATION = resolve(
   REPO_ROOT,
   "supabase/migrations/20261022173000_moderation_reports_sanctions_appeals.sql",
 );
+// R3 chat messages are reportable, and that target type is added by its own
+// migration: the client must name no target the schema rejects, so the target
+// vocabulary is checked against both migrations.
+const CHAT_REPORT_MIGRATION = resolve(
+  REPO_ROOT,
+  "supabase/migrations/20261027000000_chat_message_reports.sql",
+);
 // The visibility atom predates B2a and is NOT redefined here: the client still
 // has to name the four values the item_posts CHECK accepts.
 const VISIBILITY_MIGRATION = resolve(
@@ -123,8 +130,11 @@ describe("the client vocabulary is the server vocabulary", () => {
 
   it("offers only target types, statuses, visibilities and sanction kinds the schema accepts", () => {
     const sql = migration();
+    // MESSAGE is a real target type, and the chat-report migration extends the
+    // same CHECK to accept it. Both migrations are the schema here.
+    const targetVocabulary = `${sql}\n${readFileSync(CHAT_REPORT_MIGRATION, "utf8")}`;
     for (const targetType of REPORT_TARGET_TYPES) {
-      expect(sql).toContain(`'${targetType}'`);
+      expect(targetVocabulary).toContain(`'${targetType}'`);
     }
     for (const status of REPORT_STATUSES) {
       expect(sql).toContain(`'${status}'`);

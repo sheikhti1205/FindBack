@@ -69,11 +69,12 @@ export const REPORT_STATUS_LABELS: Readonly<Record<ReportStatus, string>> = {
  *
  * `POST` is a lost & found report, so it is called "report" here — the same
  * word the app already uses for it. `USER` is a person, never "user".
- */
+ * `MESSAGE` is a chat message. */
 export const REPORT_TARGET_LABELS: Readonly<Record<ReportTargetType, string>> = {
   POST: "report",
   COMMENT: "comment",
   USER: "person",
+  MESSAGE: "message",
 };
 
 /** The subject phrase used in a sentence: "this report", "this comment". */
@@ -81,6 +82,7 @@ export const REPORT_TARGET_SUBJECTS: Readonly<Record<ReportTargetType, string>> 
   POST: "this report",
   COMMENT: "this comment",
   USER: "this person",
+  MESSAGE: "this message",
 };
 
 /** The nine moderation actions, in words a moderator can picture. */

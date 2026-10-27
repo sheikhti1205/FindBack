@@ -28,8 +28,8 @@ import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import type { ModeratorCapability } from "./roles";
 
-/** What a report can point at (MC D1). */
-export const REPORT_TARGET_TYPES = ["POST", "COMMENT", "USER"] as const;
+/** What a report can point at (MC D1 + R3 chat messages). */
+export const REPORT_TARGET_TYPES = ["POST", "COMMENT", "USER", "MESSAGE"] as const;
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number];
 
 /** The seven report reasons (MC D2). Never free text, never extended here. */
@@ -225,12 +225,11 @@ export interface AppealSubjectCursor { createdAt: string; subjectKind: AppealSub
 export interface AppealPage<T, C> { items: T[]; nextCursor: C | null }
 
 /** Input for `submitReport`. `detail` is optional and bounded to 2000. */
-export interface SubmitReportInput {
-  targetType: ReportTargetType;
+export type SubmitReportInput = {
   targetId: string;
   reason: ReportReason;
   detail?: string | null;
-}
+} & ({ targetType: Exclude<ReportTargetType, "MESSAGE"> } | { targetType: "MESSAGE"; accountId: string; body: string });
 
 /** Input for `applyModeration`. Every sanction field is optional. */
 export interface ApplyModerationInput {
@@ -348,7 +347,7 @@ function parseReceipt(row: Record<string, unknown>): ReportReceipt | null {
  * server-side against the one visibility decision, so a hidden, deleted and
  * nonexistent target all answer the same neutral "unavailable".
  */
-export async function submitReport(input: SubmitReportInput): Promise<{ reportId: string }> {
+export async function submitReport(input: SubmitReportInput, signal?: AbortSignal): Promise<{ reportId: string }> {
   if (!isTargetType(input.targetType)) {
     throw new ApiError("Choose what you are reporting.", 400, "UNKNOWN_TARGET_TYPE");
   }
@@ -364,12 +363,23 @@ export async function submitReport(input: SubmitReportInput): Promise<{ reportId
     throw new ApiError("Keep the note under 2000 characters.", 400, "DETAIL_TOO_LONG");
   }
 
-  const { data, error } = await getSupabase().rpc("findback_submit_report", {
-    p_target_type: input.targetType,
-    p_target_id: targetId,
-    p_reason: input.reason,
-    p_detail: detail,
-  });
+  const sdk = getSupabase();
+  if (input.targetType === "MESSAGE") {
+    const { data: session, error: sessionError } = await sdk.auth.getSession();
+    if (signal?.aborted || sessionError || session.session?.user.id !== input.accountId) {
+      throw new ApiError("Your session changed. Please try again.", 401, "SESSION_CHANGED");
+    }
+  }
+  const request = input.targetType === "MESSAGE"
+    ? sdk.rpc("findback_submit_message_report", {
+        p_account_id: input.accountId, p_message_id: targetId, p_reason: input.reason,
+        p_detail: detail, p_body: input.body,
+      })
+    : sdk.rpc("findback_submit_report", {
+        p_target_type: input.targetType, p_target_id: targetId,
+        p_reason: input.reason, p_detail: detail,
+      });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
   if (error) throw moderationError(error.message, error.code);
   const reportId = text(data);
   if (!reportId) throw new ApiError("The server did not return a receipt.", 500, "UNEXPECTED_SHAPE");

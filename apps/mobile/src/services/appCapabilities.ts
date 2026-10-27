@@ -34,7 +34,7 @@ export const APP_VERSION: string = packageJson.version;
  * Matches the newest data-contract migration prefix the app was built
  * against; shown in Profile → About for release diagnosis.
  */
-export const BACKEND_SCHEMA_VERSION = "20261026020000";
+export const BACKEND_SCHEMA_VERSION = "20261027030000";
 
 export interface AppCapabilities {
   version: string;

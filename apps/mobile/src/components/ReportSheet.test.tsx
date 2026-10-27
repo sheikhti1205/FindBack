@@ -96,7 +96,7 @@ describe("the one report sheet", () => {
       targetId: "target-1",
       reason: "HARASSMENT",
       detail: "They kept messaging me.",
-    });
+    }, expect.any(AbortSignal));
   });
 
   it("shows an honest receipt only after the server confirmed the report", async () => {

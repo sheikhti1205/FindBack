@@ -50,6 +50,12 @@ vi.mock("../services/notificationPreferences", () => ({
 }));
 vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({ permission: async () => "unsupported" as const }),
+  // ChatPushLinkHandler mounts on every route and imports these; a partial mock
+  // makes them undefined and the component throws on every render.
+  CHAT_PUSH_BOUND_EVENT: "findback:chat-push-bound",
+  takeChatPushTap: async () => null,
+  listenForChatPushTap: async () => () => {},
+  acknowledgeChatPushTap: async () => {},
 }));
 
 import { App, createAppRouter } from "../App";

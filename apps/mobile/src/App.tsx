@@ -1,6 +1,6 @@
 import { createHashRouter, Navigate, Route, RouterProvider, Routes } from "react-router";
 import { MotionConfig } from "framer-motion";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { motionConfigValueFor, useAppearance } from "./appearance";
@@ -60,6 +60,7 @@ import { CommunityGuidelines, PrivacyPolicy, Terms } from "./screens/Legal";
 import { Diagnostics } from "./screens/Diagnostics";
 import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
+import { ChatPushLinkHandler } from "./components/ChatPushLinkHandler";
 import { AuthLinkBootstrap } from "./components/AuthLinkBootstrap";
 import { PublicLanding } from "./screens/PublicLanding";
 import { SharedReport } from "./screens/SharedReport";
@@ -68,6 +69,19 @@ import { SharedReport } from "./screens/SharedReport";
 import { FixtureRoute } from "./fixture/FixtureRoute";
 import { useAuth } from "./auth";
 import { SavedReportsProvider } from "./hooks/useSavedReports";
+import { Connections, MessagingThread } from "./screens/Messaging";
+import { MessagingPrivacy } from "./screens/MessagingPrivacy";
+import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
+
+function MessagingLifecycle() {
+  const { user } = useAuth();
+  const accountId = user?.id ?? null;
+  useEffect(() => {
+    setMessagingAccount(accountId);
+    return clearMessagingRuntime;
+  }, [accountId]);
+  return null;
+}
 
 function StartScreen() {
   const { user } = useAuth();
@@ -101,6 +115,7 @@ export function App({ router }: { router: ReturnType<typeof createAppRouter> }) 
   return (
     <ThemeProvider>
       <AuthProvider>
+        <MessagingLifecycle />
         {/* The ONE owner of saved-report state. It lives inside the auth
             provider because a save belongs to an ACCOUNT, and it wraps the
             router so the feed, the detail screen and the saved-reports screen
@@ -120,6 +135,7 @@ function AppRouteTree() {
     <>
           <AuthLinkBootstrap />
           <ReportLinkHandler />
+          <ChatPushLinkHandler />
           <BackButtonHandler />
           <ErrorBoundary>
             <AccountDeletionFeedback />
@@ -186,6 +202,8 @@ function AppRouteTree() {
               <Route path="/profile/edit" element={<ProfileEdit />} />
               <Route path="/u/:username" element={<PublicProfile />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route path="/connections" element={<Connections />} />
+              <Route path="/connections/:conversationId" element={<MessagingThread />} />
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
@@ -202,6 +220,7 @@ function AppRouteTree() {
               <Route path="/settings/media" element={<MediaSettings />} />
               <Route path="/settings/notifications" element={<NotificationPreferences />} />
               <Route path="/settings/privacy" element={<PrivacySettings />} />
+              <Route path="/settings/privacy/messages" element={<MessagingPrivacy />} />
               <Route path="/settings/privacy/blocked" element={<BlockedUsers />} />
               <Route path="/settings/privacy/reports" element={<SafetyReports />} />
               <Route path="/settings/feedback" element={<FeedbackForm />} />

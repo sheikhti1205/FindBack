@@ -30,6 +30,7 @@ function state(patch: Partial<PairState> = {}): PairState {
     initiatorId: A,
     blockedBy: [],
     hiddenBy: [],
+    declinedBy: [],
     requestMessageCount: 1,
     nudged: true,
     ...patch,
@@ -164,7 +165,7 @@ describe("accept / decline / hide / report / block are distinct", () => {
     expect(applyRecipientAction(connected, B, "ACCEPT")).toEqual({ ok: false, reason: "REJECTED" });
   });
 
-  it("cannot accept after End or Decline without a new active request", () => {
+  it("cannot self-accept or accept after End, but a recipient can reconsider decline", () => {
     const ended = applyEnd(connected, B);
     if (!ended.ok) throw new Error("end failed");
     expect(applyRecipientAction(ended.state, A, "ACCEPT")).toEqual({ ok: false, reason: "REJECTED" });
@@ -173,6 +174,8 @@ describe("accept / decline / hide / report / block are distinct", () => {
     const declined = applyRecipientAction(request, B, "DECLINE");
     if (!declined.ok) throw new Error("decline failed");
     expect(applyRecipientAction(declined.state, A, "ACCEPT")).toEqual({ ok: false, reason: "REJECTED" });
+    const reconsidered = applyRecipientAction(declined.state, B, "ACCEPT");
+    expect(reconsidered.ok && reconsidered.state.mode).toBe("CONNECTED");
 
     expect(applyRecipientAction(fresh, B, "ACCEPT")).toEqual({ ok: false, reason: "REJECTED" });
   });
@@ -280,8 +283,23 @@ describe("accept / decline / hide / report / block are distinct", () => {
     const declined = applyRecipientAction(request, B, "DECLINE");
     if (!declined.ok) throw new Error("decline failed");
     expect(declined.state.mode).toBe("REQUEST");
-    expect(declined.state.initiatorId).toBeNull();
+    expect(declined.state.initiatorId).toBe(A);
+    expect(declined.state.declinedBy).toEqual([B]);
     expect(applyApproach(declined.state, A).ok).toBe(true);
+  });
+
+  it.each([true, false])("keeps hide and decline independent (hide first: %s)", (hideFirst) => {
+    const first = applyRecipientAction(request, B, hideFirst ? "HIDE" : "DECLINE");
+    if (!first.ok) throw new Error("first private action failed");
+    const second = applyRecipientAction(first.state, B, hideFirst ? "DECLINE" : "HIDE");
+    if (!second.ok) throw new Error("second private action failed");
+    expect(second.state.hiddenBy).toEqual([B]);
+    expect(second.state.declinedBy).toEqual([B]);
+    const unhidden = applyRecipientAction(second.state, B, "UNHIDE");
+    if (!unhidden.ok) throw new Error("unhide failed");
+    expect(unhidden.state.hiddenBy).toEqual([]);
+    expect(unhidden.state.declinedBy).toEqual([B]);
+    expect(unhidden.state.initiatorId).toBe(A);
   });
 
   it("does not accept a reported request as if it were untouched", () => {

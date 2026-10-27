@@ -50,6 +50,9 @@ data class PushData(
          * malformed or foreign message never produces a notification.
          */
         fun fromData(data: Map<String, String>): PushData? {
+            // Chat payloads must never fall through to report presentation, even
+            // when a malformed payload also supplies report fields.
+            if (data["type"].orEmpty().startsWith("CHAT_")) return null
             val postId = data["postId"]?.trim().orEmpty()
             val url = data["url"]?.trim().orEmpty()
             if (postId.isEmpty() || url.isEmpty()) return null

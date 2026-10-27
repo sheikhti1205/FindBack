@@ -17,15 +17,15 @@ export interface SafetyActionsProps {
   /**
    * The person behind the surface, when it is known.
    *
-   * A post's author, a comment's author, or the profile's owner. The name is
+   * A post's author, a comment's author, a message's sender, or the profile's owner. The name is
    * a name — never an id — because it appears in a sentence.
    */
   person?: { userId: string; name: string };
   /**
    * Also offer "report this person".
    *
-   * True on a profile: the thing on the surface IS the person. On a post or
-   * a comment the content is the subject, and the author is offered the
+   * True on a profile: the thing on the surface IS the person. On a post, a comment
+   * or a message the content is the subject, and the author/sender is offered the
    * block control instead.
    */
   reportPerson?: boolean;

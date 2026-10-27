@@ -32,6 +32,9 @@ object PushChannels {
     /** STATUS. */
     const val UPDATES = "findback.updates.v1"
 
+    /** Initial private-message request only; follow-ups never alert. */
+    const val CHAT_REQUESTS = "findback.chat.requests.v1"
+
     /** Reserved — not created until a real background-matching source exists. */
     const val MATCHES_RESERVED = "findback.matches.v1"
 
@@ -59,6 +62,16 @@ object PushChannels {
         create(context, manager, COMMENTS, R.string.findback_channel_comments, R.string.findback_channel_comments_description, NotificationManager.IMPORTANCE_HIGH)
         create(context, manager, ACTIVITY, R.string.findback_channel_activity, R.string.findback_channel_activity_description, NotificationManager.IMPORTANCE_DEFAULT)
         create(context, manager, UPDATES, R.string.findback_channel_updates, R.string.findback_channel_updates_description, NotificationManager.IMPORTANCE_DEFAULT)
+        if (manager.getNotificationChannel(CHAT_REQUESTS) == null) {
+            manager.createNotificationChannel(NotificationChannel(CHAT_REQUESTS,
+                context.getString(R.string.findback_channel_chat_requests), NotificationManager.IMPORTANCE_LOW).apply {
+                group = GROUP_ID
+                description = context.getString(R.string.findback_channel_chat_requests_description)
+                setSound(null, null)
+                enableVibration(false)
+                setShowBadge(false)
+            })
+        }
     }
 
     private fun create(

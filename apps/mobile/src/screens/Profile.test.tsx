@@ -90,13 +90,14 @@ describe("Profile landing", () => {
     );
   });
 
-  it("links Public profile, My reports, Saved reports, Settings and Help to their canonical routes", () => {
+  it("links Public profile, My reports, Connections, Saved reports, Settings and Help to their canonical routes", () => {
     renderProfile();
     const nav = screen.getByRole("navigation", { name: "Profile actions" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/u/tester",
       "/my",
+      "/connections",
       "/saved",
       "/settings",
       "/settings/help",

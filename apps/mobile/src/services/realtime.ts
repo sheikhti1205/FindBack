@@ -10,6 +10,7 @@ export type RealtimeEvent =
   | "reaction:invalidate"
   | "reaction:changed"
   | "rating:changed"
+  | "chat:invalidate"
   | "notification:added";
 
 type Handler = (payload: Record<string, unknown>) => void;
@@ -303,6 +304,11 @@ export function joinInboxRoom(userId: string): void {
       ["notification:added", "notification:added"],
       ["comment:invalidate", "comment:invalidate"],
     ], () => client === c && inboxChannel === channel && boundInboxUser === userId && desiredInboxUser === userId);
+    channel.on("broadcast", { event: "chat:invalidate" }, () => {
+      if (client !== c || inboxChannel !== channel || boundInboxUser !== userId || desiredInboxUser !== userId) return;
+      // The private room is the authority; never interpret the wire payload.
+      dispatch("chat:invalidate", { accountId: userId });
+    });
     // Slot first (a synchronous subscribe failure must be able to clear it).
     inboxChannel = channel;
     boundInboxUser = userId;
@@ -311,6 +317,7 @@ export function joinInboxRoom(userId: string): void {
         if (inboxChannel !== channel || client !== c) return;
         clearRetry("inbox");
         dispatch("comment:invalidate", { userId, invalidate: true });
+        dispatch("chat:invalidate", { accountId: userId });
         return;
       }
       if (!isFailedStatus(status)) return;

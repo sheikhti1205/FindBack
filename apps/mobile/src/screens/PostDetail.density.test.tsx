@@ -90,7 +90,10 @@ describe("PostDetail density (owner wave)", () => {
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     await screen.findByTestId("report-receipt");
-    expect(submitReport).toHaveBeenCalledWith({ targetType: "POST", targetId: "p1", reason: "HARASSMENT", detail: null });
+    expect(submitReport).toHaveBeenCalledWith(
+      { targetType: "POST", targetId: "p1", reason: "HARASSMENT", detail: null },
+      expect.any(AbortSignal),
+    );
   });
   beforeEach(() => {
     vi.clearAllMocks();
@@ -113,7 +116,10 @@ describe("PostDetail density (owner wave)", () => {
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     await screen.findByTestId("report-receipt");
-    expect(submitReport).toHaveBeenCalledWith({ targetType: "COMMENT", targetId: "c1", reason: "HARASSMENT", detail: null });
+    expect(submitReport).toHaveBeenCalledWith(
+      { targetType: "COMMENT", targetId: "c1", reason: "HARASSMENT", detail: null },
+      expect.any(AbortSignal),
+    );
   });
 
   it("targets a nested reply, not its parent, when reporting", async () => {
@@ -129,7 +135,10 @@ describe("PostDetail density (owner wave)", () => {
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     await screen.findByTestId("report-receipt");
-    expect(submitReport).toHaveBeenCalledWith({ targetType: "COMMENT", targetId: "reply-1", reason: "HARASSMENT", detail: null });
+    expect(submitReport).toHaveBeenCalledWith(
+      { targetType: "COMMENT", targetId: "reply-1", reason: "HARASSMENT", detail: null },
+      expect.any(AbortSignal),
+    );
   });
 
   it("never exposes comment moderation actions to a signed-out viewer", async () => {

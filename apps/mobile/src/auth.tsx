@@ -282,9 +282,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       leaveInboxRoom();
       disconnectRealtime();
-      void stopPushNotifications();
+      // Rehydration is not logout. Clearing cached native admission here would
+      // discard a legitimate cold notification tap before its session loads.
+      if (!booting) void stopPushNotifications();
     }
-  }, [user]);
+  }, [user, booting]);
 
   const setUser = useCallback((next: PublicUser) => setUserState(next), []);
 

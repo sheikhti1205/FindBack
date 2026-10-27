@@ -93,7 +93,10 @@ describe("PublicProfile", () => {
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     await screen.findByTestId("report-receipt");
-    expect(submitReport).toHaveBeenCalledWith({ targetType: "USER", targetId: "u2", reason: "HARASSMENT", detail: null });
+    expect(submitReport).toHaveBeenCalledWith(
+      { targetType: "USER", targetId: "u2", reason: "HARASSMENT", detail: null },
+      expect.any(AbortSignal),
+    );
   });
 
   it("does not offer profile safety actions for self or guests", async () => {

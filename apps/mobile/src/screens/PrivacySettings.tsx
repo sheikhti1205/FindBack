@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Eye, Flag, MapPin, Sparkles, UserRoundX } from "lucide-react";
+import { Activity, Eye, Flag, MapPin, MessagesSquare, Sparkles, UserRoundX } from "lucide-react";
 import {
   PreferenceSwitchRow,
   SettingsGroup,
@@ -76,6 +76,7 @@ export function PrivacySettings() {
       description="What FindBack knows about you, and the real switches that control it."
     >
       <SettingsGroup title="Safety">
+        <SettingsRow title="Messages" description="Contact requests and read receipts." icon={MessagesSquare} iconTone="privacy" route="/settings/privacy/messages" />
         <SettingsRow
           title="Blocked accounts"
           description="Review accounts you have blocked."

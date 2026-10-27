@@ -3,8 +3,8 @@
  *
  * This module is pure SQL text plus a driver-neutral statement map. It contains no
  * driver import, so the mobile bundle never pulls a Node-only SQLite binding. The
- * adapter in `sqliteHistory.ts` takes an injected driver; the Capacitor SQLite
- * bridge becomes a thin driver later, and tests use a real SQLite engine.
+ * adapter in `sqliteHistory.ts` takes an injected driver; the Android Capacitor
+ * plugin is a thin transport driver, and host tests use a real SQLite engine.
  *
  * Durability: `synchronous = FULL` with WAL is the strictest useful SQLite setting,
  * but it is still a filesystem/OS promise, not measured power-loss proof. The
@@ -12,7 +12,13 @@
  * connection before it can issue a persistence receipt.
  */
 
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 1;
+/**
+ * v4: `tombstones` binds the recipient as well as the conversation and author, so
+ * a wrong-recipient unsend can no longer erase an unrelated message id. v1–v3
+ * files are migrated additively; rows written before v4 keep a NULL recipient and
+ * are validated on the fields they actually carry.
+ */
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 4;
 
 export const MESSAGING_SQLITE_PRAGMAS = [
   "pragma journal_mode = wal",
@@ -82,6 +88,7 @@ export const MESSAGING_SQLITE_SCHEMA = [
   `create table if not exists tombstones (
     message_id text primary key,
     conversation_id text not null,
+    recipient_id text,
     unsent_at integer not null,
     unsent_by text not null
   )`,
@@ -97,6 +104,19 @@ export const MESSAGING_SQLITE_SCHEMA = [
     through_sequence integer not null,
     cleared_at integer not null
   )`,
+  `create table if not exists conversation_state (
+    conversation_id text primary key references conversations(id) on delete cascade,
+    peer_id text not null,
+    read_through integer not null default 0 check (read_through >= 0),
+    updated_at integer not null default 0,
+    projection_json text,
+    observed_at integer
+  )`,
+  `create table if not exists messaging_state_events (
+    event_id text primary key,
+    sequence integer not null unique,
+    change_json text not null
+  )`,
 ] as const;
 
 const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
@@ -105,16 +125,35 @@ const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
 
 export const MESSAGING_SQLITE_STATEMENTS = {
   getMeta: `select value from messaging_meta where key = ?`,
+  getStateCursor: `select event_id as eventId, sequence from messaging_state_events order by sequence desc limit 1`,
+  getStateEvent: `select sequence, change_json as changeJson from messaging_state_events where event_id = ?`,
+  insertStateEvent: `insert into messaging_state_events(event_id,sequence,change_json) values(?,?,?)`,
+  erasePersonalMessage: `update messages set body=null where id=?`,
+  erasePersonalConversation: `update messages set body=null where conversation_id=? and server_sequence<=?`,
   getMetaRows: `select key, value from messaging_meta
     where key in ('account_id', 'device_id', 'schema_version')`,
-  setMetaIfAbsent: `insert into messaging_meta (key, value) values (?, ?)
-    on conflict (key) do nothing`,
+  setMetaIfAbsent: `insert or ignore into messaging_meta (key, value) values (?, ?)`,
+  setSchemaVersion: `update messaging_meta set value = ? where key = 'schema_version'`,
   insertConversation: `insert or ignore into conversations (id, created_at, updated_at)
     values (?, ?, ?)`,
   getLastSequence: `select last_sequence as lastSequence from conversations where id = ?`,
   touchConversation: `update conversations
     set last_sequence = max(last_sequence, ?), updated_at = ?
     where id = ?`,
+  insertConversationState: `insert or ignore into conversation_state (conversation_id, peer_id)
+    values (?, ?)`,
+  getConversationState: `select conversation_id as conversationId, peer_id as peerId,
+    read_through as readThrough, updated_at as updatedAt, projection_json as projectionJson,
+    observed_at as observedAt from conversation_state where conversation_id = ?`,
+  listConversationStates: `select conversation_id as conversationId, peer_id as peerId,
+    read_through as readThrough, updated_at as updatedAt, projection_json as projectionJson,
+    observed_at as observedAt from conversation_state`,
+  getConversationParticipants: `select distinct author_id as authorId, recipient_id as recipientId
+    from messages where conversation_id = ?`,
+  touchConversationState: `update conversation_state set updated_at = ? where conversation_id = ?`,
+  cacheConversation: `update conversation_state set projection_json = ?, observed_at = ? where conversation_id = ?`,
+  markConversationRead: `update conversation_state set read_through = max(read_through, ?) where conversation_id = ?`,
+  maxConversationSequence: `select coalesce(max(server_sequence), 0) as sequence from messages where conversation_id = ?`,
   /** Internal identity lookup: ignores personal visibility. */
   getMessage: `select ${MESSAGE_COLUMNS} from messages m where m.id = ?`,
   /** Consumer read: honours delete-for-me and clear-through. */
@@ -131,6 +170,11 @@ export const MESSAGING_SQLITE_STATEMENTS = {
         (select c.through_sequence from conversation_cleared c
           where c.conversation_id = m.conversation_id), 0))
     order by (m.server_sequence is null), m.server_sequence, m.created_at`,
+  listInboxMessages: `select ${MESSAGE_COLUMNS} from messages m
+    where not exists (select 1 from deleted_for_me d where d.message_id = m.id)
+      and (m.server_sequence is null or m.server_sequence > coalesce(
+        (select c.through_sequence from conversation_cleared c
+          where c.conversation_id = m.conversation_id), 0))`,
   getMessageByEvent: `select ${MESSAGE_COLUMNS} from messages m
     where m.server_event_id = ?`,
   insertMessage: `insert into messages
@@ -149,16 +193,24 @@ export const MESSAGING_SQLITE_STATEMENTS = {
     (mailbox_id, event_id, message_id, sequence, applied_at)
     values (?, ?, ?, ?, ?)`,
   getTombstone: `select message_id as messageId, conversation_id as conversationId,
-    unsent_at as unsentAt, unsent_by as unsentBy from tombstones where message_id = ?`,
-  insertTombstone: `insert into tombstones (message_id, conversation_id, unsent_at, unsent_by)
-    values (?, ?, ?, ?)`,
+    recipient_id as recipientId, unsent_at as unsentAt, unsent_by as unsentBy
+    from tombstones where message_id = ?`,
+  insertTombstone: `insert into tombstones (message_id, conversation_id, recipient_id, unsent_at, unsent_by)
+    values (?, ?, ?, ?, ?)`,
+  // Additive v1–v3 -> v4 migration. `pragma table_info` decides whether the
+  // column already exists; SQLite has no `add column if not exists`.
+  tombstoneColumns: `pragma table_info(tombstones)`,
+  addTombstoneRecipient: `alter table tombstones add column recipient_id text`,
+  /** Legacy v3 tombstone gains its recipient once an authoritative event names it. */
+  bindTombstoneRecipient: `update tombstones set recipient_id = ?
+    where message_id = ? and recipient_id is null`,
   enqueueOutbox: `insert or ignore into outbox (message_id, status) values (?, 'QUEUED')`,
   listOutbox: `select message_id as messageId, status, attempts, token,
     lease_until as leaseUntil from outbox order by message_id`,
-  claimOutbox: `update outbox
-    set status = 'SENDING', token = ?, lease_until = ?, attempts = attempts + 1
-    where message_id = (
-      select o.message_id from outbox o
+  // Android24 ships SQLite older than RETURNING/UPSERT. The adapter executes
+  // selection/claim/read-back under BEGIN IMMEDIATE, not as independent writes.
+  nextOutbox: `
+       select o.message_id as messageId from outbox o
         join messages m on m.id = o.message_id
       where (o.status in ('QUEUED', 'FAILED')
           or (o.status = 'SENDING' and o.lease_until <= ?))
@@ -167,20 +219,79 @@ export const MESSAGING_SQLITE_STATEMENTS = {
         and m.server_event_id is null
       order by o.message_id
       limit 1
-    )
-    returning message_id as messageId, attempts`,
+    `,
+  claimOutbox: `update outbox
+    set status = 'SENDING', token = ?, lease_until = ?, attempts = attempts + 1
+    where message_id = ?`,
+  getOutboxClaim: `select message_id as messageId, attempts from outbox where message_id = ?`,
   failOutbox: `update outbox set status = 'FAILED', token = null, lease_until = null
     where message_id = ? and token = ? and attempts = ? and status = 'SENDING'`,
   completeOutbox: `delete from outbox where message_id = ?`,
   deleteOutbox: `delete from outbox where message_id = ?`,
-  deleteForMe: `insert into deleted_for_me (message_id, conversation_id, deleted_at)
-    values (?, ?, ?) on conflict (message_id) do nothing`,
+  deleteForMe: `insert or ignore into deleted_for_me (message_id, conversation_id, deleted_at)
+    values (?, ?, ?)`,
   isDeletedForMe: `select 1 as present from deleted_for_me where message_id = ?`,
-  clearConversation: `insert into conversation_cleared (conversation_id, through_sequence, cleared_at)
-    values (?, ?, ?)
-    on conflict (conversation_id) do update
-      set through_sequence = max(through_sequence, excluded.through_sequence),
-          cleared_at = excluded.cleared_at`,
+  getDeletedForMe: `select conversation_id as conversationId from deleted_for_me where message_id = ?`,
+  getClearThrough: `select through_sequence as throughSequence from conversation_cleared where conversation_id=?`,
+  insertClearConversation: `insert or ignore into conversation_cleared (conversation_id, through_sequence, cleared_at)
+    values (?, ?, ?)`,
+  clearConversation: `update conversation_cleared
+    set through_sequence = max(through_sequence, ?), cleared_at = ? where conversation_id = ?`,
+
+  // ---- portable history snapshot (backup/restore) ----
+  // Only accepted messages are portable: a pending send is device-local work,
+  // not history, and must never be re-sent by a restore.
+  listSnapshotConversations: `select id, last_sequence as lastSequence,
+    created_at as createdAt, updated_at as updatedAt from conversations`,
+  listSnapshotMessages: `select ${MESSAGE_COLUMNS}, m.created_at as createdAt from messages m
+    where m.server_event_id is not null and m.server_sequence is not null`,
+  listSnapshotTombstones: `select message_id as messageId, conversation_id as conversationId,
+    recipient_id as recipientId, unsent_at as unsentAt, unsent_by as unsentBy from tombstones`,
+  listSnapshotDeletedForMe: `select message_id as messageId, conversation_id as conversationId,
+    deleted_at as deletedAt from deleted_for_me`,
+  listSnapshotClears: `select conversation_id as conversationId,
+    through_sequence as throughSequence, cleared_at as clearedAt from conversation_cleared`,
+  /** Deterministic and commutative: min creation, max activity, max sequence. */
+  mergeConversation: `update conversations
+    set last_sequence = max(last_sequence, ?), updated_at = max(updated_at, ?),
+      created_at = min(created_at, ?) where id = ?`,
+  getConversationCreated: `select created_at as createdAt from conversations where id = ?`,
+  getSnapshotMessage: `select ${MESSAGE_COLUMNS}, m.created_at as createdAt
+    from messages m where m.id = ?`,
+  /** One unsend is one event: the message adopts the tombstone's stamp if it has none. */
+  setMessageUnsentAt: `update messages set unsent_at = ?
+    where id = ? and unsent_at is null`,
+  // Two different messages cannot occupy the same (conversation, sequence), so a
+  // snapshot claiming one is contradicting this store, not merely adding to it.
+  getMessageAtSequence: `select id from messages
+    where conversation_id = ? and server_sequence = ?`,
+  insertSnapshotMessage: `insert into messages
+    (id, conversation_id, author_id, recipient_id, body, created_at,
+      server_event_id, server_sequence, unsent_at)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  updateSnapshotMessage: `update messages set body = ?, unsent_at = ?, created_at = ?
+    where id = ?`,
+  /** Union by message id, with a commutative tie-break on both metadata columns. */
+  mergeDeletedForMe: `update deleted_for_me
+    set conversation_id = coalesce(conversation_id, ?), deleted_at = min(deleted_at, ?)
+    where message_id = ?`,
+  mergeClear: `update conversation_cleared
+    set through_sequence = max(through_sequence, ?), cleared_at = max(cleared_at, ?)
+    where conversation_id = ?`,
+  // Anti-resurrection backstop, run inside the import transaction: no path may
+  // leave a body visible behind a tombstone, a personal deletion or a clear.
+  suppressTombstonedBodies: `update messages set body = null
+    where body is not null and id in (select message_id from tombstones)`,
+  suppressDeletedBodies: `update messages set body = null
+    where body is not null and id in (select message_id from deleted_for_me)`,
+  /** An unsent message is never readable, whether or not its tombstone travelled. */
+  suppressUnsentBodies: `update messages set body = null
+    where body is not null and unsent_at is not null`,
+  suppressClearedBodies: `update messages set body = null
+    where body is not null and server_sequence is not null
+      and exists (select 1 from conversation_cleared c
+        where c.conversation_id = messages.conversation_id
+          and messages.server_sequence <= c.through_sequence)`,
 } as const;
 
 export type MessagingStatement = keyof typeof MESSAGING_SQLITE_STATEMENTS;

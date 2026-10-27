@@ -1,6 +1,7 @@
 import { registerPlugin } from "@capacitor/core";
 import { reportLink } from "../utils/reportLinks";
 import { registerDeviceToken, unregisterDeviceToken, type PushPlatform } from "./deviceTokens";
+import { parseChatPush } from "./chatPush";
 
 export type PushPermissionState = "granted" | "denied" | "prompt" | "unsupported";
 
@@ -37,6 +38,11 @@ export interface PushAdapter {
   onAction(cb: (data: Record<string, string>) => void): Promise<() => void>;
   /** Deletes the FCM registration token on the device; absent on web/test fakes. */
   deleteToken?(): Promise<void>;
+  /** Android cached admission only; called by the canonical auth/push owner. */
+  setChatAccount?(accountId: string | null): Promise<void>;
+  takeChatTap?(accountId: string): Promise<unknown>;
+  acknowledgeChatTap?(accountId: string, notificationId: string): Promise<void>;
+  onChatTap?(cb: () => void): Promise<() => void>;
 }
 
 export interface PushControllerOptions {
@@ -51,10 +57,13 @@ export interface PushControllerOptions {
   openReportUrl?: (url: string) => void;
   /** Test seam; defaults to dispatching the received window event. */
   emitReceived?: () => void;
+  chatAccount?: () => string | null;
+  chatWake?: (accountId: string) => void;
 }
 
 /** A report URL from a push data payload, or null when there is nothing to open. */
 export function reportUrlFromPushData(data: Record<string, string | undefined>): string | null {
+  if (data.type?.startsWith("CHAT_")) return null;
   const url = typeof data.url === "string" ? data.url.trim() : "";
   if (url) return url;
   const postId = typeof data.postId === "string" ? data.postId.trim() : "";
@@ -180,9 +189,20 @@ export function createPushController(options: PushControllerOptions): PushContro
             await listen(adapter.onRegistrationError((message) => {
               if (active()) options.onRegistrationError?.(message);
             }));
-            await listen(adapter.onReceived(() => { if (active()) emitReceived(); }));
+            await listen(adapter.onReceived((data) => {
+              if (!active()) return;
+              if (data.type?.startsWith("CHAT_")) {
+                const chat = parseChatPush(data);
+                if (chat && chat.recipientId === options.chatAccount?.()) options.chatWake?.(chat.recipientId);
+                return;
+              }
+              emitReceived();
+            }));
             await listen(adapter.onAction((data) => {
               if (!active()) return;
+              // Chat taps never trust Capacitor's exported-launcher extras.
+              // Only the app-private pending action bridge may route them.
+              if (data.type?.startsWith("CHAT_")) return;
               const url = reportUrlFromPushData(data);
               if (url) openReportUrl(url);
             }));
@@ -262,11 +282,32 @@ export function createCapacitorPushAdapter(): PushAdapter {
     p: (await import("@capacitor/push-notifications")).PushNotifications,
   });
   const settingsPlugin = () =>
-    registerPlugin<{ openSettings(): Promise<void> }>("FindbackNotifications");
+    registerPlugin<{
+      openSettings(): Promise<void>;
+      setChatAccount(options: { accountId: string | null }): Promise<void>;
+      takeChatTap(options: { accountId: string }): Promise<{ data?: unknown }>;
+      acknowledgeChatTap(options: { accountId: string; notificationId: string }): Promise<void>;
+      addListener(event: "chatTapAvailable", cb: () => void): Promise<{ remove(): Promise<void> }>;
+    }>("FindbackNotifications");
 
   return {
     isNative: native,
     platform,
+    async setChatAccount(accountId) {
+      if (native() && platform() === "android") await settingsPlugin().setChatAccount({ accountId });
+    },
+    async takeChatTap(accountId) {
+      if (!native() || platform() !== "android") return null;
+      return (await settingsPlugin().takeChatTap({ accountId })).data ?? null;
+    },
+    async acknowledgeChatTap(accountId, notificationId) {
+      if (native() && platform() === "android") await settingsPlugin().acknowledgeChatTap({ accountId, notificationId });
+    },
+    async onChatTap(cb) {
+      if (!native() || platform() !== "android") return () => {};
+      const handle = await settingsPlugin().addListener("chatTapAvailable", cb);
+      return () => { void handle.remove(); };
+    },
     async requestPermission() {
       const result = await (await plugin()).p.requestPermissions();
       return result.receive === "granted" ? "granted" : result.receive === "denied" ? "denied" : "prompt";
