@@ -48,10 +48,22 @@ describe("cactusChallenger", () => {
       unloadCactusModel: async () => {},
     });
     const baseline = labCandidateFor("qwen3-0.6b-dynamic-int4")!;
-    // Permissive + verified pins still refuse non-lab channels at the gate.
+    // Every local generative descriptor is retired, so the catalogue now
+    // withdraws download permission for all of them and the licence gate answers
+    // first. The invariant under test is the ORDER: a licence that permits
+    // still stops at the channel gate, before any native call.
+    const permissive = {
+      ...baseline,
+      distribution: { ...baseline.distribution, downloadAllowed: true },
+    };
+    await expect(
+      challenger.load(permissive, { channel: "download" }),
+    ).rejects.toBeInstanceOf(CactusChannelRequiredError);
+    // And the retired baseline itself never reaches the channel gate: there is
+    // no download to permit.
     await expect(
       challenger.load(baseline, { channel: "download" }),
-    ).rejects.toBeInstanceOf(CactusChannelRequiredError);
+    ).rejects.toBeInstanceOf(CactusLicenseBlockedError);
   });
 
   it("loads on benchmark with an injected bridge and streams deltas", async () => {

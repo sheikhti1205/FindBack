@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -171,6 +171,35 @@ describe("PostDetail density (owner wave)", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
     await waitFor(() => expect(screen.queryByText("first comment")).toBeNull());
     expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1");
+  });
+
+  it("keeps confirmed parent and descendants hidden across clean and stale refetches", async () => {
+    authState.user = { id: "u2", username: "owner" };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const reply = { ...comment, id: "reply", parentId: "c1", body: "deleted reply", author: { id: "u4", username: "helper" } };
+    const sentinel = { ...comment, id: "other", body: "unaffected comment" };
+    const fresh = { ...comment, id: "new", body: "new comment" };
+    const rows = [comment, reply, sentinel];
+    let resolvePending!: (value: typeof rows) => void;
+    const pending = new Promise<typeof rows>((resolve) => { resolvePending = resolve; });
+    postsMock.fetchComments.mockResolvedValueOnce(rows).mockReturnValueOnce(pending)
+      .mockResolvedValueOnce([sentinel]).mockResolvedValueOnce([...rows, fresh]);
+    renderDetail();
+    await screen.findByText("deleted reply");
+    fireEvent.focus(window);
+    expect(postsMock.fetchComments).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(screen.getByText("first comment").closest("li")!).getByRole("button", { name: "Actions for comment by neighbour" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    await waitFor(() => expect(postsMock.fetchComments).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByText("deleted reply")).toBeNull());
+    await act(async () => { resolvePending(rows); await pending; });
+    expect(screen.queryByText("first comment")).toBeNull();
+    expect(screen.getByText("unaffected comment")).toBeTruthy();
+    fireEvent.focus(window);
+    await screen.findByText("new comment");
+    expect(screen.queryByText("first comment")).toBeNull();
+    expect(screen.queryByText("deleted reply")).toBeNull();
+    expect(screen.getByText("unaffected comment")).toBeTruthy();
   });
 
   it("retains a comment when the server refuses deletion", async () => {

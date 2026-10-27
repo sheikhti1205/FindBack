@@ -77,11 +77,20 @@ describe("B3 corpus: vision-only never owns text-only chat", () => {
   };
 
   it("never lets a vision-only local model own a text-only assistant message", () => {
-    expect(rolesForCatalogRecord(smolRecord)).toEqual(["vision"]);
+    // The on-device generative lane is retired: the descriptor is cleanup-only,
+    // so it owns no role at all rather than a vision role. Fail closed is the
+    // stronger form of the same rule — a retired model can never answer.
+    expect(rolesForCatalogRecord(smolRecord)).toEqual([]);
     expect(supportsAssistantMessage(smolRecord, false)).toBe(false);
   });
 
-  it("routes an image turn to the vision model instead of dropping it", () => {
-    expect(supportsAssistantMessage(smolRecord, true)).toBe(true);
+  it("does not route an image turn to a retired vision model", () => {
+    // Retired means no install path and no evaluation path, so an image turn
+    // must go to a cloud provider rather than a model the app cannot load.
+    expect(supportsAssistantMessage(smolRecord, true)).toBe(false);
+  });
+
+  it("fails closed for an id the registry does not know", () => {
+    expect(rolesForCatalogRecord({ ...smolRecord, id: "not-a-registered-model" })).toEqual([]);
   });
 });

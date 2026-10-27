@@ -170,14 +170,21 @@ describe("PostDetail photo gallery (G17)", () => {
     expect(screen.queryByRole("button", { name: /previous photo/i })).toBeNull();
   });
 
-  it("Recovered/Closed need confirmation; other transitions stay direct", async () => {
+  it("Closed needs confirmation, Matched stays direct, Recovered is not a status", async () => {
     postsMock.fetchPost.mockResolvedValue({ ...basePost, attachments: [] });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     try {
       renderDetail();
       await screen.findByRole("radiogroup", { name: /post status/i });
 
-      fireEvent.click(screen.getByRole("radio", { name: "Recovered" }));
+      // Recovered is not a status write at all: it is the durable recovery
+      // relationship, which a FOUND report cannot have. The option is absent
+      // rather than confirmable (PostDetail.test.tsx owns the LOST contract:
+      // the picker opens and no bare status is written).
+      expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
+
+      // Closed is terminal for the searcher: a declined confirm writes nothing.
+      fireEvent.click(screen.getByRole("radio", { name: "Closed" }));
       expect(confirmSpy).toHaveBeenCalled();
       expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
 

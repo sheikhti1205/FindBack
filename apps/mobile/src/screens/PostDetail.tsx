@@ -245,12 +245,23 @@ export function PostDetail() {
   // only depends on [id, load], so it reads through this ref).
   const commentsRef = useRef<CommentItem[]>([]);
   commentsRef.current = comments;
+  // Comment deletions the server confirmed. A list refetch can race the write
+  // (focus/visibility refresh, realtime invalidation, the post-delete
+  // reconcile), and a list that has not observed the delete yet would put the
+  // comment back on screen. Retain IDs for this account/post screen lifetime:
+  // a clean read does not guarantee later reads are fresh. This assumes deleted
+  // comment IDs are not reused or restored; the authorization boundary resets it.
+  const deletedComments = useRef<{ postId: string; ids: Set<string> }>({
+    postId: "",
+    ids: new Set<string>(),
+  });
 
   // A new account/report is a new authorization boundary, not a reload of the
   // old list. Clear private content before paint and fence every outstanding
   // response (including requests that finish during unmount).
   useLayoutEffect(() => {
     ++loadGen.current; ++commentsSeq.current; ++socialSeq.current;
+    deletedComments.current = { postId: id, ids: new Set<string>() };
     setComments([]); setReplyTo(null); setCommentSummaries({}); setCommentPending({});
     setCommentsLoading(true); setCommentsError(null);
     setMyReaction(null); setMyRating(null); setPostCountsOverride(null);
@@ -286,10 +297,18 @@ export function PostDetail() {
         const cs = await fetchComments(id);
         recordLoadTiming("comments", Date.now() - startedAt);
         if (loadGen.current !== gen || commentsSeq.current !== seq) return;
+        // Drop rows whose deletion this screen already confirmed, even if a
+        // previous response omitted them and this response is older.
+        const tracked = deletedComments.current;
+        if (tracked.postId !== id) {
+          tracked.postId = id;
+          tracked.ids.clear();
+        }
+        const visible = tracked.ids.size ? cs.filter((c) => !tracked.ids.has(c.id)) : cs;
         setCommentsError(null);
-        setComments(cs);
+        setComments(visible);
         setCommentSummaries({});
-        setReplyTo((prev) => prev ? cs.find(c => c.id === prev.id) ?? null : null);
+        setReplyTo((prev) => prev ? visible.find(c => c.id === prev.id) ?? null : null);
         setCommentsEpoch((n) => n + 1);
       } catch (err) {
         recordLoadTiming("comments", Date.now() - startedAt);
@@ -659,6 +678,12 @@ export function PostDetail() {
           }
         }
       }
+      const tracked = deletedComments.current;
+      if (tracked.postId !== current.id) {
+        tracked.postId = current.id;
+        tracked.ids.clear();
+      }
+      for (const id of doomed) tracked.ids.add(id);
       setComments((prev) => prev.filter((c) => !doomed.has(c.id)));
       if (replyTo && doomed.has(replyTo.id)) setReplyTo(null);
       void reconcileComments(false);

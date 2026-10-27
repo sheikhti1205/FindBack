@@ -273,7 +273,10 @@ describe("PostDetail redesign (UXN-3)", () => {
     await waitFor(() => expect(postsMock.reactToPost).toHaveBeenCalledWith("p1", "LIKE"));
     const share = screen.getByRole("button", { name: /share/i });
     expect(share.textContent).not.toMatch(/\d/);
+    // One icon slot, an explicit menu: the row button never guesses whether
+    // the reader wants the system sheet or the link.
     fireEvent.click(share);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /copy link/i }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
   });
 

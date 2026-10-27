@@ -18,6 +18,10 @@ vi.mock("../services/notificationPreferences", async (importOriginal) => {
   };
 });
 
+// The screen is a thin wrapper over the shared NotificationSettings panel, which
+// is account-keyed: without a session there is no preference set to show.
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "reader" } }) }));
+
 vi.mock("../services/pushRuntime", () => ({
   pushController: () => ({
     permission: vi.fn(async () => "unsupported" as const),
