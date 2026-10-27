@@ -105,6 +105,13 @@ describe("isAllowlistedShortLink", () => {
     expect(isAllowlistedShortLink("https://evil.example/abc")).toBe(false);
     expect(isAllowlistedShortLink("https://bit.ly/abc")).toBe(false);
   });
+
+  it("does not treat a full Maps URL as a short link", () => {
+    // A destination is not a redirect. Asking to resolve one makes the picker
+    // fetch a page it cannot parse and lose the label the reader pasted.
+    expect(isAllowlistedShortLink("https://www.google.com/maps/place/Some+Place")).toBe(false);
+    expect(isAllowlistedShortLink("https://maps.google.com/?q=23.8,90.4")).toBe(false);
+  });
 });
 
 describe("resolveShortLink", () => {
@@ -133,9 +140,139 @@ describe("resolveShortLink", () => {
     );
   });
 
+  it("does not report an unresolved link as resolved in a browser", async () => {
+    // `redirect: "manual"` yields an opaque response in browsers: status 0 and
+    // no Location header. Returning the short link there would silently store a
+    // label with no coordinates and no error.
+    const opaque = vi.fn().mockResolvedValue({
+      status: 0, type: "opaqueredirect", headers: new Headers(),
+    });
+    await expect(resolveShortLink("https://maps.app.goo.gl/abc", opaque))
+      .rejects.toThrow("cannot follow the map link");
+  });
+
+  it("returns a full Maps URL unchanged without fetching it", async () => {
+    // Nothing to follow: the URL is the destination. A fetch here would either
+    // fail (a browser cannot read the response) or burn a request for a page
+    // the caller already has.
+    const fetcher = vi.fn();
+    const url = "https://www.google.com/maps/place/Some+Place";
+    await expect(resolveShortLink(url, fetcher)).resolves.toBe(url);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects a link that never redirects", async () => {
+    const direct = vi.fn().mockResolvedValue({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://maps.app.goo.gl/abc", direct))
+      .rejects.toThrow("did not redirect");
+  });
+
+  it("rejects a redirect that downgrades the scheme", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      status: 302,
+      headers: new Headers({ location: "http://maps.google.com/?q=23.8,90.4" }),
+    });
+    await expect(resolveShortLink("https://maps.app.goo.gl/abc", fetcher))
+      .rejects.toThrow("untrusted host");
+  });
+
+  it("rejects a Maps path that resolves outside /maps", async () => {
+    // WHATWG URL normalises the dot segment away, so the terminal is
+    // /search on www.google.com — an allowlisted page that is not a location.
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://www.google.com/maps/../search?q=maps" }),
+      })
+      .mockResolvedValueOnce({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://goo.gl/maps/alpha", fetcher))
+      .rejects.toThrow("did not redirect");
+  });
+
+  it("rejects a hop on a non-default port", async () => {
+    // A share link is always https on 443; another port is an escape hatch
+    // around the host rules rather than a Maps destination.
+    const fetcher = vi.fn().mockResolvedValueOnce({
+      status: 302,
+      headers: new Headers({ location: "https://maps.google.com:444/?q=23.8,90.4" }),
+    });
+    await expect(resolveShortLink("https://maps.app.goo.gl/abc", fetcher))
+      .rejects.toThrow("untrusted host");
+    expect(isAllowlistedShortLink("https://maps.app.goo.gl:8443/abc")).toBe(false);
+  });
+
+  it("rejects a short link that lands on a Google page that is not Maps", async () => {
+    // goo.gl shortens more than maps links: a generic link can land on the
+    // Google homepage, which is an allowlisted host and not a location. The
+    // picker would store it as a label with null coordinates and no error.
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://www.google.com/" }),
+      })
+      .mockResolvedValueOnce({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://goo.gl/maps/alpha", fetcher))
+      .rejects.toThrow("did not redirect");
+  });
+
+  it("rejects a chain that ends on another shortener", async () => {
+    // A legacy goo.gl link can point at a maps.app.goo.gl link. Following one
+    // redirect and stopping on a second shortener resolves nothing, and the
+    // picker would store it as a label with null coordinates and no error.
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://maps.app.goo.gl/beta" }),
+      })
+      .mockResolvedValueOnce({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://goo.gl/maps/alpha", fetcher))
+      .rejects.toThrow("did not redirect");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows a shortener chain through to a real destination", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://maps.app.goo.gl/beta" }),
+      })
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://maps.google.com/?q=23.8,90.4" }),
+      })
+      .mockResolvedValueOnce({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://goo.gl/maps/alpha", fetcher))
+      .resolves.toBe("https://maps.google.com/?q=23.8,90.4");
+  });
+
+  it("rejects a redirect that lands back on the short link", async () => {
+    // A self-redirect followed by 200 ends where it began; the URL it returns
+    // would be the short link itself, which is not a location.
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: new Headers({ location: "https://maps.app.goo.gl/abc" }),
+      })
+      .mockResolvedValueOnce({ status: 200, headers: new Headers() });
+    await expect(resolveShortLink("https://maps.app.goo.gl/abc", fetcher))
+      .rejects.toThrow("did not redirect");
+  });
+
+  it("rejects a plain-http short link", () => {
+    expect(isAllowlistedShortLink("http://maps.app.goo.gl/abc123")).toBe(false);
+  });
+
   it("rejects non-allowlisted input", async () => {
     await expect(resolveShortLink("https://bit.ly/abc")).rejects.toThrow(
-      "Only Google Maps short links",
+      "Only Google Maps links",
+    );
+    await expect(resolveShortLink("http://maps.app.goo.gl/abc")).rejects.toThrow(
+      "Only Google Maps links",
     );
   });
 
@@ -211,6 +348,10 @@ describe("parseLocationInput", () => {
     expect(r.latitude).toBeNull();
     expect(r.longitude).toBeNull();
     expect(r.label).toContain("google.com");
+    // The picker only emits the label when the parse does not ask for
+    // resolution, so this flag is the difference between a saved label and a
+    // failed fetch.
+    expect(r.needsResolve).toBe(false);
   });
 });
 

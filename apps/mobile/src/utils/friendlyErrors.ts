@@ -25,6 +25,36 @@ export interface FriendlyError {
 
 const JARGON = [/supabase/gi, /postgrest/gi, /postgres/gi, /\brpc\b/gi, /jwt/gi];
 
+/**
+ * Text that comes from the database catalogue rather than from a person.
+ *
+ * Narrow on purpose: "This post violates our guidelines" is a sentence the
+ * server wrote for the reader and must survive, while "violates not-null
+ * constraint" is schema detail that must never reach one. Matching on `violates`
+ * alone would eat the first, so every pattern names an SQL construct.
+ */
+const CATALOGUE = [
+  /duplicate key value/i,
+  /violates (unique|not-null|foreign key|check|exclusion) constraint/i,
+  /null value in column/i,
+  /relation "[^"]*" does not exist/i,
+  /column "[^"]*" (does not exist|of relation)/i,
+  /syntax error at or near/i,
+  /\bsqlstate\b/i,
+  /_pkey\b/i,
+  // PostgREST's schema-cache errors name the schema object it could not find
+  // ("Could not find the function public.private_rpc(...) in the schema cache",
+  // PGRST202/PGRST205). They arrive as 400 as well as 500, so the pattern has to
+  // hold on every branch, not only where the status is already generic.
+  /could not find the (function|table|column)/i,
+  /\bschema cache\b/i,
+  /function [^()\s]+\([^)]*\) does not exist/i,
+];
+
+function isCatalogueError(message: string): boolean {
+  return CATALOGUE.some((re) => re.test(message));
+}
+
 function clean(message: string): string {
   let out = message;
   for (const re of JARGON) out = out.replace(re, "server");
@@ -98,8 +128,7 @@ export function friendlyError(err: unknown): FriendlyError {
   // catalogue error still gets the generic sentence.
   if (err instanceof ApiError && (err.code === "23505" || err.code === "P0001")) {
     const own = clean(raw);
-    const isCatalogueError = /duplicate key|unique constraint|violates|sqlstate|relation |column |syntax/i.test(own);
-    if (own && !isCatalogueError)
+    if (own && !isCatalogueError(own))
       return { code: err.code === "23505" ? "CONFLICT" : "RATE_LIMIT", message: own };
   }
   if (status === 409)
@@ -108,11 +137,21 @@ export function friendlyError(err: unknown): FriendlyError {
     return { code: "RATE_LIMIT", message: "Too many attempts. Wait a moment and try again." };
   if (status != null && status >= 500)
     return { code: "SERVER", message: "The server is having trouble. Try again in a bit." };
-  if (status === 400 || /invalid|required|too long|malformed/.test(lower))
-    return { code: "VALIDATION", message: clean(raw) || "Check the highlighted fields and try again." };
+  if (status === 400 || /invalid|required|too long|malformed/.test(lower)) {
+    // A 400 can also carry a catalogue error (a not-null or check violation
+    // arrives with its own SQLSTATE), and that is developer-facing text: a
+    // reader gets the generic sentence instead, never the schema.
+    const own = clean(raw);
+    const message = own && !isCatalogueError(own) ? own : "Check the highlighted fields and try again.";
+    return { code: "VALIDATION", message };
+  }
   if (/timeout|timed out|abort/i.test(lower))
     return { code: "TIMEOUT", message: "The request timed out. Try again." };
   if (/network|fetch|failed to fetch|load failed/i.test(lower))
     return { code: "OFFLINE", message: "Network problem. Check your connection and try again." };
-  return { code: "UNKNOWN", message: clean(raw) || "Something went wrong. Try again." };
+  const own = clean(raw);
+  return {
+    code: "UNKNOWN",
+    message: own && !isCatalogueError(own) ? own : "Something went wrong. Try again.",
+  };
 }

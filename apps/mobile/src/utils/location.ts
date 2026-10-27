@@ -146,6 +146,59 @@ export function extractCoordsFromGeoUri(input: string): { lat: number; lng: numb
   return { lat, lng };
 }
 
+/**
+ * Hosts that exist only to redirect to a Maps destination.
+ *
+ * Deliberately narrower than `ALLOWED_MAPS_HOSTS`: a full
+ * `www.google.com/maps/place/...` URL is already the destination. Treating it
+ * as something to resolve made the picker fetch a page it could not parse and
+ * then report a failure instead of keeping the pasted link as a label.
+ */
+export const SHORT_LINK_HOSTS = ["maps.app.goo.gl", "goo.gl"];
+
+/** https on the default port — a share link never needs anything else, and a
+ * non-default port is an escape hatch around the host rules. */
+function isHttpsDefaultPort(u: URL): boolean {
+  return u.protocol === "https:" && (u.port === "" || u.port === "443");
+}
+
+/** True when the URL is on a Maps host we are willing to fetch or follow. */
+function isAllowlistedMapsUrl(input: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    return false;
+  }
+  // https only: a resolved location is user data, and following an http hop
+  // would let the network rewrite it in transit.
+  return isHttpsDefaultPort(u)
+    && ALLOWED_MAPS_HOSTS.includes(u.hostname as (typeof ALLOWED_MAPS_HOSTS)[number]);
+}
+
+/**
+ * True when the URL is a Maps *destination*: a place a reader can be sent to.
+ *
+ * Not the same as "on an allowlisted host". `goo.gl` shortens more than maps
+ * links, so a short link can land on `https://www.google.com/` — a real Google
+ * page, an allowlisted host, and not a location. A terminal URL is only a
+ * resolution when it is the Maps product itself: a `maps.*` host, or the
+ * `/maps` path on a bare Google host.
+ */
+function isMapsDestination(input: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    return false;
+  }
+  if (!isHttpsDefaultPort(u)) return false;
+  if (!ALLOWED_MAPS_HOSTS.includes(u.hostname as (typeof ALLOWED_MAPS_HOSTS)[number])) return false;
+  if (SHORT_LINK_HOSTS.includes(u.hostname as (typeof SHORT_LINK_HOSTS)[number])) return false;
+  if (u.hostname.startsWith("maps.")) return true;
+  return u.pathname === "/maps" || u.pathname.startsWith("/maps/");
+}
+
 /** True when the input is a short link on an allowlisted Google host. */
 export function isAllowlistedShortLink(input: string): boolean {
   let u: URL;
@@ -154,7 +207,8 @@ export function isAllowlistedShortLink(input: string): boolean {
   } catch {
     return false;
   }
-  return ALLOWED_MAPS_HOSTS.includes(u.hostname as (typeof ALLOWED_MAPS_HOSTS)[number]);
+  return isHttpsDefaultPort(u)
+    && SHORT_LINK_HOSTS.includes(u.hostname as (typeof SHORT_LINK_HOSTS)[number]);
 }
 
 /**
@@ -170,8 +224,14 @@ export async function resolveShortLink(
   fetcher: (url: string, init?: RequestInit) => Promise<Response> = fetch,
 ): Promise<string> {
   let current = input.trim();
+  if (!isAllowlistedMapsUrl(current)) {
+    throw new Error("Only Google Maps links can be resolved.");
+  }
+  // A full Maps URL is already the destination: there is nothing to follow, and
+  // fetching it would only parse a page the caller already has.
   if (!isAllowlistedShortLink(current)) {
-    throw new Error("Only Google Maps short links can be resolved.");
+    if (!isMapsDestination(current)) throw new Error("Only Google Maps links can be resolved.");
+    return current;
   }
 
   // Use native resolver on Android
@@ -205,18 +265,35 @@ export async function resolveShortLink(
       clearTimeout(timer);
     }
 
+    // Browsers never expose a cross-origin redirect's Location header with
+    // `redirect: "manual"`: they return an opaque response instead. Returning
+    // `current` here would report the *short link* as resolved, so the caller
+    // would store a label with no coordinates and no error.
+    if (res.type === "opaqueredirect" || res.status === 0) {
+      throw new Error(
+        "This browser cannot follow the map link. Paste the coordinates or open it in Maps.",
+      );
+    }
+
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (!location) throw new Error("Map link did not redirect.");
-      const next = new URL(location, current).toString();
-      const nextHost = new URL(next).hostname;
-      if (!ALLOWED_MAPS_HOSTS.includes(nextHost as (typeof ALLOWED_MAPS_HOSTS)[number])) {
+      const next = new URL(location, current);
+      if (!isHttpsDefaultPort(next)
+        || !ALLOWED_MAPS_HOSTS.includes(next.hostname as (typeof ALLOWED_MAPS_HOSTS)[number])) {
         throw new Error("Map link redirected to an untrusted host.");
       }
-      current = next;
+      current = next.toString();
       continue;
     }
 
+    // A resolution has to land on a Maps destination. A 2xx with no redirect
+    // never moved; a redirect back to itself ends where it began; a chain that
+    // ends on another shortener has followed one redirect and still resolved
+    // nothing; and a `goo.gl` link that lands on the Google homepage reached an
+    // allowlisted page that is not a location. All four would otherwise be
+    // reported as the resolved location, with no coordinates and no error.
+    if (!isMapsDestination(current)) throw new Error("Map link did not redirect to a location.");
     return current;
   }
 

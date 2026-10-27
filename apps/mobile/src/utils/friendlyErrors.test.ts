@@ -126,6 +126,38 @@ describe("friendlyError", () => {
     expect(standing.message).toBe("Your account can't post or reply right now.");
   });
 
+  it("does not echo a catalogue error carried by a 400", () => {
+    // A not-null or check violation arrives with its own SQLSTATE, not 23505,
+    // and used to reach the reader verbatim through the validation branch.
+    const notNull = friendlyError(
+      new ApiError('null value in column "title" of relation "posts" violates not-null constraint', 400, "23502"),
+    );
+    expect(notNull.code).toBe("VALIDATION");
+    expect(notNull.message).not.toMatch(/column|relation|constraint|posts/i);
+    expect(notNull.message).toBe("Check the highlighted fields and try again.");
+
+    const unknown = friendlyError(new ApiError('relation "public.posts" does not exist', 400, "42P01"));
+    expect(unknown.message).not.toMatch(/relation|public\.|does not exist/i);
+
+    // The schema cache is the other shape a missing contract takes, and it also
+    // arrives as 400 — the same leak, through the same branch.
+    const schemaCache = friendlyError(
+      new ApiError("Could not find the function public.private_rpc(p_conversation_id uuid) in the schema cache", 400, "PGRST202"),
+    );
+    expect(schemaCache.code).toBe("VALIDATION");
+    expect(schemaCache.message).not.toMatch(/public\.|schema cache|private_rpc|function/i);
+    expect(schemaCache.message).toBe("Check the highlighted fields and try again.");
+  });
+
+  it("keeps a sentence the server wrote for the reader", () => {
+    // The catalogue filter must not eat ordinary prose that happens to use
+    // similar words.
+    expect(friendlyError(new ApiError("This post violates our guidelines", 400, "22023")).message)
+      .toBe("This post violates our guidelines");
+    expect(friendlyError(new ApiError("Title is required", 400, "22023")).message)
+      .toBe("Title is required");
+  });
+
   it("does not show a raw catalogue error as if the server had said it", () => {
     const raw = friendlyError(
       new ApiError('duplicate key value violates unique constraint "content_reports_pkey"', 409, "23505"),
