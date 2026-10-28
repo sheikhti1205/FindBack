@@ -17,8 +17,25 @@
  * a wrong-recipient unsend can no longer erase an unrelated message id. v1–v3
  * files are migrated additively; rows written before v4 keep a NULL recipient and
  * are validated on the fields they actually carry.
+ *
+ * v5: `messages.body` admits the empty string, because an image-only message has
+ * no caption. The old CHECK (`length(body) between 1 and 100000`) cannot be
+ * altered in place, so v5 rebuilds the table with SQLite's documented procedure
+ * and proves the copy is exact before dropping the original.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 4;
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 5;
+
+/**
+ * The v5 `messages` body CHECK, recognised in `sqlite_master`.
+ *
+ * The rebuild is triggered when this text is ABSENT, not when the old text is
+ * present. That direction is deliberate: a whitespace or casing change in some
+ * future build's DDL would make a positive match silently skip the migration and
+ * leave a file stamped v5 that still rejects `''`. Absence is the safe default,
+ * and re-running the rebuild on an already-correct table is harmless — the copy
+ * is proven exact and nothing is dropped until it is.
+ */
+export const MESSAGES_V5_BODY_CHECK = "length(body) <= 100000";
 
 export const MESSAGING_SQLITE_PRAGMAS = [
   "pragma journal_mode = wal",
@@ -60,7 +77,9 @@ export const MESSAGING_SQLITE_SCHEMA = [
     created_at integer not null,
     unsent_at integer,
     check (author_id <> recipient_id),
-    check (body is null or (length(body) between 1 and 100000)),
+    -- v5: an image-only message carries no caption, so the empty string is a
+    -- valid body. Anything longer than the storage bound is still refused.
+    check (body is null or length(body) <= 100000),
     check ((server_event_id is null) = (server_sequence is null)),
     unique (conversation_id, server_sequence)
   )`,
@@ -237,6 +256,54 @@ export const MESSAGING_SQLITE_STATEMENTS = {
     values (?, ?, ?)`,
   clearConversation: `update conversation_cleared
     set through_sequence = max(through_sequence, ?), cleared_at = ? where conversation_id = ?`,
+
+  // ---- v4 -> v5: messages.body admits '' (image-only caption) ----
+  /** Fingerprint of the live table; the CHECK cannot be altered in place. */
+  messagesTableSql: `select sql from sqlite_master where type = 'table' and name = 'messages'`,
+  /** The same columns and constraints, with the body CHECK relaxed to <= 100000. */
+  createMessagesV5: `create table messages_v5 (
+    id text primary key,
+    conversation_id text not null references conversations(id) on delete cascade,
+    author_id text not null,
+    recipient_id text not null,
+    body text,
+    server_event_id text,
+    server_sequence integer,
+    created_at integer not null,
+    unsent_at integer,
+    check (author_id <> recipient_id),
+    check (body is null or length(body) <= 100000),
+    check ((server_event_id is null) = (server_sequence is null)),
+    unique (conversation_id, server_sequence)
+  )`,
+  copyMessagesV5: `insert into messages_v5
+    (id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at)
+    select id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at from messages`,
+  // Exact set comparison over every column, in both directions. A count alone
+  // would accept a copy that silently dropped one row and duplicated another.
+  missingMessagesV5: `select count(*) as n from (
+    select id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at from messages
+    except
+    select id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at from messages_v5)`,
+  extraMessagesV5: `select count(*) as n from (
+    select id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at from messages_v5
+    except
+    select id, conversation_id, author_id, recipient_id, body, server_event_id,
+      server_sequence, created_at, unsent_at from messages)`,
+  dropMessages: `drop table messages`,
+  renameMessagesV5: `alter table messages_v5 rename to messages`,
+  // Indexes are dropped with their table, so both are recreated by name.
+  recreateMessagesEventIndex: `create unique index if not exists ux_messages_event
+    on messages(server_event_id) where server_event_id is not null`,
+  recreateMessagesConversationIndex: `create index if not exists ix_messages_conversation
+    on messages(conversation_id, server_sequence)`,
+  /** Foreign keys are off during the rebuild, so integrity is proven afterwards. */
+  foreignKeyCheck: `pragma foreign_key_check`,
 
   // ---- portable history snapshot (backup/restore) ----
   // Only accepted messages are portable: a pending send is device-local work,

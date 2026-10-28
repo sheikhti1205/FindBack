@@ -104,6 +104,50 @@ function inbound(message: Partial<HumanMessage> = {}, event = EVENT, mailbox = M
   return echoOf({ ...outgoing, authorId: B, recipientId: A, body: "Reply text", ...message }, event, mailbox, sequence);
 }
 
+/**
+ * Build a v4-shaped file: today's schema, except `messages` still carries the
+ * body CHECK that rejects the empty string, plus one accepted message and its
+ * pending outbox row.
+ */
+function seedLegacyV4() {
+  database.exec("create table messaging_meta (key text primary key, value text not null)");
+  const bind = database.prepare("insert into messaging_meta (key, value) values (?, ?)");
+  bind.run("account_id", A);
+  bind.run("device_id", DEVICE);
+  bind.run("schema_version", "4");
+  // The messages table and its indexes are created by hand below, in their v4
+  // shape, so the schema's own definitions for them are skipped.
+  const ownedByMessages = [
+    "create table if not exists messages (",
+    "create unique index if not exists ux_messages_event",
+    "create index if not exists ix_messages_conversation",
+  ];
+  for (const statement of MESSAGING_SQLITE_SCHEMA as readonly string[]) {
+    if (!ownedByMessages.some((prefix) => statement.startsWith(prefix))) database.exec(statement);
+  }
+  database.exec(`create table messages (
+    id text primary key,
+    conversation_id text not null references conversations(id) on delete cascade,
+    author_id text not null,
+    recipient_id text not null,
+    body text,
+    server_event_id text,
+    server_sequence integer,
+    created_at integer not null,
+    unsent_at integer,
+    check (author_id <> recipient_id),
+    check (body is null or (length(body) between 1 and 100000)),
+    check ((server_event_id is null) = (server_sequence is null)),
+    unique (conversation_id, server_sequence))`);
+  database.exec("create unique index ux_messages_event on messages(server_event_id) where server_event_id is not null");
+  database.exec("create index ix_messages_conversation on messages(conversation_id, server_sequence)");
+  database.prepare("insert into conversations (id, created_at, updated_at) values (?,?,?)").run(CONVERSATION, 1, 1);
+  database.prepare(`insert into messages
+    (id, conversation_id, author_id, recipient_id, body, server_event_id, server_sequence, created_at)
+    values (?,?,?,?,?,?,?,?)`).run(MESSAGE, CONVERSATION, A, B, "Hello there", EVENT, 1, 5);
+  database.prepare("insert into outbox (message_id, status) values (?, 'QUEUED')").run(MESSAGE);
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "findback-sqlite-"));
   path = join(dir, "messaging.db");
@@ -192,6 +236,146 @@ describe("schema and durability", () => {
     });
     expect(database.prepare("select recipient_id as recipientId from tombstones where message_id = ?").get(MESSAGE))
       .toEqual({ recipientId: A });
+    await history.close();
+  });
+
+  it("rebuilds a v4 messages table so an image-only message can be stored, preserving every row", async () => {
+    seedLegacyV4();
+    // The old shape is what makes this a real migration rather than a no-op.
+    expect(() => database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE_2, CONVERSATION, A, B, "", 6)).toThrow(/CHECK/);
+
+    const history = await open();
+    expect(database.prepare("select value from messaging_meta where key = 'schema_version'").get())
+      .toEqual({ value: "5" });
+    // Every existing row and its pending send survived the rebuild.
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there", server: { sequence: 1 } });
+    expect((await history.listOutbox()).map((entry) => entry.messageId)).toEqual([MESSAGE]);
+    // The rebuilt table accepts the empty caption, and the indexes exist again.
+    database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE_2, CONVERSATION, A, B, "", 6);
+    const indexRows = database.prepare("select name from sqlite_master where type = 'index' and tbl_name = 'messages'")
+      .all() as Array<{ name: string }>;
+    const indexes = indexRows.map((row) => row.name);
+    expect(indexes).toEqual(expect.arrayContaining(["ux_messages_event", "ix_messages_conversation"]));
+    expect(database.prepare("pragma foreign_key_check").all()).toEqual([]);
+    expect(database.prepare("pragma foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    // Still bounded above: the rebuild relaxed the floor, not the ceiling.
+    expect(() => database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE, CONVERSATION, A, B, "x".repeat(100_001), 7)).toThrow(/CHECK/);
+    await history.close();
+  });
+
+  it("refuses to drop the original table when the v5 copy is not exact", async () => {
+    seedLegacyV4();
+    // Simulate a lossy copy: remove a row after it was copied, before the
+    // verification query runs. The rebuild must notice and refuse.
+    let corrupted = false;
+    const issued: string[] = [];
+    await expect(open((sql) => {
+      issued.push(sql);
+      if (!corrupted && sql.includes("except") && sql.includes("from messages_v5)")) {
+        corrupted = true;
+        database.prepare("delete from messages_v5 where id = ?").run(MESSAGE);
+      }
+    })).rejects.toThrow(/did not preserve every message/);
+    expect(corrupted).toBe(true);
+    // The pragma is restored by an issued statement, not by the engine's default.
+    expect(issued).toContain("pragma foreign_keys = on");
+    // It was issued after the copy was attempted, i.e. on the failure path.
+    expect(issued.lastIndexOf("pragma foreign_keys = on")).toBeGreaterThan(issued.indexOf("drop table messages"));
+    // The adapter closed its handle on failure, so reopen the file to inspect it.
+    database = new DatabaseSync(path);
+    // Rolled back: the original table, its CHECK and its row are untouched.
+    expect(database.prepare("select body from messages where id = ?").get(MESSAGE)).toEqual({ body: "Hello there" });
+    expect(database.prepare("select name from sqlite_master where type = 'table' and name = 'messages_v5'").get())
+      .toBeUndefined();
+    expect(() => database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE_2, CONVERSATION, A, B, "", 6)).toThrow(/CHECK/);
+    expect(database.prepare("pragma foreign_keys").get()).toEqual({ foreign_keys: 1 });
+  });
+
+  it("rebuilds a pre-v5 table even when its DDL is formatted differently", async () => {
+    // The trigger is the ABSENCE of the v5 CHECK, so a build that emitted the
+    // old constraint with different whitespace still migrates. Matching the old
+    // text positively would silently skip it and leave a v5-stamped file that
+    // rejects an image-only message at runtime.
+    seedLegacyV4();
+    database.exec("drop index ix_messages_conversation");
+    database.exec("drop index ux_messages_event");
+    database.exec("drop table messages");
+    database.exec(`CREATE TABLE messages(
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      author_id TEXT NOT NULL, recipient_id TEXT NOT NULL, body TEXT,
+      server_event_id TEXT, server_sequence INTEGER, created_at INTEGER NOT NULL,
+      unsent_at INTEGER,
+      CHECK(author_id<>recipient_id),
+      CHECK(body IS NULL OR (LENGTH(body) BETWEEN 1 AND 100000)),
+      CHECK((server_event_id IS NULL)=(server_sequence IS NULL)),
+      UNIQUE(conversation_id, server_sequence))`);
+    database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE, CONVERSATION, A, B, "Hello there", 5);
+
+    const history = await open();
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there" });
+    database.prepare(`insert into messages
+      (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+      .run(MESSAGE_2, CONVERSATION, A, B, "", 6);
+    await history.close();
+  });
+
+  it("does not rebuild a table that already carries the v5 CHECK", async () => {
+    const issued: string[] = [];
+    const history = await open((sql) => { issued.push(sql); });
+    expect(issued.some((sql) => sql.startsWith("create table messages_v5"))).toBe(false);
+    expect(issued).not.toContain("drop table messages");
+    await history.close();
+  });
+
+  it("refuses a v5 copy that gained a row as well as one that lost a row", async () => {
+    // The missing-row direction is covered above. The proof is two-way, so the
+    // extra-row direction must also be shown to fire: a count-based check would
+    // accept a copy that dropped one row and duplicated another.
+    seedLegacyV4();
+    let corrupted = false;
+    await expect(open((sql) => {
+      if (!corrupted && sql.includes("except") && sql.includes("from messages)")) {
+        corrupted = true;
+        database.prepare(`insert into messages_v5
+          (id, conversation_id, author_id, recipient_id, body, created_at) values (?,?,?,?,?,?)`)
+          .run(MESSAGE_2, CONVERSATION, A, B, "smuggled", 6);
+      }
+    })).rejects.toThrow(/did not preserve every message/);
+    expect(corrupted).toBe(true);
+    database = new DatabaseSync(path);
+    expect(database.prepare("select count(*) as n from messages").get()).toEqual({ n: 1 });
+    expect(database.prepare("select name from sqlite_master where type = 'table' and name = 'messages_v5'").get())
+      .toBeUndefined();
+  });
+
+  it("retries the v5 rebuild after a failure instead of leaving a half-migrated file", async () => {
+    seedLegacyV4();
+    const issued: string[] = [];
+    await expect(open((sql) => {
+      issued.push(sql);
+      if (sql === "drop table messages") throw new Error("simulated interruption");
+    })).rejects.toThrow(/simulated interruption/);
+    // The explicit rollback ran; the file is not merely cleaned up by close().
+    expect(issued).toContain("rollback");
+    // The adapter closed its handle on failure, so reopen the file to inspect it.
+    database = new DatabaseSync(path);
+    // The rollback left the old table intact, and a second open migrates it.
+    expect(database.prepare("select body from messages where id = ?").get(MESSAGE)).toEqual({ body: "Hello there" });
+    const history = await open();
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there" });
+    expect(database.prepare("select value from messaging_meta where key = 'schema_version'").get())
+      .toEqual({ value: "5" });
     await history.close();
   });
 

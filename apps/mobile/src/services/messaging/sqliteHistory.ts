@@ -16,6 +16,7 @@ import type {
 } from "./history";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
 import {
+  MESSAGES_V5_BODY_CHECK,
   MESSAGING_SQLITE_DURABILITY_CHECKS as D,
   MESSAGING_SQLITE_PRAGMAS,
   MESSAGING_SQLITE_SCHEMA,
@@ -78,6 +79,12 @@ interface TombstoneRow {
 }
 
 const LEASE_MS = 60_000;
+
+/**
+ * Every schema this build can migrate forward from. A version outside this list
+ * is a file written by a newer build, and it is refused before any mutation.
+ */
+const SUPPORTED_PRIOR_VERSIONS: readonly string[] = ["1", "2", "3", "4", String(MESSAGING_SQLITE_SCHEMA_VERSION)];
 
 function defaultToken(): string {
   const source = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -163,7 +170,7 @@ export async function openSqliteMessagingHistory(
       (await driver.all<{ key: string; value: string }>(S.getMetaRows)).map((row) => [row.key, row.value]),
     );
     const storedVersion = prior.get("schema_version") ?? null;
-    if (storedVersion !== null && !["1", "2", "3", String(MESSAGING_SQLITE_SCHEMA_VERSION)].includes(storedVersion)) {
+    if (storedVersion !== null && !SUPPORTED_PRIOR_VERSIONS.includes(storedVersion)) {
       throw new Error("Unsupported messaging schema version");
     }
     const storedAccount = prior.get("account_id") ?? null;
@@ -200,6 +207,54 @@ export async function openSqliteMessagingHistory(
 
   for (const statement of MESSAGING_SQLITE_SCHEMA) await driver.exec(statement);
 
+  // v4 -> v5: `messages.body` must admit the empty string so an image-only
+  // message has somewhere to live. A CHECK constraint cannot be altered in
+  // place, so this is SQLite's documented table rebuild: new table, exact copy,
+  // prove the copy, drop, rename, recreate the indexes. Foreign keys are turned
+  // off for the drop (other tables reference `messages`) and integrity is proven
+  // with `foreign_key_check` before the commit, which is why the pragma is
+  // restored in `finally` rather than trusted to survive an abort.
+  const messagesTable = (await driver.all<{ sql: string }>(S.messagesTableSql))[0];
+  // Fail-safe direction: rebuild unless the table already carries the v5 CHECK.
+  // Matching the OLD text positively would skip the migration on any future
+  // build whose DDL formatting differs, leaving a v5-stamped file that rejects
+  // `''`. Rebuilding an already-correct table is harmless — the copy is proven
+  // exact and nothing is dropped until it is.
+  if (messagesTable && !messagesTable.sql.includes(MESSAGES_V5_BODY_CHECK)) {
+    await driver.exec("pragma foreign_keys = off");
+    const disabled = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
+    if (disabled !== 0) throw new Error("Messaging storage could not disable foreign keys for the v5 rebuild");
+    try {
+      await driver.exec("begin immediate");
+      try {
+        await driver.exec(S.createMessagesV5);
+        await driver.run(S.copyMessagesV5);
+        // Exact set comparison in both directions: a count alone would accept a
+        // copy that dropped one row and duplicated another.
+        const missing = (await driver.all<{ n: number }>(S.missingMessagesV5))[0]?.n;
+        const extra = (await driver.all<{ n: number }>(S.extraMessagesV5))[0]?.n;
+        if (missing !== 0 || extra !== 0) {
+          throw new Error("Messaging v5 rebuild did not preserve every message");
+        }
+        await driver.exec(S.dropMessages);
+        await driver.exec(S.renameMessagesV5);
+        await driver.exec(S.recreateMessagesEventIndex);
+        await driver.exec(S.recreateMessagesConversationIndex);
+        if ((await driver.all(S.foreignKeyCheck)).length > 0) {
+          throw new Error("Messaging v5 rebuild broke referential integrity");
+        }
+        await driver.exec("commit");
+      } catch (error) {
+        try { await driver.exec("rollback"); } catch { /* commit may already have failed */ }
+        throw error;
+      }
+    } finally {
+      await driver.exec("pragma foreign_keys = on");
+    }
+    const restored = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
+    if (restored !== 1) throw new Error("Messaging storage requires foreign_keys = ON");
+  }
+
   // Additive v1-v3 -> v4 migration: a pre-v4 tombstones table has no recipient
   // binding. `pragma table_info` makes this idempotent; the DDL runs before the
   // binding transaction so a failure still closes the handle.
@@ -219,7 +274,7 @@ export async function openSqliteMessagingHistory(
     const storedAccount = binding.get("account_id") ?? null;
     const storedDevice = binding.get("device_id") ?? null;
     const storedVersion = binding.get("schema_version") ?? null;
-    if (storedVersion !== null && !["1", "2", "3", String(MESSAGING_SQLITE_SCHEMA_VERSION)].includes(storedVersion)) {
+    if (storedVersion !== null && !SUPPORTED_PRIOR_VERSIONS.includes(storedVersion)) {
       throw new Error("Unsupported messaging schema version");
     }
     if (storedAccount !== null && storedAccount !== scope.accountId) {
