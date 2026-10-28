@@ -397,9 +397,10 @@ Both adapters accept an injected `MediaBytesPort`. For each account its backing
 byte database must belong to exactly the same metadata database: installation
 and backend. Handles of that same history may share it; different installations
 or backends may not. Platform integration must select that isolated byte database
-and close it only after `history.close()` resolves. The existing platform owner
-does not yet inject media storage; transport, purge-owner integration and UI are
-separate F2b-3/F2b-4 stages. These adapter methods alone are not shipped chat media.
+and close it only after `history.close()` drains. The platform owner supports
+opt-in `media: { backendUrl }` composition (see below); the session/runtime does
+not yet enable it. Transport, account-deletion integration and UI remain separate
+F2b-3/F2b-4 work. These adapter methods alone are not shipped chat media.
 
 Safety is ordered, not atomic across stores:
 
@@ -451,3 +452,37 @@ It tests quota/accounting, cleanup failures, LRU, erasure and lifecycle ordering
 not real browser persistence. A Node 24 LockManager snapshot can still list a
 cancelled waiter; cancellation tests assert rejection and close before the held
 lock is released, then absence of late writes, rather than snapshot removal.
+
+### F2b-3A — production storage ownership
+
+`openPlatformMessagingHistory({ accountId, deviceId, media: { backendUrl } })`
+selects the same metadata adapters and opens scoped IndexedDB bytes on both
+platforms. Android's installation UUID still comes from the native plugin. No
+arbitrary byte port or database-name override is admitted at this boundary.
+
+`scopedMediaBytes.ts` copies and validates platform/account/installation/backend,
+then compare-or-inserts a durable registry binding **before** opening bytes or
+metadata. Registry writes require strict durability and resolve on transaction
+completion, not request success. The key matches the actual metadata identity:
+Android platform+account, web platform+account+installation. A different backend
+(or different native installation) for the same metadata database refuses before
+any sweep/purge. First registration of legacy text metadata cannot establish its
+historical backend provenance; it binds the currently configured owner only.
+
+Byte names encode the complete owner tuple, including normalized backend base
+path. A different web installation, account or platform cannot sweep another's
+bytes, even after the crash grace period. Every scoped byte method enforces the
+captured account. Ports are frozen and checked by an internal WeakMap; casts,
+copied properties and raw stores cannot satisfy runtime ownership validation.
+Close is memoized and immediately refuses new admission. The platform closes
+history first and bytes after admitted storage cleanup; failed native close
+retains the native lease and surfaces failure rather than claiming release.
+Ordinary close retains data and registry binding.
+
+Host tests exercise actual byte storage (fake-indexeddb), web metadata and the
+file-backed SQLite native seam, with platform decoding replaced only on Node.
+They cover aged-byte isolation, backend conflicts, atomic registration races,
+foreign-account rejection, strict durability, blocked-open late connection
+cleanup, option mutation and close ordering. They do not establish browser/device
+power-loss behavior or complete account deletion. Registry enumeration, durable
+deletion fencing and full history purge remain F2b-3C, not `clearMedia()`.

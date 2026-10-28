@@ -99,7 +99,9 @@ export interface MediaBytesOptions {
 function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = factory.open(name, 1);
+    let refused = false;
     request.onupgradeneeded = () => {
+      if (refused) { request.transaction!.abort(); return; }
       const db = request.result;
       if (!db.objectStoreNames.contains(BYTES)) {
         const bytes = db.createObjectStore(BYTES, { keyPath: ["accountId", "attachmentId"] });
@@ -109,9 +111,15 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
         db.createObjectStore(BUDGET, { keyPath: "accountId" });
       }
     };
-    request.onblocked = () => reject(new Error("Media storage upgrade blocked"));
+    request.onblocked = () => {
+      refused = true;
+      reject(new Error("Media storage upgrade blocked"));
+    };
     request.onerror = () => reject(new Error("Media storage could not open"));
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      if (refused) { request.result.close(); return; }
+      resolve(request.result);
+    };
   });
 }
 

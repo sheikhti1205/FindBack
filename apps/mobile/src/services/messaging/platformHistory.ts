@@ -20,6 +20,7 @@ import {
   readAndroidInstallationId,
 } from "./androidSqliteDriver";
 import { isUuid } from "./validation";
+import { assertMediaBytesOwner, openScopedMediaBytes, type ScopedMediaBytes } from "./scopedMediaBytes";
 
 export type MessagingPlatformFailure = "unsupported" | "invalid-scope" | "already-open";
 
@@ -71,13 +72,15 @@ export interface PlatformMessagingOptions {
    * rejects a different value rather than silently opening a divergent scope.
    */
   deviceId?: string;
-  /** Web/test injection for the IndexedDB factory. */
+  /** Metadata on web; media bytes/ownership registry on both platforms. */
   indexedDB?: IDBFactory;
+  /** Opt into the owned media store; callers cannot inject an arbitrary port. */
+  media?: { backendUrl: string };
 }
 
-/** The web adapter closes synchronously; the SQLite adapter returns a promise. */
+/** Both adapters invalidate synchronously, then drain admitted storage work. */
 async function closeHistory(history: MessagingHistory): Promise<void> {
-  await Promise.resolve((history as unknown as { close(): unknown }).close());
+  await history.close();
 }
 
 function createHandle(
@@ -85,6 +88,7 @@ function createHandle(
   scope: MessagingScope,
   history: MessagingHistory,
   release: () => void = () => undefined,
+  bytes?: ScopedMediaBytes,
 ): PlatformMessagingHandle {
   let closing: Promise<void> | undefined;
   return {
@@ -92,17 +96,37 @@ function createHandle(
     scope,
     history,
     close: () => {
-      closing ??= closeHistory(history).then(release);
+      // Never close bytes before history's admitted cleanup has drained, even
+      // on failed native teardown. Preserve that original close failure and do
+      // not release native ownership when either resource's close is uncertain.
+      closing ??= closeHistory(history).then(async () => {
+        await bytes?.close();
+        release();
+      }, async (error: unknown) => {
+        await bytes?.close().catch(() => undefined);
+        throw error;
+      });
       return closing;
     },
   };
 }
 
-async function openAndroid(accountId: string, requestedDeviceId?: string): Promise<PlatformMessagingHandle> {
+async function openBytes(platform: "android" | "web", scope: MessagingScope, options: PlatformMessagingOptions) {
+  if (!options.media) return undefined;
+  const owner = { platform, ...scope, backendUrl: options.media.backendUrl };
+  const bytes = await openScopedMediaBytes(owner, { indexedDB: options.indexedDB });
+  try { assertMediaBytesOwner(bytes, owner); }
+  catch (error) { await bytes.close().catch(() => undefined); throw error; }
+  return bytes;
+}
+
+async function openAndroid(options: PlatformMessagingOptions): Promise<PlatformMessagingHandle> {
+  const { accountId, deviceId: requestedDeviceId } = options;
   if (androidOwners.has(accountId)) throw new MessagingPlatformError("already-open");
   androidOwners.add(accountId);
   const release = () => { androidOwners.delete(accountId); };
   let driver: Awaited<ReturnType<typeof openAndroidMessagingSqliteDriver>> | undefined;
+  let bytes: ScopedMediaBytes | undefined;
   try {
     // Identity comes from the plugin's persisted UUID before any file is opened,
     // so a restart reopens the same database under the same scope.
@@ -110,16 +134,20 @@ async function openAndroid(accountId: string, requestedDeviceId?: string): Promi
     if (requestedDeviceId !== undefined && requestedDeviceId !== deviceId) {
       throw new MessagingPlatformError("invalid-scope");
     }
+    const scope = { accountId, deviceId };
+    bytes = await openBytes("android", scope, options);
     driver = await openAndroidMessagingSqliteDriver({ accountId });
-    const history = await openSqliteMessagingHistory(driver, { accountId, deviceId });
-    return createHandle("android", { accountId, deviceId }, history, release);
+    const history = await openSqliteMessagingHistory(driver, scope, { mediaBytes: bytes });
+    return createHandle("android", scope, history, release, bytes);
   } catch (error) {
     // The adapter closes its own driver on every failure path; this is a
     // belt-and-braces invalidation so no handle survives a failed open.
     // A failed close deliberately retains ownership. Do not expose another
     // writer until native teardown is known to have succeeded.
-    if (driver) await driver.close();
-    release();
+    let released = true;
+    try { await driver?.close(); } catch { released = false; }
+    try { await bytes?.close(); } catch { released = false; }
+    if (released) release();
     throw error;
   }
 }
@@ -127,8 +155,15 @@ async function openAndroid(accountId: string, requestedDeviceId?: string): Promi
 async function openWeb(options: PlatformMessagingOptions): Promise<PlatformMessagingHandle> {
   const { accountId, deviceId } = options;
   if (!isUuid(deviceId)) throw new MessagingPlatformError("invalid-scope");
-  const history = await openWebMessagingHistory({ accountId, deviceId }, { indexedDB: options.indexedDB });
-  return createHandle("web", { accountId, deviceId }, history);
+  const scope = { accountId, deviceId };
+  const bytes = await openBytes("web", scope, options);
+  try {
+    const history = await openWebMessagingHistory(scope, { indexedDB: options.indexedDB, mediaBytes: bytes });
+    return createHandle("web", scope, history, undefined, bytes);
+  } catch (error) {
+    await bytes?.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -141,12 +176,16 @@ export async function openPlatformMessagingHistory(
 ): Promise<PlatformMessagingHandle> {
   const accountId = options?.accountId;
   if (!isUuid(accountId)) throw new MessagingPlatformError("invalid-scope");
+  // No owner fields may be retargeted by caller mutation across installation,
+  // registry, or database awaits.
+  const captured = { accountId, deviceId: options.deviceId, indexedDB: options.indexedDB,
+    media: options.media ? { backendUrl: options.media.backendUrl } : undefined };
 
   const platform = Capacitor.getPlatform();
   if (platform === "ios") throw new MessagingPlatformError("unsupported");
   if (Capacitor.isNativePlatform()) {
     if (platform !== "android") throw new MessagingPlatformError("unsupported");
-    return openAndroid(accountId, options.deviceId);
+    return openAndroid(captured);
   }
-  return openWeb(options);
+  return openWeb(captured);
 }

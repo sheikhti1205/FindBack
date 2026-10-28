@@ -13,8 +13,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { IDBFactory } from "fake-indexeddb";
+import { IDBDatabase, IDBFactory } from "fake-indexeddb";
 import type { HumanMessage } from "./history";
+import { mediaFixture } from "./mediaTestDoubles";
+import { MEDIA_SWEEP_GRACE_MS } from "./media";
 
 const { fakePlugin, registerPluginMock, platform } = vi.hoisted(() => ({
   fakePlugin: {
@@ -37,6 +39,10 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: (name: string) => registerPluginMock(name),
 }));
 
+// The platform decoder is unavailable on Node; leave hash/container/dimension
+// verification, both real metadata adapters and actual IDB bytes in the path.
+vi.mock("../media/webTranscode", () => ({ transcodeImageForWeb: async () => undefined }));
+
 import { MessagingSqliteError } from "./androidSqliteDriver";
 import { openPlatformMessagingHistory } from "./platformHistory";
 
@@ -54,6 +60,7 @@ const outgoing: HumanMessage = {
 let dir: string;
 let callLog: string[];
 let openDatabases: DatabaseSync[];
+let mediaHandles: Awaited<ReturnType<typeof openPlatformMessagingHistory>>[];
 
 /**
  * Seam fake for the native plugin: real SQLite, real pragmas, opaque handles,
@@ -130,6 +137,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chat033-native-"));
   callLog = [];
   openDatabases = [];
+  mediaHandles = [];
   for (const fn of Object.values(fakePlugin)) fn.mockReset();
   registerPluginMock.mockReset().mockImplementation(() => fakePlugin);
   platform.native = true;
@@ -137,11 +145,14 @@ beforeEach(() => {
   installFakeNativePlugin();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(mediaHandles.map((handle) => handle.close().catch(() => undefined)));
   for (const db of openDatabases) {
     try { db.close(); } catch { /* the adapter may have closed it first */ }
   }
   rmSync(dir, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Android selection", () => {
@@ -386,4 +397,182 @@ describe("unsupported and web platforms", () => {
       openPlatformMessagingHistory({ accountId: A, indexedDB: new IDBFactory() }),
     ).rejects.toMatchObject({ kind: "invalid-scope" });
   });
+});
+
+describe.each(["android", "web"] as const)("%s production media ownership", (target) => {
+  const ATTACHMENT = "00000000-0000-4000-8000-000000000005";
+  const BACKEND = "https://backend-a.example.test";
+  let factory: IDBFactory;
+  let clock: number;
+  beforeEach(() => {
+    platform.name = target; platform.native = target === "android";
+    factory = new IDBFactory(); clock = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+  });
+
+  async function open(overrides: { accountId?: string; deviceId?: string; backendUrl?: string } = {}) {
+    const options = { accountId: overrides.accountId ?? A, deviceId: overrides.deviceId ?? INSTALLATION,
+      indexedDB: factory, media: { backendUrl: overrides.backendUrl ?? BACKEND } };
+    const handle = await openPlatformMessagingHistory(options);
+    mediaHandles.push(handle);
+    return handle;
+  }
+  async function enqueue(handle: Awaited<ReturnType<typeof open>>, body = "") {
+    await handle.history.cacheConversation({ conversationId: CONVERSATION, peerId: B, mode: "CONNECTED",
+      request: "NONE", requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 1 });
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE);
+    await handle.history.enqueueOutgoingWithMedia({ ...outgoing, body }, fixture.metadata, fixture.bytes);
+    return fixture;
+  }
+
+  it("reopens a queued image-only parent with its durable bytes and metadata", async () => {
+    const first = await open();
+    const fixture = await enqueue(first);
+    await first.close();
+    clock += MEDIA_SWEEP_GRACE_MS + 1;
+    const again = await open();
+    expect(await again.history.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+    expect(await again.history.listOutbox()).toEqual([{ messageId: MESSAGE, status: "QUEUED", attempts: 0 }]);
+    expect((await again.history.listMedia(CONVERSATION)).map((row) => row.state)).toEqual(["QUEUED"]);
+    expect((await again.history.getMessage(MESSAGE))?.body).toBe("");
+    expect(again.close()).toBe(again.close());
+  });
+
+  it("refuses backend conflict before metadata open or cleanup and preserves the first history", async () => {
+    const first = await open();
+    const fixture = await enqueue(first);
+    await first.close();
+    clock += MEDIA_SWEEP_GRACE_MS + 1;
+    const nativeOpens = fakePlugin.open.mock.calls.length;
+    const connect = factory.open.bind(factory);
+    const openedNames: string[] = [];
+    vi.spyOn(factory, "open").mockImplementation((name, version) => { openedNames.push(name); return connect(name, version); });
+    await expect(open({ backendUrl: "https://backend-b.example.test" })).rejects.toThrow(/ownership/i);
+    expect(fakePlugin.open.mock.calls.length).toBe(nativeOpens);
+    expect(openedNames.some((name) => name.startsWith("findback-human-history"))).toBe(false);
+    const again = await open();
+    expect(await again.history.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+    expect((await again.history.listMedia(CONVERSATION)).map((row) => row.id)).toEqual([ATTACHMENT]);
+  });
+
+  it.each(["account", "platform", "installation"])("does not let another %s sweep or purge aged bytes", async (different) => {
+    const first = await open();
+    const fixture = await enqueue(first);
+    clock += MEDIA_SWEEP_GRACE_MS + 1;
+    if (different === "platform") {
+      platform.name = target === "android" ? "web" : "android";
+      platform.native = platform.name === "android";
+    }
+    if (target === "android" && different === "installation") {
+      await first.close();
+      fakePlugin.installationId.mockResolvedValue({ id: OTHER_INSTALLATION });
+      await expect(open({ deviceId: OTHER_INSTALLATION })).rejects.toThrow(/ownership/i);
+      fakePlugin.installationId.mockResolvedValue({ id: INSTALLATION });
+      const again = await open();
+      expect(await again.history.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+      return;
+    }
+    const second = await open(different === "account" ? { accountId: B }
+      : different === "installation" ? { deviceId: OTHER_INSTALLATION } : {});
+    await second.history.clearMedia();
+    expect(await first.history.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+    expect((await first.history.listMedia(CONVERSATION)).map((row) => row.state)).toEqual(["QUEUED"]);
+  });
+
+  it("closes bytes only after admitted history byte cleanup commits", async () => {
+    const handle = await open();
+    await enqueue(handle);
+    const order: string[] = [];
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => { entered = resolve; });
+    const transact = IDBDatabase.prototype.transaction;
+    vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
+      const tx = transact.apply(this, args);
+      if (this.name.startsWith("findback-chat-media-bytes") && args[1] === "readwrite") {
+        tx.addEventListener("complete", () => order.push("byte-commit"));
+        entered();
+      }
+      return tx;
+    });
+    const close = IDBDatabase.prototype.close;
+    vi.spyOn(IDBDatabase.prototype, "close").mockImplementation(function (this: IDBDatabase) {
+      if (this.name.startsWith("findback-chat-media-bytes")) order.push("byte-close");
+      return close.call(this);
+    });
+    const purging = handle.history.clearMedia();
+    // SQLite's existing serial wrapper rejects post-close results even when
+    // cleanup committed (sqliteHistory.ts serial). Assert that exact contract,
+    // then independently prove the durable cleanup and byte-close ordering.
+    const settled = target === "android" ? expect(purging).rejects.toThrow(/closed/i)
+      : expect(purging).resolves.toBeUndefined();
+    await ready;
+    const closing = handle.close();
+    await settled;
+    await closing;
+    expect(order).toEqual(["byte-commit", "byte-close"]);
+    const again = await open();
+    expect(await again.history.listMedia(CONVERSATION)).toEqual([]);
+    expect(await again.history.readMedia(ATTACHMENT)).toBeNull();
+  });
+
+  it("refuses missing Web Locks and closes its owned byte connection", async () => {
+    vi.stubGlobal("navigator", {});
+    const closed: string[] = [];
+    const close = IDBDatabase.prototype.close;
+    vi.spyOn(IDBDatabase.prototype, "close").mockImplementation(function (this: IDBDatabase) {
+      closed.push(this.name); return close.call(this);
+    });
+    await expect(open()).rejects.toThrow(/Web Locks/);
+    expect(closed.some((name) => name.startsWith("findback-chat-media-bytes"))).toBe(true);
+    vi.unstubAllGlobals();
+    const again = await open();
+    await enqueue(again);
+  });
+
+  it("keeps the captured scope when the caller mutates options during open", async () => {
+    const options = { accountId: A, deviceId: INSTALLATION, indexedDB: factory,
+      media: { backendUrl: BACKEND } };
+    const pending = openPlatformMessagingHistory(options);
+    options.accountId = B;
+    options.deviceId = OTHER_INSTALLATION;
+    options.media.backendUrl = "https://backend-b.example.test";
+    const first = await pending;
+    mediaHandles.push(first);
+    expect(first.scope).toEqual({ accountId: A, deviceId: INSTALLATION });
+    const fixture = await enqueue(first);
+    await first.close();
+    const again = await open();
+    expect(await again.history.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+  });
+
+  if (target === "android") {
+    it("closes owned bytes after native setup fails and allows a clean retry", async () => {
+      const closed: string[] = [];
+      const close = IDBDatabase.prototype.close;
+      vi.spyOn(IDBDatabase.prototype, "close").mockImplementation(function (this: IDBDatabase) {
+        closed.push(this.name); return close.call(this);
+      });
+      fakePlugin.all.mockRejectedValueOnce(new Error("initialization failed"));
+      await expect(open()).rejects.toMatchObject({ kind: "command-failed" });
+      expect(closed.filter((name) => name.startsWith("findback-chat-media-bytes"))).toHaveLength(1);
+      const again = await open();
+      await enqueue(again);
+    });
+
+    it("still closes bytes but retains the native lease when native teardown fails", async () => {
+      const accountId = "00000000-0000-4000-8000-0000000000f3";
+      const first = await open({ accountId });
+      const closed: string[] = [];
+      const close = IDBDatabase.prototype.close;
+      vi.spyOn(IDBDatabase.prototype, "close").mockImplementation(function (this: IDBDatabase) {
+        closed.push(this.name); return close.call(this);
+      });
+      fakePlugin.close.mockRejectedValue(new Error("close failed"));
+      const pending = first.close();
+      expect(first.close()).toBe(pending);
+      await expect(pending).rejects.toMatchObject({ kind: "command-failed" });
+      expect(closed.filter((name) => name.startsWith("findback-chat-media-bytes"))).toHaveLength(1);
+      await expect(open({ accountId })).rejects.toMatchObject({ kind: "already-open" });
+    });
+  }
 });
