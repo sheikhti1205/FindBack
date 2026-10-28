@@ -797,11 +797,19 @@ export async function openSqliteMessagingHistory(
     });
   }
 
-  async function deleteForMe(messageId: string): Promise<void> {
+  async function deleteForMe(messageId: string, pendingConversationId?: string): Promise<void> {
     await assertOpen();
     const id = uuid(messageId);
+    if (pendingConversationId !== undefined) uuid(pendingConversationId);
     await transaction(async () => {
       const existing = await messageRow(id);
+      if (pendingConversationId !== undefined) {
+        if (!existing || (await driver.all(S.isDeletedForMe, [id])).length) return;
+        if (existing.authorId !== scope.accountId || existing.conversationId !== pendingConversationId
+          || existing.eventId !== null || existing.unsentAt !== null) {
+          throw new Error("Message is no longer pending in this conversation");
+        }
+      }
       if (existing && existing.authorId !== scope.accountId && existing.recipientId !== scope.accountId) {
         throw new Error("Delete-for-me scope mismatch");
       }
@@ -1321,11 +1329,11 @@ export async function openSqliteMessagingHistory(
     return store.sweep(scope.accountId, keep, sweepLimit(limit));
   }
 
-  async function removeMediaForMessage(messageId: string): Promise<void> {
+  async function removeMediaForMessage(messageId: string, pendingConversationId?: string): Promise<void> {
     // Removal is a real personal deletion, not a way to erase metadata while
     // allowing a late callback to silently recreate it.
     byteStore();
-    await deleteForMe(uuid(messageId));
+    await deleteForMe(uuid(messageId), pendingConversationId);
   }
 
   async function clearMedia(): Promise<void> {

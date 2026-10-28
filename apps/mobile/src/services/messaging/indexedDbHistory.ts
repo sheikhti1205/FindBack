@@ -785,11 +785,16 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     return store.sweep(scope.accountId, keep, limit);
   }
 
-  async function removeMediaForMessage(messageId: string): Promise<void> {
+  async function removeMediaForMessage(messageId: string, pendingConversationId?: string): Promise<void> {
     byteStore(); uuid(messageId);
+    if (pendingConversationId !== undefined) uuid(pendingConversationId);
     await mediaTransaction("readwrite", (view, tx, guard) => {
       const parent = view.parents.find((row) => row.id === messageId);
       if (!parent) return;
+      if (pendingConversationId !== undefined && (parent.authorId !== scope.accountId
+        || parent.conversationId !== pendingConversationId || parent.server)) {
+        throw new Error("Message is no longer pending in this conversation");
+      }
       tx.objectStore("deletions").put({ kind: "DELETE_FOR_ME", messageId, local: true,
         conversationId: parent.conversationId, authorId: parent.authorId,
         recipientId: parent.recipientId, occurredAt: Date.now() });

@@ -79,6 +79,7 @@ beforeEach(async () => {
       const action = args.p_action as string, fields = args.p_args as Record<string, unknown>;
       requestLog.push(action);
       if (action === "REGISTER" || action === "STATE_ACK") return Response.json(null);
+      if (action === "DELETE_FOR_ME" || action === "UNSEND") return Response.json(fields.messageId);
       if (action === "STATE_SYNC") return Response.json([]);
       if (action === "VIEWS") return Response.json([{ conversationId: CONV, peerId: account === A ? B : A,
         mode: connected ? "CONNECTED" : "REQUEST", request: "NONE", requestEpoch: null, ownBlocked: false,
@@ -224,6 +225,86 @@ describe("production messaging media owner", () => {
     await waitForState((state) => state.status === "ready");
     expect((await runtime.readMessagingThreadState(A, CONV)).media[0]?.state).toBe("READY");
     expect(await runtime.readMessagingMedia(A, id(201))).toEqual(fixture.bytes);
+  });
+
+  it("removes an offline pending photo locally without a remote delete or unsend", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    online = false;
+    const fixture = await mediaFixture(id(201), id(101));
+    await runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes);
+    await waitForState((state) => state.status === "offline");
+    const requests = [...requestLog];
+    await runtime.removeMessagingMessage(A, CONV, id(101), false);
+    expect(await runtime.readMessagingThreadState(A, CONV)).toEqual({ messages: [], outbox: [], media: [] });
+    expect(await runtime.readMessagingMedia(A, id(201))).toBeNull();
+    expect(requestLog).toEqual(requests);
+  });
+
+  it("replays the exact stable IDs after durable admission committed but its return was lost", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    online = false;
+    const fixture = await mediaFixture(id(201), id(101)), history = boundary.handles[0]!.history;
+    const enqueue = history.enqueueOutgoingWithMedia.bind(history);
+    vi.spyOn(history, "enqueueOutgoingWithMedia").mockImplementationOnce(async (...args) => {
+      await enqueue(...args); throw new Error("synthetic lost completion");
+    });
+    await expect(runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes)).rejects.toThrow(/lost completion/);
+    expect(await runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes)).toBe(id(101));
+    const rows = await runtime.readMessagingThreadState(A, CONV);
+    expect(rows.messages.map((row) => row.id)).toEqual([id(101)]);
+    expect(rows.outbox.map((row) => row.messageId)).toEqual([id(101)]);
+    expect(rows.media.map((row) => row.id)).toEqual([id(201)]);
+    expect(await runtime.readMessagingMedia(A, id(201))).toEqual(fixture.bytes);
+  });
+
+  it("does not send a removed photo caption as plain text after its upload metadata disappeared", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    online = false;
+    const fixture = await mediaFixture(id(201), id(101)), history = boundary.handles[0]!.history;
+    await runtime.sendMessagingMedia(A, CONV, B, "private cancelled caption", fixture.metadata, fixture.bytes);
+    await waitForState((state) => state.status === "offline");
+    const list = history.listMedia.bind(history);
+    vi.spyOn(history, "listMedia").mockImplementationOnce(async (...args) => {
+      // Outbox has already been claimed. Canonical erasure wins before the
+      // session discovers metadata, so it must not downgrade MEDIA to TEXT.
+      await history.removeMediaForMessage(id(101));
+      return list(...args);
+    });
+    online = true; await runtime.refreshMessaging(A);
+    expect(requestLog).not.toContain("SEND");
+    expect(await runtime.readMessagingThreadState(A, CONV)).toEqual({ messages: [], outbox: [], media: [] });
+  });
+
+  it("rejects local cancellation if a server echo wins after the session's initial read", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    online = false;
+    const fixture = await mediaFixture(id(201), id(101)), history = boundary.handles[0]!.history;
+    await runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes);
+    await waitForState((state) => state.status === "offline");
+    const remove = history.removeMediaForMessage.bind(history);
+    vi.spyOn(history, "removeMediaForMessage").mockImplementationOnce(async (...args) => {
+      await history.persistInbound({ accountId: A, deviceId: DEVICE, mailboxId: id(401), event: { kind: "TEXT",
+        eventId: id(301), sequence: 1, message: { id: id(101), conversationId: CONV, authorId: A, recipientId: B, body: "caption" } } });
+      await remove(...args);
+    });
+    await expect(runtime.removeMessagingMessage(A, CONV, id(101), false)).rejects.toThrow(/pending/i);
+    expect((await runtime.readMessagingThreadState(A, CONV)).messages[0]?.server?.sequence).toBe(1);
+    expect(await runtime.readMessagingMedia(A, id(201))).toEqual(fixture.bytes);
+    expect(requestLog).not.toContain("DELETE_FOR_ME");
+  });
+
+  it("keeps echoed deletion on the remote state-sync path rather than silently applying local-only erasure", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    const fixture = await mediaFixture(id(201), id(101));
+    await runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes);
+    await runtime.refreshMessaging(A); await waitForState((state) => state.status === "ready");
+    const start = requestLog.length;
+    await runtime.removeMessagingMessage(A, CONV, id(101), false);
+    expect(requestLog.slice(start)).toContain("DELETE_FOR_ME");
+    expect(requestLog.slice(start)).toContain("STATE_SYNC");
+    // This synthetic server has not supplied the deletion state envelope yet.
+    // Do not pretend a mutation HTTP result is the durable erasure event.
+    expect((await runtime.readMessagingThreadState(A, CONV)).messages[0]?.body).toBe("caption");
   });
 
   it("receives incoming media despite outgoing POST failure", async () => {

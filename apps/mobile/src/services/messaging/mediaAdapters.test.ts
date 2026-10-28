@@ -241,6 +241,62 @@ describe.each(["sqlite", "web"] as const)("%s media with actual byte storage", (
     expect(await bytes.get(A, id(201))).toEqual(fixture.bytes);
   });
 
+  it("removes a pending own photo and prevents same-ID replay or late echo resurrection", async () => {
+    const history = await open(), fixture = await mediaFixture(id(201), message(1).id);
+    await history.enqueueOutgoingWithMedia(message(1), fixture.metadata, fixture.bytes);
+    await history.removeMediaForMessage(message(1).id, CONVERSATION);
+    expect(await history.getMessage(message(1).id)).toBeNull();
+    expect(await history.listOutbox()).toEqual([]);
+    expect(await history.listMedia(CONVERSATION)).toEqual([]);
+    expect(await bytes.totalBytes(A)).toBe(0);
+    expect(await history.claimNextOutgoing()).toBeNull();
+    expect(await history.claimNextMediaUpload()).toBeNull();
+    await expect(history.enqueueOutgoingWithMedia(message(1), fixture.metadata, fixture.bytes)).rejects.toThrow();
+    await history.persistInbound({ ...scope, mailboxId: id(401), event: { kind: "TEXT", eventId: id(301),
+      sequence: 1, message: message(1) } });
+    expect(await history.getMessage(message(1).id)).toBeNull();
+    expect(await history.listMedia(CONVERSATION)).toEqual([]);
+    expect(await bytes.totalBytes(A)).toBe(0);
+  });
+
+  it("refuses local-pending removal when a server echo already won, preserving bytes", async () => {
+    const history = await open(), fixture = await mediaFixture(id(201), message(1).id);
+    await history.enqueueOutgoingWithMedia(message(1), fixture.metadata, fixture.bytes);
+    await history.persistInbound({ ...scope, mailboxId: id(401), event: { kind: "TEXT", eventId: id(301),
+      sequence: 1, message: message(1) } });
+    await expect(history.removeMediaForMessage(message(1).id, CONVERSATION)).rejects.toThrow(/pending/i);
+    expect((await history.getMessage(message(1).id))?.body).toBe("caption");
+    expect(await history.readMedia(id(201))).toEqual(fixture.bytes);
+  });
+
+  it("refuses wrong-conversation pending removal without deleting the intended photo", async () => {
+    const history = await open(), fixture = await mediaFixture(id(201), message(1).id);
+    await history.enqueueOutgoingWithMedia(message(1), fixture.metadata, fixture.bytes);
+    await expect(history.removeMediaForMessage(message(1).id, id(999))).rejects.toThrow(/pending|scope/i);
+    expect((await history.getMessage(message(1).id))?.body).toBe("caption");
+    expect(await history.readMedia(id(201))).toEqual(fixture.bytes);
+    expect((await history.listOutbox()).map((row) => row.messageId)).toEqual([message(1).id]);
+  });
+
+  it("keeps failed byte cleanup inaccessible after pending deletion and rejects stale claims", async () => {
+    const history = await open(), fixture = await mediaFixture(id(201), message(1).id);
+    await history.enqueueOutgoingWithMedia(message(1), fixture.metadata, fixture.bytes);
+    const attempt = await history.claimNextOutgoing();
+    vi.spyOn(bytes, "delete").mockRejectedValueOnce(new Error("synthetic byte cleanup failure"));
+    await history.removeMediaForMessage(message(1).id, CONVERSATION);
+    expect(await bytes.has(A, id(201))).toBe(true); // orphan, not viewable content
+    expect(await history.getMessage(message(1).id)).toBeNull();
+    expect(await history.readMedia(id(201))).toBeNull();
+    expect(await history.failOutgoing(attempt!)).toBe(false);
+    await history.close();
+    const reopened = await open();
+    expect(await reopened.getMessage(message(1).id)).toBeNull();
+    expect(await reopened.claimNextOutgoing()).toBeNull();
+    clock += MEDIA_SWEEP_GRACE_MS + 1;
+    await reopened.sweepOrphanMedia(10);
+    expect(await bytes.totalBytes(A)).toBe(0);
+  });
+
   it("cancels a pending account lock on close with zero late byte admission", async () => {
     const history = await open();
     const entered = deferred(), release = deferred();

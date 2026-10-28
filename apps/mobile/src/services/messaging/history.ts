@@ -233,8 +233,11 @@ export interface MessagingHistory {
   evictMedia(limit: number): Promise<number>;
   /** Bounded orphan sweep across both stores; returns the entries removed. */
   sweepOrphanMedia(limit: number): Promise<number>;
-  /** Local deletion: remove the row and then its bytes for one message. */
-  removeMediaForMessage(messageId: string): Promise<void>;
+  /** Local personal deletion, then byte cleanup. An expected pending conversation
+   * requires an own, not-yet-echoed parent in that conversation at transaction
+   * time; a raced server echo rejects before erasure. Already hidden is a no-op.
+   * This does not retract a send already admitted by the remote server. */
+  removeMediaForMessage(messageId: string, pendingConversationId?: string): Promise<void>;
   /** Media-only purge; retains text/history. Not full account deletion. */
   clearMedia(): Promise<void>;
   /** Permanent logical purge of this metadata database and captured-account

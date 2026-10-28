@@ -85,12 +85,14 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
   };
   // Invalidate at user intent, before the network await. No late media attempt
   // may resume through an end/block/erase, even if that mutation itself fails.
-  const mediaMutation = async (action: ChatAction, args: Record<string, unknown>) => {
+  const withMediaMutation = async <T>(work: () => Promise<T>): Promise<T> => {
     assertOpen(); mediaEpoch++; mediaPaused = true; mediaMutations++;
     mediaController.abort(); mediaTransport = undefined;
-    try { return await call(action, args); }
+    try { return await work(); }
     finally { mediaMutations--; }
   };
+  const mediaMutation = (action: ChatAction, args: Record<string, unknown>) =>
+    withMediaMutation(() => call(action, args));
   const syncState = (): Promise<void> => {
     const run = async () => {
       assertOpen();
@@ -184,6 +186,12 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
           const message = hasMedia ? copyMediaMessage(attempt.message) : copyMessage(attempt.message);
           if (hasMedia) mediaContext().live();
           if (message.authorId !== scope.accountId) throw new Error("Invalid messaging author");
+          // A local erase can win after the claim, removing both parent visibility
+          // and attachment metadata. Never downgrade its captured caption to TEXT.
+          const live = await history.getMessage(message.id);
+          assertOpen();
+          if (!live || live.server || live.unsentAt !== undefined) throw new Error("Message is no longer pending");
+          if (hasMedia) mediaContext().live();
           const accepted = await call("SEND", {
             conversationId: message.conversationId, recipientId: message.recipientId,
             messageId: message.id, body: message.body,
@@ -311,10 +319,22 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       await call("PRIVATE", { conversationId: uuid(conversationId), operation });
     },
     async removeMessage(conversationId: string, messageId: string, unsend: boolean) {
-      uuid(await mediaMutation(unsend ? "UNSEND" : "DELETE_FOR_ME", { conversationId: uuid(conversationId), messageId: uuid(messageId) }) as string);
-      // Do not apply the mutation response out of order and skip intervening
-      // state from another own device. Fetch from the durable cursor instead.
-      await syncState();
+      const conversation = uuid(conversationId), id = uuid(messageId);
+      await withMediaMutation(async () => {
+        const pending = !unsend ? await history.getMessage(id) : null;
+        assertOpen();
+        if (pending && !pending.server) {
+          // The adapter rechecks own author/conversation/pending state under the
+          // durable transaction; a server echo racing this read cannot slip in.
+          await history.removeMediaForMessage(id, conversation);
+          assertOpen();
+          return;
+        }
+        uuid(await call(unsend ? "UNSEND" : "DELETE_FOR_ME", { conversationId: conversation, messageId: id }) as string);
+        // Do not apply the mutation response out of order and skip intervening
+        // state from another own device. Fetch from the durable cursor instead.
+        await syncState();
+      });
     },
     async clearConversation(conversationId: string, throughSequence: number) {
       uuid(await mediaMutation("CLEAR_FOR_ME", { conversationId: uuid(conversationId), throughSequence: positiveSequence(throughSequence) }) as string);
