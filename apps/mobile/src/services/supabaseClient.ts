@@ -99,3 +99,64 @@ export async function signOutSupabaseAccount(accountId: string): Promise<void> {
     await sdk.auth.signOut();
   });
 }
+
+export interface RawFunctionRequest {
+  method: "GET" | "POST";
+  headers?: Record<string, string>;
+  body?: ArrayBuffer;
+  signal: AbortSignal;
+}
+interface FunctionAuthPort {
+  getSession(): Promise<{ data: { session: { user: { id: string }; access_token: string } | null }; error: unknown }>;
+}
+
+/** Raw-response counterpart to functions.invoke; reuses, never owns, auth. */
+export function createSupabaseFunctionFetch(
+  config: { url: string; key: string }, auth: FunctionAuthPort, transport: typeof fetch = globalThis.fetch,
+) {
+  const validated = validateSupabaseConfig(config.url, config.key);
+  const base = new URL(validated.url);
+  if (base.username || base.password || base.search || base.hash) throw new SupabaseConfigError("Invalid Supabase URL");
+  const functionsUrl = `${base.href.replace(/\/$/, "")}/functions/v1/`;
+  return async (name: string, accountId: string, input: RawFunctionRequest): Promise<Response> => {
+    const unavailable = () => new Error("Request unavailable");
+    const signal = input.signal;
+    const live = () => { if (signal.aborted) throw unavailable(); };
+    const wait = async <T>(promise: Promise<T>): Promise<T> => {
+      let abort!: () => void;
+      const cancelled = new Promise<never>((_resolve, reject) => { abort = () => reject(unavailable()); });
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      try { return await Promise.race([promise, cancelled]); }
+      finally { signal.removeEventListener("abort", abort); }
+    };
+    try {
+      live();
+      if (!/^[a-zA-Z0-9_-]+$/.test(name) || !accountId || (input.method !== "GET" && input.method !== "POST")) throw unavailable();
+      const method = input.method, headers = new Headers(input.headers), body = input.body?.slice(0);
+      const { data, error } = await wait(auth.getSession());
+      live();
+      const session = data.session;
+      if (error || session?.user.id !== accountId || !session.access_token?.trim()) throw unavailable();
+      headers.set("Authorization", `Bearer ${session.access_token}`);
+      headers.set("apikey", validated.key);
+      const response = await wait(transport(`${functionsUrl}${name}`, {
+        method, headers, body, signal, credentials: "omit", redirect: "error", cache: "no-store",
+      }).then((result) => {
+        if (signal.aborted || result.redirected || result.type === "opaque") {
+          void result.body?.cancel().catch(() => undefined); throw unavailable();
+        }
+        return result;
+      }));
+      if (signal.aborted) { void response.body?.cancel().catch(() => undefined); throw unavailable(); }
+      return response;
+    } catch { throw unavailable(); }
+  };
+}
+
+/** Production raw access always comes from the canonical SDK and build config. */
+export function fetchSupabaseFunction(name: string, accountId: string, input: RawFunctionRequest): Promise<Response> {
+  return createSupabaseFunctionFetch(
+    validateSupabaseConfig(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__), getSupabase().auth,
+  )(name, accountId, input);
+}

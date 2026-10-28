@@ -1,6 +1,21 @@
-import { getSupabase } from "../supabaseClient";
+import { fetchSupabaseFunction, getSupabase } from "../supabaseClient";
 import type { MessagingHistory, MessagingScope } from "./history";
 import { createMessagingSession } from "./session";
+import { createMediaTransport } from "./mediaTransport";
+import { uuid } from "./validation";
+
+/** Shares the caller's lifetime; does not create another session or scheduler. */
+export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal) {
+  const accountId = uuid(scope.accountId);
+  return createMediaTransport(scope, signal, {
+    request: (input) => fetchSupabaseFunction("chat-media", accountId, input),
+    rpc: async ({ name, args, signal: requestSignal }) => {
+      const { data, error } = await getSupabase().rpc(name, args).abortSignal(requestSignal);
+      if (error) throw new Error("Photo could not sync. Try again.");
+      return data;
+    },
+  });
+}
 
 /** Uses the canonical auth SDK; server checks the captured account on every RPC. */
 export function createSupabaseMessagingSession(scope: MessagingScope, history: MessagingHistory) {

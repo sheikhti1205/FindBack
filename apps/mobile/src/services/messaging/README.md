@@ -486,3 +486,33 @@ foreign-account rejection, strict durability, blocked-open late connection
 cleanup, option mutation and close ordering. They do not establish browser/device
 power-loss behavior or complete account deletion. Registry enumeration, durable
 deletion fencing and full history purge remain F2b-3C, not `clearMedia()`.
+
+### F2b-3B1 — transport boundary (not runtime activation)
+
+`createSupabaseMediaTransport(scope, signal)` binds the existing canonical SDK
+and owner signal to upload, download, delivery discovery and ACK. Raw gateway
+requests use `fetchSupabaseFunction` from the canonical client owner: validated
+configuration, a matching getSession account, explicit request-local JWT, no
+cookies, no redirects and no-store. This is not another auth/session owner.
+Raw fetch is required because the installed functions SDK parses image responses
+as text; POST also uses raw fetch so JSON can be bounded before parsing.
+
+Uploads snapshot immutable bytes/metadata, verify exact digest/container/size,
+send binary under stable IDs and require all six public reply fields to match.
+They do not ACK or mark READY. Downloads use retained metadata, including after
+delivery ACK: bounded streaming, optional Content-Length consistency, exact EOF,
+digest/MIME/dimension and expiry checks. The adapters still independently require
+platform decoding and durable byte/metadata admission before ACK. Transport
+validation is not proof of normalization, decoding or local persistence.
+
+Each attempt has a 90-second bound tied to owner cancellation, including pending
+auth/network/stream work and the response-to-reader handoff. Late responses are
+cancelled, untrusted error bodies discarded, and user errors remain generic.
+Delivery RPCs retain captured account/installation, validate the entire <=100
+page with no invented cursor, and omit direction until the session resolves a
+durable parent. ACK accepts only the server's void result. No new scheduler.
+
+Session SEND/echo classification, upload-after-echo, own-device ACK/recovery,
+bounded delivery draining and runtime media activation are not wired by this
+boundary increment. Full account-deletion purge remains required before combined
+F2b-3 acceptance. Host tests do not establish browser/hosted/device behavior.

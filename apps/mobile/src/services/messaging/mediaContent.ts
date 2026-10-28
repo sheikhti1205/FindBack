@@ -15,9 +15,8 @@ const decodeMedia: MediaDecoder = async (bytes, metadata) => {
     targetWidth: 1, targetHeight: 1, mimeType: "image/png", quality: null });
 };
 
-export async function verifyMediaContent(
-  metadata: MediaMetadata, bytes: ArrayBuffer, decode: MediaDecoder = decodeMedia,
-): Promise<void> {
+/** Transport verifies assertions; durable admission additionally requires decoding. */
+export async function verifyMediaContainer(metadata: MediaMetadata, bytes: ArrayBuffer): Promise<void> {
   await verifyMediaBytes(metadata, bytes);
   if (sniffMediaMime(bytes) !== metadata.mime) throw new Error("Media type mismatch");
   const view = new Uint8Array(bytes);
@@ -27,5 +26,11 @@ export async function verifyMediaContent(
   if (!size || size.width !== metadata.width || size.height !== metadata.height) {
     throw new Error("Media dimension mismatch");
   }
+}
+
+export async function verifyMediaContent(
+  metadata: MediaMetadata, bytes: ArrayBuffer, decode: MediaDecoder = decodeMedia,
+): Promise<void> {
+  await verifyMediaContainer(metadata, bytes);
   await decode(bytes, metadata);
 }
