@@ -4,6 +4,7 @@ import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
 import { displaySizeOrNull } from "./media/displayDimensions";
+import { throwIfAborted } from "./timeout";
 
 export interface StoredUpload {
   id: string;
@@ -25,6 +26,27 @@ export interface StoredUpload {
 
 export const IMAGES_BUCKET = "findback-images";
 
+/**
+ * Hand control back the moment `signal` aborts.
+ *
+ * The Storage client exposes no abort hook, so the request itself keeps
+ * running. What this guarantees is that the caller stops waiting immediately
+ * instead of blocking on a stalled upload — and `uploadImage` itself removes
+ * the object if the abandoned request later lands, so an abort cannot leave an
+ * orphan behind.
+ */
+function raceAbort<T>(promise: PromiseLike<T>, signal: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+  });
+}
+
 function extensionFor(mimeType: string): string {
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
@@ -42,26 +64,84 @@ function safeFileName(name: string): string {
  * the caller's own folder, then stage an `uploads` row the create-post RPC binds.
  * If staging fails the just-uploaded object is removed so nothing is orphaned.
  */
-export async function uploadImage(file: File, traceId?: string): Promise<StoredUpload> {
+export async function uploadImage(file: File, traceId?: string, signal?: AbortSignal): Promise<StoredUpload> {
+  throwIfAborted(signal);
   const start = Date.now();
   const supabase = getSupabase();
-  const { data: userData, error: userError } = await supabase.auth.getUser();
+  // Raced when there is a signal: a stalled auth round-trip would otherwise
+  // delay a cancel by its full timeout. An abandoned `getUser` has no side
+  // effect to clean up, so racing it is free. The `uploads` insert further down
+  // is deliberately NOT raced — a staged row that landed after the abort would
+  // be a row nobody knows about, which is worse than waiting for a bounded
+  // request. That asymmetry is intentional, not an oversight.
+  const auth = supabase.auth.getUser();
+  const { data: userData, error: userError } = signal ? await raceAbort(auth, signal) : await auth;
   if (userError || !userData.user) {
     diag("posts.upload.auth_error", { message: "Not authenticated" }, { traceId });
     throw new ApiError("Not authenticated", 401);
   }
 
-  const normalized = await normalizeImage(file);
+  // Pass the signal only when there is one, so the no-signal call shape (and its
+  // existing assertions) is untouched.
+  const normalized = signal
+    ? await normalizeImage(file, undefined, { signal })
+    : await normalizeImage(file);
+  throwIfAborted(signal);
   const id = crypto.randomUUID();
   const objectKey = `${userData.user.id}/${id}.${extensionFor(normalized.mimeType)}`;
 
   const uploadStart = Date.now();
-  const { error: uploadError } = await supabase.storage
+  const request = supabase.storage
     .from(IMAGES_BUCKET)
     .upload(objectKey, normalized.blob, {
       contentType: normalized.mimeType,
       upsert: false,
     });
+  let uploadError: { message: string } | null;
+  try {
+    const settled = signal ? await raceAbort(request, signal) : await request;
+    uploadError = settled.error;
+  } catch (err) {
+    if (signal?.aborted) {
+      // Nobody will stage a row for this object, so if the abandoned request
+      // still lands it must be removed rather than left orphaned in Storage.
+      // Supabase reports failures in `{ error }` at least as often as by
+      // throwing, so both shapes are handled and both are diagnosed: an ignored
+      // `{ error }` here would orphan the object silently, which is the exact
+      // hazard `removeStagedUpload` documents.
+      void request.then((late) => {
+        if (late.error) return undefined;
+        return supabase.storage.from(IMAGES_BUCKET).remove([objectKey]).then(
+          (removed) => {
+            if (removed.error) {
+              diag("posts.upload.abandoned_cleanup_error", {
+                bucket: IMAGES_BUCKET,
+                objectKey,
+                message: removed.error.message,
+              }, { traceId });
+            }
+          },
+          (err: unknown) => {
+            diag("posts.upload.abandoned_cleanup_error", {
+              bucket: IMAGES_BUCKET,
+              objectKey,
+              message: err instanceof Error ? err.message : String(err),
+            }, { traceId });
+          },
+        );
+      }, () => undefined).catch((err: unknown) => {
+        // `storage.from()` can throw synchronously (misconfiguration, a client
+        // that is not initialised). Without this the voided chain would reject
+        // unhandled — the same hazard the `{ error }` handling above closes.
+        diag("posts.upload.abandoned_cleanup_error", {
+          bucket: IMAGES_BUCKET,
+          objectKey,
+          message: err instanceof Error ? err.message : String(err),
+        }, { traceId });
+      });
+    }
+    throw err;
+  }
   const uploadMs = Date.now() - uploadStart;
   if (uploadError) {
     diag("posts.upload.storage_error", {
@@ -187,6 +267,12 @@ export interface UploadProgress {
 export interface UploadPhotosOptions {
   onProgress?: (progress: UploadProgress) => void;
   traceId?: string;
+  /**
+   * Cooperative cancel. Checked before each file and threaded into
+   * `uploadImage`, so an abort stops the batch at the file in flight instead of
+   * waiting for every remaining upload to finish.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -238,7 +324,8 @@ export async function uploadPhotos(
   const staged: StoredUpload[] = [];
   try {
     for (const file of files) {
-      const stored = await uploadImage(file, options.traceId);
+      throwIfAborted(options.signal);
+      const stored = await uploadImage(file, options.traceId, options.signal);
       staged.push(stored);
       options.onProgress?.({ completed: staged.length, total: files.length });
     }

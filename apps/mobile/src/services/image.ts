@@ -191,16 +191,24 @@ export async function normalizeImage(
     ? scaleToPixels(effective.width, effective.height, maxPixels)
     : null;
   let decoded: DecodedImage;
+  // Keep a handle on the decode promise, not just its result. A timeout or abort
+  // rejects the race while the platform decoder keeps running; when it finally
+  // resolves it hands back a closeable bitmap that no caller will ever see, and
+  // the `finally` below cannot reach it because control already left this block.
+  let decoding: Promise<DecodedImage> | undefined;
   try {
-    decoded = downsample
-      ? await withTimeout(
-        () => deps.decode(file, { resizeWidth: downsample.width, resizeHeight: downsample.height }),
-        stageMs,
-        "Photo decode timed out",
-        signal,
-      )
-      : await withTimeout(() => deps.decode(file), stageMs, "Photo decode timed out", signal);
+    const pending = downsample
+      ? deps.decode(file, { resizeWidth: downsample.width, resizeHeight: downsample.height })
+      : deps.decode(file);
+    decoding = pending;
+    decoded = await withTimeout(() => pending, stageMs, "Photo decode timed out", signal);
   } catch (err) {
+    // Release a late arrival. `close()` is the owner's obligation and this
+    // function is the only owner, so it must discharge it even after giving up.
+    void decoding?.then(
+      (late) => { try { late.close?.(); } catch { /* already released */ } },
+      () => undefined,
+    );
     // A decoder the platform actually attempted and refused means damaged or
     // undecodable bytes — mark it so callers do not fall back to shipping the
     // corrupt original. A genuinely missing decoder stays "unavailable".
@@ -238,7 +246,10 @@ export async function normalizeImage(
     );
     return { blob, mimeType: output.mimeType, width, height };
   } finally {
-    decoded.close?.();
+    // Release is best-effort: a decoder whose `close()` throws must not replace
+    // the result (or the error) this function is about to hand back, and the
+    // late-arrival path above is guarded for the same reason.
+    try { decoded.close?.(); } catch { /* already released */ }
   }
 }
 

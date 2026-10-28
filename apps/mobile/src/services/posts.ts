@@ -804,11 +804,13 @@ export interface PublishPhotosOptions {
   onProgress?: (progress: UploadProgress) => void;
   traceId?: string;
   /**
-   * Cooperative publish cancel threaded from the report screen. Staging
-   * remains cooperative via onProgress; this gate covers the boundary AFTER
-   * the final photo stages but BEFORE the create-post RPC runs (the point of
-   * no return). An abort here cleans exactly this attempt's staged objects
-   * and never creates the post row.
+   * Publish cancel threaded from the report screen. It now reaches staging
+   * (`uploadPhotos` → `uploadImage` → decode and the storage request), so an
+   * abort stops waiting for a stalled upload instead of blocking until it
+   * resolves, and it still covers the boundary AFTER the final photo stages but
+   * BEFORE the create-post RPC runs (the point of no return). Either way an
+   * abort cleans exactly this attempt's staged objects and never creates the
+   * post row.
    */
   signal?: AbortSignal;
 }
@@ -843,6 +845,9 @@ export async function publishReportWithPhotos(
   const staged = await uploadPhotos([...photos], {
     onProgress: options.onProgress,
     traceId: options.traceId,
+    // Threaded into staging, not just the post-staging gate: a cancel during a
+    // stalled upload must stop waiting now, not after the last photo lands.
+    signal: options.signal,
   });
   if (options.signal?.aborted) {
     await removeStagedUploads(staged, options.traceId);

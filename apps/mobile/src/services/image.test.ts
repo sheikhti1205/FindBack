@@ -7,6 +7,7 @@ import {
   fitWithin,
   normalizeImage,
   outputTypeFor,
+  type DecodedImage,
   type ImageDeps,
 } from "./image";
 import { ACCEPTED_STILL_MIME_TYPES, MAX_EDGE as POLICY_MAX_EDGE } from "./media/mediaPolicy";
@@ -130,6 +131,50 @@ describe("normalizeImage", () => {
     expect(result.mimeType).toBe("image/gif");
   });
 
+  it("releases a decode that resolves only after its stage timeout has failed", async () => {
+    // The timeout exists for a wedged decoder. When that decoder finally answers,
+    // the bitmap it hands back is unreachable by the caller and by the `finally`
+    // that closes normal results — so this function must release it itself.
+    const close = vi.fn();
+    let release: ((value: DecodedImage) => void) | undefined;
+    const decode = vi.fn(() => new Promise<DecodedImage>((resolve) => { release = resolve; }));
+
+    const pending = normalizeImage(
+      new File(["x"], "late.png", { type: "image/png" }),
+      deps({ decode }),
+      { timeoutMs: 5 },
+    );
+    await expect(pending).rejects.toThrow("Photo decode timed out");
+    expect(close).not.toHaveBeenCalled();
+
+    release?.({ source: {} as CanvasImageSource, width: 100, height: 100, close });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
+  it("releases a decode that resolves only after the caller aborted", async () => {
+    // Same release path as the timeout case, reached through a different door:
+    // an abort rejects the race while the decoder keeps running.
+    const close = vi.fn();
+    let release: ((value: DecodedImage) => void) | undefined;
+    const decode = vi.fn(() => new Promise<DecodedImage>((resolve) => { release = resolve; }));
+    const controller = new AbortController();
+
+    const pending = normalizeImage(
+      new File(["x"], "aborted.png", { type: "image/png" }),
+      deps({ decode }),
+      { signal: controller.signal, timeoutMs: 10_000 },
+    );
+    // Abort only once the decoder is actually running: an abort before it starts
+    // never reaches decode, and there would be nothing to release.
+    await vi.waitFor(() => expect(decode).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(close).not.toHaveBeenCalled();
+
+    release?.({ source: {} as CanvasImageSource, width: 100, height: 100, close });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  });
+
   it("closes the decoded handle", async () => {
     const close = vi.fn();
     const d = deps({
@@ -139,6 +184,24 @@ describe("normalizeImage", () => {
     await normalizeImage(new File(["x"], "a.png", { type: "image/png" }), d);
 
     expect(close).toHaveBeenCalled();
+  });
+
+  it("still returns the result when releasing the decoded handle throws", async () => {
+    // A throwing close() must not mask the blob the caller is waiting for.
+    const d = deps({
+      decode: vi.fn(async () => ({
+        source: {} as CanvasImageSource,
+        width: 100,
+        height: 100,
+        close: () => { throw new Error("release failed"); },
+      })),
+    });
+
+    const result = await normalizeImage(new File(["x"], "a.png", { type: "image/png" }), d);
+
+    // The value, not the encoding: this test is about the release, not the format.
+    expect(result).toMatchObject({ width: 100, height: 100 });
+    expect(result.blob).toBeInstanceOf(Blob);
   });
 
   it("rejects unsupported types", async () => {
