@@ -77,9 +77,9 @@ do $$ begin
  if exists(select 1 from public.chat_media_attachments where id='00000000-0000-4000-9848-000000000101') then
   raise exception 'Released ordinary source metadata remained';
  end if;
- if exists(select 1 from public.chat_media_cleanup_queue where bucket_id='findback-chat-media'
-  and media_id='00000000-0000-4000-9848-000000000101') then
-  raise exception 'Released ordinary source cleanup provenance remained';
+ if not exists(select 1 from public.chat_media_cleanup_queue where bucket_id='findback-chat-media'
+  and media_id='00000000-0000-4000-9848-000000000101' and removed_at is not null) then
+  raise exception 'Released ordinary source cleanup lost its tombstone';
  end if;
  if not exists(select 1 from public.chat_media_report_evidence
   where id='00000000-0000-4000-9848-000000000201' and state='ATTACHED') then
