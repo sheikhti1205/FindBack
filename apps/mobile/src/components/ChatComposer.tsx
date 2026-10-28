@@ -323,11 +323,18 @@ export function ChatComposer({
       );
       handles.current.push(
         await facade.addListener("speechState", (payload) => {
+          // The error listener owns the error notice. The native emits
+          // `speechError` and then `speechState("error")`, so clearing the
+          // notice here would erase the message one event after it was set and
+          // every recognition failure would look like the mic simply stopping.
+          if (payload.state === "error") {
+            setMic("idle");
+            return;
+          }
           if (
             payload.state === "stopped" ||
             payload.state === "finished" ||
-            payload.state === "cancelled" ||
-            payload.state === "error"
+            payload.state === "cancelled"
           ) {
             setMic("idle");
             setMicNotice(null);

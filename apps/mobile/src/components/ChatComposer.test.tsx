@@ -181,6 +181,24 @@ describe("ChatComposer M2", () => {
     expect(speech.stop).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the speech error message visible after the terminal error state arrives", async () => {
+    // The native emits `speechError` and then `speechState("error")`. Treating
+    // that state like `finished` cleared the notice one event after it was set,
+    // so a denied microphone, a network failure and a recogniser crash all
+    // looked identical: the mic just stopped with no explanation.
+    const speech = mockSpeechFacade();
+    render(<ChatComposer value="" onChange={vi.fn()} onSend={vi.fn()} speech={speech as never} />);
+    fireEvent.click(screen.getByTestId("chat-mic"));
+    await screen.findByTestId("chat-mic-stop");
+
+    speech.emit("speechError", { code: "network", message: "Speech needs a connection." } as never);
+    speech.emit("speechState", { state: "error" } as never);
+
+    // Back to idle, with the reason still on screen.
+    await screen.findByTestId("chat-mic");
+    expect(screen.getByTestId("chat-mic-status").textContent).toMatch(/needs a connection/i);
+  });
+
   it("cancelling dictation restores the pre-dictation draft", async () => {
     const speech = mockSpeechFacade();
     const onChange = vi.fn();
