@@ -1,11 +1,13 @@
 import { Capacitor } from "@capacitor/core";
-import type { OutboxEntry, StoredHumanMessage } from "./history";
+import type { MediaAttachment, OutboxEntry, StoredHumanMessage } from "./history";
+import type { MediaMetadata } from "./media";
 import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
 import { openPlatformMessagingHistory, type PlatformMessagingHandle } from "./platformHistory";
 import { createSupabaseMessagingSession } from "./supabaseSession";
 import { isUuid, uuid } from "./validation";
 import type { MessagingPreferences } from "./session";
 import { onRealtime } from "../realtime";
+import { getSupabaseBackendUrl } from "../supabaseClient";
 
 export interface MessagingRuntimeSnapshot {
   accountId: string | null;
@@ -30,6 +32,7 @@ interface Owner {
   generation: number;
   refreshing: Promise<void> | null;
   refreshAgain: boolean;
+  authorityVersion: number;
   detach: () => void;
 }
 
@@ -81,6 +84,11 @@ async function reload(owner: Owner) {
   publish({ ...snapshot, conversations, revision: snapshot.revision + 1 });
 }
 
+function invalidateAuthority(owner: Owner) {
+  owner.authorityVersion++;
+  if (current === owner) publish({ ...snapshot, currentProjections: null });
+}
+
 function closeOwner(owner: Owner): Promise<void> {
   owner.detach();
   // Session abort and history invalidation are synchronous. Platform close owns
@@ -95,7 +103,10 @@ function attachResume(owner: Owner): () => void {
   const resume = () => { void refreshOwner(owner); };
   const visible = () => { if (document.visibilityState === "visible") resume(); };
   const offline = () => {
-    if (current === owner) publish({ ...snapshot, status: "offline", currentProjections: null, error: null });
+    if (current === owner) {
+      invalidateAuthority(owner);
+      publish({ ...snapshot, status: "offline", currentProjections: null, error: null });
+    }
   };
   const unsubscribeChat = onRealtime("chat:invalidate", (payload) => {
     if (current !== owner || owner.generation !== generation || payload.accountId !== owner.handle.scope.accountId) return;
@@ -118,6 +129,7 @@ function attachResume(owner: Owner): () => void {
 }
 
 function refreshOwner(owner: Owner): Promise<void> {
+  invalidateAuthority(owner);
   if (owner.refreshing) {
     // A send/wake can arrive after the running flush already exhausted its
     // outbox. Coalesce one follow-up instead of dropping that invalidation.
@@ -125,11 +137,14 @@ function refreshOwner(owner: Owner): Promise<void> {
     return owner.refreshing;
   }
   const work = async () => {
+    const authorityVersion = owner.authorityVersion;
     try {
       assertOwner(owner);
       publish({ ...snapshot, currentProjections: null });
       // Registration is idempotent and precedes SEND/SYNC for this installation.
       await owner.session.start(owner.handle.platform);
+      // Resolve own end/block before considering cached media send eligibility.
+      const projections = await owner.session.refreshConversations();
       let sendFailed = false;
       try { await owner.session.flush(); } catch { sendFailed = true; }
       assertOwner(owner);
@@ -139,11 +154,20 @@ function refreshOwner(owner: Owner): Promise<void> {
         assertOwner(owner);
         if (await owner.session.sync() < 100) break;
       }
-      const projections = await owner.session.refreshConversations();
+      // An outgoing failure must never starve independently authorized incoming
+      // deliveries or lost-ACK settlement. Each session pass is bounded.
+      let mediaFailed = false;
+      try { await owner.session.flushMedia(); } catch { mediaFailed = true; }
+      assertOwner(owner);
+      try { await owner.session.syncMedia(); } catch { mediaFailed = true; }
       await reload(owner);
       assertOwner(owner);
-      publish({ ...snapshot, status: "ready", error: sendFailed ? "Some messages could not send. Try again." : null,
-        currentProjections: Object.fromEntries(projections.map((projection) => [projection.conversationId, projection])) });
+      publish({ ...snapshot, status: "ready", error: mediaFailed ? "Some photos could not sync. Try again."
+        : sendFailed ? "Some messages could not send. Try again." : null,
+        // An end/block/preference change or newer wake during a slow photo must
+        // not restore earlier receipt authority. The coalesced pass refetches it.
+        currentProjections: authorityVersion === owner.authorityVersion
+          ? Object.fromEntries(projections.map((projection) => [projection.conversationId, projection])) : null });
     } catch {
       if (current !== owner || owner.generation !== generation) return;
       // Local data remains primary and usable even if the server is unreachable.
@@ -188,11 +212,11 @@ export function setMessagingAccount(accountId: string | null): void {
     if (!closed.ok) throw new Error("Chat storage could not close");
     let handle: PlatformMessagingHandle | undefined;
     try {
-      handle = await openPlatformMessagingHistory({ accountId: next,
+      handle = await openPlatformMessagingHistory({ accountId: next, media: { backendUrl: getSupabaseBackendUrl() },
         ...(Capacitor.isNativePlatform() ? {} : { deviceId: webInstallationId() }) });
       if (ticket !== generation) { await handle.close(); return; }
       const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history),
-        generation: ticket, refreshing: null, refreshAgain: false, detach: () => undefined };
+        generation: ticket, refreshing: null, refreshAgain: false, authorityVersion: 0, detach: () => undefined };
       current = owner;
       owner.detach = attachResume(owner);
       await reload(owner); // Publish local rows before attempting network work.
@@ -240,14 +264,41 @@ export async function readMessagingThread(accountId: string, conversationId: str
 }
 
 export async function readMessagingThreadState(accountId: string, conversationId: string): Promise<{
-  messages: StoredHumanMessage[]; outbox: OutboxEntry[];
+  messages: StoredHumanMessage[]; outbox: OutboxEntry[]; media: MediaAttachment[];
 }> {
   const owner = ownerFor(accountId);
   const messages = await owner.handle.history.listMessages(uuid(conversationId));
   const ids = new Set(messages.map((message) => message.id));
   const outbox = (await owner.handle.history.listOutbox()).filter((entry) => ids.has(entry.messageId));
+  const media = (await owner.handle.history.listMedia(conversationId)).filter((entry) => ids.has(entry.messageId));
   assertOwner(owner);
-  return { messages, outbox };
+  return { messages, outbox, media };
+}
+
+/** Prepared immutable derivative bytes only; picker/normalization stays in the
+ * canonical media pipeline. Caller retains both stable IDs across uncertain
+ * admission errors, instead of generating a new message on retry. */
+export async function sendMessagingMedia(accountId: string, conversationId: string, peerId: string, body: string,
+  metadata: MediaMetadata, bytes: ArrayBuffer): Promise<string> {
+  const owner = ownerFor(accountId), id = uuid(metadata.messageId);
+  await owner.session.sendMedia({ id, conversationId: uuid(conversationId), authorId: uuid(accountId),
+    recipientId: uuid(peerId), body }, metadata, bytes);
+  assertOwner(owner);
+  await reload(owner);
+  void refreshOwner(owner);
+  return id;
+}
+
+export async function readMessagingMedia(accountId: string, attachmentId: string): Promise<ArrayBuffer | null> {
+  const owner = ownerFor(accountId);
+  const bytes = await owner.handle.history.readMedia(uuid(attachmentId));
+  assertOwner(owner); return bytes;
+}
+
+export async function downloadMessagingMedia(accountId: string, conversationId: string, attachmentId: string): Promise<void> {
+  const owner = ownerFor(accountId);
+  await owner.session.downloadMedia(uuid(conversationId), uuid(attachmentId));
+  assertOwner(owner); await reload(owner);
 }
 
 export async function sendMessagingText(accountId: string, conversationId: string, peerId: string, body: string): Promise<string> {
@@ -305,7 +356,7 @@ export async function requestMessagingConversation(accountId: string, peerId: st
 export async function changeMessagingRelationship(accountId: string, conversationId: string,
   action: "accept" | "end" | "block" | "hide" | "unhide" | "decline"): Promise<void> {
   const owner = ownerFor(accountId);
-  publish({ ...snapshot, currentProjections: null });
+  invalidateAuthority(owner);
   try {
     if (action === "hide" || action === "unhide" || action === "decline") {
       const operations = { hide: "HIDE", unhide: "UNHIDE", decline: "DECLINE" } as const;
@@ -326,21 +377,25 @@ export async function fetchMessagingPreferences(accountId: string): Promise<Mess
 
 export async function removeMessagingMessage(accountId: string, conversationId: string, messageId: string, unsend: boolean): Promise<void> {
   const owner = ownerFor(accountId);
+  invalidateAuthority(owner);
   await owner.session.removeMessage(uuid(conversationId), uuid(messageId), unsend);
   assertOwner(owner);
   await reload(owner);
+  void refreshOwner(owner);
 }
 
 export async function clearMessagingConversation(accountId: string, conversationId: string, throughSequence: number): Promise<void> {
   const owner = ownerFor(accountId);
+  invalidateAuthority(owner);
   await owner.session.clearConversation(uuid(conversationId), throughSequence);
   assertOwner(owner);
   await reload(owner);
+  void refreshOwner(owner);
 }
 
 export async function setMessagingPreference(accountId: string, key: keyof MessagingPreferences, enabled: boolean): Promise<MessagingPreferences> {
   const owner = ownerFor(accountId);
-  publish({ ...snapshot, currentProjections: null });
+  invalidateAuthority(owner);
   try {
     if (key === "openMessages") await owner.session.setOpenMessages(enabled);
     else if (key === "readReceipts") await owner.session.setReadReceipts(enabled);

@@ -33,5 +33,5 @@ export function createSupabaseMessagingSession(scope: MessagingScope, history: M
     const { data, error } = await request.abortSignal(signal);
     if (error) throw new Error("Chat could not sync. Try again.");
     return data;
-  });
+  }, createSupabaseMediaTransport);
 }

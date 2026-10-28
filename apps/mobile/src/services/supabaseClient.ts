@@ -51,6 +51,11 @@ export function validateSupabaseConfig(url: string, key: string): { url: string;
 
 let client: SupabaseClient | null = null;
 let authPersistence: ReturnType<typeof createAccountScopedAuthStorage> | null = null;
+/** Backend storage identity from canonical build configuration, without starting
+ * auth/network work merely to open offline account history. */
+export function getSupabaseBackendUrl(): string {
+  return validateSupabaseConfig(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__).url;
+}
 function sessionStorageKey(url: string): string {
   return `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
 }

@@ -516,3 +516,46 @@ Session SEND/echo classification, upload-after-echo, own-device ACK/recovery,
 bounded delivery draining and runtime media activation are not wired by this
 boundary increment. Full account-deletion purge remains required before combined
 F2b-3 acceptance. Host tests do not establish browser/hosted/device behavior.
+
+### F2b-3B2 — canonical session/runtime integration
+
+The runtime now opens owned media bytes using the canonical configured backend
+without starting auth merely to read offline history. It creates one session;
+that session creates the transport with its own abort lifetime. Existing
+online/focus/visibility/realtime wakes remain the only resume machinery.
+
+Media admission takes a prepared immutable derivative, optional caption and
+stable message/attachment IDs. Caller-supplied retention expiry is rejected.
+Plain-text admission still refuses empty text. Durable attachment metadata, not
+caption emptiness, selects SEND `messageType: MEDIA`; authorized TEXT mailbox
+envelopes may contain empty captions. Only a durable echo permits an upload claim.
+POST success leaves `AWAITING_ACK`, never READY. Discovery resolves direction
+from the durable parent, reuses matching local sender bytes, and passes the
+trusted metadata through the adapter's independent decode/persist/ACK boundary.
+
+Lost POST responses may reconcile via discovery. Local `AWAITING_ACK` rows with
+trusted expiry retry their durable ACK even when successful remote ACK already
+removed them from discovery. Upload attempts are bounded to ten per pass and
+stop on failure. Recovery attempts are bounded to 100; discovery is bounded to
+ten pages, stops on no ACK progress, and attempts each attachment once per pass.
+Absent/suppressed parents are deferred without bytes/ACK. Other incoming rows
+continue after a per-row failure; incoming sync still runs after outgoing failure.
+The server has no cursor: 100 unprocessable oldest rows can hide later deliveries.
+
+End/block/erase intent cancels current media work before its RPC await and pauses
+new transport work until a subsequent un-raced projection refresh. Runtime
+authority versions also prevent a slower prior refresh from restoring stale
+receipt projections after a newer wake, mutation or offline event. Close aborts
+all media attempts, drains owned storage and retains history for ordinary logout.
+
+Thread state exposes committed metadata, and account-scoped byte reads and
+download-again reuse this owner. Download again uses retained identity/expiry,
+not discovery presence, and uses the same durable ACK path. Picker preparation,
+object URLs, rendered media bubbles and controls remain F2b-4. Full account
+history/byte deletion remains F2b-3C; B2 is not combined F2b-3 acceptance.
+
+Tests compose real SQLite/web metadata and IndexedDB bytes with the real bounded
+transport; runtime tests also use the real platform opener and SDK with a fake
+network. Synthetic container fixtures replace decoding on Node. These tests are
+not proof of native/browser decoding, CORS, hosted deployment, configured builds
+or physical-device acceptance.
