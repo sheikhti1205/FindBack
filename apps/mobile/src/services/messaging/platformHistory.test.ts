@@ -174,12 +174,12 @@ describe("Android selection", () => {
       if (results[0].status !== "fulfilled") throw new Error("First opener failed");
       const first = results[0].value;
       await first.history.enqueueOutgoing(outgoing);
-      expect(await first.history.listMessages(CONVERSATION)).toEqual([outgoing]);
+      expect(await first.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, messageType: "TEXT" }]);
     } finally {
       await Promise.all(results.map((result) => result.status === "fulfilled" ? result.value.close() : undefined));
     }
     const reopened = await openPlatformMessagingHistory({ accountId: A });
-    expect(await reopened.history.listMessages(CONVERSATION)).toEqual([outgoing]);
+    expect(await reopened.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, messageType: "TEXT" }]);
     await reopened.close();
   });
 
@@ -259,7 +259,7 @@ describe("Android selection", () => {
 
     const second = await openPlatformMessagingHistory({ accountId: A });
     expect(second.scope.deviceId).toBe(first.scope.deviceId);
-    expect(await second.history.listMessages(CONVERSATION)).toEqual([outgoing]);
+    expect(await second.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, messageType: "TEXT" }]);
     await second.close();
   });
 
@@ -269,7 +269,7 @@ describe("Android selection", () => {
     const second = await openPlatformMessagingHistory({ accountId: otherAccount });
     await first.history.enqueueOutgoing(outgoing);
 
-    expect(await first.history.listMessages(CONVERSATION)).toEqual([outgoing]);
+    expect(await first.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, messageType: "TEXT" }]);
     expect(await second.history.listMessages(CONVERSATION)).toEqual([]);
     expect(fakePlugin.open).toHaveBeenNthCalledWith(1, { accountId: A });
     expect(fakePlugin.open).toHaveBeenNthCalledWith(2, { accountId: otherAccount });
@@ -477,7 +477,7 @@ describe.each(["android", "web"] as const)("%s production media ownership", (tar
     await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow();
     expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
     await expectKnownAStoresEmpty();
-    expect(await b.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A }]);
+    expect(await b.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A, messageType: "TEXT" }]);
     // Corruption stays unresolved: no guessed backend and no false completion.
     await expect(listMessagingStorageScopes(A, factory)).rejects.toThrow(/corrupt/i);
   });
@@ -562,7 +562,7 @@ describe.each(["android", "web"] as const)("%s production media ownership", (tar
     await expect(open()).rejects.toThrow(/delet/i);
     if (target === "android") fakePlugin.installationId.mockResolvedValueOnce({ id: OTHER_INSTALLATION });
     await expect(open({ deviceId: OTHER_INSTALLATION })).rejects.toThrow(/delet/i);
-    expect(await other.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A }]);
+    expect(await other.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A, messageType: "TEXT" }]);
     // Inspect actual physical logical stores, not a mocked cleanup call or a
     // fenced reader that cannot reveal whether sensitive content was deleted.
     if (target === "android") {

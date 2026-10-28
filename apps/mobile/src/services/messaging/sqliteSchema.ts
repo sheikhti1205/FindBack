@@ -31,7 +31,7 @@
  * verified byte entry exists, and the write order (bytes, then row) is what makes
  * that claim true.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 6;
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 7;
 
 /**
  * The v5 `messages` body CHECK, recognised in `sqlite_master`.
@@ -91,6 +91,7 @@ export const MESSAGING_SQLITE_SCHEMA = [
     author_id text not null,
     recipient_id text not null,
     body text,
+    message_type text check (message_type in ('TEXT','MEDIA')),
     server_event_id text,
     server_sequence integer,
     created_at integer not null,
@@ -187,7 +188,7 @@ export const MESSAGING_SQLITE_SCHEMA = [
 ] as const;
 
 const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
-  m.author_id as authorId, m.recipient_id as recipientId, m.body as body,
+  m.author_id as authorId, m.recipient_id as recipientId, m.body as body, m.message_type as messageType,
   m.server_event_id as eventId, m.server_sequence as sequence, m.unsent_at as unsentAt`;
 
 const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as direction,
@@ -264,11 +265,16 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   getMessageByEvent: `select ${MESSAGE_COLUMNS} from messages m
     where m.server_event_id = ?`,
   insertMessage: `insert into messages
-    (id, conversation_id, author_id, recipient_id, body, created_at)
-    values (?, ?, ?, ?, ?, ?)`,
+    (id, conversation_id, author_id, recipient_id, body, created_at, message_type)
+    values (?, ?, ?, ?, ?, ?, ?)`,
   insertTombstonedMessage: `insert into messages
-    (id, conversation_id, author_id, recipient_id, body, created_at, unsent_at)
-    values (?, ?, ?, ?, null, ?, ?)`,
+    (id, conversation_id, author_id, recipient_id, body, created_at, unsent_at, message_type)
+    values (?, ?, ?, ?, null, ?, ?, ?)`,
+  messageColumns: `pragma table_info(messages)`,
+  addMessageType: `alter table messages add column message_type text check (message_type in ('TEXT','MEDIA'))`,
+  backfillMediaType: `update messages set message_type='MEDIA' where message_type is null
+    and exists (select 1 from media_attachments a where a.message_id=messages.id)`,
+  bindMessageType: `update messages set message_type=? where id=? and message_type is null`,
   setMessageServer: `update messages set server_event_id = ?, server_sequence = ?
     where id = ? and server_event_id is null`,
   clearMessageBody: `update messages set body = null, unsent_at = coalesce(unsent_at, ?)
@@ -291,8 +297,10 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   bindTombstoneRecipient: `update tombstones set recipient_id = ?
     where message_id = ? and recipient_id is null`,
   enqueueOutbox: `insert or ignore into outbox (message_id, status) values (?, 'QUEUED')`,
-  listOutbox: `select message_id as messageId, status, attempts, token,
-    lease_until as leaseUntil from outbox order by message_id`,
+  listOutbox: `select o.message_id as messageId,
+    case when m.message_type is null then 'NEEDS_REVIEW' else o.status end as status,
+    o.attempts, o.token, o.lease_until as leaseUntil
+    from outbox o join messages m on m.id=o.message_id order by o.message_id`,
   // Android24 ships SQLite older than RETURNING/UPSERT. The adapter executes
   // selection/claim/read-back under BEGIN IMMEDIATE, not as independent writes.
   nextOutbox: `
@@ -302,7 +310,8 @@ export const MESSAGING_SQLITE_STATEMENTS = {
           or (o.status = 'SENDING' and o.lease_until <= ?))
         and m.body is not null
         and m.unsent_at is null
-        and m.server_event_id is null
+         and m.server_event_id is null
+         and m.message_type is not null
       order by o.message_id
       limit 1
     `,
@@ -401,8 +410,8 @@ export const MESSAGING_SQLITE_STATEMENTS = {
     where conversation_id = ? and server_sequence = ?`,
   insertSnapshotMessage: `insert into messages
     (id, conversation_id, author_id, recipient_id, body, created_at,
-      server_event_id, server_sequence, unsent_at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      server_event_id, server_sequence, unsent_at, message_type)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   updateSnapshotMessage: `update messages set body = ?, unsent_at = ?, created_at = ?
     where id = ?`,
   /** Union by message id, with a commutative tie-break on both metadata columns. */

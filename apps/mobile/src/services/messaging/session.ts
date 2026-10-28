@@ -1,5 +1,5 @@
 import type { HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope } from "./history";
-import { copyMediaMessage, copyMessage, positiveSequence, uuid } from "./validation";
+import { copyMediaMessage, copyMessage, copyReceivedMessage, positiveSequence, uuid } from "./validation";
 import { copyConversationProjection, type ConversationProjection } from "./conversationIndex";
 import { copyStateEnvelope, type StateChangeEnvelope } from "./stateChanges";
 import { copyMediaMetadata, sameMediaIdentity, type MediaMetadata } from "./media";
@@ -31,7 +31,7 @@ function mailbox(value: unknown, scope: MessagingScope): MailboxEnvelope {
   }
   // The authorized TEXT envelope also carries optional media captions. This
   // does not relax local plain-text admission in send().
-  const message = copyMediaMessage(object(event.message) as unknown as HumanMessage);
+  const message = copyReceivedMessage(object(event.message) as unknown as HumanMessage);
   if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) throw new Error("Invalid messaging participant");
   return {
     ...scope, mailboxId: uuid(row.mailboxId as string),
@@ -182,16 +182,20 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
         const attempt = await history.claimNextOutgoing();
         if (!attempt) break;
         try {
-          const attachments = await history.listMedia(attempt.message.conversationId);
-          const hasMedia = attachments.some((row) => row.messageId === attempt.message.id);
+          const hasMedia = attempt.message.messageType === "MEDIA";
+          if (!attempt.message.messageType) throw new Error("Message classification unavailable");
           const message = hasMedia ? copyMediaMessage(attempt.message) : copyMessage(attempt.message);
-          if (hasMedia) mediaContext().live();
+          if (hasMedia) {
+            mediaContext().live();
+            const attachments = await history.listMedia(message.conversationId);
+            if (!attachments.some((row) => row.messageId === message.id)) throw new Error("Photo unavailable");
+          }
           if (message.authorId !== scope.accountId) throw new Error("Invalid messaging author");
           // A local erase can win after the claim, removing both parent visibility
           // and attachment metadata. Never downgrade its captured caption to TEXT.
           const live = await history.getMessage(message.id);
           assertOpen();
-          if (!live || live.server || live.unsentAt !== undefined) throw new Error("Message is no longer pending");
+          if (!live || live.server || live.unsentAt !== undefined || live.messageType !== message.messageType) throw new Error("Message is no longer pending");
           if (hasMedia) mediaContext().live();
           const accepted = await call("SEND", {
             conversationId: message.conversationId, recipientId: message.recipientId,

@@ -3,7 +3,7 @@ import type {
   OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage, MediaAttachment, MediaBytesPort,
 } from "./history";
 import { MediaParentUnavailableError } from "./history";
-import { cachedMediaAllowed, copyMessage, copyMediaMessage, copyMediaAttachment, sameMessage, positiveSequence, uuid } from "./validation";
+import { cachedMediaAllowed, copyMessage, copyMediaMessage, copyReceivedMessage, compatibleMessageType, copyMediaAttachment, sameMessage, positiveSequence, uuid } from "./validation";
 import { isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt } from "./media";
 import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
 import { withHistoryLock } from "./historyLock";
@@ -13,7 +13,7 @@ import {
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
 
-export const MESSAGING_IDB_VERSION = 4;
+export const MESSAGING_IDB_VERSION = 5;
 const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle"];
 const LEASE_MS = 60_000;
 
@@ -59,6 +59,21 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
         media.createIndex("messageId", "messageId", { unique: true });
       }
       if (!db.objectStoreNames.contains("mediaLifecycle")) db.createObjectStore("mediaLifecycle");
+      // Upgrade is one atomic versionchange transaction. Only an existing
+      // attachment establishes MEDIA; absent metadata never proves TEXT.
+      const tx = request.transaction!;
+      const cursor = tx.objectStore("messages").openCursor();
+      cursor.onsuccess = () => {
+        const entry = cursor.result;
+        if (!entry) return;
+        const message = entry.value as StoredHumanMessage;
+        if (message.messageType !== undefined) { entry.continue(); return; }
+        const media = tx.objectStore("mediaAttachments").index("messageId").get(message.id);
+        media.onsuccess = () => {
+          if (media.result) entry.update({ ...message, messageType: "MEDIA" });
+          entry.continue();
+        };
+      };
     };
     request.onsuccess = () => {
       if (rejected) request.result.close();
@@ -205,7 +220,9 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       const request = messages.get(message.id);
       const deleted = tx.objectStore("deletions").get(message.id);
       const unsent = tx.objectStore("unsends").get(message.id);
-      let remaining = 3;
+      const queued = tx.objectStore("outbox").get(message.id);
+      const media = tx.objectStore("mediaAttachments").index("messageId").get(message.id);
+      let remaining = 5;
       const complete = guard(() => {
         if (--remaining !== 0) return;
         if (deleted.result || unsent.result) throw new Error("Cannot enqueue a removed message");
@@ -216,11 +233,16 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0 } satisfies OutboxEntry);
           updateConversation(tx, guard, message.conversationId, conversationPeer(scope, message),
             (state) => ({ ...state, updatedAt: Date.now() }));
+        } else if (!existing.messageType && !existing.server && existing.unsentAt === undefined && queued.result) {
+          // Explicit text admission, not automatic retry or body inference.
+          if (media.result) throw new Error("Media parent classification conflict");
+          messages.put({ ...existing, messageType: "TEXT" });
         }
         // Existing queued/failed/sending/sent records are never reset by retry.
         result(undefined);
       });
       request.onsuccess = complete; deleted.onsuccess = complete; unsent.onsuccess = complete;
+      queued.onsuccess = complete; media.onsuccess = complete;
     });
   }
 
@@ -249,7 +271,16 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   async function listOutbox(): Promise<OutboxEntry[]> {
     return transaction("readonly", (tx, result, guard) => {
       const request = tx.objectStore("outbox").getAll();
-      request.onsuccess = guard(() => result(request.result as OutboxEntry[]));
+      const messages = tx.objectStore("messages").getAll();
+      let remaining = 2;
+      const complete = guard(() => {
+        if (--remaining) return;
+        const classified = new Set((messages.result as StoredHumanMessage[])
+          .filter((message) => message.messageType !== undefined).map((message) => message.id));
+        result((request.result as OutboxEntry[]).map((entry) => classified.has(entry.messageId)
+          ? entry : { ...entry, status: "NEEDS_REVIEW" }));
+      });
+      request.onsuccess = complete; messages.onsuccess = complete;
     });
   }
 
@@ -313,10 +344,13 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         request.onsuccess = guard(() => {
           const message = request.result as StoredHumanMessage | undefined;
           if (!message || message.server) throw new Error("Messaging outbox identity conflict");
+          // NULL/absent classification itself is the durable quarantine. Do not
+          // lease or increment attempts; later classified sends must progress.
+          if (!message.messageType) { current.continue(); return; }
           const token = crypto.randomUUID();
           const attempts = entry.attempts + 1;
           outbox.put({ messageId: entry.messageId, status: "SENDING", attempts, token, leaseUntil: now + LEASE_MS } satisfies OutboxEntry);
-          result({ message: copyMediaMessage(message), token, attempt: attempts });
+          result({ message: copyReceivedMessage(message), token, attempt: attempts });
         });
       });
     });
@@ -324,7 +358,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
 
   async function failOutgoing(input: OutgoingAttempt): Promise<boolean> {
     assertOpen();
-    const message = copyMediaMessage(input.message);
+    const message = copyReceivedMessage(input.message);
     const token = uuid(input.token);
     const attempt = input.attempt;
     if (message.authorId !== scope.accountId || !Number.isSafeInteger(attempt) || attempt < 1) {
@@ -358,7 +392,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     const eventId = uuid(input.event.eventId);
     const sequence = input.event.sequence;
     if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("Invalid messaging event sequence");
-    const message = copyMediaMessage(input.event.message);
+    const message = copyReceivedMessage(input.event.message);
     if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) {
       throw new Error("Inbound participant scope mismatch");
     }
@@ -403,17 +437,19 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             const suppressed = !!deletion || sequence <= ((clear.result as { throughSequence: number } | undefined)?.throughSequence ?? 0);
             if (existing && (existing.id !== message.id || existing.conversationId !== message.conversationId
               || existing.authorId !== message.authorId || existing.recipientId !== message.recipientId
+              || !compatibleMessageType(existing.messageType, message.messageType)
               || (!tombstone && !suppressed && !sameMessage(existing, message)))) throw new Error("Immutable message conflict");
             if (existing?.server && (existing.server.eventId !== eventId || existing.server.sequence !== sequence)) {
               throw new Error("Immutable message event conflict");
             }
             if (!existingEvent) events.add({ eventId, conversationId: message.conversationId, sequence, messageId: message.id } satisfies EventIdentity);
             const stored: StoredHumanMessage = { ...message, server: { eventId, sequence },
+              ...((message.messageType ?? existing?.messageType) ? { messageType: message.messageType ?? existing?.messageType } : {}),
               ...((tombstone || suppressed) ? { body: "" } : {}),
               ...(tombstone ? { unsentAt: tombstone.occurredAt } : {}) };
             if (tombstone || suppressed) removeMediaRows(tx, guard, message.id);
             if (!existing) messages.add(stored);
-            else if (!existing.server || tombstone || suppressed) messages.put(stored);
+            else if (!existing.server || tombstone || suppressed || (!existing.messageType && message.messageType)) messages.put(stored);
             if (!existing?.server) updateConversation(tx, guard, message.conversationId,
               conversationPeer(scope, message), (state) => ({ ...state, updatedAt: Date.now() }));
             if (!existingMailbox) mailbox.add(receipt);
@@ -506,6 +542,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             else tx.objectStore("unsends").put(change);
             messages.put({ id: change.messageId, conversationId: change.conversationId,
                 authorId: change.authorId, recipientId: change.recipientId, body: "",
+                ...(existing?.messageType ? { messageType: existing.messageType } : {}),
                 ...(existing?.server ? { server: existing.server } : {}),
                 ...(existing?.unsentAt !== undefined ? { unsentAt: existing.unsentAt }
                   : change.kind === "UNSEND" ? { unsentAt: change.occurredAt } : {}) } satisfies StoredHumanMessage);
@@ -590,6 +627,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     const parent = view.parents.find((row) => row.id === metadata.messageId);
     if (!parent) throw new MediaParentUnavailableError(metadata.messageId);
     if (parent.authorId !== scope.accountId && parent.recipientId !== scope.accountId) throw new Error("Media participant scope mismatch");
+    if (parent.messageType === "TEXT") throw new Error("Media parent classification conflict");
     if (metadata.direction !== (parent.authorId === scope.accountId ? "OUT" : "IN")) throw new Error("Media direction scope mismatch");
     return parent;
   }
@@ -646,6 +684,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           if (parent) {
             mediaParent(view, record);
             if (!sameMessage(parent, message)) throw new Error("Immutable message identity conflict");
+            if (!parent.messageType) tx.objectStore("messages").put({ ...parent, messageType: "MEDIA" });
           } else {
             tx.objectStore("messages").add(message);
             tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0 } satisfies OutboxEntry);

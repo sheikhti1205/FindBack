@@ -26,6 +26,35 @@ async function sealed(snapshot: HistorySnapshot = emptySnapshot(), overrides: Re
 }
 
 describe("portable history backup envelope", () => {
+  it.each(["VIDEO", "text", 1, {}])("rejects malformed v2 classification %j even with a valid digest", async (messageType) => {
+    const snapshot = { ...emptySnapshot(), messages: [{ id: MESSAGE,
+      conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT, body: "Caption",
+      serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0, messageType }] };
+    const raw = await sealed(snapshot as HistorySnapshot, { version: 2 });
+    await expect(decodeBackup(raw)).rejects.toMatchObject({ code: "backup: invalid snapshot" });
+  });
+
+  it("writes v2 classification and verifies the unchanged v1 digest before normalizing legacy unknowns", async () => {
+    const legacy: HistorySnapshot = { ...emptySnapshot(), messages: [{ id: MESSAGE,
+      conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT, body: "Caption",
+      serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0 }] };
+    const old = await sealed(legacy);
+    expect(await decodeBackup(old)).toEqual(old);
+    expect(normaliseSnapshot((await decodeBackup(old)).snapshot).messages[0]?.messageType).toBeNull();
+    await expect(decodeBackup({ ...old, snapshot: { ...legacy,
+      messages: [{ ...legacy.messages[0]!, messageType: "MEDIA" }] } }))
+      .rejects.toMatchObject({ code: "backup: invalid snapshot" });
+
+    const history = { exportSnapshot: async () => ({ ...legacy,
+      messages: [{ ...legacy.messages[0]!, messageType: "MEDIA" as const }] }) } as MessagingHistory;
+    const current = await createBackup(history, { accountId: ACCOUNT, deviceId: DEVICE }, 99);
+    expect(current.version).toBe(2);
+    expect((await decodeBackup(encodeBackup(current))).snapshot.messages[0]?.messageType).toBe("MEDIA");
+    const forged = { ...current, snapshot: { ...current.snapshot,
+      messages: [{ ...current.snapshot.messages[0]!, messageType: "TEXT" as const }] } };
+    await expect(decodeBackup(forged)).rejects.toMatchObject({ code: "backup: digest mismatch" });
+  });
+
   it("sorts object keys recursively without changing array order", () => {
     expect(canonicalJson({ z: [{ b: 2, a: 1 }], a: 0 })).toBe('{"a":0,"z":[{"a":1,"b":2}]}');
   });
@@ -36,7 +65,7 @@ describe("portable history backup envelope", () => {
       [null, "backup: not an object"],
       [{}, "backup: unsupported format"],
       [{ format: "other" }, "backup: unsupported format"],
-      [{ format: "findback.chat.backup", version: 2 }, "backup: unsupported version"],
+      [{ format: "findback.chat.backup", version: 3 }, "backup: unsupported version"],
       [{ format: "findback.chat.backup", version: 0 }, "backup: unsupported version"],
     ] as const) {
       await expect(decodeBackup(raw)).rejects.toMatchObject({ code });

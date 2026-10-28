@@ -1129,6 +1129,18 @@ const MEDIA_DDL_PREFIXES = [
   "create unique index if not exists ux_media_attachments_message",
 ];
 
+// Historical v5/v6 messages DDL, before classification existed. Do not derive
+// this from the current messages schema: that would silently test no upgrade.
+const LEGACY_MESSAGES_DDL = `create table if not exists messages (
+  id text primary key,
+  conversation_id text not null references conversations(id) on delete cascade,
+  author_id text not null, recipient_id text not null, body text,
+  server_event_id text, server_sequence integer, created_at integer not null, unsent_at integer,
+  check (author_id <> recipient_id), check (body is null or length(body) <= 100000),
+  check ((server_event_id is null) = (server_sequence is null)),
+  unique (conversation_id, server_sequence)
+)`;
+
 /**
  * A v5 file: every table except `media_attachments`, the v5 body CHECK, one
  * accepted message and its pending outbox row. This is what the previous build
@@ -1142,7 +1154,7 @@ function seedV5() {
   bind.run("schema_version", "5");
   for (const statement of MESSAGING_SQLITE_SCHEMA as readonly string[]) {
     if (MEDIA_DDL_PREFIXES.some((prefix) => statement.startsWith(prefix))) continue;
-    database.exec(statement);
+    database.exec(statement.startsWith("create table if not exists messages (") ? LEGACY_MESSAGES_DDL : statement);
   }
   database.prepare("insert into conversations (id, created_at, updated_at) values (?,?,?)")
     .run(CONVERSATION, 1, 1);
@@ -1153,6 +1165,63 @@ function seedV5() {
 }
 
 describe("chat media schema and migration", () => {
+  function seedV6() {
+    seedV5();
+    for (const statement of MESSAGING_SQLITE_SCHEMA) {
+      if (MEDIA_DDL_PREFIXES.some((prefix) => statement.startsWith(prefix))) database.exec(statement);
+    }
+    database.exec("update messaging_meta set value='6' where key='schema_version'");
+    database.prepare(`insert into messages (id,conversation_id,author_id,recipient_id,body,created_at,unsent_at)
+      values (?,?,?,?,?,?,?)`).run(MESSAGE_2, CONVERSATION, B, A, null, 6, 10);
+    database.prepare(`insert into media_attachments
+      (id,message_id,direction,sha256,mime,byte_size,width,height,expires_at,last_access_at,state,attempts)
+      values (?,?, 'IN', ?, 'image/png',64,32,32,1000,0,'EVICTED',0)`)
+      .run(ATTACHMENT, MESSAGE_2, "a".repeat(64));
+    expect(database.prepare("pragma table_info(messages)").all().map((column) => column.name))
+      .not.toContain("message_type");
+  }
+
+  it("migrates real v6 classification without guessing TEXT or losing suppressed media and outbox", async () => {
+    seedV6();
+    const before = database.prepare("select * from messages order by id").all();
+    const outbox = database.prepare("select * from outbox").all();
+    const media = database.prepare("select * from media_attachments").all();
+    const history = await open();
+    expect(database.prepare("select * from messages order by id").all()).toEqual([
+      { ...before[0], message_type: null }, { ...before[1], message_type: "MEDIA" },
+    ]);
+    expect(database.prepare("select * from outbox").all()).toEqual(outbox);
+    expect(database.prepare("select * from media_attachments").all()).toEqual(media);
+    expect((await history.getMessage(MESSAGE))?.messageType).toBeUndefined();
+    expect((await history.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+    expect(() => database.prepare("update messages set message_type='VIDEO'").run()).toThrow(/CHECK/);
+    await history.close();
+    database = new DatabaseSync(path);
+    const reopened = await open();
+    expect((await reopened.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+    await reopened.close();
+  });
+
+  it("rolls v6 classification DDL and backfill back with the version stamp on failure", async () => {
+    seedV6();
+    const before = database.prepare("select * from messages order by id").all();
+    const base = driverFor(database);
+    await expect(openSqliteMessagingHistory({ ...base, run: async (sql, params) => {
+      const changed = await base.run(sql, params);
+      if (sql === S.backfillMediaType) throw new Error("Injected after backfill");
+      return changed;
+    } }, { accountId: A, deviceId: DEVICE })).rejects.toThrow("Injected after backfill");
+    database = new DatabaseSync(path);
+    expect(database.prepare("pragma table_info(messages)").all().map((column) => column.name))
+      .not.toContain("message_type");
+    expect(database.prepare("select * from messages order by id").all()).toEqual(before);
+    expect(database.prepare("select value from messaging_meta where key='schema_version'").get())
+      .toEqual({ value: "6" });
+    const retry = await open();
+    expect((await retry.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+    await retry.close();
+  });
+
   it("migrates a v5 file additively, preserving every row and the v5 body CHECK", async () => {
     seedV5();
     const history = await openWithMedia(new FakeMediaBytes(() => clock));
@@ -1277,6 +1346,21 @@ describe("chat media schema and migration", () => {
 });
 
 describe("chat media records", () => {
+  it("reopens authoritative TEXT and MEDIA classifications", async () => {
+    const first = await openWithMedia(new FakeMediaBytes(() => clock));
+    await first.enqueueOutgoing(outgoing);
+    const mediaMessage = { ...outgoing, id: MESSAGE_2, body: "" };
+    const fixture = await mediaFixture("00000000-0000-4000-8000-00000000000e", mediaMessage.id);
+    await first.enqueueOutgoingWithMedia(mediaMessage, fixture.metadata, fixture.bytes);
+    await first.close();
+
+    database = new DatabaseSync(path);
+    const reopened = await openWithMedia(new FakeMediaBytes(() => clock));
+    expect(await reopened.getMessage(MESSAGE)).toMatchObject({ messageType: "TEXT" });
+    expect(await reopened.getMessage(MESSAGE_2)).toMatchObject({ body: "", messageType: "MEDIA" });
+    await reopened.close();
+  });
+
   it.each(["purge", "delete"])("does not dispatch ACK when %s wins after commit but before ACK admission", async (action) => {
     const port = new FakeMediaBytes(() => clock);
     const one = await openWithMedia(port);

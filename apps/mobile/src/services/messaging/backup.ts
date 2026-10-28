@@ -32,7 +32,7 @@ export type {
 } from "./history";
 
 export const BACKUP_FORMAT = "findback.chat.backup";
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 export interface HistoryBackup {
   format: typeof BACKUP_FORMAT;
@@ -119,6 +119,7 @@ const ENVELOPE_KEYS = ["format", "version", "accountId", "deviceId", "exportedAt
 const CONVERSATION_KEYS = ["id", "lastSequence", "createdAt", "updatedAt"];
 const MESSAGE_KEYS = ["id", "conversationId", "authorId", "recipientId", "body",
   "serverEventId", "serverSequence", "unsentAt", "createdAt"];
+const MESSAGE_V2_KEYS = [...MESSAGE_KEYS, "messageType"];
 const TOMBSTONE_KEYS = ["messageId", "conversationId", "recipientId", "unsentAt", "unsentBy"];
 const DELETION_KEYS = ["messageId", "conversationId", "deletedAt"];
 const CLEAR_KEYS = ["conversationId", "throughSequence", "clearedAt"];
@@ -221,7 +222,7 @@ function validBody(value: unknown): boolean {
  * Values are copied verbatim, never normalised: the digest is computed over this
  * copy, so it must be byte-identical to what the caller sealed.
  */
-function readSnapshot(value: unknown): HistorySnapshot {
+function readSnapshot(value: unknown, version?: number): HistorySnapshot {
   try {
     if (!object(value)) throw new BackupError("backup: invalid snapshot");
     if (!exactKeys(value, SNAPSHOT_KEYS)) throw new BackupError("backup: invalid snapshot");
@@ -250,13 +251,18 @@ function readSnapshot(value: unknown): HistorySnapshot {
         };
       }),
       messages: messages.map((row) => {
-        const r = record(row, MESSAGE_KEYS);
+        // A v1 digest must describe the original nine fields exactly. Never add
+        // defaults before verifying it, nor let v1 smuggle a v2 discriminator.
+        const classified = version === 2 || (version === undefined && object(row)
+          && Object.getOwnPropertyDescriptor(row, "messageType") !== undefined);
+        const r = record(row, classified ? MESSAGE_V2_KEYS : MESSAGE_KEYS);
         return {
           id: r.id as string,
           conversationId: r.conversationId as string,
           authorId: r.authorId as string,
           recipientId: r.recipientId as string,
           body: r.body as string | null,
+          ...(classified ? { messageType: r.messageType as SnapshotMessage["messageType"] } : {}),
           serverEventId: r.serverEventId as string,
           serverSequence: r.serverSequence as number,
           unsentAt: r.unsentAt as number | null,
@@ -326,6 +332,8 @@ function checkSnapshot(value: unknown, accountId: string): asserts value is Hist
     && isUuid(row.authorId) && isUuid(row.recipientId) && row.authorId !== row.recipientId
     && (row.authorId === accountId || row.recipientId === accountId)
     && validBody(row.body)
+    && (row.messageType === undefined || row.messageType === null || row.messageType === "TEXT" || row.messageType === "MEDIA")
+    && (row.messageType !== "TEXT" || row.body !== "")
     && isUuid(row.serverEventId) && integer(row.serverSequence, 1)
     && (row.unsentAt === null || integer(row.unsentAt, 1))
     && (row.createdAt === null || integer(row.createdAt)))) {
@@ -370,6 +378,7 @@ export function normaliseSnapshot(value: unknown): HistorySnapshot {
     ...snapshot,
     messages: snapshot.messages.map((message: SnapshotMessage) => ({
       ...message,
+      messageType: message.messageType ?? null,
       createdAt: message.createdAt ?? 0,
     })),
   };
@@ -422,10 +431,10 @@ async function decodeEnvelope(value: object): Promise<HistoryBackup> {
   }
   // The single guarded read of the snapshot: the digest is computed over this
   // copy and the copy is what gets validated and returned.
-  const snapshot = readSnapshot(field("snapshot"));
+  const snapshot = readSnapshot(field("snapshot"), version);
   const envelope = {
     format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
+    version,
     accountId: accountId as string,
     deviceId: deviceId as string,
     exportedAt: exportedAt as number,

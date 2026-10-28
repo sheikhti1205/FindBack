@@ -1,5 +1,5 @@
 /** Shared validation for human messaging storage adapters. */
-import type { HumanMessage, MediaAttachment } from "./history";
+import type { HumanMessage, MediaAttachment, MessageType } from "./history";
 import type { ConversationProjection } from "./conversationIndex";
 import { copyMediaMetadata, MEDIA_STATES, type MediaMime, type MediaState } from "./media";
 
@@ -31,8 +31,20 @@ export interface CopyMessageOptions {
 }
 
 export function copyMessage(value: HumanMessage, options: CopyMessageOptions = {}): HumanMessage {
+  const message = copyReceivedMessage(value, options);
+  if (message.messageType === "MEDIA") throw new Error("Invalid messaging type");
+  return { ...message, messageType: "TEXT" };
+}
+
+/** Authorized mailbox/history data: missing legacy classification stays unknown. */
+export function copyReceivedMessage(value: HumanMessage, options: CopyMessageOptions = { allowEmptyBody: true }): HumanMessage {
+  const messageType = value?.messageType;
+  if (messageType !== undefined && messageType !== "TEXT" && messageType !== "MEDIA") {
+    throw new Error("Invalid messaging type");
+  }
   if (!value || typeof value.body !== "string" || value.body.length > MAX_BODY_UNITS
-    || (!options.allowEmptyBody && !value.body.trim())) {
+    || ((!options.allowEmptyBody || messageType === "TEXT") && !value.body.trim())
+    || (value.body !== "" && !value.body.trim())) {
     throw new Error("Invalid messaging text");
   }
   // A NUL byte makes SQLite's length()/text handling disagree with JS, so it is
@@ -41,6 +53,7 @@ export function copyMessage(value: HumanMessage, options: CopyMessageOptions = {
   const message = {
     id: uuid(value.id), conversationId: uuid(value.conversationId),
     authorId: uuid(value.authorId), recipientId: uuid(value.recipientId), body: value.body,
+    ...(messageType ? { messageType } : {}),
   };
   if (message.authorId === message.recipientId) throw new Error("Invalid messaging participants");
   return message;
@@ -52,14 +65,20 @@ export function copyMessage(value: HumanMessage, options: CopyMessageOptions = {
  * caption either; it would render as a blank bubble, so it is refused.
  */
 export function copyMediaMessage(value: HumanMessage): HumanMessage {
-  const message = copyMessage(value, { allowEmptyBody: true });
+  if (value?.messageType !== undefined && value.messageType !== "MEDIA") throw new Error("Invalid messaging type");
+  const message = copyReceivedMessage({ ...value, messageType: "MEDIA" });
   if (message.body !== "" && !message.body.trim()) throw new Error("Invalid messaging text");
   return message;
 }
 
 export function sameMessage(a: HumanMessage, b: HumanMessage): boolean {
   return a.id === b.id && a.conversationId === b.conversationId && a.authorId === b.authorId
-    && a.recipientId === b.recipientId && a.body === b.body;
+    && a.recipientId === b.recipientId && a.body === b.body && compatibleMessageType(a.messageType, b.messageType);
+}
+
+/** Unknown legacy state may gain authority; two known contradictory types cannot merge. */
+export function compatibleMessageType(a: MessageType | null | undefined, b: MessageType | null | undefined): boolean {
+  return a == null || b == null || a === b;
 }
 
 export function positiveSequence(value: unknown): number {

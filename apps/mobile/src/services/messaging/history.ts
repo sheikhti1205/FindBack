@@ -9,6 +9,8 @@ export interface MessagingScope {
   deviceId: string;
 }
 
+export type MessageType = "TEXT" | "MEDIA";
+
 export interface HumanMessage {
   /** Stable client-generated UUID: transport retries must preserve it. */
   id: string;
@@ -16,6 +18,9 @@ export interface HumanMessage {
   authorId: string;
   recipientId: string;
   body: string;
+  /** Absent only for legacy history whose classification was never received.
+   * Never infer TEXT from body or missing attachment metadata. */
+  messageType?: MessageType;
 }
 
 export interface StoredHumanMessage extends HumanMessage {
@@ -80,7 +85,10 @@ export class MediaParentUnavailableError extends Error {
 
 export interface OutboxEntry {
   messageId: string;
-  status: "QUEUED" | "SENDING" | "FAILED";
+  /** NEEDS_REVIEW is the durable unknown-classification quarantine projected
+   * from the parent, not a retryable transport failure. Wake/flush skips it;
+   * authority or explicit matching text/media admission can resolve it. */
+  status: "QUEUED" | "SENDING" | "FAILED" | "NEEDS_REVIEW";
   attempts: number;
   token?: string;
   leaseUntil?: number;
@@ -96,7 +104,7 @@ export interface OutgoingAttempt {
  * MUST come from a participant-authorized transport validator, not push payloads.
  * This local boundary checks shape/scope/idempotency, not server authorization.
  * Sequence is authoritative per conversation, never a timestamp or ACK cursor.
- * Only TEXT is supported; tombstones/clear/read/media are explicitly not applied.
+   * TEXT is the legacy transport event kind, not the message classification.
  */
 export interface MailboxEnvelope extends MessagingScope {
   mailboxId: string;
@@ -138,6 +146,8 @@ export interface SnapshotMessage {
   authorId: string;
   recipientId: string;
   body: string | null;
+  /** NULL/absent means legacy unknown; suppression never erases classification. */
+  messageType?: MessageType | null;
   /** Only accepted messages are portable; a pending send is not history. */
   serverEventId: string;
   serverSequence: number;

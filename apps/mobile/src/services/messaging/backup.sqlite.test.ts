@@ -100,6 +100,36 @@ afterEach(() => {
 });
 
 describe("backup round trip", () => {
+  it("merges classification without downgrade and rejects conflicting known types transactionally", async () => {
+    const source = await store("source"), target = await store("target");
+    await source.persistInbound(envelope({ messageType: "MEDIA" }, EVENT, MAILBOX, 1));
+    const classified = await source.exportSnapshot();
+    const legacy = { ...classified, messages: classified.messages.map(({ messageType: _type, ...row }) => row) };
+    await target.importSnapshot(legacy);
+    expect((await target.getMessage(MESSAGE))?.messageType).toBeUndefined();
+    await target.importSnapshot(classified);
+    await target.importSnapshot(legacy);
+    expect((await target.getMessage(MESSAGE))?.messageType).toBe("MEDIA");
+    const before = await target.exportSnapshot();
+    await expect(target.importSnapshot({ ...classified,
+      messages: classified.messages.map((row) => ({ ...row, messageType: "TEXT" })) }))
+      .rejects.toMatchObject({ code: "backup: identity conflict" });
+    expect(await target.exportSnapshot()).toEqual(before);
+  });
+
+  it("preserves MEDIA classification through a sealed snapshot and restore", async () => {
+    const source = await store("source");
+    await source.persistInbound(envelope({ body: "", messageType: "MEDIA" } as Partial<HumanMessage>, EVENT, MAILBOX, 1));
+    const backup = await createBackup(source, { accountId: A, deviceId: DEVICE }, clock);
+    expect(backup.snapshot.messages).toMatchObject([{ id: MESSAGE, body: "", messageType: "MEDIA" }]);
+    await source.close();
+
+    const target = await store("target", OTHER_DEVICE);
+    await restoreBackup(target, { accountId: A, deviceId: OTHER_DEVICE }, encodeBackup(backup));
+    expect(await target.getMessage(MESSAGE)).toMatchObject({ body: "", messageType: "MEDIA" });
+    await target.close();
+  });
+
   it("restores accepted history, the conversation and the erasure metadata", async () => {
     const source = await store("source");
     await source.persistInbound(envelope({}, EVENT, MAILBOX, 1));

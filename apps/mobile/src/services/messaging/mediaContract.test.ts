@@ -119,7 +119,7 @@ describe("image-only messages", () => {
   it("accepts an empty caption as 'no caption', not as suppression", () => {
     expect(copyMediaMessage({
       id: MESSAGE, conversationId: MESSAGE, authorId: A, recipientId: B, body: "",
-    })).toEqual({ id: MESSAGE, conversationId: MESSAGE, authorId: A, recipientId: B, body: "" });
+    })).toEqual({ id: MESSAGE, conversationId: MESSAGE, authorId: A, recipientId: B, body: "", messageType: "MEDIA" });
   });
 
   it("still refuses whitespace-only, NUL and oversized captions", () => {

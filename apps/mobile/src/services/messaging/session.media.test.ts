@@ -67,13 +67,36 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     }
     histories.push(history); await history.cacheConversation(view); return history;
   }
+
+  // Reproduce a pre-discriminator queued record without fabricating a message
+  // classification from its caption. Both real stores keep this state durably.
+  async function forgetQueuedClassification(messageId: string) {
+    if (backend === "sqlite") {
+      const db = new DatabaseSync(join(directory, "history.db"));
+      try { db.prepare("update messages set message_type=null where id=?").run(messageId); }
+      finally { db.close(); }
+    } else {
+      const request = factory.open(`findback-human-history-v1:${A}:${DEVICE}`);
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("messages", "readwrite"), store = tx.objectStore("messages");
+          const read = store.get(messageId);
+          read.onsuccess = () => { const { messageType: _type, ...legacy } = read.result as HumanMessage; store.put(legacy); };
+          tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+        });
+      } finally { db.close(); }
+    }
+  }
   const rpc: MessagingRpc = async ({ accountId, deviceId, action, args, signal }) => {
     expect({ accountId, deviceId }).toEqual(scope); expect(signal.aborted).toBe(false);
     if (action === "SEND") {
       sends.push(args); if (sendError) throw new Error("offline");
       const value = { id: args.messageId, conversationId: args.conversationId, authorId: A,
-        recipientId: args.recipientId, body: args.body } as HumanMessage;
-      mailbox = [envelope(value)]; return value.id;
+        recipientId: args.recipientId, body: args.body, messageType: args.messageType } as HumanMessage;
+      mailbox = [envelope(value, sends.length)]; return value.id;
     }
     if (action === "ACK") { mailbox = mailbox.filter((row) => row.mailboxId !== args.mailboxId); return null; }
     if (action === "SYNC") return [...mailbox];
@@ -142,17 +165,124 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     await history.enqueueOutgoingWithMedia(value, fixture.metadata, fixture.bytes);
     await client.flush();
     expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: value.id, body: caption, messageType: "MEDIA" }]);
-    expect((await history.getMessage(value.id))?.server?.sequence).toBe(1);
+    expect(await history.getMessage(value.id)).toMatchObject({ messageType: "MEDIA", server: { sequence: 1 } });
     expect(await history.listOutbox()).toEqual([]);
     expect((await history.listMedia(CONV))[0]?.state).toBe("QUEUED");
+  });
+
+  it("does not downgrade a classified caption to TEXT when attachment discovery is missing", async () => {
+    const history = await open(), client = session(history), value = message(1, "Caption");
+    const fixture = await mediaFixture(id(201), value.id);
+    await history.enqueueOutgoingWithMedia(value, fixture.metadata, fixture.bytes);
+    vi.spyOn(history, "listMedia").mockResolvedValue([]);
+    await expect(client.flush()).rejects.toThrow();
+    expect(sends).toEqual([]);
+    expect(await history.getMessage(value.id)).toMatchObject({ messageType: "MEDIA" });
+  });
+
+  it("quarantines a legacy unknown send across repeated flushes without starving newer messages; explicit text admission recovers it", async () => {
+    const initial = await open(), legacy = message(1, "Old caption");
+    await initial.enqueueOutgoing(legacy);
+    await forgetQueuedClassification(legacy.id);
+    await initial.close();
+    const history = await open(), client = session(history);
+    await history.enqueueOutgoing(message(2, "New text"));
+    await client.flush(); await client.flush(); await client.flush();
+    expect(sends.map((args) => args.messageId)).toEqual([message(2).id]);
+    expect(await history.listOutbox()).toEqual([{ messageId: legacy.id, status: "NEEDS_REVIEW", attempts: 0 }]);
+    expect((await history.getMessage(legacy.id))?.messageType).toBeUndefined();
+
+    // Only an explicit user text admission, not a wake/retry, may classify this
+    // unsent record. Existing immutable identity/body must still match.
+    await expect(client.send({ ...legacy, body: "Changed" })).rejects.toThrow(/conflict/i);
+    await client.send(legacy);
+    expect((await history.getMessage(legacy.id))?.messageType).toBe("TEXT");
+    await client.flush();
+    expect(sends.map((args) => args.messageId)).toEqual([message(2).id, legacy.id]);
+    expect(await history.listOutbox()).toEqual([]);
+  });
+
+  it("recovers a quarantined send only through explicit verified media admission when the user chooses a photo", async () => {
+    const history = await open(), client = session(history), legacy = message(1, "Old caption");
+    await history.enqueueOutgoing(legacy);
+    await forgetQueuedClassification(legacy.id);
+    const fixture = await mediaFixture(id(201), legacy.id);
+    await client.sendMedia(legacy, fixture.metadata, fixture.bytes);
+    expect((await history.getMessage(legacy.id))?.messageType).toBe("MEDIA");
+    await client.flush();
+    expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: legacy.id, body: legacy.body, messageType: "MEDIA" }]);
+    expect(await history.listOutbox()).toEqual([]);
+  });
+
+  it("reconciles a legacy unknown outbox from authority before any resend", async () => {
+    const history = await open(), client = session(history), legacy = message(1, "Old caption");
+    await history.enqueueOutgoing(legacy);
+    await forgetQueuedClassification(legacy.id);
+    await client.flush();
+    expect(sends).toEqual([]);
+    mailbox = [envelope({ ...legacy, messageType: "TEXT" })];
+    await client.sync(); await client.flush();
+    expect(sends).toEqual([]);
+    expect(await history.listOutbox()).toEqual([]);
+    expect(await history.getMessage(legacy.id)).toMatchObject({ messageType: "TEXT", server: { sequence: 1 } });
+  });
+
+  it("retains unknown legacy classification until an authoritative echo supplies it, without downgrade", async () => {
+    const history = await open(), client = session(history), value = { ...message(1, "Caption"), authorId: B, recipientId: A };
+    mailbox = [envelope(value)];
+    await client.sync();
+    expect((await history.getMessage(value.id))?.messageType).toBeUndefined();
+    mailbox = [envelope({ ...value, messageType: "MEDIA" })];
+    await client.sync();
+    expect((await history.getMessage(value.id))?.messageType).toBe("MEDIA");
+    mailbox = [envelope(value)];
+    await client.sync();
+    expect((await history.getMessage(value.id))?.messageType).toBe("MEDIA");
+    mailbox = [envelope({ ...value, messageType: "TEXT" })];
+    await expect(client.sync()).rejects.toThrow(/conflict/i);
+    expect(mailbox).toHaveLength(1); // No ACK for contradictory classification.
+    expect((await history.getMessage(value.id))?.messageType).toBe("MEDIA");
+  });
+
+  it("refuses attachment delivery under an authoritative TEXT parent before bytes or ACK", async () => {
+    const history = await open(), client = session(history);
+    const value = { ...message(1, "Not a photo"), authorId: B, recipientId: A, messageType: "TEXT" as const };
+    await history.persistInbound(envelope(value));
+    const fixture = await mediaFixture(id(201), value.id, { direction: "IN", expiresAt: Date.now() + 60_000 });
+    remote.set(fixture.metadata.id, fixture);
+    await expect(client.syncMedia()).rejects.toThrow();
+    expect(acks).toEqual([]);
+    expect(await bytes.get(A, fixture.metadata.id)).toBeNull();
+    expect(await history.listMedia(CONV)).toEqual([]);
+  });
+
+  it("rejects a classification conflict even after unsend erased the body", async () => {
+    const history = await open();
+    const value = { ...message(1, "Caption"), authorId: B, recipientId: A, messageType: "MEDIA" as const };
+    await history.persistInbound(envelope(value));
+    await history.applyStateChange({ ...scope,
+      change: { kind: "UNSEND", eventId: id(600), sequence: 1, conversationId: CONV, messageId: value.id, authorId: B,
+        recipientId: A, messageSequence: 1, occurredAt: Date.now() } });
+    await expect(history.persistInbound(envelope({ ...value, messageType: "TEXT" }))).rejects.toThrow(/conflict/i);
+    expect(await history.getMessage(value.id)).toMatchObject({ messageType: "MEDIA", body: "" });
+  });
+
+  it.each([null, "", "VIDEO", "text", 1, {}])("rejects malformed mailbox classification %j before persistence or ACK", async (messageType) => {
+    const history = await open(), client = session(history);
+    const value = { ...message(1, "Caption"), authorId: B, recipientId: A, messageType } as HumanMessage;
+    mailbox = [envelope(value)];
+    await expect(client.sync()).rejects.toThrow(/type/i);
+    expect(mailbox).toHaveLength(1);
+    expect(await history.getMessage(value.id)).toBeNull();
+    expect(await history.listMessages(CONV)).toEqual([]);
   });
 
   it("accepts authorized image-only inbound echo without permitting empty plain-text sends", async () => {
     const history = await open(), client = session(history);
     await expect(client.send(message())).rejects.toThrow();
-    mailbox = [envelope({ ...message(), authorId: B, recipientId: A })];
+    mailbox = [envelope({ ...message(), authorId: B, recipientId: A, messageType: "MEDIA" } as HumanMessage)];
     expect(await client.sync()).toBe(1);
-    expect(await history.getMessage(message().id)).toMatchObject({ body: "", server: { sequence: 1 } });
+    expect(await history.getMessage(message().id)).toMatchObject({ body: "", messageType: "MEDIA", server: { sequence: 1 } });
   });
 
   it("queues a photo offline, reopens, uploads after echo and ACKs own-device bytes before READY", async () => {

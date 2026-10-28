@@ -29,7 +29,7 @@ import {
   type ConversationProjection, type ConversationSummary, type LocalConversationState,
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
-import { cachedMediaAllowed, copyMessage, copyMediaAttachment, copyMediaMessage, positiveSequence, uuid } from "./validation";
+import { cachedMediaAllowed, copyMessage, copyMediaAttachment, copyMediaMessage, copyReceivedMessage, compatibleMessageType, positiveSequence, uuid } from "./validation";
 import {
   isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt,
 } from "./media";
@@ -71,6 +71,7 @@ interface MessageRow {
   authorId: string;
   recipientId: string;
   body: string | null;
+  messageType: HumanMessage["messageType"] | null;
   eventId: string | null;
   sequence: number | null;
   unsentAt: number | null;
@@ -118,7 +119,7 @@ const LEASE_MS = 60_000;
  * is a file written by a newer build, and it is refused before any mutation.
  */
 const SUPPORTED_PRIOR_VERSIONS: readonly string[] = [
-  "1", "2", "3", "4", "5", String(MESSAGING_SQLITE_SCHEMA_VERSION),
+  "1", "2", "3", "4", "5", "6", String(MESSAGING_SQLITE_SCHEMA_VERSION),
 ];
 
 function defaultToken(): string {
@@ -134,6 +135,7 @@ function toStored(row: MessageRow): StoredHumanMessage {
     authorId: row.authorId,
     recipientId: row.recipientId,
     body: row.body ?? "",
+    ...(row.messageType ? { messageType: row.messageType } : {}),
   };
   if (row.eventId !== null && row.sequence !== null) {
     stored.server = { eventId: row.eventId, sequence: row.sequence };
@@ -146,7 +148,8 @@ function toStored(row: MessageRow): StoredHumanMessage {
 function sameIdentity(row: MessageRow, message: HumanMessage): boolean {
   return row.conversationId === message.conversationId
     && row.authorId === message.authorId
-    && row.recipientId === message.recipientId;
+    && row.recipientId === message.recipientId
+    && compatibleMessageType(row.messageType, message.messageType);
 }
 
 function positiveTimestamp(value: unknown): number {
@@ -324,6 +327,13 @@ export async function openSqliteMessagingHistory(
     }
     for (const statement of MESSAGING_SQLITE_SCHEMA) {
       if (statement.includes("media_attachments")) await driver.exec(statement);
+    }
+    // v7: classification is independent of attachment discovery and body. Old
+    // rows without authoritative metadata stay NULL, never guessed TEXT.
+    const messageColumns = await driver.all<{ name: string }>(S.messageColumns);
+    if (!messageColumns.some((column) => column.name === "message_type")) {
+      await driver.exec(S.addMessageType);
+      await driver.run(S.backfillMediaType);
     }
     await driver.run(S.setMetaIfAbsent, ["account_id", scope.accountId]);
     await driver.run(S.setMetaIfAbsent, ["device_id", scope.deviceId]);
@@ -519,6 +529,16 @@ export async function openSqliteMessagingHistory(
         if (tombstone && existing.body !== null) {
           await driver.run(S.clearMessageBody, [tombstone.unsentAt, outgoing.id]);
         }
+        // This path is explicit text admission, never an automatic flush/retry.
+        // A pending legacy unknown may gain TEXT only after identity/body match.
+        if (!existing.messageType && !tombstone && existing.body !== null
+          && existing.unsentAt === null && existing.eventId === null
+          && (await driver.all(S.getOutboxClaim, [outgoing.id])).length) {
+          if ((await driver.all(S.getMediaByMessage, [outgoing.id])).length) {
+            throw new Error("Media parent classification conflict");
+          }
+          await driver.run(S.bindMessageType, ["TEXT", outgoing.id]);
+        }
         return;
       }
       if (tombstone) {
@@ -526,12 +546,12 @@ export async function openSqliteMessagingHistory(
         // and never queue an erased message for delivery.
         await driver.run(S.insertTombstonedMessage, [
           outgoing.id, outgoing.conversationId, outgoing.authorId, outgoing.recipientId,
-          now(), tombstone.unsentAt,
+          now(), tombstone.unsentAt, outgoing.messageType ?? null,
         ]);
         return;
       }
       await driver.run(S.insertMessage, [
-        outgoing.id, outgoing.conversationId, outgoing.authorId, outgoing.recipientId, outgoing.body, now(),
+        outgoing.id, outgoing.conversationId, outgoing.authorId, outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null,
       ]);
       await driver.run(S.enqueueOutbox, [outgoing.id]);
       await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
@@ -612,6 +632,7 @@ export async function openSqliteMessagingHistory(
         message: {
           id: row.id, conversationId: row.conversationId, authorId: row.authorId,
           recipientId: row.recipientId, body: row.body,
+          ...(row.messageType ? { messageType: row.messageType } : {}),
         },
         token,
         attempt: claimed.attempts,
@@ -622,7 +643,7 @@ export async function openSqliteMessagingHistory(
 
   async function failOutgoing(attempt: OutgoingAttempt): Promise<boolean> {
     await assertOpen();
-    const message = copyMediaMessage(attempt?.message);
+    const message = copyReceivedMessage(attempt?.message);
     if (message.authorId !== scope.accountId) throw new Error("Invalid outgoing attempt scope");
     if (!Number.isSafeInteger(attempt?.attempt) || attempt.attempt < 1) {
       throw new Error("Invalid outgoing attempt generation");
@@ -652,7 +673,7 @@ export async function openSqliteMessagingHistory(
     const sequence = positiveSequence(envelope.event?.sequence);
     if (envelope.event?.kind !== "TEXT") throw new Error("Unsupported messaging event");
     // The server keeps the TEXT envelope for captionless MEDIA messages.
-    const message = copyMediaMessage(envelope.event.message);
+    const message = copyReceivedMessage(envelope.event.message);
     if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) {
       throw new Error("Inbound participant scope mismatch");
     }
@@ -692,6 +713,7 @@ export async function openSqliteMessagingHistory(
 
       if (existing) {
         if (!sameIdentity(existing, message)) throw new Error("Immutable message identity conflict");
+        if (message.messageType) await driver.run(S.bindMessageType, [message.messageType, message.id]);
         if (existing.eventId !== null && (existing.eventId !== eventId || existing.sequence !== sequence)) {
           throw new Error("Immutable message event conflict");
         }
@@ -708,15 +730,15 @@ export async function openSqliteMessagingHistory(
         if (tombstone) {
           await driver.run(S.insertTombstonedMessage, [
             message.id, message.conversationId, message.authorId, message.recipientId,
-            now(), tombstone.unsentAt,
+            now(), tombstone.unsentAt, message.messageType ?? null,
           ]);
         } else if (suppressed) {
           await driver.run(S.insertTombstonedMessage, [
-            message.id, message.conversationId, message.authorId, message.recipientId, now(), null,
+            message.id, message.conversationId, message.authorId, message.recipientId, now(), null, message.messageType ?? null,
           ]);
         } else {
           await driver.run(S.insertMessage, [
-            message.id, message.conversationId, message.authorId, message.recipientId, message.body, now(),
+            message.id, message.conversationId, message.authorId, message.recipientId, message.body, now(), message.messageType ?? null,
           ]);
         }
         await driver.run(S.setMessageServer, [eventId, sequence, message.id]);
@@ -882,12 +904,12 @@ export async function openSqliteMessagingHistory(
             await driver.run(S.bindTombstoneRecipient, [change.recipientId, change.messageId]);
           }
           if (!existing) await driver.run(S.insertTombstonedMessage, [change.messageId, change.conversationId,
-            change.authorId, change.recipientId, now(), change.occurredAt]);
+            change.authorId, change.recipientId, now(), change.occurredAt, null]);
           else await driver.run(S.clearMessageBody, [change.occurredAt, change.messageId]);
         } else {
           await driver.run(S.deleteForMe, [change.messageId, change.conversationId, change.occurredAt]);
           if (!existing) await driver.run(S.insertTombstonedMessage, [change.messageId, change.conversationId,
-            change.authorId, change.recipientId, now(), null]);
+            change.authorId, change.recipientId, now(), null, null]);
           await driver.run(S.erasePersonalMessage, [change.messageId]);
         }
         // A state change is metadata, not the message's TEXT event: it must not
@@ -925,7 +947,7 @@ export async function openSqliteMessagingHistory(
       })),
       messages: messages.map((row) => ({
         id: row.id, conversationId: row.conversationId, authorId: row.authorId,
-        recipientId: row.recipientId, body: row.body,
+        recipientId: row.recipientId, body: row.body, messageType: row.messageType,
         // The query filters on both, so these are never null here.
         serverEventId: row.eventId as string, serverSequence: row.sequence as number,
         unsentAt: row.unsentAt, createdAt: row.createdAt,
@@ -1057,6 +1079,7 @@ export async function openSqliteMessagingHistory(
           if (existing.conversationId !== message.conversationId
             || existing.authorId !== message.authorId
             || existing.recipientId !== message.recipientId
+            || !compatibleMessageType(existing.messageType, message.messageType)
             || (existing.eventId !== null && existing.eventId !== message.serverEventId)
             || (existing.sequence !== null && existing.sequence !== message.serverSequence)
             || (existing.body !== null && message.body !== null && existing.body !== message.body)
@@ -1070,6 +1093,7 @@ export async function openSqliteMessagingHistory(
           const merged = existing.createdAt === 0 ? createdAt
             : createdAt === 0 ? existing.createdAt : Math.min(existing.createdAt, createdAt);
           await driver.run(S.updateSnapshotMessage, [body, mergedUnsentAt, merged, message.id]);
+          if (message.messageType) await driver.run(S.bindMessageType, [message.messageType, message.id]);
           if (existing.eventId === null) {
             // The message was accepted but this device never saw the echo. Adopt
             // the authoritative identity and drop the pending send so a restore
@@ -1092,7 +1116,7 @@ export async function openSqliteMessagingHistory(
           await ensureConversation(message.conversationId);
           await driver.run(S.insertSnapshotMessage, [
             message.id, message.conversationId, message.authorId, message.recipientId,
-            message.body, createdAt, message.serverEventId, message.serverSequence, unsentAt,
+            message.body, createdAt, message.serverEventId, message.serverSequence, unsentAt, message.messageType ?? null,
           ]);
         }
         report.messages += 1;
@@ -1127,6 +1151,7 @@ export async function openSqliteMessagingHistory(
     if (row.authorId !== scope.accountId && row.recipientId !== scope.accountId) {
       throw new Error("Media participant scope mismatch");
     }
+    if (row.messageType === "TEXT") throw new Error("Media parent classification conflict");
     if (metadata.direction !== (row.authorId === scope.accountId ? "OUT" : "IN")) {
       throw new Error("Media direction scope mismatch");
     }
@@ -1202,9 +1227,10 @@ export async function openSqliteMessagingHistory(
       const parent = await messageRow(outgoing.id);
       if (parent) {
         if (!sameIdentity(parent, outgoing) || parent.body !== outgoing.body) throw new Error("Immutable message identity conflict");
+        if (!parent.messageType) await driver.run(S.bindMessageType, ["MEDIA", outgoing.id]);
       } else {
         await driver.run(S.insertMessage, [outgoing.id, outgoing.conversationId, outgoing.authorId,
-          outgoing.recipientId, outgoing.body, now()]);
+          outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null]);
         await driver.run(S.enqueueOutbox, [outgoing.id]);
         await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
       }

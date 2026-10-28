@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { IDBFactory, IDBDatabase, IDBObjectStore, IDBTransaction, forceCloseDatabase } from "fake-indexeddb";
+import { IDBFactory, IDBDatabase, IDBObjectStore, IDBTransaction, IDBCursor, forceCloseDatabase } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as adapter from "./indexedDbHistory";
 import type { HumanMessage, MailboxEnvelope, MediaBytesPort, MessagingHistory, MessagingScope, OutgoingAttempt, StoredHumanMessage } from "./history";
@@ -38,8 +38,22 @@ describe("durable human messaging history (not AI chat)", () => {
     await first.enqueueOutgoing(text);
     first.close();
     const second = await open();
-    expect(await second.getMessage(MESSAGE)).toEqual(text);
+    expect(await second.getMessage(MESSAGE)).toEqual({ ...text, messageType: "TEXT" });
     expect(await second.listOutbox()).toEqual([{ messageId: MESSAGE, status: "QUEUED", attempts: 0 }]);
+  });
+
+  it("reopens authoritative TEXT and MEDIA classifications", async () => {
+    const bytes = new FakeMediaBytes(() => CLOCK);
+    const first = await openWithMedia(bytes);
+    await first.enqueueOutgoing(text);
+    const mediaMessage = { ...text, id: "00000000-0000-4000-8000-000000000009", body: "" };
+    const fixture = await mediaFixture("00000000-0000-4000-8000-00000000000a", mediaMessage.id);
+    await first.enqueueOutgoingWithMedia(mediaMessage, fixture.metadata, fixture.bytes);
+    await first.close();
+
+    const reopened = await openWithMedia(bytes);
+    expect(await reopened.getMessage(MESSAGE)).toMatchObject({ messageType: "TEXT" });
+    expect(await reopened.getMessage(mediaMessage.id)).toMatchObject({ body: "", messageType: "MEDIA" });
   });
 
   it("rolls back message and outbox if the transaction aborts after the message write succeeds", async () => {
@@ -62,7 +76,7 @@ describe("durable human messaging history (not AI chat)", () => {
     const one = await open();
     const two = await open();
     await Promise.all(Array.from({ length: 5 }, (_, i) => (i % 2 ? one : two).enqueueOutgoing(text)));
-    expect(await one.listMessages(CONVERSATION)).toEqual([text]);
+    expect(await one.listMessages(CONVERSATION)).toEqual([{ ...text, messageType: "TEXT" }]);
     expect(await two.listOutbox()).toHaveLength(1);
     await expect(two.enqueueOutgoing({ ...text, body: "different" })).rejects.toThrow(/conflict/i);
     await expect(two.enqueueOutgoing({ ...text, recipientId: DEVICE })).rejects.toThrow(/conflict/i);
@@ -91,10 +105,10 @@ describe("durable human messaging history (not AI chat)", () => {
     const saved = one.enqueueOutgoing(input);
     input.body = "changed after call";
     await saved;
-    expect(await one.getMessage(MESSAGE)).toEqual(text);
+    expect(await one.getMessage(MESSAGE)).toEqual({ ...text, messageType: "TEXT" });
     const read = (await one.getMessage(MESSAGE))!;
     read.body = "changed read result";
-    expect(await one.getMessage(MESSAGE)).toEqual(text);
+    expect(await one.getMessage(MESSAGE)).toEqual({ ...text, messageType: "TEXT" });
   });
 
   it("fails closed when signed out, device identity is missing, or durable storage is unavailable", async () => {
@@ -198,7 +212,7 @@ describe("durable human messaging history (not AI chat)", () => {
     vi.restoreAllMocks();
     one.close();
     const reopened = await open();
-    expect(await reopened.getMessage(MESSAGE)).toEqual(text);
+    expect(await reopened.getMessage(MESSAGE)).toEqual({ ...text, messageType: "TEXT" });
     expect(await reopened.listOutbox()).toEqual([{ messageId: MESSAGE, status: "QUEUED", attempts: 0 }]);
     await reopened.persistInbound(envelope(text));
     expect(await reopened.listOutbox()).toEqual([]);
@@ -553,9 +567,9 @@ async function rawMediaRows(): Promise<Array<Record<string, unknown>>> {
 }
 
 /** Write a v3 database by hand: the shape the previous build left on disk. */
-function seedV3(): Promise<void> {
+function seedV3(version = 3, attachment?: Record<string, unknown>): Promise<void> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(DB_NAME, 3);
+    const request = factory.open(DB_NAME, version);
     request.onupgradeneeded = () => {
       const db = request.result;
       const messages = db.createObjectStore("messages", { keyPath: "id" });
@@ -570,13 +584,22 @@ function seedV3(): Promise<void> {
       db.createObjectStore("deletions", { keyPath: "messageId" });
       db.createObjectStore("unsends", { keyPath: "messageId" });
       db.createObjectStore("clears", { keyPath: "conversationId" });
+      if (version === 4) {
+        db.createObjectStore("mediaAttachments", { keyPath: "id" })
+          .createIndex("messageId", "messageId", { unique: true });
+        db.createObjectStore("mediaLifecycle");
+      }
     };
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
       const db = request.result;
-      const tx = db.transaction(["messages", "outbox"], "readwrite");
+      const tx = db.transaction(version === 4 ? ["messages", "outbox", "mediaAttachments"] : ["messages", "outbox"], "readwrite");
       tx.objectStore("messages").put({ ...text, server: { eventId: EVENT, sequence: 1 } });
       tx.objectStore("outbox").put({ messageId: MESSAGE, status: "QUEUED", attempts: 0 });
+      if (attachment) {
+        tx.objectStore("messages").put({ ...text, id: MESSAGE_2, body: "", unsentAt: CLOCK });
+        tx.objectStore("mediaAttachments").put(attachment);
+      }
       tx.oncomplete = () => { db.close(); resolve(); };
       tx.onabort = () => reject(tx.error);
     };
@@ -585,6 +608,47 @@ function seedV3(): Promise<void> {
 
 describe("chat media records (web parity with SQLite)", () => {
   beforeEach(() => { vi.spyOn(Date, "now").mockReturnValue(CLOCK); });
+
+  it("upgrades real v4 classification, preserving legacy unknowns, suppression and the queued outbox", async () => {
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE_2);
+    const attachment = { ...fixture.metadata, state: "EVICTED", attempts: 0, lastAccessAt: CLOCK };
+    await seedV3(4, attachment);
+    const store = await open();
+    expect((await store.getMessage(MESSAGE))?.messageType).toBeUndefined();
+    expect(await store.getMessage(MESSAGE_2)).toEqual({ ...text, id: MESSAGE_2, body: "", unsentAt: CLOCK, messageType: "MEDIA" });
+    expect(await store.listOutbox()).toEqual([{ messageId: MESSAGE, status: "NEEDS_REVIEW", attempts: 0 }]);
+    expect(await rawMediaRows()).toEqual([attachment]);
+    store.close();
+    const reopened = await open();
+    expect((await reopened.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+  });
+
+  it("aborts the v4 version change and backfill together and permits a clean retry", async () => {
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE_2);
+    const attachment = { ...fixture.metadata, state: "EVICTED", attempts: 0, lastAccessAt: CLOCK };
+    await seedV3(4, attachment);
+    const cursorPrototype = IDBCursor.prototype;
+    const originalUpdate = cursorPrototype.update;
+    const fault = vi.spyOn(cursorPrototype, "update").mockImplementation(function (this: IDBCursor, value: unknown) {
+      const request = originalUpdate.call(this, value);
+      const source = this.source as IDBObjectStore;
+      if (source.name === "messages") source.transaction.abort();
+      return request;
+    });
+    await expect(open()).rejects.toThrow();
+    fault.mockRestore();
+    const request = factory.open(DB_NAME, 4);
+    const old = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    expect(old.version).toBe(4);
+    const read = old.transaction("messages").objectStore("messages").get(MESSAGE_2);
+    expect(await new Promise((resolve) => { read.onsuccess = () => resolve(read.result); }))
+      .toEqual({ ...text, id: MESSAGE_2, body: "", unsentAt: CLOCK });
+    old.close();
+    const retry = await open();
+    expect((await retry.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+  });
 
   it.each(["purge", "delete"])("does not dispatch ACK when %s wins after commit but before ACK admission", async (action) => {
     const port = new FakeMediaBytes(() => CLOCK);
@@ -740,12 +804,12 @@ describe("chat media records (web parity with SQLite)", () => {
     db.close();
   });
 
-  it("upgrades a v3 database to v4 by adding media records and lifecycle state", async () => {
+  it("upgrades a v3 database with media stores while quarantining unknown classification", async () => {
     await seedV3();
     const store = await open();
     // Existing records survive the upgrade untouched.
     expect(await store.getMessage(MESSAGE)).toMatchObject({ body: text.body, server: { sequence: 1 } });
-    expect(await store.listOutbox()).toEqual([{ messageId: MESSAGE, status: "QUEUED", attempts: 0 }]);
+    expect(await store.listOutbox()).toEqual([{ messageId: MESSAGE, status: "NEEDS_REVIEW", attempts: 0 }]);
 
     const db = await rawMediaDatabase();
     expect(Array.from(db.objectStoreNames)).toEqual(expect.arrayContaining([
