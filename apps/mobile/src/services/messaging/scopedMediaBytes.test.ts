@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBDatabase, IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { MEDIA_SWEEP_GRACE_MS } from "./media";
 import { openMediaBytes } from "./mediaBytes";
+import * as mediaByteModule from "./mediaBytes";
+import { deferred } from "./mediaTestDoubles";
 import {
   assertMediaBytesOwner, openScopedMediaBytes,
+  beginMessagingAccountDeletion, listPendingMessagingDeletions, listMessagingStorageScopes,
+  openMessagingCleanupBytes,
   type MediaStorageOwner, type ScopedMediaBytes,
 } from "./scopedMediaBytes";
 
@@ -29,6 +33,139 @@ beforeEach(() => { indexedDB = new IDBFactory(); clock = 1_000_000; opened = [];
 afterEach(async () => { await Promise.all(opened.map((bytes) => bytes.close())); vi.restoreAllMocks(); });
 
 describe("scoped production media byte ownership", () => {
+  it("fencing waits for an admitted raw byte write and rejects subsequent writes", async () => {
+    const create = mediaByteModule.openMediaBytes, entered = deferred(), release = deferred();
+    const order: string[] = [];
+    vi.spyOn(mediaByteModule, "openMediaBytes").mockImplementationOnce(async (options) => {
+      const raw = await create(options);
+      return { ...raw, async put(...args) {
+        entered.resolve(); await release.promise;
+        await raw.put(...args); order.push("byte committed");
+      } };
+    });
+    const bytes = await open();
+    const writing = bytes.put(A, ATTACHMENT, payload);
+    let deletion: Promise<unknown> | undefined;
+    try {
+      await entered.promise;
+      deletion = beginMessagingAccountDeletion(A, indexedDB).then(() => { order.push("fence committed"); });
+      await beginMessagingAccountDeletion(B, indexedDB);
+      expect(await listPendingMessagingDeletions(indexedDB)).toEqual([B]);
+    } finally { release.resolve(); }
+    await writing; await deletion;
+    expect(order).toEqual(["byte committed", "fence committed"]);
+    await expect(bytes.put(A, ATTACHMENT, payload)).rejects.toThrow(/delet/i);
+    const cleanup = await openMessagingCleanupBytes(owner, indexedDB); opened.push(cleanup);
+    expect(await cleanup.keys(A)).toEqual([ATTACHMENT]);
+    await cleanup.clearAccount(A);
+    expect(await cleanup.keys(A)).toEqual([]);
+  });
+
+  it("durably fences every live and future scope while preserving another account", async () => {
+    const first = await open();
+    const second = await open({ ...owner, deviceId: DEVICE_B, backendUrl: "https://backend-b.example.test" });
+    const other = await open({ ...owner, accountId: B });
+    await first.put(A, ATTACHMENT, payload);
+    await other.put(B, ATTACHMENT, payload);
+    await beginMessagingAccountDeletion(A, indexedDB);
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([A]);
+    expect(await listMessagingStorageScopes(A, indexedDB)).toEqual(expect.arrayContaining([
+      owner, { ...owner, deviceId: DEVICE_B, backendUrl: "https://backend-b.example.test" },
+    ]));
+    for (const port of [first, second]) {
+      await expect(port.put(A, ATTACHMENT, payload)).rejects.toThrow(/delet/i);
+      await expect(port.get(A, ATTACHMENT)).rejects.toThrow(/delet/i);
+      await expect(port.clearAccount(A)).rejects.toThrow(/delet/i);
+    }
+    await first.close(); await second.close();
+    await expect(open()).rejects.toThrow(/delet/i);
+    await expect(open({ ...owner, deviceId: "00000000-0000-4000-8000-000000000099" })).rejects.toThrow(/delet/i);
+    expect(await other.get(B, ATTACHMENT)).toEqual(payload);
+    await beginMessagingAccountDeletion(B, indexedDB);
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([A, B]);
+  });
+
+  it("does not accept a weakened durable deletion transaction or lose earlier pending accounts", async () => {
+    await open();
+    await beginMessagingAccountDeletion(A, indexedDB);
+    const transaction = IDBDatabase.prototype.transaction;
+    vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, names, mode) {
+      return transaction.call(this, names, mode, { durability: "relaxed" });
+    });
+    await expect(beginMessagingAccountDeletion(B, indexedDB)).rejects.toThrow(/strict/i);
+    vi.restoreAllMocks();
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([A]);
+    await expect(open()).rejects.toThrow(/delet/i);
+  });
+
+  it("keeps a v1 registered owner's bytes and binding through the deletion-registry upgrade", async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open("findback-chat-media-owners-v1", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("owners", { keyPath: "metadataKey" });
+      request.onsuccess = () => resolve(request.result);
+    });
+    const key = JSON.stringify(["web", A, DEVICE]);
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("owners", "readwrite");
+      tx.objectStore("owners").add({ metadataKey: key,
+        identity: JSON.stringify(["web", A, DEVICE, "https://backend-a.example.test"]), owner });
+      tx.oncomplete = () => resolve();
+    });
+    db.close();
+    const raw = await openMediaBytes({ indexedDB,
+      databaseName: `findback-chat-media-bytes-v1:${JSON.stringify(["web", A, DEVICE, "https://backend-a.example.test"])}` });
+    try { await raw.put(A, ATTACHMENT, payload); } finally { await raw.close(); }
+    const upgraded = await open();
+    expect(await upgraded.get(A, ATTACHMENT)).toEqual(payload);
+    await expect(open({ ...owner, backendUrl: "https://backend-b.example.test" })).rejects.toThrow(/ownership/i);
+    await beginMessagingAccountDeletion(A, indexedDB);
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([A]);
+  });
+
+  it("does not acknowledge a deletion request whose registry transaction aborts after the write request", async () => {
+    const bytes = await open(); await bytes.put(A, ATTACHMENT, payload);
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, ...args) {
+      const request = put.apply(this, args);
+      if (this.name === "deletions") request.addEventListener("success", () => this.transaction.abort());
+      return request;
+    });
+    await expect(beginMessagingAccountDeletion(A, indexedDB)).rejects.toThrow(/aborted/i);
+    vi.restoreAllMocks();
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([]);
+    expect(await bytes.get(A, ATTACHMENT)).toEqual(payload);
+  });
+
+  it("cleanup byte capabilities cannot read payloads, write, or retarget another account", async () => {
+    const bytes = await open(); await bytes.put(A, ATTACHMENT, payload);
+    await expect(openMessagingCleanupBytes(owner, indexedDB)).rejects.toThrow(/not admitted/i);
+    await beginMessagingAccountDeletion(A, indexedDB);
+    const cleanup = await openMessagingCleanupBytes(owner, indexedDB);
+    opened.push(cleanup);
+    expect(await cleanup.keys(A)).toEqual([ATTACHMENT]);
+    await expect(cleanup.get(A, ATTACHMENT)).rejects.toThrow(/cleanup only/i);
+    await expect(cleanup.put(A, ATTACHMENT, payload)).rejects.toThrow(/cleanup only/i);
+    await expect(cleanup.clearAccount(B)).rejects.toThrow(/scope/i);
+    await cleanup.clearAccount(A);
+    expect(await cleanup.keys(A)).toEqual([]);
+  });
+
+  it("refuses corrupt ownership inventory rather than silently completing an empty account", async () => {
+    await open(); await beginMessagingAccountDeletion(A, indexedDB);
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open("findback-chat-media-owners-v1");
+      request.onsuccess = () => resolve(request.result);
+    });
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("owners", "readwrite");
+      tx.objectStore("owners").put({ metadataKey: JSON.stringify(["web", A, DEVICE]), identity: "corrupt", owner });
+      tx.oncomplete = () => resolve();
+    });
+    db.close();
+    await expect(listMessagingStorageScopes(A, indexedDB)).rejects.toThrow(/corrupt/i);
+    expect(await listPendingMessagingDeletions(indexedDB)).toEqual([A]);
+  });
+
   it("reopens exact scope and canonical backend spelling without losing bytes", async () => {
     const first = await open();
     await first.put(A, ATTACHMENT, payload);

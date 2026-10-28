@@ -587,3 +587,62 @@ auth deletion owner, durable retry/dismissal, and captured-A cleanup after B sig
 in before the server reply. Direct raw-byte access and other metadata namespaces
 are not protected by this per-database fence. No native file/WAL/free-page forensic
 erasure or external backup deletion is established by logical row removal.
+
+### F2b-3C2 — durable account fence and cleanup ownership
+
+The same IndexedDB ownership registry now records text-only scopes as well as
+media scopes and retains a permanent account deletion fence with a separate
+pending flag. Its v2 upgrade preserves existing v1 backend bindings. Multiple
+accounts can remain pending independently; no auth UI marker or memory fallback
+is used for this ledger. Registration and fence admission use strict committed
+transactions, and corrupt records fail closed rather than becoming an empty
+successful inventory. First media use may bind an existing text-only scope's
+backend; neither normal text use nor deletion replaces existing provenance.
+
+Deletion admission takes the history account Web Lock, then a distinct byte
+operation lock, then commits the registry fence. Ordinary platform adapters check
+registry admission under their existing history lock; scoped byte ports take only
+the byte lock and check the durable fence before each raw operation. This lock
+order drains previously admitted work without recursive account-lock acquisition.
+Already-open and reopened production handles cannot write/read a deleted account.
+Text-only production opening now requires the registry too; this is not a fallback
+from Android SQLite to web message history.
+
+`purgeMessagingAccount(capturedAccountId)` belongs to the existing runtime. It
+invalidates only a matching active owner, aborts its transport, drains pending
+target teardown and serializes cleanup with lifecycle opening. If B replaced A,
+it does not close B, sign B out, or create a cleanup session. Platform cleanup opens
+only captured scope identities with purge/close-only adapters and clear/key-only
+byte capabilities. No device registration, mailbox sync or transport is performed.
+Every scope must acknowledge logical purge, empty bytes and resource close before
+the ledger's pending flag clears; failure remains retryable. The permanent fence
+is retained. Each admission advances a durable revision: an older cleanup cannot
+clear a newer attempt's pending flag, even if the older cleanup finishes later.
+Ordinary logout continues to retain all local history. Corrupt inventory still
+fails overall, but validated known scopes are purged rather than starved by one
+bad record; no corrupt scope's historical backend is guessed or overwritten.
+
+Legacy text history can predate registration. Exact web database names recover
+account/installation via IndexedDB database inventory; the native account filename
+and stored messaging_meta device recover its native scope. These scopes enter the
+already-fenced registry without inventing a historical backend. Database inventory
+is supplementary legacy discovery, not the authority for registered media scopes.
+Unavailable/failed legacy inventory, unsupported native scope access or uncertain
+native close leaves pending cleanup, even if other known scopes were successfully
+purged. Current-origin/app-private stores are the boundary: arbitrary trusted raw
+stores, another origin, old code creating new unregistered stores, external backups
+and forensic SQLite/WAL erasure are not covered by this production-composition gate.
+
+Complete legacy cleanup requires `IDBFactory.databases()` on the executing
+browser/WebView, in addition to the existing strict-IDB/Web-Locks requirements.
+Without inventory support known stores are still purged but the operation remains
+pending: absence of the API cannot prove absence of pre-registry history. Retry
+can finish on an updated, capable browser/WebView; there is no silent fallback.
+The deployed browser/WebView compatibility matrix is not established by Node
+tests and remains a browser/device acceptance gate.
+
+C3 remains required: the canonical auth owner must admit confirmed deletion of A
+even after a switch before the server response, invoke this API only for deletion,
+and expose durable retry without discarding pending work on UI dismissal. C2 does
+not yet establish that auth integration or combined F2b-3 acceptance. Host tests
+are not device, browser, configured-build or hosted acceptance.

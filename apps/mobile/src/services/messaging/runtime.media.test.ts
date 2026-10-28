@@ -9,6 +9,7 @@ import type { PlatformMessagingHandle } from "./platformHistory";
 import { mediaFixture, deferred } from "./mediaTestDoubles";
 import type { MediaMetadata } from "./media";
 import type { MailboxEnvelope } from "./history";
+import { listPendingMessagingDeletions } from "./scopedMediaBytes";
 
 const boundary = vi.hoisted(() => ({ sdk: null as unknown, raw: null as unknown,
   handles: [] as PlatformMessagingHandle[], url: "https://runtime.example.test" }));
@@ -125,6 +126,63 @@ afterEach(async () => {
 });
 
 describe("production messaging media owner", () => {
+  it("purges captured A after switching to B without closing B or starting cleanup network work", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    await boundary.handles[0]!.history.enqueueOutgoing({ id: id(101), conversationId: CONV, authorId: A, recipientId: B, body: "private A" });
+    runtime.setMessagingAccount(B); account = B;
+    await waitForState((state) => state.accountId === B && state.status === "ready");
+    const b = boundary.handles.at(-1)!;
+    await b.history.enqueueOutgoing({ id: id(102), conversationId: CONV, authorId: B, recipientId: A, body: "private B" });
+    const requests = [...requestLog];
+    await runtime.purgeMessagingAccount(A);
+    expect(runtime.getMessagingRuntimeSnapshot()).toMatchObject({ accountId: B, status: "ready" });
+    expect((await runtime.readMessagingThread(B, CONV)).map((row) => row.body)).toEqual(["private B"]);
+    expect(requestLog).toEqual(requests);
+    expect(boundary.handles).toHaveLength(2);
+    expect(await listPendingMessagingDeletions()).toEqual([]);
+    runtime.setMessagingAccount(A); account = A;
+    await waitForState((state) => state.accountId === A && state.status === "error");
+    expect(boundary.handles).toHaveLength(2);
+  });
+
+  it("drains A's already pending platform close before cleanup and leaves replacement B alive", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    const a = boundary.handles[0]!, close = a.close.bind(a), gate = deferred(), closing = deferred();
+    vi.spyOn(a, "close").mockImplementation(async () => { closing.resolve(); await gate.promise; await close(); });
+    runtime.setMessagingAccount(B); account = B; await closing.promise;
+    let purging: Promise<void> | undefined;
+    try {
+      purging = runtime.purgeMessagingAccount(A);
+      // Await independent fence persistence instead of sleeping or assuming a
+      // launched purge has already been admitted durably.
+      const { beginMessagingAccountDeletion } = await import("./scopedMediaBytes");
+      await beginMessagingAccountDeletion(A);
+      expect(await listPendingMessagingDeletions()).toEqual([A]);
+      expect(boundary.handles).toHaveLength(1);
+    } finally { gate.resolve(); }
+    await purging;
+    await waitForState((state) => state.accountId === B && state.status === "ready");
+    expect(await runtime.readMessagingThread(B, CONV)).toEqual([]);
+  });
+
+  it("active deletion aborts a pending GET and prevents late byte persistence or ACK", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    const inbound = await mediaFixture(id(202), id(102), { direction: "IN", expiresAt: Date.now() + 60_000 });
+    remote.set(id(202), inbound);
+    await boundary.handles[0]!.history.persistInbound({ accountId: A, deviceId: DEVICE, mailboxId: id(402),
+      event: { kind: "TEXT", eventId: id(302), sequence: 2,
+        message: { id: id(102), conversationId: CONV, authorId: B, recipientId: A, body: "" } } });
+    deliveryGate = deferred(); const refresh = runtime.refreshMessaging(A);
+    await entered.promise;
+    const purge = runtime.purgeMessagingAccount(A);
+    expect(runtime.getMessagingRuntimeSnapshot().accountId).toBeNull();
+    expect(lastGetSignal?.aborted).toBe(true);
+    await purge;
+    deliveryGate.resolve(); await refresh;
+    expect(requestLog).not.toContain(`media-ack:${id(202)}`);
+    expect(await listPendingMessagingDeletions()).toEqual([]);
+  });
+
   it("cannot restore stale receipt authority while end is pending during an older refresh", async () => {
     runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
     const inbound = await mediaFixture(id(202), id(102), { direction: "IN", expiresAt: Date.now() + 60_000 });

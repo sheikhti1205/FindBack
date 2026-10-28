@@ -60,6 +60,9 @@ export interface SqliteHistoryOptions {
    */
   mediaBytes?: MediaBytesPort;
   decodeMedia?: MediaDecoder;
+  /** Production registry admission runs under the existing account Web Lock. */
+  accountAdmission?: () => Promise<void>;
+  cleanupOnly?: boolean;
 }
 
 interface MessageRow {
@@ -1370,8 +1373,12 @@ export async function openSqliteMessagingHistory(
       const captured = structuredClone(args);
       const next = tail.then(async () => {
         if (closed) throw new Error("Messaging history closed");
-        const result = await withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes,
-          async () => { await assertOpen(allowPurged); return work(...captured); });
+        const result = await withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes || !!options.accountAdmission,
+          async () => {
+            if (!allowPurged && options.cleanupOnly) throw new Error("Messaging deletion cleanup only");
+            if (!allowPurged) await options.accountAdmission?.();
+            await assertOpen(allowPurged); return work(...captured);
+          });
         if (closed) throw new Error("Messaging history closed");
         return result;
       });
@@ -1424,7 +1431,7 @@ export async function openSqliteMessagingHistory(
     return closing;
   }
 
-  if (options.mediaBytes) {
+  if (options.mediaBytes && !options.cleanupOnly) {
     try { await serial(async () => { if (!await historyIsPurged()) await sweepOrphanMedia(100); }, true)(); }
     catch (error) { await close(); throw error; }
   }

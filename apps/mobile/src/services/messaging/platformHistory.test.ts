@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBDatabase, IDBFactory } from "fake-indexeddb";
 import type { HumanMessage } from "./history";
-import { mediaFixture } from "./mediaTestDoubles";
+import { mediaFixture, deferred } from "./mediaTestDoubles";
 import { MEDIA_SWEEP_GRACE_MS } from "./media";
 
 const { fakePlugin, registerPluginMock, platform } = vi.hoisted(() => ({
@@ -43,8 +43,13 @@ vi.mock("@capacitor/core", () => ({
 // verification, both real metadata adapters and actual IDB bytes in the path.
 vi.mock("../media/webTranscode", () => ({ transcodeImageForWeb: async () => undefined }));
 
-import { MessagingSqliteError } from "./androidSqliteDriver";
-import { openPlatformMessagingHistory } from "./platformHistory";
+import { MessagingSqliteError, openAndroidMessagingSqliteDriver } from "./androidSqliteDriver";
+import { openPlatformMessagingHistory, purgePlatformMessagingAccount } from "./platformHistory";
+import { beginMessagingAccountDeletion, listPendingMessagingDeletions, listMessagingStorageScopes } from "./scopedMediaBytes";
+import { openMediaBytes } from "./mediaBytes";
+import { openSqliteMessagingHistory } from "./sqliteHistory";
+import { openWebMessagingHistory } from "./indexedDbHistory";
+import * as webTranscode from "../media/webTranscode";
 
 const A = "00000000-0000-4000-8000-000000000001";
 const B = "00000000-0000-4000-8000-000000000002";
@@ -134,6 +139,7 @@ function installFakeNativePlugin(): void {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("indexedDB", new IDBFactory());
   dir = mkdtempSync(join(tmpdir(), "chat033-native-"));
   callLog = [];
   openDatabases = [];
@@ -284,13 +290,16 @@ describe("Android selection", () => {
     await handle.close();
   });
 
-  it("fails closed when native open fails and never touches IndexedDB", async () => {
+  it("fails closed when native open fails and never falls back to IndexedDB history", async () => {
     fakePlugin.open.mockRejectedValue(new Error("native open exploded"));
-    const factory = { open: vi.fn() } as unknown as IDBFactory;
+    const factory = new IDBFactory();
+    const opening = vi.spyOn(factory, "open");
     await expect(
       openPlatformMessagingHistory({ accountId: A, indexedDB: factory }),
     ).rejects.toBeInstanceOf(MessagingSqliteError);
-    expect(factory.open).not.toHaveBeenCalled();
+    // Both platforms now require the durable ownership/deletion registry;
+    // touching it is not a fallback to web message storage.
+    expect(opening.mock.calls.map(([name]) => name)).toEqual(["findback-chat-media-owners-v1"]);
   });
 
   it("fails closed when the installation id is unavailable", async () => {
@@ -424,6 +433,245 @@ describe.each(["android", "web"] as const)("%s production media ownership", (tar
     await handle.history.enqueueOutgoingWithMedia({ ...outgoing, body }, fixture.metadata, fixture.bytes);
     return fixture;
   }
+
+  async function expectKnownAStoresEmpty() {
+    // Bypass production fencing to inspect actual logical content, not just the
+    // inability of a deleted-account reader to observe remaining sensitive data.
+    if (target === "android") {
+      const db = new DatabaseSync(join(dir, `${A}.sqlite3`));
+      try { expect(db.prepare("select count(*) n from messages").get()).toMatchObject({ n: 0 }); }
+      finally { db.close(); }
+    } else {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = factory.open(`findback-human-history-v1:${A}:${INSTALLATION}`);
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      try {
+        expect(await new Promise<number>((resolve, reject) => {
+          const request = db.transaction("messages").objectStore("messages").count();
+          request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+        })).toBe(0);
+      } finally { db.close(); }
+    }
+    const bytes = await openMediaBytes({ indexedDB: factory,
+      databaseName: `findback-chat-media-bytes-v1:${JSON.stringify([target, A, INSTALLATION, BACKEND])}` });
+    try { expect(await bytes.keys(A)).toEqual([]); } finally { await bytes.close(); }
+  }
+
+  it.each([A, B])("purges valid known scopes despite corrupt inventory for %s", async (corruptAccount) => {
+    const a = await open(); await enqueue(a); await a.close();
+    const b = await open({ accountId: B });
+    await b.history.enqueueOutgoing({ ...outgoing, authorId: B, recipientId: A });
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open("findback-chat-media-owners-v1");
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("owners", "readwrite");
+        tx.objectStore("owners").put({ metadataKey: JSON.stringify(["web", corruptAccount, OTHER_INSTALLATION]),
+          identity: "synthetic corrupt provenance", owner: { platform: "web", accountId: corruptAccount, deviceId: OTHER_INSTALLATION } });
+        tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+      });
+    } finally { db.close(); }
+    await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow();
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    await expectKnownAStoresEmpty();
+    expect(await b.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A }]);
+    // Corruption stays unresolved: no guessed backend and no false completion.
+    await expect(listMessagingStorageScopes(A, factory)).rejects.toThrow(/corrupt/i);
+  });
+
+  it("purges known scopes but retains retry when the legacy inventory API is absent", async () => {
+    const a = await open(); await enqueue(a); await a.close();
+    const databases = factory.databases;
+    Object.defineProperty(factory, "databases", { configurable: true, value: undefined });
+    try {
+      await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow(/incomplete/i);
+      expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+      await expectKnownAStoresEmpty();
+      await expect(open()).rejects.toThrow(/delet/i);
+    } finally { Object.defineProperty(factory, "databases", { configurable: true, value: databases }); }
+    // A capable browser/WebView can verify legacy scope inventory and finish;
+    // missing capability itself is never bypassed as an empty inventory.
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+  });
+
+  it("an older cleanup cannot erase a newer failed cleanup's pending admission", async () => {
+    const a = await open(); await enqueue(a); await a.close();
+    const entered = deferred(), release = deferred(), databases = factory.databases.bind(factory);
+    vi.spyOn(factory, "databases")
+      .mockImplementationOnce(async () => { entered.resolve(); await release.promise; return databases(); })
+      .mockRejectedValueOnce(new Error("synthetic newer inventory failure"));
+    const older = purgePlatformMessagingAccount(A, { indexedDB: factory });
+    // Attach immediately: rejection must never become an unhandled promise.
+    const olderResult = older.then(() => "completed", () => "incomplete");
+    try {
+      await entered.promise;
+      await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow(/incomplete/i);
+      expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    } finally { release.resolve(); }
+    expect(await olderResult).toBe("incomplete");
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    await expectKnownAStoresEmpty();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+  });
+
+  it("deletion waits for a history operation already admitted before fencing", async () => {
+    const a = await open();
+    const entered = deferred(), release = deferred(), decode = webTranscode.transcodeImageForWeb;
+    vi.spyOn(webTranscode, "transcodeImageForWeb").mockImplementationOnce(async (...args) => {
+      entered.resolve(); await release.promise; return decode(...args);
+    });
+    const writing = enqueue(a);
+    let deleting: Promise<unknown> | undefined;
+    try {
+      await entered.promise;
+      deleting = beginMessagingAccountDeletion(A, factory);
+      // An independent account's committed fence is an event-driven checkpoint;
+      // A's admitted history operation remains paused inside its account lock.
+      await beginMessagingAccountDeletion(B, factory);
+      expect(await listPendingMessagingDeletions(factory)).toEqual([B]);
+    } finally { release.resolve(); }
+    await writing; await deleting;
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A, B]);
+    await expect(a.history.enqueueOutgoing(outgoing)).rejects.toThrow(/delet/i);
+    await a.close();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    await expectKnownAStoresEmpty();
+  });
+
+  it("fences live history and purges known scopes without altering account B", async () => {
+    const first = await open();
+    await enqueue(first);
+    const other = await open({ accountId: B });
+    await other.history.enqueueOutgoing({ ...outgoing, authorId: B, recipientId: A });
+    let second: Awaited<ReturnType<typeof open>> | undefined;
+    if (target === "web") {
+      second = await open({ deviceId: OTHER_INSTALLATION, backendUrl: "https://backend-b.example.test" });
+      await enqueue(second);
+    }
+    await beginMessagingAccountDeletion(A, factory);
+    await expect(first.history.getMessage(MESSAGE)).rejects.toThrow(/delet/i);
+    await expect(first.history.enqueueOutgoing(outgoing)).rejects.toThrow(/delet/i);
+    await first.close(); await second?.close();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+    await expect(open()).rejects.toThrow(/delet/i);
+    if (target === "android") fakePlugin.installationId.mockResolvedValueOnce({ id: OTHER_INSTALLATION });
+    await expect(open({ deviceId: OTHER_INSTALLATION })).rejects.toThrow(/delet/i);
+    expect(await other.history.listMessages(CONVERSATION)).toEqual([{ ...outgoing, authorId: B, recipientId: A }]);
+    // Inspect actual physical logical stores, not a mocked cleanup call or a
+    // fenced reader that cannot reveal whether sensitive content was deleted.
+    if (target === "android") {
+      const db = new DatabaseSync(join(dir, `${A}.sqlite3`));
+      try { expect(db.prepare("select count(*) n from messages").get()).toMatchObject({ n: 0 }); }
+      finally { db.close(); }
+    } else {
+      for (const device of [INSTALLATION, OTHER_INSTALLATION]) {
+        const db = await new Promise<IDBDatabase>((resolve) => {
+          const request = factory.open(`findback-human-history-v1:${A}:${device}`);
+          request.onsuccess = () => resolve(request.result);
+        });
+        try {
+          const rows = await new Promise<unknown[]>((resolve) => {
+            const request = db.transaction("messages").objectStore("messages").getAll();
+            request.onsuccess = () => resolve(request.result);
+          });
+          expect(rows).toEqual([]);
+        } finally { db.close(); }
+      }
+    }
+    for (const [deviceId, backend] of target === "web"
+      ? [[INSTALLATION, BACKEND], [OTHER_INSTALLATION, "https://backend-b.example.test"]]
+      : [[INSTALLATION, BACKEND]]) {
+      const bytes = await openMediaBytes({ indexedDB: factory,
+        databaseName: `findback-chat-media-bytes-v1:${JSON.stringify([target, A, deviceId, backend])}` });
+      try { expect(await bytes.keys(A)).toEqual([]); } finally { await bytes.close(); }
+    }
+  });
+
+  it("retains deletion retry after byte failure then verifies every byte on retry", async () => {
+    const first = await open(); await enqueue(first); await first.close();
+    const transaction = IDBDatabase.prototype.transaction;
+    vi.spyOn(IDBDatabase.prototype, "transaction").mockImplementation(function (this: IDBDatabase, ...args) {
+      if (this.name.startsWith("findback-chat-media-bytes") && args[1] === "readwrite") throw new Error("synthetic byte failure");
+      return transaction.apply(this, args);
+    });
+    await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow();
+    vi.restoreAllMocks();
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    await expect(open()).rejects.toThrow(/delet/i);
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+    // Idempotent cleanup does not remove the permanent fence.
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    await expect(open()).rejects.toThrow(/delet/i);
+  });
+
+  it("includes registered text-only history in account deletion", async () => {
+    const first = await openPlatformMessagingHistory({ accountId: A, deviceId: INSTALLATION, indexedDB: factory });
+    await first.history.enqueueOutgoing(outgoing); await first.close();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+    await expect(openPlatformMessagingHistory({ accountId: A, deviceId: INSTALLATION, indexedDB: factory })).rejects.toThrow(/delet/i);
+  });
+
+  it("discovers pre-registry history without guessing its backend or current installation", async () => {
+    // This is how a text-only pre-registry release opened its database. The
+    // old web installation/native stored device differs from today's identity.
+    const scope = { accountId: A, deviceId: OTHER_INSTALLATION };
+    const old = target === "android"
+      ? await openSqliteMessagingHistory(await openAndroidMessagingSqliteDriver({ accountId: A }), scope)
+      : await openWebMessagingHistory(scope, { indexedDB: factory });
+    await old.enqueueOutgoing(outgoing); await old.close();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listMessagingStorageScopes(A, factory)).toEqual([{ platform: target, ...scope }]);
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+    // Trusted low-level reopen is permitted for inspecting the permanent C1
+    // fence; even it may not resurrect ordinary history after the purge.
+    const inspected = target === "android"
+      ? await openSqliteMessagingHistory(await openAndroidMessagingSqliteDriver({ accountId: A }), scope)
+      : await openWebMessagingHistory(scope, { indexedDB: factory });
+    try { await expect(inspected.getMessage(MESSAGE)).rejects.toThrow(/purged/i); }
+    finally { await inspected.close(); }
+  });
+
+  it("continues legacy discovery after a malformed name and purges later valid history", async () => {
+    const a = await open(); await enqueue(a); await a.close();
+    const legacyScope = { accountId: A, deviceId: OTHER_INSTALLATION };
+    const legacy = await openWebMessagingHistory(legacyScope, { indexedDB: factory });
+    await legacy.enqueueOutgoing(outgoing); await legacy.close();
+    const malformed = `findback-human-history-v1:${A}:invalid-device`;
+    const bad = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open(malformed);
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    bad.close();
+    const names = await factory.databases();
+    vi.spyOn(factory, "databases").mockResolvedValueOnce([
+      ...names.filter((row) => row.name === malformed), ...names.filter((row) => row.name !== malformed),
+    ]);
+    await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow(/incomplete/i);
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    await expectKnownAStoresEmpty();
+    expect(await listMessagingStorageScopes(A, factory)).toContainEqual({ platform: "web", ...legacyScope });
+    const inspected = await openWebMessagingHistory(legacyScope, { indexedDB: factory });
+    try { await expect(inspected.getMessage(MESSAGE)).rejects.toThrow(/purged/i); }
+    finally { await inspected.close(); }
+  });
+
+  it("retains pending deletion when legacy database inventory cannot be verified", async () => {
+    const first = await open(); await enqueue(first); await first.close();
+    vi.spyOn(factory, "databases").mockRejectedValueOnce(new Error("synthetic inventory failure"));
+    await expect(purgePlatformMessagingAccount(A, { indexedDB: factory })).rejects.toThrow(/incomplete/i);
+    expect(await listPendingMessagingDeletions(factory)).toEqual([A]);
+    await expectKnownAStoresEmpty();
+    await purgePlatformMessagingAccount(A, { indexedDB: factory });
+    expect(await listPendingMessagingDeletions(factory)).toEqual([]);
+  });
 
   it("reopens a queued image-only parent with its durable bytes and metadata", async () => {
     const first = await open();

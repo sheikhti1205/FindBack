@@ -2,7 +2,8 @@ import { Capacitor } from "@capacitor/core";
 import type { MediaAttachment, OutboxEntry, StoredHumanMessage } from "./history";
 import type { MediaMetadata } from "./media";
 import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
-import { openPlatformMessagingHistory, type PlatformMessagingHandle } from "./platformHistory";
+import { openPlatformMessagingHistory, purgePlatformMessagingAccount, type PlatformMessagingHandle } from "./platformHistory";
+import { beginMessagingAccountDeletion } from "./scopedMediaBytes";
 import { createSupabaseMessagingSession } from "./supabaseSession";
 import { isUuid, uuid } from "./validation";
 import type { MessagingPreferences } from "./session";
@@ -41,6 +42,9 @@ let generation = 0;
 let desiredAccount: string | null = null;
 let current: Owner | null = null;
 let lifecycle: Promise<void> = Promise.resolve();
+// A switch can detach A before deletion is confirmed. Preserve failed teardown
+// as well as in-flight teardown instead of losing it in lifecycle's UI catch.
+const accountClosing = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 
 function publish(value: MessagingRuntimeSnapshot) {
@@ -89,11 +93,24 @@ function invalidateAuthority(owner: Owner) {
   if (current === owner) publish({ ...snapshot, currentProjections: null });
 }
 
+function rememberClose(accountId: string, work: Promise<void>): Promise<void> {
+  accountClosing.set(accountId, work);
+  void work.then(() => {
+    if (accountClosing.get(accountId) === work) accountClosing.delete(accountId);
+  }, () => undefined);
+  return work;
+}
+
+function closePlatformHandle(handle: PlatformMessagingHandle): Promise<void> {
+  return rememberClose(handle.scope.accountId, handle.close());
+}
+
 function closeOwner(owner: Owner): Promise<void> {
   owner.detach();
   // Session abort and history invalidation are synchronous. Platform close owns
   // releasing the one-account lease after the same durable teardown settles.
-  return Promise.all([owner.session.close(), owner.handle.close()]).then(() => undefined);
+  return rememberClose(owner.handle.scope.accountId,
+    Promise.all([owner.session.close(), owner.handle.close()]).then(() => undefined));
 }
 
 /** Signals only trigger ordinary mailbox synchronization; no signal payload is
@@ -214,7 +231,7 @@ export function setMessagingAccount(accountId: string | null): void {
     try {
       handle = await openPlatformMessagingHistory({ accountId: next, media: { backendUrl: getSupabaseBackendUrl() },
         ...(Capacitor.isNativePlatform() ? {} : { deviceId: webInstallationId() }) });
-      if (ticket !== generation) { await handle.close(); return; }
+      if (ticket !== generation) { await closePlatformHandle(handle); return; }
       const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history),
         generation: ticket, refreshing: null, refreshAgain: false, authorityVersion: 0, detach: () => undefined };
       current = owner;
@@ -226,7 +243,7 @@ export function setMessagingAccount(accountId: string | null): void {
         const failed = current;
         current = null;
         await closeOwner(failed).catch(() => undefined);
-      } else if (handle) await handle.close().catch(() => undefined);
+      } else if (handle) await closePlatformHandle(handle).catch(() => undefined);
       throw error;
     }
   };
@@ -237,6 +254,24 @@ export function setMessagingAccount(accountId: string | null): void {
 }
 
 export function clearMessagingRuntime(): void { setMessagingAccount(null); }
+
+/** Confirmed deletion for captured A, even after B becomes current. Ordinary
+ * logout never calls this. Durable pending work belongs to the storage registry,
+ * not this promise or the dismissible auth UI. No cleanup session/network work. */
+export function purgeMessagingAccount(accountId: string): Promise<void> {
+  const target = uuid(accountId);
+  if (desiredAccount === target) setMessagingAccount(null);
+  const admitted = beginMessagingAccountDeletion(target);
+  // Handle rejection immediately while prior lifecycle work may still be queued.
+  void admitted.catch(() => undefined);
+  const cleanup = lifecycle.then(async () => {
+    await admitted;
+    await accountClosing.get(target);
+    await purgePlatformMessagingAccount(target);
+  });
+  lifecycle = cleanup.catch(() => undefined);
+  return cleanup;
+}
 
 /** Account-scoped wake only. Payloads never become message or receipt truth. */
 export function invalidateMessaging(accountId: string): void {

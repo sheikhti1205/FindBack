@@ -70,6 +70,10 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
 /** Explicit web adapter; no Android/SQLite selection or memory fallback. */
 export async function openWebMessagingHistory(identity: MessagingScope, options: {
   indexedDB?: IDBFactory; mediaBytes?: MediaBytesPort; decodeMedia?: MediaDecoder;
+  /** Production registry guard, called while holding the existing account lock. */
+  accountAdmission?: () => Promise<void>;
+  /** Trusted platform cleanup handle: purge/close only, no maintenance/admission. */
+  cleanupOnly?: boolean;
 } = {}): Promise<MessagingHistory> {
   const scope = { accountId: uuid(identity?.accountId), deviceId: uuid(identity?.deviceId) };
   const factory = options.indexedDB ?? globalThis.indexedDB;
@@ -839,9 +843,11 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       const captured = structuredClone(args);
       const next = tail.then(() => {
         assertOpen();
-        return withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes,
+        return withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes || !!options.accountAdmission,
           async () => {
             assertOpen();
+            if (!allowPurged && options.cleanupOnly) throw new Error("Messaging deletion cleanup only");
+            if (!allowPurged) await options.accountAdmission?.();
             if (!allowPurged && await historyIsPurged()) throw new Error("Messaging history purged");
             assertOpen(); return work(...captured);
           });
@@ -882,7 +888,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     if (!closed && !mediaPurged) await serializedMediaReady(record.id);
   }
 
-  if (options.mediaBytes) {
+  if (options.mediaBytes && !options.cleanupOnly) {
     try { await serial(async () => { if (!await historyIsPurged()) await sweepOrphanMedia(100); }, true)(); }
     catch (error) { await close(); throw error; }
   }

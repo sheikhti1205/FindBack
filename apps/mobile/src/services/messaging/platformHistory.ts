@@ -20,7 +20,12 @@ import {
   readAndroidInstallationId,
 } from "./androidSqliteDriver";
 import { isUuid } from "./validation";
-import { assertMediaBytesOwner, openScopedMediaBytes, type ScopedMediaBytes } from "./scopedMediaBytes";
+import {
+  assertMediaBytesOwner, openScopedMediaBytes, type ScopedMediaBytes, type MessagingStorageScope,
+  assertMessagingAccountActive, registerMessagingStorageScope, beginMessagingAccountDeletion,
+  inspectMessagingStorageScopes, finishMessagingAccountDeletion, openMessagingCleanupBytes,
+  registerMessagingCleanupScope,
+} from "./scopedMediaBytes";
 
 export type MessagingPlatformFailure = "unsupported" | "invalid-scope" | "already-open";
 
@@ -135,9 +140,12 @@ async function openAndroid(options: PlatformMessagingOptions): Promise<PlatformM
       throw new MessagingPlatformError("invalid-scope");
     }
     const scope = { accountId, deviceId };
+    await registerMessagingStorageScope({ platform: "android", ...scope, backendUrl: options.media?.backendUrl }, options.indexedDB);
     bytes = await openBytes("android", scope, options);
     driver = await openAndroidMessagingSqliteDriver({ accountId });
-    const history = await openSqliteMessagingHistory(driver, scope, { mediaBytes: bytes });
+    const history = await openSqliteMessagingHistory(driver, scope, { mediaBytes: bytes,
+      accountAdmission: () => assertMessagingAccountActive(accountId, options.indexedDB) });
+    await assertMessagingAccountActive(accountId, options.indexedDB);
     return createHandle("android", scope, history, release, bytes);
   } catch (error) {
     // The adapter closes its own driver on every failure path; this is a
@@ -156,11 +164,16 @@ async function openWeb(options: PlatformMessagingOptions): Promise<PlatformMessa
   const { accountId, deviceId } = options;
   if (!isUuid(deviceId)) throw new MessagingPlatformError("invalid-scope");
   const scope = { accountId, deviceId };
+  await registerMessagingStorageScope({ platform: "web", ...scope, backendUrl: options.media?.backendUrl }, options.indexedDB);
   const bytes = await openBytes("web", scope, options);
+  let history: MessagingHistory | undefined;
   try {
-    const history = await openWebMessagingHistory(scope, { indexedDB: options.indexedDB, mediaBytes: bytes });
+    history = await openWebMessagingHistory(scope, { indexedDB: options.indexedDB, mediaBytes: bytes,
+      accountAdmission: () => assertMessagingAccountActive(accountId, options.indexedDB) });
+    await assertMessagingAccountActive(accountId, options.indexedDB);
     return createHandle("web", scope, history, undefined, bytes);
   } catch (error) {
+    try { await history?.close(); } catch { /* preserve setup failure */ }
     await bytes?.close().catch(() => undefined);
     throw error;
   }
@@ -188,4 +201,102 @@ export async function openPlatformMessagingHistory(
     return openAndroid(captured);
   }
   return openWeb(captured);
+}
+
+/** Opens only the recorded scope, not today's installation or configured backend.
+ * No session/registration/sync is constructed. A lost native close holds its lease. */
+async function purgeRecordedScope(owner: Readonly<MessagingStorageScope>, factory?: IDBFactory): Promise<void> {
+  const native = owner.platform === "android";
+  if (native && (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android")) {
+    throw new MessagingPlatformError("unsupported");
+  }
+  if (native && androidOwners.has(owner.accountId)) throw new MessagingPlatformError("already-open");
+  if (native) androidOwners.add(owner.accountId);
+  let bytes: ScopedMediaBytes | undefined;
+  let driver: Awaited<ReturnType<typeof openAndroidMessagingSqliteDriver>> | undefined;
+  let history: MessagingHistory | undefined;
+  let failure: unknown;
+  let closeFailed = false;
+  try {
+    bytes = await openMessagingCleanupBytes(owner, factory);
+    if (native) {
+      driver = await openAndroidMessagingSqliteDriver({ accountId: owner.accountId });
+      history = await openSqliteMessagingHistory(driver, owner, { mediaBytes: bytes, cleanupOnly: true });
+    } else {
+      history = await openWebMessagingHistory(owner, { indexedDB: factory, mediaBytes: bytes, cleanupOnly: true });
+    }
+    await history.purgeHistory();
+  } catch (error) { failure = error; }
+  try { if (history) await history.close(); else await driver?.close(); }
+  catch (error) { closeFailed = true; failure ??= error; }
+  try { await bytes?.close(); }
+  catch (error) { closeFailed = true; failure ??= error; }
+  if (native && !closeFailed) androidOwners.delete(owner.accountId);
+  if (failure) throw failure;
+}
+
+/** Legacy web text databases predate the ownership registry. Database names can
+ * recover account/installation, never a media backend. Registered owners remain
+ * authoritative; enumeration only discovers the legacy gap, never replaces it. */
+async function discoverLegacyWebScopes(accountId: string, factory: IDBFactory): Promise<void> {
+  if (typeof factory.databases !== "function") throw new Error("Messaging legacy inventory unavailable");
+  const names = await factory.databases();
+  const prefix = `findback-human-history-v1:${accountId}:`;
+  const failures: unknown[] = [];
+  for (const row of names) {
+    if (!row.name?.startsWith(prefix)) continue;
+    try {
+      const deviceId = row.name.slice(prefix.length);
+      if (!isUuid(deviceId)) throw new Error("Messaging legacy scope invalid");
+      await registerMessagingCleanupScope({ platform: "web", accountId, deviceId }, factory);
+    } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, "Messaging legacy inventory incomplete");
+}
+
+/** Native filename is account-bound. A pre-registry file carries its original
+ * device in messaging_meta; today's installation must not retarget that file. */
+async function discoverLegacyAndroidScope(accountId: string, factory: IDBFactory): Promise<void> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return;
+  if ((await inspectMessagingStorageScopes(accountId, factory)).scopes.some((scope) => scope.platform === "android")) return;
+  if (androidOwners.has(accountId)) throw new MessagingPlatformError("already-open");
+  androidOwners.add(accountId);
+  let driver: Awaited<ReturnType<typeof openAndroidMessagingSqliteDriver>> | undefined;
+  let failure: unknown, closeFailed = false;
+  try {
+    driver = await openAndroidMessagingSqliteDriver({ accountId });
+    const table = await driver.all<{ name: string }>("select name from sqlite_master where type = 'table' and name = 'messaging_meta'");
+    let deviceId: string;
+    if (table.length) {
+      const rows = await driver.all<{ key: string; value: string }>("select key, value from messaging_meta");
+      const prior = new Map(rows.map((row) => [row.key, row.value]));
+      if (prior.get("account_id") !== accountId || !isUuid(prior.get("device_id"))) {
+        throw new Error("Messaging legacy ownership invalid");
+      }
+      deviceId = prior.get("device_id")!;
+    } else deviceId = await readAndroidInstallationId();
+    await registerMessagingCleanupScope({ platform: "android", accountId, deviceId }, factory);
+  } catch (error) { failure = error; }
+  try { await driver?.close(); } catch (error) { closeFailed = true; failure ??= error; }
+  if (!closeFailed) androidOwners.delete(accountId);
+  if (failure) throw failure;
+}
+
+/** Local logical deletion for ALL known scopes. Failures remain durably pending;
+ * other scopes are still attempted. Ordinary close/logout never calls this. */
+export async function purgePlatformMessagingAccount(accountId: string, options: { indexedDB?: IDBFactory } = {}): Promise<void> {
+  const factory = options.indexedDB ?? globalThis.indexedDB;
+  const revision = await beginMessagingAccountDeletion(accountId, factory);
+  const failures: unknown[] = [];
+  // Inventory failure must not prevent known scopes being erased, nor may it
+  // clear pending and claim that unknown legacy history was removed.
+  try { await discoverLegacyWebScopes(accountId, factory); } catch (error) { failures.push(error); }
+  try { await discoverLegacyAndroidScope(accountId, factory); } catch (error) { failures.push(error); }
+  const { scopes, failures: inventoryFailures } = await inspectMessagingStorageScopes(accountId, factory);
+  failures.push(...inventoryFailures);
+  for (const scope of scopes) {
+    try { await purgeRecordedScope(scope, factory); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, "Messaging account deletion incomplete");
+  await finishMessagingAccountDeletion(accountId, revision, factory);
 }
