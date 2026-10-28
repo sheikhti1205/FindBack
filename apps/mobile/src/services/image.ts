@@ -138,6 +138,8 @@ export function outputTypeFor(
 }
 
 export interface NormalizeOpts {
+  /** Preserve GIFs by default. Still-only consumers opt into canvas re-encoding. */
+  animation?: "preserve" | "still";
   /** Override for the decode pixel bound (default MAX_DECODE_PIXELS). */
   maxDecodePixels?: number;
   /** AbortSignal threaded from the photo pipeline; abort stops decode/encode. */
@@ -183,7 +185,7 @@ export async function normalizeImage(
     : null;
   throwIfAborted(signal);
   const effective = probed ?? heicGuard;
-  const animated = file.type === "image/gif";
+  const animated = file.type === "image/gif" && opts?.animation !== "still";
   if (effective && effective.width * effective.height > maxPixels) {
     if (animated) throw new DecodeError("rejected", DECODE_TOO_LARGE);
   }
@@ -228,13 +230,15 @@ export async function normalizeImage(
     if (decoded.width * decoded.height > maxPixels) {
       throw new DecodeError("rejected", DECODE_TOO_LARGE);
     }
-    if (file.type === "image/gif") {
+    if (animated) {
       // Never round-trip an animation.
       return { blob: file, mimeType: "image/gif", width: decoded.width, height: decoded.height };
     }
     const { width, height } = fitWithin(MAX_EDGE, decoded.width, decoded.height);
     const output = outputTypeFor(
-      file.type,
+      // A sampled GIF uses PNG to retain transparency, not an unsupported GIF
+      // encoder or a lossy JPEG with an implicit background color.
+      file.type === "image/gif" ? "image/png" : file.type,
       deps.webpSupported,
       opts?.quality ?? currentPhotoQuality(),
     );
