@@ -4,6 +4,7 @@ import { copyConversationProjection, type ConversationProjection } from "./conve
 import { copyStateEnvelope, type StateChangeEnvelope } from "./stateChanges";
 import { copyMediaMetadata, sameMediaIdentity, type MediaMetadata } from "./media";
 import type { createMediaTransport, MediaDelivery } from "./mediaTransport";
+import { PhotoUnavailableError } from "./mediaTransport";
 
 type MediaTransportFactory = (scope: MessagingScope, signal: AbortSignal) => ReturnType<typeof createMediaTransport>;
 
@@ -383,7 +384,8 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     async downloadMedia(conversationId: string, attachmentId: string) {
       const context = mediaContext(), id = uuid(attachmentId);
       const row = (await history.listMedia(uuid(conversationId))).find((item) => item.id === id);
-      if (!row || row.expiresAt === null || row.expiresAt <= Date.now()) throw mediaUnavailable();
+      if (!row || row.expiresAt === null) throw mediaUnavailable();
+      if (row.expiresAt <= Date.now()) { context.live(); throw new PhotoUnavailableError(); }
       await receiveMedia(row, context);
     },
     sync, syncState, flush, refreshConversations, flushMedia, syncMedia,

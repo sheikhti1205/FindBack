@@ -12,17 +12,24 @@ export interface MediaTransportPorts {
 export type MediaDelivery = Omit<MediaMetadata, "direction" | "expiresAt"> & { expiresAt: number };
 
 const unavailable = () => new Error("Photo could not sync. Try again.");
+/** Opaque download outcome. Never reveals missing vs unauthorized vs expired.
+ * Consumers map this type to unavailable copy, not a permanent deletion claim. */
+export class PhotoUnavailableError extends Error {
+  constructor() { super("Photo could not sync. Try again."); this.name = "PhotoUnavailableError"; }
+}
+const failure = (error: unknown, signal: AbortSignal, preserveUnavailable: boolean) =>
+  preserveUnavailable && !signal.aborted && error instanceof PhotoUnavailableError ? error : unavailable();
 const assertLive = (signal: AbortSignal) => { if (signal.aborted) throw unavailable(); };
 const cancelBody = (response: Response) => { void response.body?.cancel().catch(() => undefined); };
 
 /** A non-cooperating promise cannot keep an aborted/deadline-expired attempt alive. */
-function abortable<T>(pending: PromiseLike<T>, signal: AbortSignal): Promise<T> {
+function abortable<T>(pending: PromiseLike<T>, signal: AbortSignal, preserveUnavailable = false): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(unavailable());
     signal.addEventListener("abort", abort, { once: true });
     Promise.resolve(pending).then(
       (value) => { signal.removeEventListener("abort", abort); if (signal.aborted) reject(unavailable()); else resolve(value); },
-      () => { signal.removeEventListener("abort", abort); reject(unavailable()); },
+      (error: unknown) => { signal.removeEventListener("abort", abort); reject(failure(error, signal, preserveUnavailable)); },
     );
     if (signal.aborted) abort();
   });
@@ -76,9 +83,11 @@ export function createMediaTransport(inputScope: MessagingScope, owner: AbortSig
     owner.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(abort, 90_000);
     try {
-      const result = await abortable(work(controller.signal), controller.signal);
+      // Only the internally generated download outcome survives this outer
+      // boundary. Port rejections below still go through generic sanitization.
+      const result = await abortable(work(controller.signal), controller.signal, true);
       assertLive(controller.signal); return result;
-    } catch { throw unavailable(); }
+    } catch (error) { throw failure(error, controller.signal, true); }
     finally { clearTimeout(timeout); owner.removeEventListener("abort", abort); }
   };
   const request = async (input: Parameters<MediaTransportPorts["request"]>[0], type: string, maximum: number, exact: boolean) => {
@@ -95,6 +104,9 @@ export function createMediaTransport(inputScope: MessagingScope, owner: AbortSig
         return response;
       });
       const response = await abortable(pending, input.signal);
+      if (input.method === "GET" && response.status === 404 && !response.redirected && response.type !== "opaque") {
+        cancelBody(response); assertLive(input.signal); throw new PhotoUnavailableError();
+      }
       if (response.status !== 200 || response.redirected || response.type === "opaque"
         || response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() !== type) {
         cancelBody(response); throw unavailable();
@@ -126,10 +138,11 @@ export function createMediaTransport(inputScope: MessagingScope, owner: AbortSig
     download(input: MediaMetadata): Promise<ArrayBuffer> {
       return attempt(async (signal) => {
         const metadata = copyMediaMetadata(input);
-        if (metadata.expiresAt === null || metadata.expiresAt <= Date.now()) throw unavailable();
+        if (metadata.expiresAt === null) throw unavailable();
+        if (metadata.expiresAt <= Date.now()) throw new PhotoUnavailableError();
         const bytes = await request({ method: "GET", headers: { "x-attachment-id": metadata.id }, signal }, metadata.mime, metadata.byteSize, true);
         await abortable(verifyMediaContainer(metadata, bytes), signal);
-        if (metadata.expiresAt <= Date.now()) throw unavailable();
+        if (metadata.expiresAt <= Date.now()) throw new PhotoUnavailableError();
         return bytes;
       });
     },

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMediaTransport, type MediaTransportPorts } from "./mediaTransport";
+import { createMediaTransport, PhotoUnavailableError, type MediaTransportPorts } from "./mediaTransport";
 import { mediaFixture } from "./mediaTestDoubles";
 import type { MediaMetadata } from "./media";
 
@@ -137,6 +137,78 @@ describe("media transport boundary", () => {
     }, cancel() { cancelled = true; } }), { status }));
     await expect(transport.download(metadata)).rejects.toThrow("Photo could not sync. Try again.");
     expect(cancelled).toBe(true);
+  });
+
+  it("gives GET 404 an opaque unavailable outcome without exposing private reason or body", async () => {
+    const { metadata } = await fixture(); let cancelled = false;
+    const { transport } = setup(async () => new Response(new ReadableStream({ start(c) {
+      c.enqueue(new TextEncoder().encode("private missing blocked deleted storage-key"));
+    }, cancel() { cancelled = true; } }), { status: 404 }));
+    const error = await transport.download(metadata).catch((reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "PhotoUnavailableError", message: "Photo could not sync. Try again." });
+    expect(Object.keys(error as object)).not.toContain("status");
+    expect(String(error)).not.toMatch(/blocked|deleted|storage-key|404/);
+    expect(cancelled).toBe(true);
+  });
+
+  it("gives a trusted passed expiry the same unavailable outcome without contacting the network", async () => {
+    const { metadata } = await fixture(); let calls = 0;
+    const { transport } = setup(async () => { calls++; throw Error("unexpected"); });
+    await expect(transport.download({ ...metadata, expiresAt: Date.now() - 1 })).rejects.toMatchObject({ name: "PhotoUnavailableError" });
+    expect(calls).toBe(0);
+  });
+
+  it.each([401, 503])("keeps GET HTTP %s retryable rather than inventing permanent unavailability", async (status) => {
+    const { metadata } = await fixture();
+    const { transport } = setup(async () => new Response(null, { status }));
+    await expect(transport.download(metadata)).rejects.toMatchObject({ name: "Error", message: "Photo could not sync. Try again." });
+  });
+
+  it("does not classify a POST 404 as permanently unavailable", async () => {
+    const { metadata, bytes } = await fixture();
+    const { transport } = setup(async () => new Response(null, { status: 404 }));
+    await expect(transport.upload(metadata, bytes)).rejects.toMatchObject({ name: "Error" });
+  });
+
+  it("does not let a raw port rejection spoof the opaque unavailable outcome", async () => {
+    const { metadata } = await fixture();
+    const { transport } = setup(async () => { throw Object.assign(new Error("private raw failure"), { name: "PhotoUnavailableError" }); });
+    await expect(transport.download(metadata)).rejects.toMatchObject({ name: "Error", message: "Photo could not sync. Try again." });
+  });
+
+  it("sanitizes even an actual unavailable error rejected by an untrusted request port", async () => {
+    const { metadata } = await fixture();
+    const { transport } = setup(async () => { throw new PhotoUnavailableError(); });
+    const error = await transport.download(metadata).catch((reason: unknown) => reason);
+    expect(error).not.toBeInstanceOf(PhotoUnavailableError);
+    expect(error).toMatchObject({ name: "Error" });
+  });
+
+  it("discards valid bytes if their trusted expiry passes while the GET is in flight", async () => {
+    const { metadata, bytes } = await fixture();
+    const { transport } = setup(async () => {
+      vi.spyOn(Date, "now").mockReturnValue(metadata.expiresAt! + 1);
+      return new Response(bytes, { headers: { "content-type": metadata.mime } });
+    });
+    try { await expect(transport.download(metadata)).rejects.toBeInstanceOf(PhotoUnavailableError); }
+    finally { vi.restoreAllMocks(); }
+  });
+
+  it("lets owner abort win a racing GET404 and cancels the body without terminal classification", async () => {
+    const { metadata } = await fixture(); let cancelled = false;
+    const { transport, owner } = setup(async () => {
+      owner.abort();
+      return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 404 });
+    });
+    await expect(transport.download(metadata)).rejects.toMatchObject({ name: "Error" });
+    expect(cancelled).toBe(true);
+  });
+
+  it("does not trust a redirected404 as an unavailable-photo response", async () => {
+    const { metadata } = await fixture(), response = new Response(null, { status: 404 });
+    Object.defineProperty(response, "redirected", { value: true });
+    const { transport } = setup(async () => response);
+    await expect(transport.download(metadata)).rejects.toMatchObject({ name: "Error" });
   });
 
   it("bounds upload JSON before parsing and cancels excess data", async () => {

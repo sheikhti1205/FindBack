@@ -228,6 +228,26 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     expect((await history.listMedia(CONV))[0]?.state).toBe("READY");
   });
 
+  it.each([404, 503])("propagates explicit redownload HTTP%s without persisting or ACKing missing bytes", async (status) => {
+    const history = await open(), ports = network(history), client = session(history, ports), fixture = await incoming(history);
+    await client.syncMedia(); await history.evictMedia(1);
+    const priorAcks = [...acks];
+    ports.request = async () => new Response(null, { status });
+    await expect(client.downloadMedia(CONV, fixture.metadata.id)).rejects.toMatchObject({ name: status === 404 ? "PhotoUnavailableError" : "Error" });
+    expect(await history.readMedia(fixture.metadata.id)).toBeNull();
+    expect((await history.listMedia(CONV))[0]?.state).toBe("EVICTED");
+    expect(acks).toEqual(priorAcks);
+  });
+
+  it("propagates trusted local expiry without another GET or ACK", async () => {
+    const history = await open(), client = session(history), fixture = await incoming(history);
+    await client.syncMedia(); await history.evictMedia(1);
+    const priorDownloads = [...downloads], priorAcks = [...acks];
+    vi.spyOn(Date, "now").mockReturnValue(fixture.metadata.expiresAt! + 1);
+    await expect(client.downloadMedia(CONV, fixture.metadata.id)).rejects.toMatchObject({ name: "PhotoUnavailableError" });
+    expect(downloads).toEqual(priorDownloads); expect(acks).toEqual(priorAcks);
+  });
+
   it("drains a full acknowledged page to reach later deliveries", async () => {
     const history = await open(), client = session(history);
     for (let n = 1; n <= 101; n++) await incoming(history, n);

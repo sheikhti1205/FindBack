@@ -34,6 +34,7 @@ let requestLog: string[], mail: MailboxEnvelope[], remote: Map<string, { metadat
 let acked: Set<string>, deliveryGate: ReturnType<typeof deferred> | null, entered: ReturnType<typeof deferred>;
 let lastGetSignal: AbortSignal | null;
 let mutationGate: ReturnType<typeof deferred> | null, mutationEntered: ReturnType<typeof deferred>, connected: boolean;
+let downloadStatus: number;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -50,6 +51,7 @@ beforeEach(async () => {
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
   mutationGate = null; mutationEntered = deferred(); connected = true;
+  downloadStatus = 200;
   const items = new Map<string, string>([["findback.messaging.installation.v1", DEVICE]]);
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("localStorage", { getItem: (key: string) => items.get(key) ?? null,
@@ -103,6 +105,7 @@ beforeEach(async () => {
     if (request.method === "GET") {
       requestLog.push(`GET:${key}`); lastGetSignal = init!.signal!;
       if (deliveryGate) { entered.resolve(); await deliveryGate.promise; }
+      if (downloadStatus !== 200) return new Response(null, { status: downloadStatus });
       return new Response(remote.get(key)!.bytes.slice(0), { headers: { "content-type": "image/png" } });
     }
     requestLog.push(`POST:${key}`);
@@ -305,6 +308,19 @@ describe("production messaging media owner", () => {
     // This synthetic server has not supplied the deletion state envelope yet.
     // Do not pretend a mutation HTTP result is the durable erasure event.
     expect((await runtime.readMessagingThreadState(A, CONV)).messages[0]?.body).toBe("caption");
+  });
+
+  it.each([404, 503])("preserves explicit download HTTP%s outcome through the production runtime", async (status) => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    const fixture = await mediaFixture(id(201), id(101));
+    await runtime.sendMessagingMedia(A, CONV, B, "caption", fixture.metadata, fixture.bytes);
+    await runtime.refreshMessaging(A); await waitForState((state) => state.status === "ready");
+    await boundary.handles[0]!.history.evictMedia(1);
+    downloadStatus = status;
+    const start = requestLog.length;
+    await expect(runtime.downloadMessagingMedia(A, CONV, id(201))).rejects.toMatchObject({ name: status === 404 ? "PhotoUnavailableError" : "Error" });
+    expect(await runtime.readMessagingMedia(A, id(201))).toBeNull();
+    expect(requestLog.slice(start).filter((entry) => /^(GET:|POST:|media-ack:|delivery$)/.test(entry))).toEqual([`GET:${id(201)}`]);
   });
 
   it("receives incoming media despite outgoing POST failure", async () => {
