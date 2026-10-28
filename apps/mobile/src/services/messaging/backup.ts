@@ -201,7 +201,10 @@ function elements(value: unknown): unknown[] {
 }
 
 function validBody(value: unknown): boolean {
-  return value === null
+  // `null` is suppression. `""` is an image-only message with no caption
+  // (SQLite v5 admits it), so it is portable as-is and must not be collapsed
+  // into `null` by an import.
+  return value === null || value === ""
     || (typeof value === "string" && !!value.trim() && value.length <= MAX_BODY_UNITS
       && !value.includes("\u0000"));
 }

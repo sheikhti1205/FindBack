@@ -1,15 +1,20 @@
 import type {
   HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope,
-  OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage,
+  OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage, MediaAttachment, MediaBytesPort,
 } from "./history";
-import { copyMessage, sameMessage, uuid } from "./validation";
+import { MediaParentUnavailableError } from "./history";
+import { cachedMediaAllowed, copyMessage, copyMediaMessage, copyMediaAttachment, sameMessage, positiveSequence, uuid } from "./validation";
+import { isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt } from "./media";
+import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
+import { withHistoryLock } from "./historyLock";
 import {
   conversationPeer, copyConversationProjection, nonnegativeSequence, summarizeConversations,
   type ConversationProjection, type ConversationSummary, type LocalConversationState,
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
 
-const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends"];
+export const MESSAGING_IDB_VERSION = 4;
+const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle"];
 const LEASE_MS = 60_000;
 
 interface EventIdentity {
@@ -21,7 +26,7 @@ interface EventIdentity {
 
 function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(name, 3);
+    const request = factory.open(name, MESSAGING_IDB_VERSION);
     let rejected = false;
     request.onblocked = () => {
       rejected = true;
@@ -49,6 +54,11 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
         db.createObjectStore("unsends", { keyPath: "messageId" });
         db.createObjectStore("clears", { keyPath: "conversationId" });
       }
+      if (!db.objectStoreNames.contains("mediaAttachments")) {
+        const media = db.createObjectStore("mediaAttachments", { keyPath: "id" });
+        media.createIndex("messageId", "messageId", { unique: true });
+      }
+      if (!db.objectStoreNames.contains("mediaLifecycle")) db.createObjectStore("mediaLifecycle");
     };
     request.onsuccess = () => {
       if (rejected) request.result.close();
@@ -58,13 +68,17 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
 }
 
 /** Explicit web adapter; no Android/SQLite selection or memory fallback. */
-export async function openWebMessagingHistory(identity: MessagingScope, options: { indexedDB?: IDBFactory } = {}): Promise<MessagingHistory> {
+export async function openWebMessagingHistory(identity: MessagingScope, options: {
+  indexedDB?: IDBFactory; mediaBytes?: MediaBytesPort; decodeMedia?: MediaDecoder;
+} = {}): Promise<MessagingHistory> {
   const scope = { accountId: uuid(identity?.accountId), deviceId: uuid(identity?.deviceId) };
   const factory = options.indexedDB ?? globalThis.indexedDB;
   if (!factory) throw new Error("IndexedDB messaging storage unavailable");
   const db = await connect(factory, `findback-human-history-v1:${scope.accountId}:${scope.deviceId}`);
   let closed = false;
   const active = new Set<IDBTransaction>();
+  const lockLifetime = new AbortController();
+  const removedBytes = new WeakMap<IDBTransaction, Set<string>>();
 
   function assertOpen() {
     if (closed) throw new Error("Messaging history closed");
@@ -97,14 +111,18 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
 
-  function close() {
-    if (closed) return;
+  function close(): Promise<void> {
+    if (closed) return tail.then(() => undefined);
     closed = true;
+    lockLifetime.abort(new Error("Messaging history closed"));
     for (const tx of active) {
       // An externally completed transaction may still await its completion event.
       try { tx.abort(); } catch { /* already finished */ }
     }
     db.close();
+    // Invalidate synchronously, but the byte port must outlive any admitted
+    // write/rollback cleanup. The platform owner awaits this before closing it.
+    return tail.then(() => undefined);
   }
   db.onversionchange = close;
   db.onclose = close;
@@ -127,7 +145,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   /** Never resolve a durable operation from request success; only tx complete. */
   function transaction<T>(mode: IDBTransactionMode, action: (
     tx: IDBTransaction, result: (value: T) => void, guard: (callback: () => void) => () => void,
-  ) => void): Promise<T> {
+  ) => void, onCommitted?: () => void): Promise<T> {
     assertOpen();
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(STORES, mode, mode === "readwrite" ? { durability: "strict" } : undefined);
@@ -142,8 +160,14 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       };
       tx.oncomplete = () => {
         active.delete(tx);
-        if (closed) reject(new Error("Messaging history closed"));
-        else resolve(value);
+        onCommitted?.();
+        const ids = [...(removedBytes.get(tx) ?? [])];
+        const cleanup = ids.length && options.mediaBytes
+          ? options.mediaBytes.delete(scope.accountId, ids).catch(() => undefined) : Promise.resolve();
+        void cleanup.then(() => {
+          if (closed) reject(new Error("Messaging history closed"));
+          else resolve(value);
+        });
       };
       tx.onabort = () => {
         active.delete(tx);
@@ -280,7 +304,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           const token = crypto.randomUUID();
           const attempts = entry.attempts + 1;
           outbox.put({ messageId: entry.messageId, status: "SENDING", attempts, token, leaseUntil: now + LEASE_MS } satisfies OutboxEntry);
-          result({ message: copyMessage(message), token, attempt: attempts });
+          result({ message: copyMediaMessage(message), token, attempt: attempts });
         });
       });
     });
@@ -288,7 +312,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
 
   async function failOutgoing(input: OutgoingAttempt): Promise<boolean> {
     assertOpen();
-    const message = copyMessage(input.message);
+    const message = copyMediaMessage(input.message);
     const token = uuid(input.token);
     const attempt = input.attempt;
     if (message.authorId !== scope.accountId || !Number.isSafeInteger(attempt) || attempt < 1) {
@@ -322,7 +346,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     const eventId = uuid(input.event.eventId);
     const sequence = input.event.sequence;
     if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("Invalid messaging event sequence");
-    const message = copyMessage(input.event.message);
+    const message = copyMediaMessage(input.event.message);
     if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) {
       throw new Error("Inbound participant scope mismatch");
     }
@@ -362,7 +386,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             for (const state of [tombstone, deletion]) {
               if (state && (state.kind === "CLEAR_FOR_ME" || state.conversationId !== message.conversationId
                 || state.authorId !== message.authorId || state.recipientId !== message.recipientId
-                || state.messageSequence !== sequence)) throw new Error("Erasure message identity conflict");
+                 || (!("local" in state) && state.messageSequence !== sequence))) throw new Error("Erasure message identity conflict");
             }
             const suppressed = !!deletion || sequence <= ((clear.result as { throughSequence: number } | undefined)?.throughSequence ?? 0);
             if (existing && (existing.id !== message.id || existing.conversationId !== message.conversationId
@@ -375,6 +399,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             const stored: StoredHumanMessage = { ...message, server: { eventId, sequence },
               ...((tombstone || suppressed) ? { body: "" } : {}),
               ...(tombstone ? { unsentAt: tombstone.occurredAt } : {}) };
+            if (tombstone || suppressed) removeMediaRows(tx, guard, message.id);
             if (!existing) messages.add(stored);
             else if (!existing.server || tombstone || suppressed) messages.put(stored);
             if (!existing?.server) updateConversation(tx, guard, message.conversationId,
@@ -423,7 +448,10 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             const entry = cursor.result;
             if (!entry) return;
             const message = entry.value as StoredHumanMessage;
-            if (message.server && message.server.sequence <= change.throughSequence) entry.update({ ...message, body: "" });
+            if (message.server && message.server.sequence <= change.throughSequence) {
+              entry.update({ ...message, body: "" });
+              removeMediaRows(tx, guard, message.id);
+            }
             entry.continue();
           });
         } else {
@@ -454,7 +482,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
               const prior = source as MessageStateChange | undefined;
               if (prior && (prior.kind === "CLEAR_FOR_ME" || prior.conversationId !== change.conversationId
                 || prior.authorId !== change.authorId || prior.recipientId !== change.recipientId
-                || prior.messageSequence !== change.messageSequence)) throw new Error("Erasure message identity conflict");
+                 || (!("local" in prior) && prior.messageSequence !== change.messageSequence))) throw new Error("Erasure message identity conflict");
             }
             const existing = request.result as StoredHumanMessage | undefined;
             if (existing && (existing.conversationId !== change.conversationId || existing.authorId !== change.authorId
@@ -470,6 +498,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
                 ...(existing?.unsentAt !== undefined ? { unsentAt: existing.unsentAt }
                   : change.kind === "UNSEND" ? { unsentAt: change.occurredAt } : {}) } satisfies StoredHumanMessage);
             tx.objectStore("outbox").delete(change.messageId);
+            removeMediaRows(tx, guard, change.messageId);
           });
           request.onsuccess = complete; deletion.onsuccess = complete; unsend.onsuccess = complete;
           byId.onsuccess = complete; bySequence.onsuccess = complete;
@@ -481,7 +510,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   }
 
   async function persistInboundAndAck(envelope: MailboxEnvelope, ack: (receipt: PersistenceReceipt) => Promise<void>): Promise<void> {
-    const receipt = await persistInbound(envelope);
+    const receipt = await serializedPersist(envelope);
     assertOpen(); // Sign-out between commit and ACK fails closed; replay can ACK later.
     await ack(receipt);
   }
@@ -495,7 +524,333 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     return Promise.reject(new Error("Messaging backup is not implemented for IndexedDB yet"));
   }
 
-  return { enqueueOutgoing, getMessage, listMessages, listConversations, cacheConversation,
-    markConversationRead, getStateCursor, applyStateChange, listOutbox, claimNextOutgoing, failOutgoing, persistInbound, persistInboundAndAck, close,
-    exportSnapshot, importSnapshot };
+  function removeMediaRows(tx: IDBTransaction, guard: (callback: () => void) => () => void, messageId: string) {
+    const store = tx.objectStore("mediaAttachments");
+    const request = store.index("messageId").get(messageId);
+    request.onsuccess = guard(() => {
+      const row = request.result as MediaAttachment | undefined;
+      if (!row) return;
+      store.delete(row.id);
+      const ids = removedBytes.get(tx) ?? new Set<string>();
+      ids.add(row.id);
+      removedBytes.set(tx, ids);
+    });
+  }
+
+  interface MediaView {
+    records: MediaAttachment[]; parents: StoredHumanMessage[]; purged: boolean;
+    states: LocalConversationState[];
+  }
+  function mediaTransaction<T>(mode: IDBTransactionMode,
+    work: (view: MediaView, tx: IDBTransaction, guard: (callback: () => void) => () => void) => T,
+    onCommitted?: () => void): Promise<T> {
+    return transaction(mode, (tx, result, guard) => {
+      const records = tx.objectStore("mediaAttachments").getAll();
+      const messages = tx.objectStore("messages").getAll();
+      const purged = tx.objectStore("mediaLifecycle").get("purged");
+      const states = tx.objectStore("conversations").getAll();
+      let remaining = 4;
+      const complete = guard(() => {
+        if (--remaining) return;
+        visibleMessages(tx, guard, messages.result as StoredHumanMessage[], (parents) => {
+          result(work({ records: records.result.map(copyMediaAttachment), purged: purged.result === true,
+            states: states.result as LocalConversationState[],
+            parents: parents.filter((parent) => parent.unsentAt === undefined) }, tx, guard));
+        });
+      });
+      records.onsuccess = complete; messages.onsuccess = complete; purged.onsuccess = complete;
+      states.onsuccess = complete;
+    }, onCommitted);
+  }
+
+  let mediaPurged = false;
+  function byteStore(): MediaBytesPort {
+    if (!options.mediaBytes) throw new Error("Messaging media byte storage unavailable");
+    return options.mediaBytes;
+  }
+
+  function mediaParent(view: MediaView, metadata: MediaMetadata): StoredHumanMessage {
+    const parent = view.parents.find((row) => row.id === metadata.messageId);
+    if (!parent) throw new MediaParentUnavailableError(metadata.messageId);
+    if (parent.authorId !== scope.accountId && parent.recipientId !== scope.accountId) throw new Error("Media participant scope mismatch");
+    if (metadata.direction !== (parent.authorId === scope.accountId ? "OUT" : "IN")) throw new Error("Media direction scope mismatch");
+    return parent;
+  }
+
+  function mediaReplay(view: MediaView, metadata: MediaMetadata): MediaAttachment | undefined {
+    const existing = view.records.find((row) => row.id === metadata.id);
+    const byMessage = view.records.find((row) => row.messageId === metadata.messageId);
+    if ((existing && !sameMediaIdentity(existing, metadata)) || (byMessage && byMessage.id !== metadata.id)) {
+      throw new Error("Media identity conflict");
+    }
+    return existing;
+  }
+
+  function canSendMedia(view: MediaView, conversationId: string): boolean {
+    return cachedMediaAllowed(view.states.find((state) => state.conversationId === conversationId)?.projection);
+  }
+
+  async function storeMedia(record: MediaAttachment, bytes: ArrayBuffer, message?: HumanMessage): Promise<MediaAttachment> {
+    const store = byteStore();
+    await mediaTransaction("readonly", (view) => {
+      if (view.purged) throw new Error("Messaging media purged");
+      if (message && !canSendMedia(view, message.conversationId)) throw new Error("Media unavailable");
+      mediaReplay(view, record);
+      if (!message) mediaParent(view, record);
+    });
+    await verifyMediaContent(record, bytes, options.decodeMedia);
+    const prior = await store.get(scope.accountId, record.id);
+    if (prior) await verifyMediaBytes(record, prior);
+    else await store.put(scope.accountId, record.id, bytes);
+    let committed = false;
+    try {
+      return await mediaTransaction("readwrite", (view, tx, guard) => {
+        if (view.purged) throw new Error("Messaging media purged");
+        if (message && !canSendMedia(view, message.conversationId)) throw new Error("Media unavailable");
+        const existing = mediaReplay(view, record);
+        const write = () => {
+          const saved = existing ? copyMediaAttachment({ ...existing,
+            ...(message ? {} : { state: "AWAITING_ACK", token: undefined, leaseUntil: undefined,
+              expiresAt: record.expiresAt ?? existing.expiresAt, lastAccessAt: record.lastAccessAt }),
+          }) : record;
+          tx.objectStore("mediaAttachments").put(saved);
+          return saved;
+        };
+        if (!message) { mediaParent(view, record); return write(); }
+        // The erasure requests stay inside this strict metadata transaction.
+        const deleted = tx.objectStore("deletions").get(message.id);
+        const unsent = tx.objectStore("unsends").get(message.id);
+        const request = tx.objectStore("messages").get(message.id);
+        let remaining = 3;
+        const complete = guard(() => {
+          if (--remaining) return;
+          if (deleted.result || unsent.result) throw new MediaParentUnavailableError(message.id);
+          const parent = request.result as StoredHumanMessage | undefined;
+          if (parent) {
+            mediaParent(view, record);
+            if (!sameMessage(parent, message)) throw new Error("Immutable message identity conflict");
+          } else {
+            tx.objectStore("messages").add(message);
+            tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0 } satisfies OutboxEntry);
+            updateConversation(tx, guard, message.conversationId, conversationPeer(scope, message),
+              (state) => ({ ...state, updatedAt: Date.now() }));
+          }
+          write();
+        });
+        deleted.onsuccess = complete; unsent.onsuccess = complete; request.onsuccess = complete;
+        return existing ?? record;
+      }, () => { committed = true; });
+    } catch (error) {
+      if (!committed && !prior) await store.delete(scope.accountId, [record.id]).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async function enqueueOutgoingWithMedia(input: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer): Promise<void> {
+    assertOpen();
+    const message = copyMediaMessage(input);
+    const record = copyMediaAttachment({ ...metadata, state: "QUEUED", attempts: 0, lastAccessAt: Date.now() });
+    if (message.authorId !== scope.accountId || record.direction !== "OUT" || record.messageId !== message.id) {
+      throw new Error("Outgoing media scope mismatch");
+    }
+    await storeMedia(record, bytes, message);
+  }
+
+  async function claimNextMediaUpload(): Promise<MediaUploadAttempt | null> {
+    const store = byteStore();
+    const now = Date.now();
+    const candidate = await mediaTransaction("readonly", (view) => view.records
+      .filter((row) => row.direction === "OUT" && (row.state === "QUEUED" || row.state === "FAILED"
+        || (row.state === "UPLOADING" && row.leaseUntil! <= now))
+        && view.parents.some((parent) => parent.id === row.messageId && parent.server
+          && canSendMedia(view, parent.conversationId)))
+      .sort((a, b) => a.lastAccessAt - b.lastAccessAt || a.id.localeCompare(b.id))[0]);
+    if (!candidate) return null;
+    const bytes = await store.get(scope.accountId, candidate.id);
+    if (!bytes) throw new Error("Media bytes missing");
+    await verifyMediaBytes(candidate, bytes);
+    return mediaTransaction("readwrite", (view, tx) => {
+      const current = mediaReplay(view, candidate);
+      if (!current || JSON.stringify(current) !== JSON.stringify(candidate)) return null;
+      if (!mediaParent(view, current).server) return null;
+      const token = uuid(crypto.randomUUID());
+      const claimed = copyMediaAttachment({ ...current, state: "UPLOADING", token,
+        leaseUntil: now + LEASE_MS, attempts: current.attempts + 1 });
+      tx.objectStore("mediaAttachments").put(claimed);
+      return { attachmentId: current.id, messageId: current.messageId, sha256: current.sha256,
+        token, attempt: claimed.attempts };
+    });
+  }
+
+  async function settleMediaUpload(input: MediaUploadAttempt, success: boolean): Promise<boolean> {
+    byteStore();
+    const id = uuid(input?.attachmentId), messageId = uuid(input?.messageId), token = uuid(input?.token);
+    const attempt = positiveSequence(input?.attempt);
+    if (!isMediaSha256(input?.sha256)) throw new Error("Invalid media digest");
+    return mediaTransaction("readwrite", (view, tx) => {
+      const row = view.records.find((item) => item.id === id);
+      if (!row) return false;
+      if (row.messageId !== messageId || row.sha256 !== input.sha256) throw new Error("Media attempt identity conflict");
+      if (row.state !== "UPLOADING" || row.token !== token || row.attempts !== attempt) return false;
+      mediaParent(view, row);
+      tx.objectStore("mediaAttachments").put(copyMediaAttachment({ ...row,
+        state: success ? "AWAITING_ACK" : "FAILED", token: undefined, leaseUntil: undefined }));
+      return true;
+    });
+  }
+
+  async function markMediaReady(id: string): Promise<boolean> {
+    const store = byteStore(); uuid(id);
+    const bytes = await store.get(scope.accountId, id);
+    const row = await mediaTransaction("readonly", (view) => view.records.find((record) => record.id === id));
+    if (!row || row.state !== "AWAITING_ACK") return false;
+    if (!bytes) throw new Error("Media bytes missing");
+    await verifyMediaBytes(row, bytes);
+    return mediaTransaction("readwrite", (view, tx) => {
+      const current = mediaReplay(view, row);
+      if (!current || current.state !== "AWAITING_ACK") return false;
+      mediaParent(view, current);
+      tx.objectStore("mediaAttachments").put(copyMediaAttachment({ ...current, state: "READY" }));
+      return true;
+    });
+  }
+
+  async function listMedia(conversationId: string): Promise<MediaAttachment[]> {
+    uuid(conversationId);
+    return mediaTransaction("readonly", (view) => view.parents
+      .filter((parent) => parent.conversationId === conversationId)
+      .sort((a, b) => (a.server?.sequence ?? Infinity) - (b.server?.sequence ?? Infinity) || a.id.localeCompare(b.id))
+      .flatMap((parent) => view.records.filter((row) => row.messageId === parent.id)));
+  }
+
+  async function readMedia(attachmentId: string): Promise<ArrayBuffer | null> {
+    uuid(attachmentId);
+    const store = byteStore();
+    const row = await mediaTransaction("readonly", (view) => {
+      const record = view.records.find((item) => item.id === attachmentId);
+      if (!record || record.state === "EVICTED" || !view.parents.some((parent) => parent.id === record.messageId)) return null;
+      mediaParent(view, record);
+      return record;
+    });
+    if (!row) return null;
+    const bytes = await store.get(scope.accountId, attachmentId);
+    if (!bytes) return null;
+    await verifyMediaBytes(row, bytes);
+    return mediaTransaction("readwrite", (view, tx) => {
+      const current = mediaReplay(view, row);
+      if (!current || current.state === "EVICTED" || !view.parents.some((parent) => parent.id === row.messageId)) return null;
+      tx.objectStore("mediaAttachments").put(copyMediaAttachment({ ...current, lastAccessAt: Date.now() }));
+      return bytes;
+    });
+  }
+
+  function sweepLimit(limit: number): number {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid media sweep limit");
+    return limit;
+  }
+
+  async function evictMedia(limit: number): Promise<number> {
+    const store = byteStore(); sweepLimit(limit);
+    const ids = await mediaTransaction("readwrite", (view, tx) => {
+      const rows = view.records.filter((row) => row.state === "READY")
+        .sort((a, b) => a.lastAccessAt - b.lastAccessAt || a.id.localeCompare(b.id)).slice(0, limit);
+      for (const row of rows) tx.objectStore("mediaAttachments").put(copyMediaAttachment({ ...row, state: "EVICTED" }));
+      return rows.map((row) => row.id);
+    });
+    await store.delete(scope.accountId, ids);
+    return ids.length;
+  }
+
+  async function sweepOrphanMedia(limit: number): Promise<number> {
+    const store = byteStore(); sweepLimit(limit);
+    const keep = await mediaTransaction("readonly", (view) => new Set(view.records
+      .filter((row) => row.state !== "EVICTED").map((row) => row.id)));
+    return store.sweep(scope.accountId, keep, limit);
+  }
+
+  async function removeMediaForMessage(messageId: string): Promise<void> {
+    byteStore(); uuid(messageId);
+    await mediaTransaction("readwrite", (view, tx, guard) => {
+      const parent = view.parents.find((row) => row.id === messageId);
+      if (!parent) return;
+      tx.objectStore("deletions").put({ kind: "DELETE_FOR_ME", messageId, local: true,
+        conversationId: parent.conversationId, authorId: parent.authorId,
+        recipientId: parent.recipientId, occurredAt: Date.now() });
+      tx.objectStore("messages").put({ ...parent, body: "" });
+      tx.objectStore("outbox").delete(messageId);
+      removeMediaRows(tx, guard, messageId);
+    });
+  }
+
+  async function clearMedia(): Promise<void> {
+    const store = byteStore();
+    await transaction("readwrite", (tx, result) => {
+      tx.objectStore("mediaLifecycle").put(true, "purged");
+      tx.objectStore("mediaAttachments").clear(); result(undefined);
+    });
+    mediaPurged = true;
+    await store.clearAccount(scope.accountId);
+  }
+
+  let tail: Promise<unknown> = Promise.resolve();
+  function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>) {
+    return async (...args: Args): Promise<Result> => {
+      const captured = structuredClone(args);
+      const next = tail.then(() => {
+        assertOpen();
+        return withHistoryLock(scope.accountId, lockLifetime.signal, !!options.mediaBytes,
+          () => { assertOpen(); return work(...captured); });
+      });
+      tail = next.catch(() => undefined);
+      return next;
+    };
+  }
+  const serializedPersist = serial(persistInbound);
+  const serializedMediaPersist = serial(async (metadata: MediaMetadata, bytes: ArrayBuffer) => {
+    const record = copyMediaAttachment({ ...metadata, state: "AWAITING_ACK", attempts: 0, lastAccessAt: Date.now() });
+    return storeMedia(record, bytes);
+  });
+  const serializedMediaReady = serial(markMediaReady);
+  async function persistVerifiedMediaAndAck(metadata: MediaMetadata, bytes: ArrayBuffer,
+    ack: (attachment: MediaAttachment) => Promise<void>): Promise<void> {
+    if (typeof ack !== "function") throw new Error("Invalid media ACK callback");
+    const record = await serializedMediaPersist(metadata, bytes);
+    const { completion } = await serial(async () => {
+      const current = await mediaTransaction("readonly", (view) => {
+        if (view.purged) throw new Error("Messaging media purged");
+        const row = mediaReplay(view, record);
+        if (!row || (row.state !== "AWAITING_ACK" && row.state !== "READY")) throw new Error("Media unavailable");
+        mediaParent(view, row);
+        return row;
+      });
+      const stored = await byteStore().get(scope.accountId, current.id);
+      if (!stored) throw new Error("Media bytes missing");
+      await verifyMediaBytes(current, stored);
+      // Dispatch synchronously under the account lock, but release it without
+      // awaiting network completion. The callback may reenter this history.
+      assertOpen();
+      const completion = Promise.resolve(ack(structuredClone(current)));
+      void completion.catch(() => undefined);
+      return { completion };
+    })();
+    await completion;
+    if (!closed && !mediaPurged) await serializedMediaReady(record.id);
+  }
+
+  if (options.mediaBytes) {
+    try { await serial(sweepOrphanMedia)(100); }
+    catch (error) { await close(); throw error; }
+  }
+
+  return { enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage), listMessages: serial(listMessages),
+    listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
+    markConversationRead: serial(markConversationRead), getStateCursor: serial(getStateCursor),
+    applyStateChange: serial(applyStateChange), listOutbox: serial(listOutbox), claimNextOutgoing: serial(claimNextOutgoing),
+    failOutgoing: serial(failOutgoing), persistInbound: serializedPersist, persistInboundAndAck, close,
+    enqueueOutgoingWithMedia: serial(enqueueOutgoingWithMedia), claimNextMediaUpload: serial(claimNextMediaUpload),
+    failMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, false)),
+    completeMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, true)),
+    persistVerifiedMediaAndAck, markMediaReady: serializedMediaReady, listMedia: serial(listMedia), readMedia: serial(readMedia),
+    evictMedia: serial(evictMedia), sweepOrphanMedia: serial(sweepOrphanMedia),
+    removeMediaForMessage: serial(removeMediaForMessage), clearMedia: serial(clearMedia), exportSnapshot, importSnapshot };
 }

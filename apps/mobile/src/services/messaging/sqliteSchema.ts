@@ -22,8 +22,16 @@
  * no caption. The old CHECK (`length(body) between 1 and 100000`) cannot be
  * altered in place, so v5 rebuilds the table with SQLite's documented procedure
  * and proves the copy is exact before dropping the original.
+ *
+ * v6: `media_attachments` holds chat attachment metadata. Purely additive — the
+ * table and its unique index are created only if absent, so a v5 file keeps every
+ * row and a fresh file ends with byte-identical DDL. The bytes themselves are
+ * never stored here: the SQLite bridge cannot carry binary, so they live in the
+ * `mediaBytes` IndexedDB store on every platform. This row is the claim that a
+ * verified byte entry exists, and the write order (bytes, then row) is what makes
+ * that claim true.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 5;
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 6;
 
 /**
  * The v5 `messages` body CHECK, recognised in `sqlite_master`.
@@ -54,6 +62,17 @@ export const MESSAGING_SQLITE_DURABILITY_CHECKS = {
   synchronous: "pragma synchronous",
   foreignKeys: "pragma foreign_keys",
 } as const;
+
+/** Same lowercase UUID shape as validation.uuid; SQL protects non-TS writers. */
+function uuidCheck(column: string): string {
+  return `typeof(${column}) = 'text' and length(${column}) = 36
+    and substr(${column}, 9, 1) = '-' and substr(${column}, 14, 1) = '-'
+    and substr(${column}, 19, 1) = '-' and substr(${column}, 24, 1) = '-'
+    and length(replace(${column}, '-', '')) = 32
+    and replace(${column}, '-', '') not glob '*[^0-9a-f]*'
+    and substr(${column}, 15, 1) between '1' and '8'
+    and substr(${column}, 20, 1) in ('8','9','a','b')`;
+}
 
 export const MESSAGING_SQLITE_SCHEMA = [
   `create table if not exists messaging_meta (
@@ -136,11 +155,45 @@ export const MESSAGING_SQLITE_SCHEMA = [
     sequence integer not null unique,
     change_json text not null
   )`,
+  // v6: chat attachment metadata, additive. Bytes live in the mediaBytes store,
+  // never here. `state = 'UPLOADING'` *is* the lease, so token and lease_until
+  // exist exactly then; a stale token cannot outlive the state that held it.
+  `create table if not exists media_attachments (
+    id text primary key not null check (${uuidCheck("id")}),
+    message_id text not null references messages(id) on delete cascade check (${uuidCheck("message_id")}),
+    direction text not null check (direction in ('OUT','IN')),
+    -- Lowercase 64-hex only: the digest is compared as a string downstream.
+    sha256 text not null check (length(sha256) = 64 and sha256 not glob '*[^0-9a-f]*'),
+    mime text not null check (mime in ('image/jpeg','image/png','image/webp')),
+    byte_size integer not null check (typeof(byte_size) = 'integer' and byte_size between 1 and 20971520),
+    width integer not null check (typeof(width) = 'integer' and width between 1 and 8192),
+    height integer not null check (typeof(height) = 'integer' and height between 1 and 8192),
+    expires_at integer check (expires_at is null or (typeof(expires_at) = 'integer' and expires_at between 1 and 9007199254740991)),
+    last_access_at integer not null check (typeof(last_access_at) = 'integer' and last_access_at between 0 and 9007199254740991),
+    state text not null check (state in ('QUEUED','UPLOADING','FAILED','AWAITING_ACK','READY','EVICTED')),
+    attempts integer not null default 0 check (typeof(attempts) = 'integer' and attempts between 0 and 9007199254740991),
+    token text check (token is null or (${uuidCheck("token")})),
+    lease_until integer check (lease_until is null or (typeof(lease_until) = 'integer' and lease_until between 1 and 9007199254740991)),
+    check ((state = 'UPLOADING' and token is not null and lease_until is not null)
+      or (state <> 'UPLOADING' and token is null and lease_until is null)),
+    check (direction = 'OUT' or expires_at is not null),
+    -- Inbound only exists once verified bytes arrived: there is no local queue.
+    check (direction = 'OUT' or state in ('AWAITING_ACK','READY','EVICTED'))
+  )`,
+  // One attachment per message in this wave, and the lookup the adapters use.
+  // A unique index provides both the uniqueness rule and the index.
+  `create unique index if not exists ux_media_attachments_message
+    on media_attachments(message_id)`,
 ] as const;
 
 const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
   m.author_id as authorId, m.recipient_id as recipientId, m.body as body,
   m.server_event_id as eventId, m.server_sequence as sequence, m.unsent_at as unsentAt`;
+
+const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as direction,
+  a.sha256 as sha256, a.mime as mime, a.byte_size as byteSize, a.width as width,
+  a.height as height, a.expires_at as expiresAt, a.last_access_at as lastAccessAt,
+  a.state as state, a.attempts as attempts, a.token as token, a.lease_until as leaseUntil`;
 
 export const MESSAGING_SQLITE_STATEMENTS = {
   getMeta: `select value from messaging_meta where key = ?`,
@@ -359,6 +412,84 @@ export const MESSAGING_SQLITE_STATEMENTS = {
       and exists (select 1 from conversation_cleared c
         where c.conversation_id = messages.conversation_id
           and messages.server_sequence <= c.through_sequence)`,
+
+  // ---- v6: chat media attachment metadata ----
+  insertMediaAttachment: `insert into media_attachments
+    (id, message_id, direction, sha256, mime, byte_size, width, height, expires_at,
+      last_access_at, state, attempts, token, lease_until)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  getMediaAttachment: `select ${MEDIA_COLUMNS} from media_attachments a where a.id = ?`,
+  getMediaByMessage: `select ${MEDIA_COLUMNS} from media_attachments a where a.message_id = ?`,
+  /** A row is only rendered or claimed behind a parent this account can see. */
+  getMediaParent: `select m.id as id from messages m
+    where m.id = ?
+      and m.body is not null
+      and m.unsent_at is null
+      and not exists (select 1 from deleted_for_me d where d.message_id = m.id)
+      and (m.server_sequence is null or m.server_sequence > coalesce(
+        (select c.through_sequence from conversation_cleared c
+          where c.conversation_id = m.conversation_id), 0))`,
+  listMediaForConversation: `select ${MEDIA_COLUMNS} from media_attachments a
+    join messages m on m.id = a.message_id
+    where m.conversation_id = ?
+      and m.body is not null and m.unsent_at is null
+      and not exists (select 1 from deleted_for_me d where d.message_id = m.id)
+      and (m.server_sequence is null or m.server_sequence > coalesce(
+        (select c.through_sequence from conversation_cleared c
+          where c.conversation_id = m.conversation_id), 0))
+    order by (m.server_sequence is null), m.server_sequence, m.created_at, a.id`,
+  /**
+   * The only claimable rows. The text echo must already be stored: reserve
+   * requires an authored server message, so claiming earlier would POST for a
+   * message the server has never seen.
+   */
+  nextMediaUpload: `select a.id as id, m.conversation_id as conversationId from media_attachments a
+    join messages m on m.id = a.message_id
+    where (a.state in ('QUEUED', 'FAILED')
+        or (a.state = 'UPLOADING' and a.lease_until <= ?))
+      and m.server_event_id is not null
+      and m.server_sequence is not null
+      and m.body is not null
+      and m.unsent_at is null
+      and not exists (select 1 from deleted_for_me d where d.message_id = m.id)
+      and (m.server_sequence > coalesce(
+        (select c.through_sequence from conversation_cleared c
+          where c.conversation_id = m.conversation_id), 0))
+    order by a.last_access_at, a.id`,
+  claimMediaUpload: `update media_attachments
+    set state = 'UPLOADING', token = ?, lease_until = ?, attempts = attempts + 1
+    where id = ?`,
+  getMediaClaim: `select attempts from media_attachments where id = ?`,
+  failMediaUpload: `update media_attachments
+    set state = 'FAILED', token = null, lease_until = null
+    where id = ? and token = ? and attempts = ? and state = 'UPLOADING'`,
+  completeMediaUpload: `update media_attachments
+    set state = 'AWAITING_ACK', token = null, lease_until = null
+    where id = ? and token = ? and attempts = ? and state = 'UPLOADING'`,
+  markMediaReady: `update media_attachments
+    set state = 'READY', token = null, lease_until = null
+    where id = ? and state = 'AWAITING_ACK'`,
+  /** Replay: keep a known expiry rather than replacing it with NULL. */
+  setMediaAwaitingAck: `update media_attachments
+    set state = 'AWAITING_ACK', token = null, lease_until = null,
+      expires_at = coalesce(?, expires_at), last_access_at = ?
+    where id = ?`,
+  touchMediaAccess: `update media_attachments set last_access_at = ? where id = ?`,
+  evictableMedia: `select id from media_attachments where state = 'READY'
+    order by last_access_at, id limit ?`,
+  markMediaEvicted: `update media_attachments set state = 'EVICTED'
+    where id = ? and state = 'READY'`,
+  /** `EVICTED` is excluded, so the sweep also reclaims bytes it still holds. */
+  listLiveMediaIds: `select id from media_attachments where state <> 'EVICTED'`,
+  suppressedMedia: `select a.id as id from media_attachments a
+    left join messages m on m.id = a.message_id
+    where m.id is null or m.body is null or m.unsent_at is not null
+      or exists (select 1 from deleted_for_me d where d.message_id = m.id)
+      or exists (select 1 from conversation_cleared c where c.conversation_id = m.conversation_id
+        and m.server_sequence <= c.through_sequence)`,
+  listMediaIdsForMessage: `select id from media_attachments where message_id = ?`,
+  deleteMediaAttachment: `delete from media_attachments where id = ?`,
+  deleteAllMedia: `delete from media_attachments`,
 } as const;
 
 export type MessagingStatement = keyof typeof MESSAGING_SQLITE_STATEMENTS;

@@ -11,9 +11,10 @@
  * effect, because a persistence receipt is only honest after a durable commit.
  */
 import type {
-  HistorySnapshot, HumanMessage, ImportReport, MailboxEnvelope, MessagingHistory,
-  MessagingScope, OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage,
+  HistorySnapshot, HumanMessage, ImportReport, MailboxEnvelope, MediaAttachment, MediaBytesPort,
+  MessagingHistory, MessagingScope, OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage,
 } from "./history";
+import { MediaParentUnavailableError } from "./history";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
 import {
   MESSAGES_V5_BODY_CHECK,
@@ -28,7 +29,12 @@ import {
   type ConversationProjection, type ConversationSummary, type LocalConversationState,
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
-import { copyMessage, positiveSequence, uuid } from "./validation";
+import { cachedMediaAllowed, copyMessage, copyMediaAttachment, copyMediaMessage, positiveSequence, uuid } from "./validation";
+import {
+  isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt,
+} from "./media";
+import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
+import { withHistoryLock } from "./historyLock";
 
 export type SqliteValue = string | number | null;
 
@@ -48,6 +54,12 @@ export interface SqliteHistoryOptions {
   token?: () => string;
   /** Test/initialisation override for the busy timeout. */
   busyTimeoutMs?: number;
+  /**
+   * The chat-media byte store. Required for every media operation and never for
+   * text: the two durable stores stay independent, ordered rather than shared.
+   */
+  mediaBytes?: MediaBytesPort;
+  decodeMedia?: MediaDecoder;
 }
 
 interface MessageRow {
@@ -78,13 +90,33 @@ interface TombstoneRow {
   unsentBy: string;
 }
 
+/** `media_attachments` as the adapter reads it; validation re-checks every field. */
+interface MediaRow {
+  id: string;
+  messageId: string;
+  direction: "OUT" | "IN";
+  sha256: string;
+  mime: string;
+  byteSize: number;
+  width: number;
+  height: number;
+  expiresAt: number | null;
+  lastAccessAt: number;
+  state: string;
+  attempts: number;
+  token: string | null;
+  leaseUntil: number | null;
+}
+
 const LEASE_MS = 60_000;
 
 /**
  * Every schema this build can migrate forward from. A version outside this list
  * is a file written by a newer build, and it is refused before any mutation.
  */
-const SUPPORTED_PRIOR_VERSIONS: readonly string[] = ["1", "2", "3", "4", String(MESSAGING_SQLITE_SCHEMA_VERSION)];
+const SUPPORTED_PRIOR_VERSIONS: readonly string[] = [
+  "1", "2", "3", "4", "5", String(MESSAGING_SQLITE_SCHEMA_VERSION),
+];
 
 function defaultToken(): string {
   const source = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
@@ -205,7 +237,11 @@ export async function openSqliteMessagingHistory(
     throw new Error("Messaging storage requires foreign_keys = ON");
   }
 
-  for (const statement of MESSAGING_SQLITE_SCHEMA) await driver.exec(statement);
+  // v6 DDL belongs to the identity/version transaction below, never a partially
+  // applied upgrade outside that lock. Prior migrations retain their ordering.
+  for (const statement of MESSAGING_SQLITE_SCHEMA) {
+    if (!statement.includes("media_attachments")) await driver.exec(statement);
+  }
 
   // v4 -> v5: `messages.body` must admit the empty string so an image-only
   // message has somewhere to live. A CHECK constraint cannot be altered in
@@ -283,6 +319,9 @@ export async function openSqliteMessagingHistory(
     if (storedDevice !== null && storedDevice !== scope.deviceId) {
       throw new Error("Messaging database belongs to a different installation");
     }
+    for (const statement of MESSAGING_SQLITE_SCHEMA) {
+      if (statement.includes("media_attachments")) await driver.exec(statement);
+    }
     await driver.run(S.setMetaIfAbsent, ["account_id", scope.accountId]);
     await driver.run(S.setMetaIfAbsent, ["device_id", scope.deviceId]);
     await driver.run(S.setMetaIfAbsent, ["schema_version", String(MESSAGING_SQLITE_SCHEMA_VERSION)]);
@@ -316,16 +355,42 @@ export async function openSqliteMessagingHistory(
     }
   }
 
-  async function transaction<T>(work: () => Promise<T>): Promise<T> {
-    await driver.exec("begin immediate");
+  async function transaction<T>(work: () => Promise<T>,
+    onOutcome?: (outcome: "committed" | "rolled-back" | "unknown") => void): Promise<T> {
+    let committed = false;
     try {
+      // A rejected bridge reply does not prove BEGIN failed to execute. Include
+      // acquisition in rollback/invalidation so it cannot leak a writer lock.
+      await driver.exec("begin immediate");
       const result = await work();
+      // Text suppression and attachment suppression share the metadata commit.
+      // Bytes go afterwards: failed cleanup leaves garbage, never a live lie.
+      const suppressed = await driver.all<{ id: string }>(S.suppressedMedia);
+      for (const row of suppressed) await driver.run(S.deleteMediaAttachment, [row.id]);
       if (closed) throw new Error("Messaging history closed");
       await driver.exec("commit");
+      committed = true;
+      onOutcome?.("committed");
+      if (suppressed.length && options.mediaBytes) {
+        await options.mediaBytes.delete(scope.accountId, suppressed.map((row) => row.id)).catch(() => undefined);
+      }
       if (closed) throw new Error("Messaging history closed");
       return result;
     } catch (error) {
-      try { await driver.exec("rollback"); } catch { /* commit may already have failed */ }
+      if (!committed) {
+        let outcome: "rolled-back" | "unknown" = "unknown";
+        try { await driver.exec("rollback"); outcome = "rolled-back"; }
+        catch { /* BEGIN/COMMIT may have executed despite a lost bridge reply. */ }
+        onOutcome?.(outcome);
+        if (outcome === "unknown") {
+          // The transaction may still be active. Never expose its uncommitted
+          // rows through later reads or leave the writer lane reusable. Close
+          // directly here, NOT via close()'s tail (which contains this call).
+          closed = true;
+          lockLifetime.abort(new Error("Messaging history transaction outcome unknown"));
+          await closeDriver().catch(() => undefined); // preserve the original operation error
+        }
+      }
       throw error;
     }
   }
@@ -547,7 +612,7 @@ export async function openSqliteMessagingHistory(
 
   async function failOutgoing(attempt: OutgoingAttempt): Promise<boolean> {
     await assertOpen();
-    const message = copyMessage(attempt?.message);
+    const message = copyMediaMessage(attempt?.message);
     if (message.authorId !== scope.accountId) throw new Error("Invalid outgoing attempt scope");
     if (!Number.isSafeInteger(attempt?.attempt) || attempt.attempt < 1) {
       throw new Error("Invalid outgoing attempt generation");
@@ -576,7 +641,8 @@ export async function openSqliteMessagingHistory(
     const eventId = uuid(envelope.event?.eventId);
     const sequence = positiveSequence(envelope.event?.sequence);
     if (envelope.event?.kind !== "TEXT") throw new Error("Unsupported messaging event");
-    const message = copyMessage(envelope.event.message);
+    // The server keeps the TEXT envelope for captionless MEDIA messages.
+    const message = copyMediaMessage(envelope.event.message);
     if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) {
       throw new Error("Inbound participant scope mismatch");
     }
@@ -1018,15 +1084,261 @@ export async function openSqliteMessagingHistory(
     });
   }
 
+  let mediaPurged = false;
+  function byteStore(): MediaBytesPort {
+    if (!options.mediaBytes) throw new Error("Messaging media byte storage unavailable");
+    return options.mediaBytes;
+  }
+
+  async function mediaRow(id: string): Promise<MediaAttachment | null> {
+    const row = (await driver.all<MediaRow>(S.getMediaAttachment, [id]))[0];
+    return row ? copyMediaAttachment(row) : null;
+  }
+
+  async function mediaParent(metadata: MediaMetadata): Promise<MessageRow> {
+    const row = await messageRow(metadata.messageId);
+    const visible = (await driver.all(S.getMediaParent, [metadata.messageId])).length > 0;
+    if (!row || !visible) throw new MediaParentUnavailableError(metadata.messageId);
+    if (row.authorId !== scope.accountId && row.recipientId !== scope.accountId) {
+      throw new Error("Media participant scope mismatch");
+    }
+    if (metadata.direction !== (row.authorId === scope.accountId ? "OUT" : "IN")) {
+      throw new Error("Media direction scope mismatch");
+    }
+    return row;
+  }
+
+  async function mediaReplay(metadata: MediaMetadata): Promise<MediaAttachment | null> {
+    const existing = await mediaRow(metadata.id);
+    const byMessage = (await driver.all<MediaRow>(S.getMediaByMessage, [metadata.messageId]))[0];
+    if ((existing && !sameMediaIdentity(existing, metadata))
+      || (byMessage && byMessage.id !== metadata.id)) throw new Error("Media identity conflict");
+    return existing;
+  }
+
+  async function insertMedia(record: MediaAttachment): Promise<void> {
+    const row = copyMediaAttachment(record);
+    await driver.run(S.insertMediaAttachment, [row.id, row.messageId, row.direction, row.sha256,
+      row.mime, row.byteSize, row.width, row.height, row.expiresAt, row.lastAccessAt,
+      row.state, row.attempts, row.token ?? null, row.leaseUntil ?? null]);
+  }
+
+  /** Compensate a new byte entry only after a positively acknowledged rollback. */
+  async function withMediaBytes<T>(metadata: MediaMetadata, bytes: ArrayBuffer,
+    work: (store: MediaBytesPort) => Promise<T>): Promise<T> {
+    const store = byteStore();
+    let newlyWritten = false;
+    let rolledBack = false;
+    try {
+      return await transaction(async () => {
+        if ((await driver.all<{ value: string }>(S.getMeta, ["media_purged"]))[0]?.value === "1") {
+          throw new Error("Messaging media purged");
+        }
+        // Guard immutable identities before overwriting any byte entry.
+        await mediaReplay(metadata);
+        const prior = await store.get(scope.accountId, metadata.id);
+        if (prior) await verifyMediaBytes(metadata, prior);
+        else {
+          await store.put(scope.accountId, metadata.id, bytes);
+          newlyWritten = true;
+        }
+        return work(store);
+      }, (outcome) => { rolledBack = outcome === "rolled-back"; });
+    } catch (error) {
+      // A rejected COMMIT response does not prove it failed. Unknown outcomes
+      // retain bytes: sweepable garbage is safer than destroying a live row.
+      if (newlyWritten && rolledBack) {
+        await store.delete(scope.accountId, [metadata.id]).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  async function canSendMedia(conversationId: string): Promise<boolean> {
+    const state = (await driver.all<StateRow>(S.getConversationState, [conversationId]))[0];
+    return cachedMediaAllowed(state ? localState(state).projection : undefined);
+  }
+
+  async function enqueueOutgoingWithMedia(message: HumanMessage, input: MediaMetadata, bytes: ArrayBuffer): Promise<void> {
+    await assertOpen();
+    const outgoing = copyMediaMessage(message);
+    const record = copyMediaAttachment({ ...input, state: "QUEUED", attempts: 0, lastAccessAt: now() });
+    if (outgoing.authorId !== scope.accountId || record.direction !== "OUT" || record.messageId !== outgoing.id) {
+      throw new Error("Outgoing media scope mismatch");
+    }
+    if (!await canSendMedia(outgoing.conversationId)) throw new Error("Media unavailable");
+    byteStore();
+    await verifyMediaContent(record, bytes, options.decodeMedia);
+    await withMediaBytes(record, bytes, async () => {
+      await ensureConversationState(outgoing.conversationId, conversationPeer(scope, outgoing));
+      if (await tombstoneRow(outgoing.id) || (await driver.all(S.isDeletedForMe, [outgoing.id])).length) {
+        throw new MediaParentUnavailableError(outgoing.id);
+      }
+      const parent = await messageRow(outgoing.id);
+      if (parent) {
+        if (!sameIdentity(parent, outgoing) || parent.body !== outgoing.body) throw new Error("Immutable message identity conflict");
+      } else {
+        await driver.run(S.insertMessage, [outgoing.id, outgoing.conversationId, outgoing.authorId,
+          outgoing.recipientId, outgoing.body, now()]);
+        await driver.run(S.enqueueOutbox, [outgoing.id]);
+        await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
+      }
+      await mediaParent(record);
+      if (!await mediaReplay(record)) await insertMedia(record);
+    });
+  }
+
+  async function claimNextMediaUpload(): Promise<MediaUploadAttempt | null> {
+    await assertOpen();
+    const store = byteStore();
+    return transaction(async () => {
+      const time = positiveTimestamp(now());
+      const candidates = await driver.all<{ id: string; conversationId: string }>(S.nextMediaUpload, [time]);
+      let candidate: { id: string } | undefined;
+      for (const row of candidates) {
+        if (await canSendMedia(row.conversationId)) { candidate = row; break; }
+      }
+      if (!candidate) return null;
+      const row = (await mediaRow(candidate.id))!;
+      await mediaParent(row);
+      const bytes = await store.get(scope.accountId, row.id);
+      if (!bytes) throw new Error("Media bytes missing");
+      await verifyMediaBytes(row, bytes);
+      const token = uuid(tokenFactory());
+      const claimed = copyMediaAttachment({ ...row, state: "UPLOADING", token,
+        leaseUntil: time + leaseMs, attempts: row.attempts + 1 });
+      await driver.run(S.claimMediaUpload, [token, claimed.leaseUntil!, row.id]);
+      return { attachmentId: row.id, messageId: row.messageId, sha256: row.sha256,
+        token, attempt: claimed.attempts };
+    });
+  }
+
+  async function settleMediaUpload(input: MediaUploadAttempt, success: boolean): Promise<boolean> {
+    await assertOpen(); byteStore();
+    const id = uuid(input?.attachmentId);
+    const messageId = uuid(input?.messageId);
+    const token = uuid(input?.token);
+    const attempt = positiveSequence(input?.attempt);
+    if (!isMediaSha256(input?.sha256)) throw new Error("Invalid media digest");
+    return transaction(async () => {
+      const row = await mediaRow(id);
+      if (!row) return false;
+      if (row.messageId !== messageId || row.sha256 !== input.sha256) throw new Error("Media attempt identity conflict");
+      await mediaParent(row);
+      return (await driver.run(success ? S.completeMediaUpload : S.failMediaUpload, [id, token, attempt])) === 1;
+    });
+  }
+
+  async function persistVerifiedMedia(input: MediaMetadata, bytes: ArrayBuffer): Promise<MediaAttachment> {
+    await assertOpen(); byteStore();
+    const record = copyMediaAttachment({ ...input, state: "AWAITING_ACK", attempts: 0, lastAccessAt: now() });
+    await mediaParent(record); // Defer before writing bytes for a missing parent.
+    await mediaReplay(record);
+    await verifyMediaContent(record, bytes, options.decodeMedia);
+    return withMediaBytes(record, bytes, async () => {
+      await mediaParent(record); // Re-check under the write lock after decoding.
+      const existing = await mediaReplay(record);
+      if (existing) await driver.run(S.setMediaAwaitingAck, [record.expiresAt, now(), record.id]);
+      else await insertMedia(record);
+      return (await mediaRow(record.id))!;
+    });
+  }
+
+  async function markMediaReady(attachmentId: string): Promise<boolean> {
+    await assertOpen();
+    const store = byteStore();
+    return transaction(async () => {
+      const row = await mediaRow(uuid(attachmentId));
+      if (!row || row.state !== "AWAITING_ACK") return false;
+      await mediaParent(row);
+      const bytes = await store.get(scope.accountId, row.id);
+      if (!bytes) throw new Error("Media bytes missing");
+      await verifyMediaBytes(row, bytes);
+      return (await driver.run(S.markMediaReady, [row.id])) === 1;
+    });
+  }
+
+  async function listMedia(conversationId: string): Promise<MediaAttachment[]> {
+    await assertOpen();
+    return (await driver.all<MediaRow>(S.listMediaForConversation, [uuid(conversationId)])).map(copyMediaAttachment);
+  }
+
+  async function readMedia(attachmentId: string): Promise<ArrayBuffer | null> {
+    await assertOpen();
+    const store = byteStore();
+    return transaction(async () => {
+      const row = await mediaRow(uuid(attachmentId));
+      if (!row || row.state === "EVICTED") return null;
+      if (!(await driver.all(S.getMediaParent, [row.messageId])).length) return null;
+      await mediaParent(row);
+      const bytes = await store.get(scope.accountId, row.id);
+      if (!bytes) return null;
+      await verifyMediaBytes(row, bytes);
+      await driver.run(S.touchMediaAccess, [now(), row.id]);
+      return bytes;
+    });
+  }
+
+  function sweepLimit(limit: number): number {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid media sweep limit");
+    return limit;
+  }
+
+  async function evictMedia(limit: number): Promise<number> {
+    await assertOpen();
+    const store = byteStore();
+    const ids = await transaction(async () => {
+      const candidates = await driver.all<{ id: string }>(S.evictableMedia, [sweepLimit(limit)]);
+      for (const row of candidates) await driver.run(S.markMediaEvicted, [row.id]);
+      return candidates.map((row) => row.id);
+    });
+    // A failed delete leaves EVICTED + orphan bytes; no live reader can use them.
+    await store.delete(scope.accountId, ids);
+    return ids.length;
+  }
+
+  async function sweepOrphanMedia(limit: number): Promise<number> {
+    await assertOpen();
+    const store = byteStore();
+    const keep = new Set((await driver.all<{ id: string }>(S.listLiveMediaIds)).map((row) => row.id));
+    return store.sweep(scope.accountId, keep, sweepLimit(limit));
+  }
+
+  async function removeMediaForMessage(messageId: string): Promise<void> {
+    // Removal is a real personal deletion, not a way to erase metadata while
+    // allowing a late callback to silently recreate it.
+    byteStore();
+    await deleteForMe(uuid(messageId));
+  }
+
+  async function clearMedia(): Promise<void> {
+    await assertOpen();
+    const store = byteStore();
+    await transaction(async () => {
+      await driver.run(S.setMetaIfAbsent, ["media_purged", "1"]);
+      await driver.run(S.deleteAllMedia);
+    });
+    mediaPurged = true;
+    await store.clearAccount(scope.accountId);
+  }
+
+  const lockLifetime = new AbortController();
   let tail: Promise<unknown> = Promise.resolve();
   let closing: Promise<void> | null = null;
+  let driverClosing: Promise<void> | null = null;
+  function closeDriver(): Promise<void> {
+    // Shared by owner close and unknown-outcome invalidation, even when the
+    // owner has already queued a close behind the current transaction.
+    return driverClosing ??= Promise.resolve().then(() => driver.close());
+  }
   function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>) {
     return async (...args: Args): Promise<Result> => {
       // Snapshot BEFORE joining the queue; callers cannot mutate a delayed write.
       const captured = structuredClone(args);
       const next = tail.then(async () => {
         if (closed) throw new Error("Messaging history closed");
-        const result = await work(...captured);
+        const result = await withHistoryLock(scope.accountId, lockLifetime.signal, !!options.mediaBytes,
+          async () => { await assertOpen(); return work(...captured); });
         if (closed) throw new Error("Messaging history closed");
         return result;
       });
@@ -1036,17 +1348,63 @@ export async function openSqliteMessagingHistory(
   }
   const serializedPersist = serial(persistInbound);
   const serializedImport = serial(importSnapshot);
+  const serializedMediaPersist = serial(persistVerifiedMedia);
+  const serializedMediaReady = serial(markMediaReady);
+
+  async function persistVerifiedMediaAndAck(metadata: MediaMetadata, bytes: ArrayBuffer,
+    ack: (attachment: MediaAttachment) => Promise<void>): Promise<void> {
+    if (typeof ack !== "function") throw new Error("Invalid media ACK callback");
+    const record = await serializedMediaPersist(metadata, bytes);
+    const { completion } = await serial(async () => {
+      if ((await driver.all<{ value: string }>(S.getMeta, ["media_purged"]))[0]?.value === "1") {
+        throw new Error("Messaging media purged");
+      }
+      const current = await mediaReplay(record);
+      if (!current || (current.state !== "AWAITING_ACK" && current.state !== "READY")) {
+        throw new Error("Media unavailable");
+      }
+      await mediaParent(current);
+      const stored = await byteStore().get(scope.accountId, current.id);
+      if (!stored) throw new Error("Media bytes missing");
+      await verifyMediaBytes(current, stored);
+      // Callback ENTRY is the admission point, while still holding the account
+      // lock. No await between this invalidation check and dispatch. Return a
+      // box, not the promise itself: reentrant async completion must not hold
+      // the lock or block the local queue it may need.
+      if (closed) throw new Error("Messaging history closed");
+      const completion = Promise.resolve(ack(structuredClone(current)));
+      void completion.catch(() => undefined);
+      return { completion };
+    })();
+    await completion;
+    if (!closed && !mediaPurged) await serializedMediaReady(record.id);
+  }
 
   function close(): Promise<void> {
     if (closing) return closing;
     closed = true;
+    lockLifetime.abort(new Error("Messaging history closed"));
     // Invalidate immediately; finish/rollback a dispatched transaction before
-    // closing its native handle. No queued operation or ACK survives close.
-    closing = tail.then(() => driver.close());
+    // closing its native handle. No new ACK entry survives close; an already
+    // entered remote callback completes outside this drained storage queue.
+    closing = tail.then(closeDriver);
     return closing;
   }
 
+  if (options.mediaBytes) {
+    try { await serial(sweepOrphanMedia)(100); }
+    catch (error) { await close(); throw error; }
+  }
+
   return {
+    enqueueOutgoingWithMedia: serial(enqueueOutgoingWithMedia),
+    claimNextMediaUpload: serial(claimNextMediaUpload),
+    failMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, false)),
+    completeMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, true)),
+    persistVerifiedMediaAndAck, markMediaReady: serializedMediaReady,
+    listMedia: serial(listMedia), readMedia: serial(readMedia), evictMedia: serial(evictMedia),
+    sweepOrphanMedia: serial(sweepOrphanMedia), removeMediaForMessage: serial(removeMediaForMessage),
+    clearMedia: serial(clearMedia),
     enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage),
     listMessages: serial(listMessages), listOutbox: serial(listOutbox),
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),

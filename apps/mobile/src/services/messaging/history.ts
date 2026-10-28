@@ -1,4 +1,5 @@
 import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
+import type { MediaMetadata, MediaState, MediaUploadAttempt } from "./media";
 import type { StateChangeEnvelope, StateCursor } from "./stateChanges";
 
 /** Human-to-human text history. Deliberately separate from services/ai/chatStore. */
@@ -21,6 +22,60 @@ export interface StoredHumanMessage extends HumanMessage {
   server?: { eventId: string; sequence: number };
   /** Present when the author unsent this message; `body` is then empty. */
   unsentAt?: number;
+}
+
+/**
+ * One chat attachment. Metadata only: the bytes live in the dedicated
+ * `mediaBytes` store on every platform, because the SQLite bridge cannot carry
+ * binary. A record never proves its own bytes exist; only the byte store does.
+ *
+ * `state` is the whole upload/ACK lifecycle and `token`/`leaseUntil` are the
+ * lease that fences a stale attempt. They are present exactly while
+ * `state === "UPLOADING"`.
+ */
+export interface MediaAttachment extends MediaMetadata {
+  state: MediaState;
+  attempts: number;
+  /** Least-recently-used ordering for eviction; updated when bytes are read. */
+  lastAccessAt: number;
+  token?: string;
+  leaseUntil?: number;
+}
+
+/**
+ * The slice of the byte store the history adapters use. Injected so the two
+ * durable stores stay independent. Ordering plus the account Web Lock prevents
+ * adapter-owned cleanup from deleting bytes owned by a committed record.
+ *
+ * Trusted dependency contract: for one account, this port's backing database
+ * belongs to exactly ONE metadata database (installation + backend). Multiple
+ * handles of that same history may share it. Different installations/backends
+ * must use different byte databases, even for the same account; otherwise an
+ * orphan sweep cannot know the other history's live set. The platform owner is
+ * responsible for choosing that database and closing it after history drains.
+ */
+export interface MediaBytesPort {
+  /** Rejects rather than evicting when the account budget is full. */
+  put(accountId: string, attachmentId: string, bytes: ArrayBuffer): Promise<void>;
+  get(accountId: string, attachmentId: string): Promise<ArrayBuffer | null>;
+  has(accountId: string, attachmentId: string): Promise<boolean>;
+  delete(accountId: string, attachmentIds: readonly string[]): Promise<void>;
+  keys(accountId: string): Promise<string[]>;
+  /** Removes entries whose id is not in `keep`, bounded by `limit`. */
+  sweep(accountId: string, keep: ReadonlySet<string>, limit: number): Promise<number>;
+  clearAccount(accountId: string): Promise<void>;
+}
+
+/**
+ * A verified inbound attachment whose parent message is not visible here yet.
+ * The caller defers and retries after the text sync; it must never ACK, and no
+ * row or byte was written.
+ */
+export class MediaParentUnavailableError extends Error {
+  constructor(readonly messageId: string) {
+    super("Media parent is not available");
+    this.name = "MediaParentUnavailableError";
+  }
 }
 
 export interface OutboxEntry {
@@ -63,9 +118,11 @@ export interface PersistenceReceipt extends MessagingScope {
  * no cursor. A restore must never claim to have applied metadata it does not
  * have, so the state cursor is not part of a backup.
  *
- * `body: null` means suppressed (unsent or deleted-for-me). An empty string is
- * not a valid body, so the two adapters — which store suppression as NULL and
- * as `""` respectively — normalise to this one representation.
+ * `body: null` means suppressed (unsent or deleted-for-me). `body: ""` is a
+ * legitimate body: an image-only message has no caption (SQLite v5 relaxed the
+ * `messages` CHECK so `''` is storable, and the web adapter stores `""` too).
+ * Neither adapter may collapse one into the other: suppression is carried by
+ * `unsentAt`/`deletedForMe`/`clears`, not by the empty string.
  */
 export interface SnapshotConversation {
   id: string;
@@ -127,6 +184,60 @@ export interface MessagingHistory {
   /** Requires accepted strict write durability, then transaction completion. Echo confirms sent. */
   persistInbound(envelope: MailboxEnvelope): Promise<PersistenceReceipt>;
   persistInboundAndAck(envelope: MailboxEnvelope, ack: (receipt: PersistenceReceipt) => Promise<void>): Promise<void>;
+  /**
+   * The single durable outbound media admission point. Validates scope, parent,
+   * cached CONNECTED eligibility, digest, size, budget and suppression. Writes bytes first, then the
+   * message, outbox and attachment in one history transaction, and resolves only
+   * after both commits. Rejection gives no success/ACK guarantee: a lost COMMIT
+   * response can leave committed pending work. Reconcile/retry the same IDs;
+   * only a positively acknowledged rollback permits new-byte compensation.
+   * An unknown transaction outcome invalidates the SQLite handle; reopen it.
+   */
+  enqueueOutgoingWithMedia(message: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer): Promise<void>;
+  /**
+   * The only upload claim. Never returns an attachment whose bytes are absent,
+   * whose parent is invisible, or whose text echo has not landed yet.
+   */
+  claimNextMediaUpload(): Promise<MediaUploadAttempt | null>;
+  /** Token+attempt compare-and-set; a stale attempt can never change a newer one. */
+  failMediaUpload(attempt: MediaUploadAttempt): Promise<boolean>;
+  /** Upload finished: `UPLOADING` -> `AWAITING_ACK`, fenced by token+attempt. */
+  completeMediaUpload(attempt: MediaUploadAttempt): Promise<boolean>;
+  /**
+   * The single inbound enforcement point. Independently verifies digest, exact
+   * length, MIME and immutable identity, requires a visible parent, commits the
+   * bytes then metadata as `AWAITING_ACK`. Rechecks live row, purge fence,
+   * visible parent, stored bytes and open state before callback entry under the
+   * account lock. Async callback completion is outside the lock/local queue so
+   * it may reenter history. The callback must start scope-bound work at entry
+   * and honor the owner's abort signal; already-entered work is not recalled.
+   * ACK failure keeps bytes protected unless another operation suppressed them;
+   * successful ACK marks an extant record `READY`, never recreates a removed row.
+   */
+  persistVerifiedMediaAndAck(
+    metadata: MediaMetadata,
+    verifiedBytes: ArrayBuffer,
+    ack: (attachment: MediaAttachment) => Promise<void>,
+  ): Promise<void>;
+  /** Visible attachments for one conversation, in authoritative message order. */
+  listMedia(conversationId: string): Promise<MediaAttachment[]>;
+  /** Committed bytes, or `null`. Never a partial value; a read updates LRU order. */
+  readMedia(attachmentId: string): Promise<ArrayBuffer | null>;
+  /** Marks an acknowledged attachment `READY`; idempotent for a late replay. */
+  markMediaReady(attachmentId: string): Promise<boolean>;
+  /**
+   * Least-recently-used eviction of `READY` records only. The row is marked
+   * `EVICTED` before its bytes are deleted, so a crash leaves sweepable bytes
+   * rather than a row claiming bytes that are gone.
+   */
+  evictMedia(limit: number): Promise<number>;
+  /** Bounded orphan sweep across both stores; returns the entries removed. */
+  sweepOrphanMedia(limit: number): Promise<number>;
+  /** Local deletion: remove the row and then its bytes for one message. */
+  removeMediaForMessage(messageId: string): Promise<void>;
+   /** Account deletion in this history/byte scope: a durable fence prevents
+    * re-admission after reopen. Cleanup is retryable if byte deletion fails. */
+  clearMedia(): Promise<void>;
   /** Portable history data for a backup. Never includes mailbox receipts, the
    * outbox or per-device read state. */
   exportSnapshot(): Promise<HistorySnapshot>;

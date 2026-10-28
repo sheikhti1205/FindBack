@@ -384,3 +384,70 @@ Tests use real fake-indexeddb transactions (including abort after write success)
 a real `node:sqlite` file database. They prove logical persistence across
 close/reopen and the SQL statements themselves, not browser disk durability, OS
 power loss, the Capacitor bridge or native Android behaviour.
+
+## Media adapter boundary (F2b-2)
+
+SQLite v6 adds `media_attachments`; IndexedDB v4 adds `mediaAttachments` and
+`mediaLifecycle`. SQLite v5's empty caption remains distinct from `NULL`
+suppression. Text unsend tombstones remain in message history; their attachments
+do not. Portable backups still exclude media bytes, and web backup support is
+not supplied by this stage.
+
+Both adapters accept an injected `MediaBytesPort`. For each account its backing
+byte database must belong to exactly the same metadata database: installation
+and backend. Handles of that same history may share it; different installations
+or backends may not. Platform integration must select that isolated byte database
+and close it only after `history.close()` resolves. The existing platform owner
+does not yet inject media storage; transport, purge-owner integration and UI are
+separate F2b-3/F2b-4 stages. These adapter methods alone are not shipped chat media.
+
+Safety is ordered, not atomic across stores:
+
+1. Hold an account-scoped origin-wide Web Lock, including compensation/cleanup.
+2. Verify immutable metadata, SHA-256, MIME, dimensions and bounded platform
+   decoding. Commit bytes before committing attachment/message/outbox metadata.
+3. Only after metadata commit may a delivery ACK run. Callback **entry** is under
+   the account lock after revalidating the live row, purge fence, visible parent,
+   stored bytes and synchronous open state. Async callback **completion** is
+   outside the lock/local queue, permitting reentrancy. Callbacks must start
+   scope-bound work at entry and honor the owner's abort signal; already-entered
+   remote work cannot be recalled. Failed ACKs retain protected `AWAITING_ACK`
+   bytes unless another operation suppressed them. Text echo alone never makes
+   an attachment ready. READY settlement never recreates a removed row.
+4. Commit suppression or `EVICTED` before deleting bytes. Interrupted/failed
+   cleanup can leave unavailable orphan bytes, never authorize their rendering.
+   Open runs one bounded sweep of 100 aged orphans under the same lock; the
+   15-minute crash grace period remains enforced by the byte store.
+5. Media purge durably fences future admission, including other handles/reopen,
+   before clearing bytes. Retry cleanup after a byte-store error. Ordinary close
+   does not purge. Close invalidates immediately and drains admitted work before
+   allowing the byte port to close.
+
+SQLite compensation deletes newly written bytes only after a positively
+acknowledged rollback. A COMMIT response may be lost after the commit succeeded;
+unknown outcomes retain bytes and reject without ACK. Rejected enqueue therefore
+does not prove absence of committed pending work: reconcile/retry stable IDs.
+An unknown rollback outcome invalidates and closes the SQLite handle before it
+can expose uncommitted reads or retain a reusable writer transaction. Reopen to
+reconcile; already committed rows/bytes survive. If driver close itself fails,
+the handle stays invalid and owner `close()` reports that failure, not success.
+This recovery includes BEGIN: a rejected bridge reply may follow a successful
+transaction start. Reuse requires acknowledged rollback; otherwise invalidate
+and close, preserving the original failure without admitting bytes or ACK.
+
+Web Locks are required for media; an unavailable API is not silently replaced
+with an in-process queue. Node host tests use Node's LockManager; browser/WebView
+cross-tab and power-loss acceptance remain separate. Outgoing admission and
+upload selection require a cached CONNECTED projection with no own block. This
+is offline eligibility only; remote authorization must recheck current policy.
+
+Tests inject decoding for synthetic image headers, but retain actual hash and
+dimension checks. They do not prove real decoder compatibility, device quota,
+20 MiB latency or native power-loss durability.
+
+The composition suite uses the actual `openMediaBytes` code on fake-indexeddb
+with both adapters, including file-backed asynchronous node:sqlite handles.
+It tests quota/accounting, cleanup failures, LRU, erasure and lifecycle ordering,
+not real browser persistence. A Node 24 LockManager snapshot can still list a
+cancelled waiter; cancellation tests assert rejection and close before the held
+lock is released, then absence of late writes, rather than snapshot removal.

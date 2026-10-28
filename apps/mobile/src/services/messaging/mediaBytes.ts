@@ -73,6 +73,13 @@ export interface MediaBytesStore {
    * Entries stored less than `MEDIA_SWEEP_GRACE_MS` ago are never candidates:
    * a send writes bytes before its attachment row, so a fresh entry with no row
    * is in progress, not orphaned.
+   *
+   * The boundary is captured before this pass joins the per-account queue, so a
+   * pass that waits behind other work uses an *older* cutoff rather than a newer
+   * one. A queue delay can therefore only make a candidate older than the grace
+   * window — it protects more rows, never fewer. Capturing it after the wait
+   * would do the opposite and could sweep a send that is still between its byte
+   * write and its row write.
    */
   sweep(accountId: string, keep: ReadonlySet<string>, limit: number): Promise<number>;
   clearAccount(accountId: string): Promise<void>;

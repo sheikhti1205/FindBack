@@ -8,10 +8,12 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HumanMessage, MailboxEnvelope } from "./history";
 import { openSqliteMessagingHistory, type SqliteDriver, type SqliteHistoryOptions } from "./sqliteHistory";
-import { MESSAGING_SQLITE_SCHEMA, MESSAGING_SQLITE_SCHEMA_VERSION } from "./sqliteSchema";
+import { MESSAGING_SQLITE_SCHEMA, MESSAGING_SQLITE_SCHEMA_VERSION, MESSAGING_SQLITE_STATEMENTS as S } from "./sqliteSchema";
+import { MEDIA_SWEEP_GRACE_MS } from "./media";
+import { afterNextHistoryOperation, deferred, FakeMediaBytes, mediaBytes, mediaFixture } from "./mediaTestDoubles";
 import type { StateChangeEnvelope } from "./stateChanges";
 
 const A = "00000000-0000-4000-8000-000000000001";
@@ -78,7 +80,9 @@ function rawBodies(): string[] {
   }
 }
 
-function rawCount(table: "messages" | "mailbox_seen" | "conversations" | "outbox"): number {
+function rawCount(
+  table: "messages" | "mailbox_seen" | "conversations" | "outbox" | "media_attachments",
+): number {
   const reader = new DatabaseSync(path);
   try {
     return Number((reader.prepare(`select count(*) as n from ${table}`).get() as { n: number }).n);
@@ -155,6 +159,7 @@ beforeEach(() => {
   clock = 1_700_000_000_000;
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   try { database.close(); } catch { /* already closed by the adapter */ }
   rmSync(dir, { recursive: true, force: true });
 });
@@ -248,7 +253,7 @@ describe("schema and durability", () => {
 
     const history = await open();
     expect(database.prepare("select value from messaging_meta where key = 'schema_version'").get())
-      .toEqual({ value: "5" });
+      .toEqual({ value: String(MESSAGING_SQLITE_SCHEMA_VERSION) });
     // Every existing row and its pending send survived the rebuild.
     expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there", server: { sequence: 1 } });
     expect((await history.listOutbox()).map((entry) => entry.messageId)).toEqual([MESSAGE]);
@@ -375,7 +380,7 @@ describe("schema and durability", () => {
     const history = await open();
     expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there" });
     expect(database.prepare("select value from messaging_meta where key = 'schema_version'").get())
-      .toEqual({ value: "5" });
+      .toEqual({ value: String(MESSAGING_SQLITE_SCHEMA_VERSION) });
     await history.close();
   });
 
@@ -1083,6 +1088,857 @@ describe("server-authoritative erasure state", () => {
     expect(await history.getMessage(MESSAGE)).toBeNull();
     expect((await history.listMessages(CONVERSATION)).map((message) => message.body)).toEqual(["new"]);
     expect(database.prepare("select body from messages where id = ?").get(MESSAGE)).toEqual({ body: null });
+    await history.close();
+  });
+});
+
+const ATTACHMENT = "00000000-0000-4000-8000-000000000020";
+const ATTACHMENT_2 = "00000000-0000-4000-8000-000000000021";
+const ATTACHMENT_3 = "00000000-0000-4000-8000-000000000022";
+const ORPHAN_ATTACHMENT = "00000000-0000-4000-8000-000000000024";
+const MESSAGE_3 = "00000000-0000-4000-8000-000000000025";
+const EVENT_3 = "00000000-0000-4000-8000-000000000027";
+const MAILBOX_3 = "00000000-0000-4000-8000-000000000028";
+
+const MEDIA_COLUMNS = `id, message_id as messageId, direction, sha256, mime,
+  byte_size as byteSize, width, height, expires_at as expiresAt,
+  last_access_at as lastAccessAt, state, attempts, token, lease_until as leaseUntil`;
+
+function rawMedia(id: string): Record<string, unknown> | undefined {
+  const reader = new DatabaseSync(path);
+  try {
+    return reader.prepare(`select ${MEDIA_COLUMNS} from media_attachments where id = ?`).get(id) as
+      Record<string, unknown> | undefined;
+  } finally {
+    reader.close();
+  }
+}
+
+async function openWithMedia(port: FakeMediaBytes, beforeExec?: (sql: string) => void | Promise<void>) {
+  const history = await openOn(database, { accountId: A, deviceId: DEVICE }, {
+    mediaBytes: port, decodeMedia: async () => undefined,
+    token: () => ATTACHMENT_3,
+  }, beforeExec);
+  await history.cacheConversation({ conversationId: CONVERSATION, peerId: B, mode: "CONNECTED", request: "NONE",
+    requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 1 });
+  return history;
+}
+
+const MEDIA_DDL_PREFIXES = [
+  "create table if not exists media_attachments (",
+  "create unique index if not exists ux_media_attachments_message",
+];
+
+/**
+ * A v5 file: every table except `media_attachments`, the v5 body CHECK, one
+ * accepted message and its pending outbox row. This is what the previous build
+ * actually wrote, so opening it is a real forward migration.
+ */
+function seedV5() {
+  database.exec("create table messaging_meta (key text primary key, value text not null)");
+  const bind = database.prepare("insert into messaging_meta (key, value) values (?, ?)");
+  bind.run("account_id", A);
+  bind.run("device_id", DEVICE);
+  bind.run("schema_version", "5");
+  for (const statement of MESSAGING_SQLITE_SCHEMA as readonly string[]) {
+    if (MEDIA_DDL_PREFIXES.some((prefix) => statement.startsWith(prefix))) continue;
+    database.exec(statement);
+  }
+  database.prepare("insert into conversations (id, created_at, updated_at) values (?,?,?)")
+    .run(CONVERSATION, 1, 1);
+  database.prepare(`insert into messages
+    (id, conversation_id, author_id, recipient_id, body, server_event_id, server_sequence, created_at)
+    values (?,?,?,?,?,?,?,?)`).run(MESSAGE, CONVERSATION, A, B, "", EVENT, 1, 5);
+  database.prepare("insert into outbox (message_id, status) values (?, 'QUEUED')").run(MESSAGE);
+}
+
+describe("chat media schema and migration", () => {
+  it("migrates a v5 file additively, preserving every row and the v5 body CHECK", async () => {
+    seedV5();
+    const history = await openWithMedia(new FakeMediaBytes(() => clock));
+    expect(database.prepare("select value from messaging_meta where key = 'schema_version'").get())
+      .toEqual({ value: String(MESSAGING_SQLITE_SCHEMA_VERSION) });
+    // No rebuild: the image-only body and the pending send are untouched.
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "", server: { sequence: 1 } });
+    expect((await history.listOutbox()).map((entry) => entry.messageId)).toEqual([MESSAGE]);
+    expect(database.prepare("select name from sqlite_master where type = 'table' and name = 'media_attachments'").get())
+      .toEqual({ name: "media_attachments" });
+    await history.close();
+  });
+
+  it("produces byte-identical media_attachments SQL in a fresh v6 file and a migrated v5 file", async () => {
+    const freshPath = join(dir, "fresh.db");
+    const freshDatabase = new DatabaseSync(freshPath);
+    const fresh = await openOn(freshDatabase, { accountId: A, deviceId: DEVICE });
+    await fresh.close();
+    const readSchema = (file: string) => {
+      const reader = new DatabaseSync(file);
+      try {
+        return reader.prepare(`select type, name, sql from sqlite_master
+          where tbl_name = 'media_attachments' and sql is not null order by type, name`).all();
+      } finally {
+        reader.close();
+      }
+    };
+    const freshSchema = readSchema(freshPath);
+
+    seedV5();
+    const migrated = await openWithMedia(new FakeMediaBytes(() => clock));
+    await migrated.close();
+    const migratedSchema = readSchema(path);
+
+    expect(migratedSchema).toEqual(freshSchema);
+    expect(freshSchema).toHaveLength(2); // the table and its message-id index
+    expect((freshSchema as Array<{ sql: string }>).every((row) => typeof row.sql === "string")).toBe(true);
+  });
+
+  it("enforces every media record invariant in SQL", async () => {
+    await (await open()).close(); // Schema only; no cached conversation fixture.
+    const raw = new DatabaseSync(path);
+    raw.exec("pragma foreign_keys = on");
+    const insert = (overrides: Record<string, unknown> = {}) => {
+      const row = {
+        id: ATTACHMENT, messageId: MESSAGE, direction: "OUT",
+        sha256: "a".repeat(64), mime: "image/png", byteSize: 64, width: 32, height: 32,
+        expiresAt: null, lastAccessAt: 0, state: "QUEUED", attempts: 0, token: null, leaseUntil: null,
+        ...overrides,
+      };
+      raw.prepare(`insert into media_attachments
+        (id, message_id, direction, sha256, mime, byte_size, width, height, expires_at,
+          last_access_at, state, attempts, token, lease_until)
+        values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        row.id as string, row.messageId as string, row.direction as string, row.sha256 as string,
+        row.mime as string, row.byteSize as number, row.width as number, row.height as number,
+        row.expiresAt as number | null, row.lastAccessAt as number, row.state as string,
+        row.attempts as number, row.token as string | null, row.leaseUntil as number | null,
+      );
+    };
+
+    // Parent must exist: the row is a claim about a message, not a free record.
+    expect(() => insert()).toThrow(/FOREIGN KEY/);
+    raw.prepare("insert into conversations (id, created_at, updated_at) values (?,?,?)").run(CONVERSATION, 1, 1);
+    raw.prepare(`insert into messages (id, conversation_id, author_id, recipient_id, body, created_at)
+      values (?,?,?,?,?,?)`).run(MESSAGE, CONVERSATION, A, B, "", 1);
+    insert();
+    expect(raw.prepare("select count(*) as n from media_attachments").get()).toEqual({ n: 1 });
+
+    const violations: Array<[string, Record<string, unknown>]> = [
+      ["uppercase digest", { sha256: "A".repeat(64) }],
+      ["non-hex digest", { sha256: "g".repeat(64) }],
+      ["short digest", { sha256: "a".repeat(63) }],
+      ["unsupported mime", { mime: "image/gif" }],
+      ["zero byte size", { byteSize: 0 }],
+      ["oversized byte size", { byteSize: 20 * 1024 * 1024 + 1 }],
+      ["zero width", { width: 0 }],
+      ["oversized height", { height: 8193 }],
+      ["zero expiry", { expiresAt: 0 }],
+      ["negative access", { lastAccessAt: -1 }],
+      ["unknown state", { state: "SENDING" }],
+      ["negative attempts", { attempts: -1 }],
+      ["inbound queued", { direction: "IN", state: "QUEUED" }],
+      ["lease without uploading", { token: ATTACHMENT, leaseUntil: 5 }],
+      ["uploading without token", { state: "UPLOADING" }],
+      ["uploading without lease", { state: "UPLOADING", token: ATTACHMENT }],
+      ["malformed token", { state: "UPLOADING", token: "not-a-uuid", leaseUntil: 5 }],
+      ["single token", { token: ATTACHMENT }],
+      ["single lease", { leaseUntil: 5 }],
+      ["fractional size", { byteSize: 1.5 }],
+      ["fractional width", { width: 1.5 }],
+      ["fractional height", { height: 1.5 }],
+      ["fractional access", { lastAccessAt: 1.5 }],
+      ["fractional attempt", { attempts: 1.5 }],
+      ["inbound no expiry", { direction: "IN", state: "READY" }],
+      ["malformed id", { id: "not-a-uuid" }],
+      ["non UUID token", { state: "UPLOADING", token: "a".repeat(36), leaseUntil: 5 }],
+    ];
+    for (const [label, overrides] of violations) {
+      expect(() => insert({ id: ATTACHMENT_2, messageId: MESSAGE, ...overrides }), label).toThrow(/CHECK/);
+    }
+    // One attachment per message for this wave.
+    expect(() => insert({ id: ATTACHMENT_2 })).toThrow(/UNIQUE/);
+    // Inbound may be awaiting ACK, ready or evicted.
+    raw.prepare("delete from media_attachments").run();
+    insert({ id: ATTACHMENT_2, direction: "IN", state: "AWAITING_ACK", expiresAt: 5 });
+    raw.prepare("delete from media_attachments").run();
+    insert({ id: ATTACHMENT_3, messageId: MESSAGE, direction: "IN", state: "READY", expiresAt: 5 });
+    raw.close();
+  });
+
+  it("cascades a message delete through its attachment row", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE);
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, metadata, bytes);
+    expect(rawCount("media_attachments")).toBe(1);
+    database.exec(`delete from messages where id = '${MESSAGE}'`);
+    expect(rawCount("media_attachments")).toBe(0);
+    await history.close();
+  });
+});
+
+describe("chat media records", () => {
+  it.each(["purge", "delete"])("does not dispatch ACK when %s wins after commit but before ACK admission", async (action) => {
+    const port = new FakeMediaBytes(() => clock);
+    const one = await openWithMedia(port);
+    const two = await openOn(new DatabaseSync(path), { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => undefined,
+    });
+    try {
+      await one.persistInbound(inbound());
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+      afterNextHistoryOperation(() => action === "purge" ? two.clearMedia() : two.removeMediaForMessage(MESSAGE));
+      const ack = vi.fn(async () => undefined);
+      await expect(one.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack))
+        .rejects.toThrow(/purged|not available|unavailable/i);
+      expect(ack).not.toHaveBeenCalled();
+      expect(rawCount("media_attachments")).toBe(0);
+      expect(await port.keys(A)).toEqual([]);
+    } finally { await one.close(); await two.close(); }
+  });
+
+  it("close drains a delayed ACK-admission read and prevents callback dispatch", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const base = driverFor(database);
+    const entered = deferred(), release = deferred();
+    let armAfterCommit = false, delayParent = false, nativeClosed = false;
+    const history = await openSqliteMessagingHistory({ ...base,
+      exec: async (sql) => {
+        await base.exec(sql);
+        if (sql === "commit" && armAfterCommit) { delayParent = true; armAfterCommit = false; }
+      },
+      all: async <T>(sql: string, params?: readonly (string | number | null)[]) => {
+        const result = await base.all<T>(sql, params);
+        if (sql === S.getMediaParent && delayParent) {
+          delayParent = false; entered.resolve(); await release.promise;
+        }
+        return result;
+      },
+      close: async () => { nativeClosed = true; await base.close(); },
+    }, { accountId: A, deviceId: DEVICE }, { mediaBytes: port, decodeMedia: async () => undefined, now: () => clock });
+    await history.persistInbound(inbound());
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+    armAfterCommit = true;
+    const ack = vi.fn(async () => undefined);
+    const settled = Promise.allSettled([history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack)]);
+    await entered.promise;
+    const closing = history.close();
+    try { await Promise.resolve(); expect(nativeClosed).toBe(false); }
+    finally { release.resolve(); await settled; await closing; }
+    expect((await settled)[0]).toMatchObject({ status: "rejected" });
+    expect(ack).not.toHaveBeenCalled();
+    expect(await port.has(A, ATTACHMENT)).toBe(true);
+  });
+
+  it.each([false, true])("invalidates an unknown transaction outcome without exposing uncommitted rows or holding the writer lock (owner closing: %s)", async (closeDuringCommit) => {
+    const port = new FakeMediaBytes(() => clock);
+    const base = driverFor(database);
+    let failCompletion = false, driverClosed = false, closeCount = 0;
+    let ownerClose: void | Promise<void>;
+    const history = await openSqliteMessagingHistory({ ...base,
+      exec: async (sql) => {
+        if (failCompletion && (sql === "commit" || sql === "rollback")) {
+          if (sql === "commit" && closeDuringCommit) ownerClose = history.close();
+          throw new Error(`synthetic ${sql} not dispatched`);
+        }
+        await base.exec(sql);
+      },
+      close: async () => { closeCount++; await base.close(); driverClosed = true; },
+    }, { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => undefined, now: () => clock,
+    });
+    try {
+      await history.cacheConversation({ conversationId: CONVERSATION, peerId: B, mode: "CONNECTED", request: "NONE",
+        requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 1 });
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE);
+      failCompletion = true;
+      await expect(history.enqueueOutgoingWithMedia(outgoing, fixture.metadata, fixture.bytes))
+        .rejects.toThrow(/commit not dispatched/);
+      expect(rawCount("messages")).toBe(0); // independent reader sees no commit
+      const reads = await Promise.allSettled([
+        history.getMessage(MESSAGE), history.listMessages(CONVERSATION), history.listMedia(CONVERSATION),
+        history.claimNextMediaUpload(),
+      ]);
+      expect(reads.map((result) => result.status)).toEqual(["rejected", "rejected", "rejected", "rejected"]);
+      expect(driverClosed).toBe(true);
+      expect(await port.get(A, ATTACHMENT)).toEqual(fixture.bytes); // unknown outcome retains bytes
+
+      const fresh = new DatabaseSync(path);
+      fresh.exec("begin immediate; rollback"); // no leaked writer lock, before explicit owner close
+      const reopened = await openOn(fresh, { accountId: A, deviceId: DEVICE }, {
+        mediaBytes: port, decodeMedia: async () => undefined,
+      });
+      try {
+        expect(await reopened.getMessage(MESSAGE)).toBeNull();
+        expect(await reopened.listMedia(CONVERSATION)).toEqual([]);
+        expect(await reopened.claimNextMediaUpload()).toBeNull();
+        clock += MEDIA_SWEEP_GRACE_MS + 1;
+        expect(await reopened.sweepOrphanMedia(10)).toBe(1);
+        expect(await port.keys(A)).toEqual([]);
+      } finally { await reopened.close(); }
+    } finally { await history.close(); await ownerClose!; }
+    expect(closeCount).toBe(1);
+  });
+
+  it.each(["before", "after"] as const)("recovers a BEGIN failure %s SQL execution without admission or a leaked writer lock", async (failureAt) => {
+    const port = new FakeMediaBytes(() => clock);
+    const base = driverFor(database);
+    let failBegin = false, driverClosed = false;
+    const history = await openSqliteMessagingHistory({ ...base,
+      exec: async (sql) => {
+        if (sql === "begin immediate" && failBegin) {
+          failBegin = false;
+          if (failureAt === "after") await base.exec(sql);
+          throw new Error("synthetic BEGIN failed reply");
+        }
+        await base.exec(sql);
+      },
+      close: async () => { await base.close(); driverClosed = true; },
+    }, { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => undefined, now: () => clock,
+    });
+    try {
+      await history.persistInbound(inbound());
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+      const ack = vi.fn(async () => undefined);
+      failBegin = true;
+      await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack))
+        .rejects.toThrow(/BEGIN failed reply/);
+      expect(ack).not.toHaveBeenCalled();
+      expect(await port.keys(A)).toEqual([]);
+      expect(rawCount("messages")).toBe(1); // only the previously committed parent
+      expect(rawCount("media_attachments")).toBe(0);
+      expect(rawCount("outbox")).toBe(0);
+      const fresh = new DatabaseSync(path);
+      try { fresh.exec("begin immediate; rollback"); }
+      finally { fresh.close(); }
+      if (failureAt === "before") {
+        expect(driverClosed).toBe(true); // rollback cannot acknowledge a nonexistent transaction
+        await expect(history.getMessage(MESSAGE)).rejects.toThrow(/closed/);
+      } else {
+        expect(driverClosed).toBe(false); // acknowledged rollback permits safe reuse
+        expect(await history.claimNextMediaUpload()).toBeNull();
+      }
+      const reopened = await openOn(new DatabaseSync(path), { accountId: A, deviceId: DEVICE }, {
+        mediaBytes: port, decodeMedia: async () => undefined,
+      });
+      try {
+        await reopened.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack);
+        expect(ack).toHaveBeenCalledOnce();
+        expect(await reopened.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+      } finally { await reopened.close(); }
+    } finally { await history.close(); }
+  });
+
+  it.each(["throw", "reject"] as const)("keeps unknown-outcome invalidation when driver close fails by %s", async (failureMode) => {
+    const port = new FakeMediaBytes(() => clock);
+    const base = driverFor(database);
+    let armed = false, closeCount = 0;
+    let ownerCloseResult: Promise<PromiseSettledResult<void>[]> | undefined;
+    const originalError = new Error("synthetic COMMIT unavailable");
+    const closeError = new Error("synthetic native close unavailable");
+    const history = await openSqliteMessagingHistory({ ...base,
+      exec: async (sql) => {
+        if (armed && (sql === "commit" || sql === "rollback")) {
+          if (sql === "commit") ownerCloseResult = Promise.allSettled([Promise.resolve(history.close())]);
+          throw originalError;
+        }
+        await base.exec(sql);
+      },
+      close: () => {
+        closeCount++;
+        if (failureMode === "throw") throw closeError;
+        return Promise.reject(closeError);
+      },
+    }, { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => undefined, now: () => clock,
+    });
+    try {
+      await history.persistInbound(inbound());
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+      const ack = vi.fn(async () => undefined);
+      armed = true;
+      await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack)).rejects.toBe(originalError);
+      expect(ack).not.toHaveBeenCalled();
+      await expect(history.getMessage(MESSAGE)).rejects.toThrow(/closed/);
+      await expect(history.close()).rejects.toBe(closeError);
+      expect(await ownerCloseResult).toEqual([{ status: "rejected", reason: closeError }]);
+      expect(closeCount).toBe(1);
+      expect(await port.get(A, ATTACHMENT)).toEqual(fixture.bytes);
+    } finally { await base.close(); } // test-owned driver failure cannot release its actual DB
+  });
+
+  it("preserves committed media bytes when the COMMIT response is lost", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const base = driverFor(database);
+    let loseCommitResponse = false;
+    const history = await openSqliteMessagingHistory({ ...base, exec: async (sql) => {
+      await base.exec(sql); // Real file-backed commit happens first.
+      if (sql === "commit" && loseCommitResponse) {
+        loseCommitResponse = false; throw new Error("commit response lost");
+      }
+    } }, { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => undefined, now: () => clock,
+    });
+    try {
+      await history.persistInbound(inbound());
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+      loseCommitResponse = true;
+      const ack = vi.fn(async () => undefined);
+      await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack))
+        .rejects.toThrow(/commit response lost/);
+      expect(ack).not.toHaveBeenCalled();
+      expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "AWAITING_ACK" });
+      expect(await port.get(A, ATTACHMENT)).toEqual(fixture.bytes);
+      await expect(history.getMessage(MESSAGE)).rejects.toThrow(/closed/);
+      const reopened = await openOn(new DatabaseSync(path), { accountId: A, deviceId: DEVICE }, {
+        mediaBytes: port, decodeMedia: async () => undefined,
+      });
+      try {
+        await reopened.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack);
+        expect(ack).toHaveBeenCalledOnce();
+        expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "READY" });
+        expect(await reopened.readMedia(ATTACHMENT)).toEqual(fixture.bytes);
+      } finally { await reopened.close(); }
+    } finally { await history.close(); }
+  });
+
+  it("refuses REQUEST media admission and stops new claims after End", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    try {
+      const fixture = await mediaFixture(ATTACHMENT, MESSAGE);
+      await history.enqueueOutgoingWithMedia(outgoing, fixture.metadata, fixture.bytes);
+      await history.persistInbound(echoOf());
+      await history.cacheConversation({ conversationId: CONVERSATION, peerId: B, mode: "REQUEST", request: "NONE",
+        requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 2 });
+      expect(await history.claimNextMediaUpload()).toBeNull();
+      const second = await mediaFixture(ATTACHMENT_2, MESSAGE_2);
+      await expect(history.enqueueOutgoingWithMedia({ ...outgoing, id: MESSAGE_2 }, second.metadata, second.bytes))
+        .rejects.toThrow(/media unavailable/i);
+      expect(await port.keys(A)).toEqual([ATTACHMENT]);
+      expect(await history.getMessage(MESSAGE_2)).toBeNull();
+    } finally { await history.close(); }
+  });
+
+  it("sweeps aged orphan bytes on open but preserves the crash grace window", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    port.plant(A, ORPHAN_ATTACHMENT, mediaBytes(), clock - MEDIA_SWEEP_GRACE_MS - 1);
+    port.plant(A, ATTACHMENT, mediaBytes(), clock);
+    const history = await openWithMedia(port);
+    try { expect(await port.keys(A)).toEqual([ATTACHMENT]); }
+    finally { await history.close(); }
+  });
+
+  it("durably fences reopen after account media purge", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+    await history.clearMedia();
+    await history.close();
+    database = new DatabaseSync(path);
+    const reopened = await openWithMedia(port);
+    let acks = 0;
+    try {
+      await expect(reopened.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, async () => { acks++; }))
+        .rejects.toThrow(/purged/);
+      expect(acks).toBe(0);
+      expect(await port.keys(A)).toEqual([]);
+      expect(rawCount("media_attachments")).toBe(0);
+      await reopened.clearMedia();
+      await reopened.clearMedia();
+    } finally { await reopened.close(); }
+  });
+
+  it("checks initial image dimensions and fails closed on decoder failure", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openOn(database, { accountId: A, deviceId: DEVICE }, {
+      mediaBytes: port, decodeMedia: async () => { throw new Error("decode failed"); },
+    });
+    await history.persistInbound(inbound());
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+    let acks = 0;
+    const ack = async () => { acks++; };
+    await expect(history.persistVerifiedMediaAndAck(
+      { ...fixture.metadata, width: 31 }, fixture.bytes, ack,
+    )).rejects.toThrow(/dimension mismatch/i);
+    await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack))
+      .rejects.toThrow(/decode failed/);
+    expect(acks).toBe(0);
+    expect(rawCount("media_attachments")).toBe(0);
+    expect(await port.keys(A)).toEqual([]);
+    await history.close();
+  });
+
+  it("does not ACK after close during a committed media transaction", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    let closeOnCommit = false;
+    let closing: Promise<void> | undefined;
+    const history = await openWithMedia(port, (sql) => {
+      if (sql === "commit" && closeOnCommit) closing = Promise.resolve(history.close());
+    });
+    await history.persistInbound(inbound());
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+    closeOnCommit = true;
+    let acks = 0;
+    await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, async () => { acks++; }))
+      .rejects.toThrow(/closed/);
+    await closing;
+    expect(acks).toBe(0);
+    // COMMIT succeeded despite close: do not delete its now-owned bytes.
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "AWAITING_ACK" });
+    expect(await port.has(A, ATTACHMENT)).toBe(true);
+  });
+
+  it("erases media on delete, blocks late replay, and keeps other media intact", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const fixture = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1000 });
+    await history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, async () => undefined);
+    await history.deleteForMe(MESSAGE);
+    expect(rawMedia(ATTACHMENT)).toBeUndefined();
+    expect(await port.keys(A)).toEqual([]);
+    await expect(history.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, async () => undefined))
+      .rejects.toThrow(/parent is not available/);
+    await history.close();
+  });
+
+  it("stores bytes before the attachment row and never claims before the text echo", async () => {
+    const trace: string[] = [];
+    const port = new FakeMediaBytes(() => clock, trace);
+    const history = await openWithMedia(port, (sql) => {
+      if (sql.includes("insert into media_attachments")) trace.push("row");
+      if (sql === "commit") trace.push("commit");
+    });
+    trace.length = 0; // Ignore initialization commits, not admission ordering.
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE);
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, metadata, bytes);
+
+    // Bytes, then the row, then its commit: the ordering that makes a row
+    // claiming missing bytes impossible.
+    expect(trace.indexOf(`bytes:put:${ATTACHMENT}`)).toBeGreaterThanOrEqual(0);
+    expect(trace.indexOf(`bytes:put:${ATTACHMENT}`)).toBeLessThan(trace.indexOf("row"));
+    expect(trace.indexOf("row")).toBeLessThan(trace.indexOf("commit"));
+    // The image-only message exists with no caption, not with a null body.
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "" });
+    // No claim until the authoritative text echo names the server message.
+    expect(await history.claimNextMediaUpload()).toBeNull();
+    await history.persistInbound(echoOf({ ...outgoing, body: "" }));
+    const attempt = await history.claimNextMediaUpload();
+    expect(attempt).toMatchObject({
+      attachmentId: ATTACHMENT, messageId: MESSAGE, sha256: metadata.sha256, attempt: 1,
+    });
+    await history.close();
+  });
+
+  it("rolls the byte write back when the attachment row is refused", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port, (sql) => {
+      if (sql.includes("insert into media_attachments")) throw new Error("injected failure");
+    });
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE);
+    await expect(history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, metadata, bytes))
+      .rejects.toThrow(/injected failure/);
+    // Both stores rolled back: no message, no outbox, no row, no bytes.
+    expect(rawCount("messages")).toBe(0);
+    expect(rawCount("media_attachments")).toBe(0);
+    expect(await port.keys(A)).toEqual([]);
+    await history.close();
+  });
+
+  it("keeps one attachment per message and rolls back the second byte write", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    const first = await mediaFixture(ATTACHMENT, MESSAGE);
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, first.metadata, first.bytes);
+    await history.persistInbound(echoOf({ ...outgoing, body: "" }));
+
+    const second = await mediaFixture(ATTACHMENT_2, MESSAGE);
+    await expect(history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, second.metadata, second.bytes))
+      .rejects.toThrow(/media identity conflict/i);
+    expect(rawCount("media_attachments")).toBe(1);
+    expect(await port.keys(A)).toEqual([ATTACHMENT]);
+    // The replay of the admitted attachment is idempotent.
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, first.metadata, first.bytes);
+    expect(await port.keys(A)).toEqual([ATTACHMENT]);
+    await history.close();
+  });
+
+  it("refuses to claim an attachment whose bytes have gone", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE);
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, metadata, bytes);
+    await history.persistInbound(echoOf({ ...outgoing, body: "" }));
+    await port.delete(A, [ATTACHMENT]);
+
+    await expect(history.claimNextMediaUpload()).rejects.toThrow(/bytes missing/);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "QUEUED", attempts: 0, token: null });
+    await history.close();
+  });
+
+  it("claims once under concurrency, fences stale tokens and recovers an expired lease", async () => {
+    const history = await openWithMedia(new FakeMediaBytes(() => clock));
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE);
+    await history.enqueueOutgoingWithMedia({ ...outgoing, body: "" }, metadata, bytes);
+    await history.persistInbound(echoOf({ ...outgoing, body: "" }));
+
+    const claimed = await Promise.all([history.claimNextMediaUpload(), history.claimNextMediaUpload()]);
+    const attempts = claimed.filter((attempt) => attempt !== null);
+    expect(attempts).toHaveLength(1);
+    const first = attempts[0]!;
+    expect(first.attempt).toBe(1);
+
+    // An expired lease is recovered with a new generation.
+    clock += 60_000;
+    const second = await history.claimNextMediaUpload();
+    expect(second).toMatchObject({ attachmentId: ATTACHMENT, attempt: 2 });
+    // The stale generation cannot fail or complete the newer attempt.
+    expect(await history.failMediaUpload(first)).toBe(false);
+    expect(await history.completeMediaUpload(first)).toBe(false);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "UPLOADING", attempts: 2, token: second!.token });
+    expect(await history.completeMediaUpload(second!)).toBe(true);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "AWAITING_ACK", token: null, leaseUntil: null });
+    expect(await history.markMediaReady(ATTACHMENT)).toBe(true);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "READY" });
+    await history.close();
+  });
+
+  it("persists verified inbound bytes, commits before ACK, and keeps them when ACK fails", async () => {
+    const trace: string[] = [];
+    const port = new FakeMediaBytes(() => clock, trace);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE, {
+      direction: "IN", expiresAt: clock + 1_000_000,
+    });
+
+    const acked: string[] = [];
+    await history.persistVerifiedMediaAndAck(metadata, bytes, async (record) => {
+      acked.push(record.id);
+      // The row is already committed and visible to another connection.
+      const reader = new DatabaseSync(path);
+      try {
+        expect(reader.prepare("select state from media_attachments where id = ?").get(ATTACHMENT))
+          .toEqual({ state: "AWAITING_ACK" });
+      } finally {
+        reader.close();
+      }
+      expect(await port.has(A, ATTACHMENT)).toBe(true);
+    });
+    expect(acked).toEqual([ATTACHMENT]);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "READY", direction: "IN" });
+    expect(await history.readMedia(ATTACHMENT)).not.toBeNull();
+
+    // A second attachment whose ACK fails keeps its bytes and stays replayable.
+    await history.persistInbound(inbound({ id: MESSAGE_2 }, EVENT_2, MAILBOX_2, 2));
+    const second = await mediaFixture(ATTACHMENT_2, MESSAGE_2, {
+      direction: "IN", expiresAt: clock + 1_000_000,
+    });
+    const failure = new Error("ack unavailable");
+    await expect(history.persistVerifiedMediaAndAck(second.metadata, second.bytes, async () => {
+      throw failure;
+    })).rejects.toThrow(/ack unavailable/);
+    expect(rawMedia(ATTACHMENT_2)).toMatchObject({ state: "AWAITING_ACK" });
+    expect(await port.has(A, ATTACHMENT_2)).toBe(true);
+    expect(await history.readMedia(ATTACHMENT_2)).not.toBeNull();
+
+    const replays: string[] = [];
+    await history.persistVerifiedMediaAndAck(second.metadata, second.bytes, async (record) => {
+      replays.push(record.id);
+    });
+    expect(replays).toEqual([ATTACHMENT_2]);
+    expect(rawMedia(ATTACHMENT_2)).toMatchObject({ state: "READY" });
+    await history.close();
+  });
+
+  it("rejects a digest, length, MIME or dimension mismatch with no row, no ACK and no render path", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const acked: string[] = [];
+    const ack = async (record: { id: string }) => { acked.push(record.id); };
+
+    const base = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    // Wrong digest: valid-looking metadata, different bytes.
+    await expect(history.persistVerifiedMediaAndAck(
+      { ...base.metadata, sha256: "b".repeat(64) }, base.bytes, ack,
+    )).rejects.toThrow(/digest mismatch/i);
+    // Wrong declared length, correct digest of the actual bytes.
+    await expect(history.persistVerifiedMediaAndAck(
+      { ...base.metadata, byteSize: base.bytes.byteLength + 1 }, base.bytes, ack,
+    )).rejects.toThrow(/length mismatch/i);
+    // MIME that contradicts the bytes.
+    const png = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await expect(history.persistVerifiedMediaAndAck(
+      { ...png.metadata, mime: "image/jpeg" }, png.bytes, ack,
+    )).rejects.toThrow(/media type mismatch/i);
+    expect(acked).toEqual([]);
+    expect(rawCount("media_attachments")).toBe(0);
+    expect(await port.keys(A)).toEqual([]);
+    expect(await history.readMedia(ATTACHMENT)).toBeNull();
+
+    // A committed record cannot be re-described with different dimensions.
+    await history.persistVerifiedMediaAndAck(png.metadata, png.bytes, ack);
+    await expect(history.persistVerifiedMediaAndAck(
+      { ...png.metadata, width: png.metadata.width + 1 }, png.bytes, ack,
+    )).rejects.toThrow(/identity conflict/i);
+    expect(acked).toEqual([ATTACHMENT]);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ width: 32, height: 32, state: "READY" });
+    await history.close();
+  });
+
+  it("defers an inbound attachment whose parent is missing or suppressed", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    const missing = await mediaFixture(ATTACHMENT, MESSAGE, {
+      direction: "IN", expiresAt: clock + 1_000_000,
+    });
+    const acked: string[] = [];
+    await expect(history.persistVerifiedMediaAndAck(missing.metadata, missing.bytes, async (record) => {
+      acked.push(record.id);
+    })).rejects.toThrow(/parent is not available/);
+    expect(acked).toEqual([]);
+    expect(rawCount("media_attachments")).toBe(0);
+    // Nothing was stored: a deferred attachment must not leave orphan bytes.
+    expect(await port.keys(A)).toEqual([]);
+
+    // A suppressed parent is not visible, so its attachment is never admitted.
+    await history.persistInbound(inbound());
+    await history.deleteForMe(MESSAGE);
+    await expect(history.persistVerifiedMediaAndAck(missing.metadata, missing.bytes, async (record) => {
+      acked.push(record.id);
+    })).rejects.toThrow(/parent is not available/);
+    expect(acked).toEqual([]);
+    expect(rawCount("media_attachments")).toBe(0);
+    await history.close();
+  });
+
+  it("evicts only READY bytes and keeps the metadata", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    await history.persistInbound(inbound({ id: MESSAGE_2 }, EVENT_2, MAILBOX_2, 2));
+    const ready = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    const pending = await mediaFixture(ATTACHMENT_2, MESSAGE_2, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await history.persistVerifiedMediaAndAck(ready.metadata, ready.bytes, async () => undefined);
+    await expect(history.persistVerifiedMediaAndAck(pending.metadata, pending.bytes, async () => {
+      throw new Error("ack unavailable");
+    })).rejects.toThrow(/ack unavailable/);
+
+    // An outbound queued attachment and an uploading one are both protected.
+    const queued = await mediaFixture(ATTACHMENT_3, MESSAGE_3);
+    await history.enqueueOutgoingWithMedia(
+      { ...outgoing, id: MESSAGE_3, body: "" }, queued.metadata, queued.bytes,
+    );
+    await history.persistInbound(echoOf({ ...outgoing, id: MESSAGE_3, body: "" }, EVENT_3, MAILBOX_3, 3));
+    const claimed = await history.claimNextMediaUpload();
+    expect(claimed).toMatchObject({ attachmentId: ATTACHMENT_3 });
+
+    expect(await history.evictMedia(10)).toBe(1);
+    expect(rawMedia(ATTACHMENT)).toMatchObject({
+      state: "EVICTED", sha256: ready.metadata.sha256, mime: "image/png",
+      byteSize: ready.metadata.byteSize, width: 32, height: 32,
+    });
+    expect(await port.has(A, ATTACHMENT)).toBe(false);
+    expect(await history.readMedia(ATTACHMENT)).toBeNull();
+    // Protected states keep their bytes.
+    expect(await port.has(A, ATTACHMENT_2)).toBe(true);
+    expect(await port.has(A, ATTACHMENT_3)).toBe(true);
+    expect(rawMedia(ATTACHMENT_2)).toMatchObject({ state: "AWAITING_ACK" });
+    expect(rawMedia(ATTACHMENT_3)).toMatchObject({ state: "UPLOADING" });
+    await history.close();
+  });
+
+  it("sweeps orphan bytes and the bytes still held by an EVICTED row", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const ready = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await history.persistVerifiedMediaAndAck(ready.metadata, ready.bytes, async () => undefined);
+    await history.evictMedia(1);
+
+    // Simulate a crash between the EVICTED commit and the byte delete, plus a
+    // byte entry that never got a row at all.
+    port.plant(A, ATTACHMENT, mediaBytes(), clock - MEDIA_SWEEP_GRACE_MS - 1);
+    port.plant(A, ORPHAN_ATTACHMENT, mediaBytes(), clock - MEDIA_SWEEP_GRACE_MS - 1);
+    const live = await mediaFixture(ATTACHMENT_2, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await history.persistInbound(inbound({ id: MESSAGE_2 }, EVENT_2, MAILBOX_2, 2));
+    await history.persistVerifiedMediaAndAck(
+      { ...live.metadata, messageId: MESSAGE_2 }, live.bytes, async () => undefined,
+    );
+
+    expect(await history.sweepOrphanMedia(10)).toBe(2);
+    expect(await port.keys(A)).toEqual([ATTACHMENT_2]);
+    // The EVICTED row keeps its metadata; only its bytes are gone.
+    expect(rawMedia(ATTACHMENT)).toMatchObject({ state: "EVICTED", sha256: ready.metadata.sha256 });
+    await history.close();
+  });
+
+  it("clears every attachment row and byte entry for account deletion", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    const { bytes, metadata } = await mediaFixture(ATTACHMENT, MESSAGE, {
+      direction: "IN", expiresAt: clock + 1_000_000,
+    });
+    await history.persistVerifiedMediaAndAck(metadata, bytes, async () => undefined);
+    await history.clearMedia();
+    expect(rawCount("media_attachments")).toBe(0);
+    expect(await port.keys(A)).toEqual([]);
+    expect(await history.listMedia(CONVERSATION)).toEqual([]);
+    await history.close();
+  });
+
+  it("removes one message's attachment and bytes without touching another", async () => {
+    const port = new FakeMediaBytes(() => clock);
+    const history = await openWithMedia(port);
+    await history.persistInbound(inbound());
+    await history.persistInbound(inbound({ id: MESSAGE_2 }, EVENT_2, MAILBOX_2, 2));
+    const first = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    const second = await mediaFixture(ATTACHMENT_2, MESSAGE_2, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await history.persistVerifiedMediaAndAck(first.metadata, first.bytes, async () => undefined);
+    await history.persistVerifiedMediaAndAck(second.metadata, second.bytes, async () => undefined);
+
+    await history.removeMediaForMessage(MESSAGE);
+    expect(rawMedia(ATTACHMENT)).toBeUndefined();
+    expect(await port.keys(A)).toEqual([ATTACHMENT_2]);
+    // A late inbound callback for the removed attachment finds no parent row to
+    // attach to only if the message itself is gone; the deletion marker is the
+    // real defence and it is exercised by the suppression test above.
+    expect((await history.listMedia(CONVERSATION)).map((row) => row.id)).toEqual([ATTACHMENT_2]);
+    await history.close();
+  });
+
+  it("lists visible attachments in message order", async () => {
+    const history = await openWithMedia(new FakeMediaBytes(() => clock));
+    await history.persistInbound(inbound({ id: MESSAGE_2 }, EVENT_2, MAILBOX_2, 2));
+    await history.persistInbound(inbound());
+    const second = await mediaFixture(ATTACHMENT_2, MESSAGE_2, { direction: "IN", expiresAt: clock + 1_000_000 });
+    const first = await mediaFixture(ATTACHMENT, MESSAGE, { direction: "IN", expiresAt: clock + 1_000_000 });
+    await history.persistVerifiedMediaAndAck(second.metadata, second.bytes, async () => undefined);
+    await history.persistVerifiedMediaAndAck(first.metadata, first.bytes, async () => undefined);
+    expect((await history.listMedia(CONVERSATION)).map((row) => row.id)).toEqual([ATTACHMENT, ATTACHMENT_2]);
+    await history.close();
+  });
+
+  it("round-trips an image-only message through exportSnapshot and importSnapshot", async () => {
+    const history = await openWithMedia(new FakeMediaBytes(() => clock));
+    await history.persistInbound(inbound({ body: "" }));
+    const snapshot = await history.exportSnapshot();
+    // `''` is "no caption", never suppression: the portable form keeps it.
+    expect(snapshot.messages).toHaveLength(1);
+    expect(snapshot.messages[0]!.body).toBe("");
+
+    const otherDatabase = new DatabaseSync(join(dir, "image-only-restore.db"));
+    const restored = await openOn(otherDatabase, { accountId: A, deviceId: OTHER_DEVICE });
+    await restored.importSnapshot(snapshot);
+    expect(await restored.getMessage(MESSAGE)).toMatchObject({ body: "" });
+    expect((await restored.exportSnapshot()).messages[0]!.body).toBe("");
+    // The stored column is an empty string, not NULL.
+    expect(otherDatabase.prepare("select body from messages where id = ?").get(MESSAGE)).toEqual({ body: "" });
+    await restored.close();
     await history.close();
   });
 });
