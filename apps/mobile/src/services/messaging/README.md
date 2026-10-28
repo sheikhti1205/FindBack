@@ -646,3 +646,40 @@ even after a switch before the server response, invoke this API only for deletio
 and expose durable retry without discarding pending work on UI dismissal. C2 does
 not yet establish that auth integration or combined F2b-3 acceptance. Host tests
 are not device, browser, configured-build or hosted acceptance.
+
+### F2b-3C3 — canonical confirmed-account cleanup
+
+`AccountSettings` dispatches confirmed captured-A cleanup even when B replaced A
+before the server reply; only screen state updates are suppressed on a switch.
+`AuthProvider.finishAccountDeletion(A)` never recaptures B through `logout()`.
+It atomically admits messaging and auth/key work in the existing strict registry
+(v3 preserves v1/v2 rows). Each responsibility has its own pending flag and
+monotonic revision. Messaging readmission/acknowledgment cannot clear failed auth
+work, and stale auth acknowledgments cannot clear a newer confirmed attempt.
+No credentials or network token enter this ledger.
+
+Auth remains the cleanup owner. It starts captured-account messaging purge and
+attempts captured-account keys/session independently; one failure does not skip
+the other, and only the successful responsibility is acknowledged. SDK cleanup
+continues through the account-targeted persistence boundary. Foreign-session
+guards include a replacement that subsequently signed out; A's pending key work
+does not suppress B's unexpected-session-expiry reason. Unmounted auth work may
+finish destructive A storage work, but cannot certify interrupted auth cleanup or
+clear a replacement owner's global state. Ordinary logout never admits deletion
+or purges messaging.
+
+After canonical boot restore, auth discovers and retries all durably pending
+accounts, even with no legacy marker or with another account signed in. Valid
+pending accounts remain actionable if another row is corrupt; incomplete inventory
+is reported as a check failure, never empty success or proof of account deletion.
+The old scalar marker migrates by strict joint admission BEFORE its removal.
+UI dismissal changes presentation only and never clears durable work.
+
+If durable admission fails, the operation fails and remains retryable in the
+live owner, with a best-effort legacy hint when available; it is NOT certified
+crash-durable. No storage mechanism can promise persistence when its backing store
+refuses writes. Local cleanup/complete claims require acknowledged durable work;
+browser storage clearing/eviction, other origins, old executables, external
+backups and forensic SQLite/WAL erasure remain outside this local logical gate.
+Host and synthetic rendered evidence do not establish hosted, browser-compatibility,
+configured-build or physical-device acceptance.

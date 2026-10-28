@@ -55,7 +55,7 @@ function metadataKey(owner: Readonly<MessagingStorageScope>): string {
 
 function connectRegistry(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(REGISTRY, 2);
+    const request = factory.open(REGISTRY, 3);
     let refused = false;
     request.onblocked = () => {
       refused = true;
@@ -117,13 +117,31 @@ function readScope(record: unknown): Readonly<MessagingStorageScope> {
   return owner;
 }
 
-function readDeletion(record: unknown): { accountId: string; pending: boolean; revision: number } | undefined {
+interface DeletionRecord {
+  accountId: string;
+  pending: boolean;
+  revision: number;
+  authPending: boolean;
+  authRevision: number;
+}
+
+function readDeletion(record: unknown): DeletionRecord | undefined {
   if (record === undefined) return undefined;
   if (!record || typeof record !== "object" || !("accountId" in record) || !isUuid(record.accountId)
     || !("pending" in record) || typeof record.pending !== "boolean"
     || !("revision" in record) || typeof record.revision !== "number"
     || !Number.isSafeInteger(record.revision) || record.revision < 1) throw new Error("Messaging deletion record corrupt");
-  return { accountId: record.accountId, pending: record.pending, revision: record.revision };
+  // v2 rows tracked messaging only. Both absent is the legacy shape; a partial
+  // or malformed new pair is corruption, never an implicit acknowledgment.
+  const legacy = !("authPending" in record) && !("authRevision" in record);
+  if (!legacy && (!("authPending" in record) || typeof record.authPending !== "boolean"
+    || !("authRevision" in record) || typeof record.authRevision !== "number"
+    || !Number.isSafeInteger(record.authRevision) || record.authRevision < 1)) {
+    throw new Error("Account auth cleanup record corrupt");
+  }
+  return { accountId: record.accountId, pending: record.pending, revision: record.revision,
+    authPending: legacy ? false : (record as { authPending: boolean }).authPending,
+    authRevision: legacy ? 0 : (record as { authRevision: number }).authRevision };
 }
 
 export async function assertMessagingAccountActive(accountId: string, factory?: IDBFactory): Promise<void> {
@@ -169,6 +187,16 @@ async function withByteLock<T>(accountId: string, work: () => Promise<T>): Promi
 /** Order is history lock -> byte lock -> registry. Byte ports never take the
  * history lock, including when called from an already-locked adapter. */
 export async function beginMessagingAccountDeletion(accountId: string, factory?: IDBFactory): Promise<number> {
+  return beginDeletion(accountId, false, factory);
+}
+
+/** Canonical auth owner only, AFTER the server confirms captured-account
+ * deletion. Both local responsibilities are admitted by the same strict commit. */
+export async function beginConfirmedAccountDeletion(accountId: string, factory?: IDBFactory): Promise<number> {
+  return beginDeletion(accountId, true, factory);
+}
+
+async function beginDeletion(accountId: string, includeAuth: boolean, factory?: IDBFactory): Promise<number> {
   if (!isUuid(accountId)) throw new Error("Invalid messaging account");
   const dbFactory = storageFactory(factory);
   return withHistoryLock(accountId, new AbortController().signal, true, () => withByteLock(accountId, () =>
@@ -180,10 +208,59 @@ export async function beginMessagingAccountDeletion(accountId: string, factory?:
         if (!Number.isSafeInteger(revision)) throw new Error("Messaging deletion revision exhausted");
         // Rechecking a completed account is itself pending until the full scope
         // inventory/purge succeeds again. Failure cannot masquerade as complete.
-        store.put({ accountId, pending: true, revision });
-        result(revision);
+        const authRevision = (prior?.authRevision ?? 0) + (includeAuth ? 1 : 0);
+        if (!Number.isSafeInteger(authRevision)) throw new Error("Account auth cleanup revision exhausted");
+        // Do not materialize the legacy zero-revision pair. A non-legacy auth
+        // record always has a positive revision, even after acknowledgment.
+        store.put({ accountId, pending: true, revision,
+          ...(authRevision > 0 ? { authRevision, authPending: includeAuth || prior!.authPending } : {}) });
+        result(includeAuth ? authRevision : revision);
       });
     })));
+}
+
+export interface PendingAccountDeletion {
+  accountId: string;
+  messagingPending: boolean;
+  authPending: boolean;
+  authRevision: number;
+}
+
+/** Return valid pending work AND incomplete-inventory errors, so corruption in
+ * one row cannot starve another account's admitted cleanup. No payload/keys. */
+export async function inspectPendingAccountDeletions(factory?: IDBFactory): Promise<{
+  pending: PendingAccountDeletion[]; failures: unknown[];
+}> {
+  return registryTransaction(storageFactory(factory), "readonly", (tx, guard, result) => {
+    const request = tx.objectStore(DELETIONS).getAll();
+    request.onsuccess = guard(() => {
+      const pending: PendingAccountDeletion[] = [], failures: unknown[] = [];
+      for (const record of request.result) {
+        try {
+          const row = readDeletion(record)!;
+          if (row.pending || row.authPending) pending.push({ accountId: row.accountId,
+            messagingPending: row.pending, authPending: row.authPending, authRevision: row.authRevision });
+        } catch (error) { failures.push(error); }
+      }
+      pending.sort((a, b) => a.accountId.localeCompare(b.accountId));
+      result({ pending, failures });
+    });
+  });
+}
+
+/** Only acknowledges the captured auth/key attempt; never clears media pending
+ * or the permanent account fence. A newer attempt cannot be lost to an old one. */
+export async function finishAccountAuthCleanup(accountId: string, revision: number, factory?: IDBFactory): Promise<void> {
+  if (!isUuid(accountId)) throw new Error("Invalid messaging account");
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Invalid account auth cleanup revision");
+  await registryTransaction<void>(storageFactory(factory), "readwrite", (tx, guard) => {
+    const store = tx.objectStore(DELETIONS), request = store.get(accountId);
+    request.onsuccess = guard(() => {
+      const deletion = readDeletion(request.result);
+      if (!deletion || deletion.authRevision !== revision) throw new Error("Account auth cleanup superseded; retry required");
+      store.put({ ...deletion, authPending: false });
+    });
+  });
 }
 
 /** Trusted platform discovery of a pre-registry text database. It may only add
@@ -202,7 +279,8 @@ export async function registerMessagingCleanupScope(value: Omit<MediaStorageOwne
           return;
         }
         store.add({ metadataKey: key, identity: identity(owner), owner });
-        tx.objectStore(DELETIONS).put({ ...deletion, pending: true });
+        tx.objectStore(DELETIONS).put(deletion.authRevision > 0 ? { ...deletion, pending: true }
+          : { accountId: deletion.accountId, pending: true, revision: deletion.revision });
       });
     });
   });
@@ -254,7 +332,8 @@ export async function finishMessagingAccountDeletion(accountId: string, revision
       const deletion = readDeletion(request.result);
       if (!deletion) throw new Error("Messaging deletion not admitted");
       if (deletion.revision !== revision) throw new Error("Messaging deletion superseded; retry required");
-      store.put({ ...deletion, pending: false });
+      store.put(deletion.authRevision > 0 ? { ...deletion, pending: false }
+        : { accountId: deletion.accountId, pending: false, revision: deletion.revision });
     });
   });
 }

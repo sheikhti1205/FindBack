@@ -158,7 +158,7 @@ export function AccountSettings() {
     setSignOutError(null);
   }
 
-  /** Server-confirmed deletion, then the normal logout wipe. */
+  /** Confirmed captured-account cleanup is mandatory; only UI follows the slot. */
   function runDeleteAccount() {
     if (deleting || !user) return;
     setDeleting(true);
@@ -166,9 +166,10 @@ export function AccountSettings() {
     const deletingAccount = user.id;
     void requestAccountDeletion(deletingAccount)
       .then(async () => {
-        if (currentAccount.current !== deletingAccount) return;
-        setDeleted(true);
-        setDeleteArmed(false);
+        if (currentAccount.current === deletingAccount) {
+          setDeleted(true);
+          setDeleteArmed(false);
+        }
         await finishAccountDeletion(deletingAccount);
         if (currentAccount.current !== deletingAccount && currentAccount.current !== null) return;
         setLocalCleanupDone(true);

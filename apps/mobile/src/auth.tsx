@@ -46,6 +46,11 @@ import { recordOperation } from "./services/monitoring/operations";
 import { startPushNotifications, stopPushNotifications } from "./services/pushRuntime";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
+import { purgeMessagingAccount } from "./services/messaging/runtime";
+import {
+  beginConfirmedAccountDeletion, finishAccountAuthCleanup, inspectPendingAccountDeletions,
+  type PendingAccountDeletion,
+} from "./services/messaging/scopedMediaBytes";
 // W0-B (S2, additive): Google ID-token seam + missing-profile seed. auth.ts,
 // session.ts, and userScopedState.ts remain the owners of their behavior.
 import {
@@ -82,6 +87,8 @@ interface AuthContextValue {
   resendPendingEmail: () => Promise<void>;
   logout: () => Promise<void>;
   deletionCompletion: { accountId: string; state: "cleaning" | "complete" | "cleanup-failed" } | null;
+  /** Inventory failure is not evidence that an account was deleted. */
+  deletionRecoveryError: boolean;
   finishAccountDeletion: (accountId: string) => Promise<void>;
   retryDeletionCleanup: () => Promise<void>;
   dismissDeletionCompletion: () => void;
@@ -107,26 +114,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, publishUser] = useState<PublicUser | null>(null);
   const currentUser = useRef<PublicUser | null>(null);
   const sdkAccount = useRef<string | null>(null);
+  // Historical slot only: null after B signs out must not make delayed A work
+  // look like A still owns global state. This never authenticates/adopts anyone.
+  const lastAccount = useRef<string | null>(null);
   const sdkObserved = useRef(false);
   const profileAdoptionBlocked = useRef(false);
   const authEpoch = useRef(0);
   const hadStoredSession = useRef(sessionExpiryCandidate());
-  const intentionalSignOut = useRef(0);
+  const intentionalSignOut = useRef(new Map<string | null, number>());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const unadmittedDeletions = useRef(new Set<string>());
+  const deletionWork = useRef<Promise<unknown>>(Promise.resolve());
+  const deletionPresentation = useRef(0);
+  const [deletionRecoveryError, setDeletionRecoveryError] = useState(false);
+  const serializeDeletion = useCallback((work: () => Promise<void>) => {
+    const next = deletionWork.current.catch(() => undefined).then(work);
+    deletionWork.current = next;
+    return next;
+  }, []);
   const assertAccount = useCallback((accountId: string) => {
     if (profileAdoptionBlocked.current || (sdkObserved.current && sdkAccount.current !== accountId)) throw new AuthAccountChangedError();
   }, []);
   const setUserState = useCallback((next: PublicUser | null) => {
     if (next !== null) assertAccount(next.id);
     if (next !== null) clearSessionExpired();
+    if (next !== null) lastAccount.current = next.id;
     currentUser.current = next;
     publishUser(next);
   }, [assertAccount]);
-  const [deletionCompletion, setDeletionCompletion] = useState<AuthContextValue["deletionCompletion"]>(() => {
-    try {
-      const accountId = storage.getItem(DELETION_CLEANUP_KEY);
-      return accountId ? { accountId, state: "cleanup-failed" } : null;
-    } catch { return null; }
-  });
+  const [deletionCompletion, setDeletionCompletion] = useState<AuthContextValue["deletionCompletion"]>(null);
   const [pendingEmail, setPendingEmailState] = useState<string | null>(() => getPendingEmail());
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
@@ -157,7 +174,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Retry. Never assume signed-out and never destroy the session here.
           setBootError("unreachable");
         } else {
-          if (err instanceof ApiError && err.status === 401 && hadStoredSession.current && intentionalSignOut.current === 0) markSessionExpired();
+          if (err instanceof ApiError && err.status === 401 && hadStoredSession.current && !intentionalSignOut.current.has(currentUser.current?.id ?? sdkAccount.current)) markSessionExpired();
           // W0-B (S2, additive): a valid session without a FindBack profile
           // (new Google account or interrupted completion) routes to
           // completion — the session is KEPT, clearAllAuth is NOT called.
@@ -190,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data } = getSupabase().auth.onAuthStateChange((event, session) => {
         const previousAccount = sdkAccount.current ?? currentUser.current?.id ?? null;
-        if (event === "SIGNED_OUT" && (previousAccount !== null || hadStoredSession.current) && intentionalSignOut.current === 0) markSessionExpired();
+        if (event === "SIGNED_OUT" && (previousAccount !== null || hadStoredSession.current) && !intentionalSignOut.current.has(previousAccount)) markSessionExpired();
         if (session) clearSessionExpired();
         if (event === "SIGNED_OUT") hadStoredSession.current = false;
         const nextAccount = session?.user.id ?? null;
@@ -200,6 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const epoch = event === "INITIAL_SESSION" && !accountChanged
           ? authEpoch.current : ++authEpoch.current;
         sdkAccount.current = nextAccount;
+        if (nextAccount !== null) lastAccount.current = nextAccount;
         sdkObserved.current = true;
         if (event === "SIGNED_OUT" || nextAccount === null) profileAdoptionBlocked.current = true;
         // SIGNED_IN can reconfirm the same session on tab refocus. Only a
@@ -257,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onSignedOut(() => {
-        if (currentUser.current && intentionalSignOut.current === 0) markSessionExpired();
+        if (currentUser.current && !intentionalSignOut.current.has(currentUser.current.id)) markSessionExpired();
         ++authEpoch.current;
         profileAdoptionBlocked.current = true;
         aiCredentials.clearSession();
@@ -345,16 +363,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const deviceSignedOut = useCallback(() => currentUser.current === null && sdkAccount.current === null, []);
 
   const cleanAccountOnDevice = useCallback(async (accountId: string | null) => {
-    intentionalSignOut.current += 1;
-    hadStoredSession.current = false;
-    clearSessionExpired();
+    intentionalSignOut.current.set(accountId, (intentionalSignOut.current.get(accountId) ?? 0) + 1);
     try {
     // Account A -> B switch starts here: drop this session's token cache and
     // pending email and notify signed-out handlers BEFORE the sign-out call,
     // so no A-owned slice can leak into the next account's calls.
     const switched = () => (sdkAccount.current !== null && sdkAccount.current !== accountId)
-      || (currentUser.current !== null && currentUser.current.id !== accountId);
-    if (!switched()) beginAccountSwitch();
+      || (currentUser.current !== null && currentUser.current.id !== accountId)
+      || (lastAccount.current !== null && lastAccount.current !== accountId);
+    if (mounted.current && !switched()) {
+      hadStoredSession.current = false;
+      clearSessionExpired();
+      beginAccountSwitch();
+    }
     // Capture the account before clearing state: signing out wipes that
     // account's AI provider credentials (session + persisted/remembered keys)
     // from this device by default. This runs BEFORE any switch check, so a
@@ -368,11 +389,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         keysFailed = true;
       }
     }
-    if (!switched()) {
+    if (mounted.current && !switched()) {
       try { await stopPushNotifications(); } catch { /* Push teardown cannot block auth cleanup. */ }
     }
     // A switch must never clear or sign out the account that replaced A, but a
     // real cleanup failure for A still has to surface so it can be retried.
+    if (!mounted.current) throw new Error("Stored sign-in cleanup was interrupted. Retry cleanup on this device.");
     if (switched()) {
       if (keysFailed) throw new Error("Stored AI keys could not be removed. Retry cleanup on this device.");
       return;
@@ -387,6 +409,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       sessionFailed = true;
     }
+    if (!mounted.current) throw new Error("Stored sign-in cleanup was interrupted. Retry cleanup on this device.");
     if (switched()) {
       if (keysFailed || sessionFailed) throw new Error("Stored sign-in or AI keys could not be removed. Retry cleanup on this device.");
       return;
@@ -399,46 +422,109 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearUserScopedLocalState();
     setUserState(null);
     if (keysFailed || sessionFailed) throw new Error("Stored sign-in or AI keys could not be removed. Retry cleanup on this device.");
-    } finally { intentionalSignOut.current -= 1; }
+    } finally {
+      const remaining = (intentionalSignOut.current.get(accountId) ?? 1) - 1;
+      if (remaining > 0) intentionalSignOut.current.set(accountId, remaining);
+      else intentionalSignOut.current.delete(accountId);
+    }
   }, [setUserState]);
 
   const logout = useCallback(() => cleanAccountOnDevice(currentUser.current?.id ?? sdkAccount.current), [cleanAccountOnDevice]);
 
+  const publishDeletion = useCallback((ticket: number, accountId: string, state: "cleaning" | "complete" | "cleanup-failed") => {
+    if (!mounted.current || ticket !== deletionPresentation.current) return;
+    // Never display A's deletion outcome over B, including while B's profile
+    // is still loading. Cleanup authority is independent of this presentation.
+    const foreign = (currentUser.current !== null && currentUser.current.id !== accountId)
+      || (sdkAccount.current !== null && sdkAccount.current !== accountId);
+    setDeletionCompletion(foreign || (state === "complete" && !deviceSignedOut()) ? null : { accountId, state });
+  }, [deviceSignedOut]);
+
+  const performDeletionCleanup = useCallback(async (entry: PendingAccountDeletion) => {
+    const failures: unknown[] = [];
+    // Start captured-account media cleanup even if key/session work fails. Its
+    // rejection is handled immediately, not left unhandled during a slow vault.
+    const messaging = entry.messagingPending
+      ? purgeMessagingAccount(entry.accountId).catch((error: unknown) => { failures.push(error); })
+      : Promise.resolve();
+    if (entry.authPending) {
+      try {
+        await cleanAccountOnDevice(entry.accountId);
+        await finishAccountAuthCleanup(entry.accountId, entry.authRevision);
+      } catch (error) { failures.push(error); }
+    }
+    await messaging;
+    if (failures.length) throw new AggregateError(failures, "Stored sign-in, AI keys or chat history could not be cleared. Retry cleanup on this device.");
+  }, [cleanAccountOnDevice]);
+
+  const admitDeletion = useCallback(async (accountId: string) => {
+    const revision = await beginConfirmedAccountDeletion(accountId);
+    unadmittedDeletions.current.delete(accountId);
+    // The old scalar is only a migration/recovery hint, never our durability
+    // proof. Remove it only AFTER strict admission, and never remove B's hint.
+    try { if (storage.getItem(DELETION_CLEANUP_KEY) === accountId) storage.removeItem(DELETION_CLEANUP_KEY); }
+    catch { /* A retained legacy hint may cause an idempotent retry, not data loss. */ }
+    return revision;
+  }, []);
+
   const finishAccountDeletion = useCallback(async (accountId: string) => {
-    if (currentUser.current?.id !== accountId) throw new Error("Your account changed. Open the current account to continue.");
-    storage.setItem(DELETION_CLEANUP_KEY, accountId);
-    setDeletionCompletion({ accountId, state: "cleaning" });
+    // Trusted confirmed-A seam. The screen calls this only after the server
+    // verifies A's deletion; being signed in as B cannot abandon captured A.
+    const ticket = ++deletionPresentation.current;
+    unadmittedDeletions.current.add(accountId);
+    publishDeletion(ticket, accountId, "cleaning");
     try {
-      await logout();
-      // "Complete" is only ever shown when the device is genuinely signed out
-      // and the persisted session is verifiably gone; a foreign session taking
-      // the slot means A's cleanup is done (A's keys were purged) but there is
-      // nothing left for the user to act on.
-      if (deviceSignedOut()) setDeletionCompletion({ accountId, state: "complete" });
-      else setDeletionCompletion(null);
-      storage.removeItem(DELETION_CLEANUP_KEY);
+      const authRevision = await admitDeletion(accountId);
+      await serializeDeletion(() => performDeletionCleanup({ accountId, authRevision, authPending: true, messagingPending: true }));
+      publishDeletion(ticket, accountId, "complete");
     } catch (error) {
-      const foreign = currentUser.current !== null && currentUser.current.id !== accountId;
-      setDeletionCompletion(foreign ? null : { accountId, state: "cleanup-failed" });
+      // Best-effort hint if durable admission itself failed. A successful
+      // localStorage/memory write is NOT certified crash-durable admission.
+      if (unadmittedDeletions.current.has(accountId)) {
+        try { if (storage.getItem(DELETION_CLEANUP_KEY) === null) storage.setItem(DELETION_CLEANUP_KEY, accountId); } catch { /* volatile retry remains */ }
+      }
+      publishDeletion(ticket, accountId, "cleanup-failed");
       throw error;
     }
-  }, [logout, deviceSignedOut]);
+  }, [admitDeletion, serializeDeletion, performDeletionCleanup, publishDeletion]);
 
   const retryDeletionCleanup = useCallback(async () => {
-    if (!deletionCompletion || deletionCompletion.state === "cleaning" || currentUser.current !== null) return;
-    const accountId = deletionCompletion.accountId;
-    setDeletionCompletion({ accountId, state: "cleaning" });
-    try {
-      await cleanAccountOnDevice(accountId);
-      if (deviceSignedOut()) setDeletionCompletion({ accountId, state: "complete" });
-      else setDeletionCompletion(null);
-      storage.removeItem(DELETION_CLEANUP_KEY);
-    } catch {
-      setDeletionCompletion(deviceSignedOut() ? { accountId, state: "cleanup-failed" } : null);
-    }
-  }, [deletionCompletion, cleanAccountOnDevice, deviceSignedOut]);
+    const ticket = ++deletionPresentation.current;
+    await serializeDeletion(async () => {
+      let inventoryFailed = false;
+      let failedAccount: string | undefined;
+      let completedAccount: string | undefined;
+      try {
+        const legacy = storage.getItem(DELETION_CLEANUP_KEY);
+        if (legacy) unadmittedDeletions.current.add(legacy);
+      } catch { inventoryFailed = true; }
+      for (const accountId of [...unadmittedDeletions.current]) {
+        try { await admitDeletion(accountId); }
+        catch { failedAccount ??= accountId; }
+      }
+      try {
+        const inventory = await inspectPendingAccountDeletions();
+        inventoryFailed ||= inventory.failures.length > 0;
+        for (const entry of inventory.pending) {
+          publishDeletion(ticket, entry.accountId, "cleaning");
+          try { await performDeletionCleanup(entry); completedAccount = entry.accountId; }
+          catch { failedAccount ??= entry.accountId; }
+        }
+      } catch { inventoryFailed = true; }
+      if (mounted.current && ticket === deletionPresentation.current) setDeletionRecoveryError(inventoryFailed);
+      if (failedAccount) publishDeletion(ticket, failedAccount, "cleanup-failed");
+      else if (completedAccount && !inventoryFailed) publishDeletion(ticket, completedAccount, "complete");
+    });
+  }, [admitDeletion, serializeDeletion, performDeletionCleanup, publishDeletion]);
+
+  // Boot discovery/retry is not dependent on a scalar marker or visible UI.
+  // Wait for canonical auth restore so foreign-session guards have its result.
+  useEffect(() => {
+    if (!booting && !bootError) void retryDeletionCleanup();
+  }, [booting, bootError, retryDeletionCleanup]);
+
   const dismissDeletionCompletion = useCallback(() => {
-    storage.removeItem(DELETION_CLEANUP_KEY);
+    ++deletionPresentation.current;
     setDeletionCompletion(null);
   }, []);
 
@@ -530,6 +616,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendPendingEmail,
       logout,
       deletionCompletion,
+      deletionRecoveryError,
       finishAccountDeletion,
       retryDeletionCleanup,
       dismissDeletionCompletion,
@@ -552,6 +639,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resendPendingEmail,
       logout,
       deletionCompletion,
+      deletionRecoveryError,
       finishAccountDeletion,
       retryDeletionCleanup,
       dismissDeletionCompletion,

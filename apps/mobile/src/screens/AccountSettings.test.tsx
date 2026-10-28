@@ -4,8 +4,9 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicUser } from "@findback/shared";
 
-const { mockLogout, mockUser, mockRequestDeletion, mockFetchEligibility } = vi.hoisted(() => ({
+const { mockLogout, mockFinishDeletion, mockUser, mockRequestDeletion, mockFetchEligibility } = vi.hoisted(() => ({
   mockLogout: vi.fn(),
+  mockFinishDeletion: vi.fn(),
   mockRequestDeletion: vi.fn(),
   mockFetchEligibility: vi.fn(),
   mockUser: {
@@ -17,7 +18,7 @@ vi.mock("../auth", () => ({
   useAuth: () => ({
     user: mockUser.value,
     logout: mockLogout,
-    finishAccountDeletion: () => mockLogout(),
+    finishAccountDeletion: (accountId: string) => mockFinishDeletion(accountId),
     retryDeletionCleanup: () => mockLogout(),
     refreshUser: vi.fn(),
   }),
@@ -74,6 +75,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUser.value = { ...verifiedUser };
   mockLogout.mockResolvedValue(undefined);
+  mockFinishDeletion.mockResolvedValue(undefined);
   mockFetchEligibility.mockResolvedValue({ eligible: true, eligibleAt: null, phoneVerified: false });
 });
 
@@ -228,13 +230,13 @@ describe("AccountSettings", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /permanently delete/i }));
     await waitFor(() => expect(mockRequestDeletion).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockFinishDeletion).toHaveBeenCalledWith("u1"));
     expect(screen.getByRole("status").textContent).toMatch(/permanently deleted/i);
   });
 
   it("does not claim local cleanup succeeded when logout fails", async () => {
     mockRequestDeletion.mockResolvedValue({ storageRemoved: 2 });
-    mockLogout.mockRejectedValue(new Error("Local cleanup failed"));
+    mockFinishDeletion.mockRejectedValue(new Error("Local cleanup failed"));
     renderAccount();
     fireEvent.click(screen.getByRole("button", { name: /delete account/i }));
     fireEvent.change(screen.getByLabelText(/type your email address/i), { target: { value: "tester@example.com" } });
@@ -256,6 +258,7 @@ describe("AccountSettings", () => {
     view.rerender(<MemoryRouter><AccountSettings /></MemoryRouter>);
     finish({ storageRemoved: 2 });
     await waitFor(() => expect(screen.getByText("other@example.com")).toBeTruthy());
+    await waitFor(() => expect(mockFinishDeletion).toHaveBeenCalledWith("u1"));
     expect(mockLogout).not.toHaveBeenCalled();
     expect(screen.queryByText(/permanently deleted/i)).toBeNull();
     expect(screen.queryByLabelText(/type your email address/i)).toBeNull();
