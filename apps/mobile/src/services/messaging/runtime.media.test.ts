@@ -35,6 +35,7 @@ let acked: Set<string>, deliveryGate: ReturnType<typeof deferred> | null, entere
 let lastGetSignal: AbortSignal | null;
 let mutationGate: ReturnType<typeof deferred> | null, mutationEntered: ReturnType<typeof deferred>, connected: boolean;
 let downloadStatus: number;
+let sent: Array<Record<string, unknown>>;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -51,7 +52,7 @@ beforeEach(async () => {
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
   mutationGate = null; mutationEntered = deferred(); connected = true;
-  downloadStatus = 200;
+  downloadStatus = 200; sent = [];
   const items = new Map<string, string>([["findback.messaging.installation.v1", DEVICE]]);
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("localStorage", { getItem: (key: string) => items.get(key) ?? null,
@@ -91,7 +92,8 @@ beforeEach(async () => {
         connected = false; return Response.json(null);
       }
       if (action === "SEND") {
-        expect(fields.messageType).toBe("MEDIA");
+        // The gateway defaults omitted messageType to TEXT; MEDIA is explicit.
+        expect(["MEDIA", undefined]).toContain(fields.messageType); sent.push(fields);
         mail.push({ accountId: account, deviceId: DEVICE, mailboxId: id(400), event: { kind: "TEXT", eventId: id(300),
           sequence: 1, message: { id: fields.messageId as string, conversationId: CONV,
             authorId: account, recipientId: fields.recipientId as string, body: fields.body as string } } });
@@ -130,6 +132,57 @@ afterEach(async () => {
 });
 
 describe("production messaging media owner", () => {
+  async function seedUnknown() {
+    const history = boundary.handles[0]!.history;
+    await history.enqueueOutgoing({ id: id(101), conversationId: CONV, authorId: A, recipientId: B, body: "Older caption" });
+    const request = indexedDB.open(`findback-human-history-v1:${A}:${DEVICE}`);
+    const db = await new Promise<IDBDatabase>((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("messages", "readwrite"), store = tx.objectStore("messages"), read = store.get(id(101));
+      read.onsuccess = () => { const legacy = { ...read.result }; delete legacy.messageType; store.put(legacy); };
+      tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error);
+    }); db.close();
+  }
+  it("recovers only an explicitly selected unknown queued message, preserving its identity and caption", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    await seedUnknown();
+    await runtime.recoverMessagingText(A, CONV, id(101));
+    expect((await boundary.handles[0]!.history.getMessage(id(101)))?.messageType).toBe("TEXT");
+    await runtime.refreshMessaging(A);
+    // A coalesced wake returns the existing pass; wait for the follow-up that
+    // actually sends the re-admitted row, not an earlier ready snapshot.
+    await waitForState((state) => state.status === "ready" && sent.length === 1).catch(async (error: Error) => {
+      throw new Error(`${error.message}: ${JSON.stringify({ requests: requestLog, state: runtime.getMessagingRuntimeSnapshot(), thread: await runtime.readMessagingThreadState(A, CONV) })}`);
+    });
+    expect(sent).toEqual([{ conversationId: CONV, recipientId: B, messageId: id(101), body: "Older caption" }]);
+    expect((await runtime.readMessagingThreadState(A, CONV)).outbox).toEqual([]);
+  });
+  it("does not recover a message from another conversation or inactive account", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    await seedUnknown();
+    await expect(runtime.recoverMessagingText(A, id(999), id(101))).rejects.toThrow();
+    await expect(runtime.recoverMessagingText(B, CONV, id(101))).rejects.toThrow();
+    expect(sent).toEqual([]);
+    expect((await runtime.readMessagingThreadState(A, CONV)).outbox[0]?.status).toBe("NEEDS_REVIEW");
+  });
+  it("does not re-admit a reviewed message once an authoritative echo has already resolved it", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    await seedUnknown();
+    await boundary.handles[0]!.history.persistInbound({ accountId: A, deviceId: DEVICE, mailboxId: id(401),
+      event: { kind: "TEXT", eventId: id(301), sequence: 1, message: { id: id(101), conversationId: CONV,
+        authorId: A, recipientId: B, body: "Older caption", messageType: "TEXT" } } });
+    await expect(runtime.recoverMessagingText(A, CONV, id(101))).rejects.toThrow(/review/);
+    expect(sent).toEqual([]);
+    expect((await runtime.readMessagingThreadState(A, CONV)).outbox).toEqual([]);
+  });
+  it("allows deleting an unknown queued message locally without network admission", async () => {
+    runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
+    await seedUnknown(); const before = [...requestLog];
+    online = false;
+    await runtime.removeMessagingMessage(A, CONV, id(101), false);
+    expect(await runtime.readMessagingThreadState(A, CONV)).toEqual({ messages: [], media: [], outbox: [] });
+    expect(requestLog).toEqual(before); expect(sent).toEqual([]);
+  });
   it("purges captured A after switching to B without closing B or starting cleanup network work", async () => {
     runtime.setMessagingAccount(A); await waitForState((state) => state.status === "ready");
     await boundary.handles[0]!.history.enqueueOutgoing({ id: id(101), conversationId: CONV, authorId: A, recipientId: B, body: "private A" });

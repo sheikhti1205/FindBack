@@ -1,20 +1,26 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
-import { ArrowLeft, Bell, ChevronDown, Ellipsis, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Bell, ChevronDown, Ellipsis, ImagePlus, RefreshCw, Send } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
 import { BottomSheet } from "../components/BottomSheet";
 import { BlockControl } from "../components/BlockControl";
 import { ReportSheet } from "../components/ReportSheet";
+import { PhotoLightbox } from "../components/PhotoLightbox";
 import { announce } from "../components/LiveRegion";
 import { fetchAccountLabels } from "../services/accountLabels";
 import { useMessaging } from "../services/messaging/useMessaging";
 import {
   changeMessagingRelationship, markMessagingConversationRead, readMessagingThreadState,
-  refreshMessaging, sendMessagingText, clearMessagingConversation, removeMessagingMessage,
-  fetchMessagingReceiptView, observeMessagingReceipt,
+  refreshMessaging, sendMessagingText, sendMessagingMedia, clearMessagingConversation, removeMessagingMessage,
+  fetchMessagingReceiptView, observeMessagingReceipt, readMessagingMedia, downloadMessagingMedia, recoverMessagingText,
 } from "../services/messaging/runtime";
-import type { OutboxEntry, StoredHumanMessage } from "../services/messaging/history";
+import type { MediaAttachment, OutboxEntry, StoredHumanMessage } from "../services/messaging/history";
+import { prepareMessagingPhoto, type PreparedMessagingPhoto } from "../services/messaging/preparePhoto";
+import type { MediaMetadata } from "../services/messaging/media";
+import { PhotoUnavailableError } from "../services/messaging/mediaTransport";
+import { chooseNativeImages, importNativeImageUri, importedImageToFile } from "../services/media/nativeMedia";
 import "./Messaging.css";
 
 function useLabels(peerIds: string[]) {
@@ -61,6 +67,46 @@ function RetrySync({ accountId }: { accountId: string }) {
       }}><RefreshCw size={19} aria-hidden="true" className={busy ? "fb-chat-refreshing" : ""} /></button>
     {error && <span role="status" className="fb-chat-secondary">Could not sync.</span>}
   </>;
+}
+
+function ChatPhoto({ accountId, conversationId, attachment, onOpen }: {
+  accountId: string; conversationId: string; attachment: MediaAttachment;
+  onOpen: (id: string, bytes: ArrayBuffer, mime: string) => void;
+}) {
+  const [content, setContent] = useState<{ url: string; bytes: ArrayBuffer } | null>(null);
+  const [state, setState] = useState<"loading" | "missing" | "failed" | "unavailable">("loading");
+  const [version, setVersion] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const canDownload = attachment.expiresAt !== null && attachment.expiresAt !== undefined
+    && attachment.expiresAt > Date.now()
+    && (attachment.direction === "IN" || ["READY", "EVICTED", "AWAITING_ACK"].includes(attachment.state));
+  useEffect(() => {
+    let cancelled = false, url: string | null = null;
+    setContent(null); setLoaded(false);
+    if (attachment.state === "EVICTED") { setState(attachment.expiresAt !== null && attachment.expiresAt <= Date.now() ? "unavailable" : "missing"); return; }
+    setState("loading");
+    void readMessagingMedia(accountId, attachment.id).then((bytes) => {
+      if (cancelled) return;
+      if (!bytes) { setState("missing"); return; }
+      const copy = bytes.slice(0);
+      url = URL.createObjectURL(new Blob([copy], { type: attachment.mime }));
+      setContent({ url, bytes: copy });
+    }).catch(() => { if (!cancelled) setState("failed"); });
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [accountId, attachment.id, attachment.mime, attachment.state, attachment.expiresAt, version]);
+  async function download() {
+    setState("loading");
+    try { await downloadMessagingMedia(accountId, conversationId, attachment.id); setVersion((v) => v + 1); }
+    catch (error) { setState(error instanceof PhotoUnavailableError ? "unavailable" : "failed"); }
+  }
+  return <div className="fb-chat-photo" style={{ aspectRatio: `${attachment.width} / ${attachment.height}` }}>
+    {content ? <button type="button" aria-label="View photo" onClick={() => onOpen(attachment.messageId, content.bytes, attachment.mime)}>
+      <img src={content.url} alt="" onLoad={() => setLoaded(true)} onError={() => { setContent(null); setState("failed"); }}
+        data-receipt-message={loaded && attachment.state === "READY" ? attachment.messageId : undefined} />
+    </button> : <div role="status">{state === "loading" ? "Photo loading…" : state === "failed" ? "Could not load photo." : "Photo unavailable"}
+      {canDownload && (state === "missing" || state === "failed") && <button type="button" onClick={() => void download()}>Download again</button>}
+    </div>}
+  </div>;
 }
 
 export function Connections() {
@@ -137,15 +183,25 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const row = chat.conversations.find((entry) => entry.conversationId === conversationId);
   const current = chat.currentProjections?.[conversationId];
   const view = current ?? row?.cachedProjection;
+  const photoAllowed = view?.mode === "CONNECTED" && !view.ownBlocked && chat.accountId === accountId;
   const labels = useLabels(row ? [row.peerId] : []);
   const name = row ? labels.get(row.peerId) : undefined;
   const [messages, setMessages] = useState<StoredHumanMessage[]>([]);
   const [outbox, setOutbox] = useState<OutboxEntry[]>([]);
+  const [media, setMedia] = useState<MediaAttachment[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState("");
+  const [photo, setPhoto] = useState<{ source: File; prepared?: PreparedMessagingPhoto; error?: boolean } | null>(null);
+  const [photoPreparing, setPhotoPreparing] = useState(false);
+  const [draftUrl, setDraftUrl] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{ id: string; previewUrl: string } | null>(null);
+  const viewerUrls = useRef(new Set<string>());
+  const photoController = useRef<AbortController | null>(null);
+  const admission = useRef<{ metadata: MediaMetadata; caption: string } | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<"actions" | "end" | "message" | "delete" | "unsend" | "clear" | null>(null);
+  const [sheet, setSheet] = useState<"actions" | "end" | "message" | "delete" | "unsend" | "clear" | "review" | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
@@ -157,8 +213,61 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; };
+    return () => { alive.current = false; photoController.current?.abort(); for (const url of viewerUrls.current) URL.revokeObjectURL(url); viewerUrls.current.clear(); };
   }, []);
+  useEffect(() => {
+    if (!photoAllowed || !photo?.prepared) { setDraftUrl(null); return; }
+    const url = URL.createObjectURL(new Blob([photo.prepared.bytes.slice(0)], { type: photo.prepared.mime }));
+    setDraftUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [photo?.prepared, photoAllowed]);
+  useLayoutEffect(() => {
+    if (!photoAllowed) {
+      photoController.current?.abort(); setPhotoPreparing(false);
+      setPhoto((previous) => previous && !previous.prepared ? { ...previous, error: true } : previous);
+    }
+  }, [photoAllowed]);
+  const activeViewer = viewer && photoAllowed
+    && messages.some((message) => message.id === viewer.id && message.unsentAt === undefined) ? viewer : null;
+  useLayoutEffect(() => {
+    if (viewer && !activeViewer) {
+      if (viewerUrls.current.delete(viewer.previewUrl)) URL.revokeObjectURL(viewer.previewUrl);
+      setViewer(null);
+    }
+  }, [viewer, activeViewer]);
+  function openPhoto(id: string, bytes: ArrayBuffer, mime: string) {
+    const previewUrl = URL.createObjectURL(new Blob([bytes.slice(0)], { type: mime }));
+    viewerUrls.current.add(previewUrl); setViewer({ id, previewUrl });
+  }
+  function closePhoto() {
+    if (!viewer) return;
+    const url = viewer.previewUrl; setViewer(null);
+    window.setTimeout(() => { if (viewerUrls.current.delete(url)) URL.revokeObjectURL(url); }, 350);
+  }
+  async function preparePhoto(source: File) {
+    photoController.current?.abort();
+    admission.current = null;
+    const controller = new AbortController();
+    photoController.current = controller;
+    setPhoto({ source }); setPhotoPreparing(true);
+    try {
+      const prepared = await prepareMessagingPhoto(source, { signal: controller.signal });
+      if (!controller.signal.aborted) setPhoto({ source, prepared });
+    } catch {
+      if (!controller.signal.aborted) setPhoto({ source, error: true });
+    } finally { if (!controller.signal.aborted) setPhotoPreparing(false); }
+  }
+  async function choosePhoto() {
+    if (Capacitor.getPlatform() !== "android") { photoInput.current?.click(); return; }
+    photoController.current?.abort();
+    const controller = new AbortController(); photoController.current = controller;
+    try {
+      const uris = await chooseNativeImages({ source: "photos", limit: 1 });
+      if (controller.signal.aborted || !uris?.[0]) return;
+      const imported = await importNativeImageUri(uris[0], { signal: controller.signal });
+      if (!controller.signal.aborted) await preparePhoto(importedImageToFile(imported));
+    } catch { if (!controller.signal.aborted) setError("Could not open that photo. Please try again."); }
+  }
   useEffect(() => {
     const update = () => setVisible(document.visibilityState === "visible");
     document.addEventListener("visibilitychange", update);
@@ -169,7 +278,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     let cancelled = false;
     void readMessagingThreadState(accountId, conversationId).then((state) => {
       if (cancelled) return;
-      setMessages(state.messages); setOutbox(state.outbox); setLoaded(true);
+      setMessages(state.messages); setOutbox(state.outbox); setMedia(state.media); setLoaded(true);
     }).catch(() => { if (!cancelled) setError("Your saved messages could not open. Try syncing again."); });
     return () => { cancelled = true; };
   }, [accountId, conversationId, chat.accountId, chat.status, chat.revision]);
@@ -201,7 +310,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     setReceipt(null);
     const area = scroll.current;
     const projections = chat.currentProjections;
-    if (!area || !loaded || !visible || sheet !== null || reportOpen || chat.accountId !== accountId || chat.status !== "ready"
+    if (!area || !loaded || !visible || sheet !== null || reportOpen || viewer || chat.accountId !== accountId || chat.status !== "ready"
       || !projections || current?.mode !== "CONNECTED" || current.ownBlocked) return;
     const controller = new AbortController();
     let context: string | null = null;
@@ -255,7 +364,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     const checkVisible = () => {
       if (controller.signal.aborted || document.visibilityState !== "visible") return;
       const container = area.getBoundingClientRect();
-      const candidates = messages.filter((message) => message.server && message.unsentAt === undefined);
+      const candidates = messages.filter((message) => message.server && message.unsentAt === undefined && message.messageType);
       const visibleOwn: string[] = [];
       const bubbles = new Map(Array.from(area.querySelectorAll<HTMLElement>("[data-receipt-message]"),
         (element) => [element.dataset.receiptMessage, element] as const));
@@ -287,15 +396,19 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       if (!frame) frame = window.requestAnimationFrame(() => { frame = 0; checkVisible(); });
     };
     area.addEventListener("scroll", schedule, { passive: true });
+    // A loaded READY photo becomes eligible without waiting for another scroll.
+    // Capture non-bubbling image loads; the next frame sees React's loaded DOM.
+    area.addEventListener("load", schedule, true);
     window.addEventListener("resize", schedule);
     schedule();
     return () => {
       controller.abort();
       if (frame) window.cancelAnimationFrame(frame);
       area.removeEventListener("scroll", schedule);
+      area.removeEventListener("load", schedule, true);
       window.removeEventListener("resize", schedule);
     };
-  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, loaded, messages, visible, sheet, reportOpen]);
+  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, loaded, messages, visible, sheet, reportOpen, viewer]);
 
   async function relationship(action: "accept" | "end" | "hide" | "unhide" | "decline") {
     if (busy) return;
@@ -308,15 +421,34 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   }
   async function send(event: FormEvent) {
     event.preventDefault();
-    if (!row || busy || !draft.trim()) return;
+    if (!row || busy || (!photo && !draft.trim())) return;
+    if (photo && (!photo.prepared || view?.mode !== "CONNECTED" || view.ownBlocked)) return;
     setBusy(true); setError(null);
     try {
-      await sendMessagingText(accountId, conversationId, row.peerId, draft);
-      if (alive.current) { nearBottom.current = true; setDraft(""); announce("Message saved. Sending."); }
-    } catch { if (alive.current) setError("Your message could not be saved. Your text is still here."); }
+      if (photo?.prepared) {
+        const { bytes, ...info } = photo.prepared;
+        const attempt = admission.current ?? { caption: draft, metadata: { ...info, id: crypto.randomUUID(), messageId: crypto.randomUUID(), direction: "OUT", expiresAt: null } };
+        admission.current = attempt;
+        await sendMessagingMedia(accountId, conversationId, row.peerId, attempt.caption, attempt.metadata, bytes);
+      } else await sendMessagingText(accountId, conversationId, row.peerId, draft);
+      if (alive.current) { nearBottom.current = true; setDraft(""); setPhoto(null); admission.current = null; announce("Message saved. Sending."); }
+    } catch { if (alive.current) setError("Your message could not be saved. Your draft is still here."); }
     finally { if (alive.current) { setBusy(false); composer.current?.focus(); } }
   }
   const selectedMessage = messages.find((message) => message.id === selectedMessageId);
+  const selectedNeedsReview = selectedMessage?.authorId === accountId && !selectedMessage.server
+    && selectedMessage.unsentAt === undefined
+    && outbox.some((entry) => entry.messageId === selectedMessageId && entry.status === "NEEDS_REVIEW");
+  async function reviewMessage(action: "send" | "delete") {
+    if (busy || !selectedNeedsReview || !selectedMessage) return;
+    setBusy(true); setError(null);
+    try {
+      if (action === "send") await recoverMessagingText(accountId, conversationId, selectedMessage.id);
+      else await removeMessagingMessage(accountId, conversationId, selectedMessage.id, false);
+      if (alive.current) { setSheet(null); setSelectedMessageId(null); announce(action === "send" ? "Text saved. Sending." : "Your copy was removed."); }
+    } catch { if (alive.current) setError("Could not confirm this change. Sync and check your chat before trying again."); }
+    finally { if (alive.current) setBusy(false); }
+  }
   async function erase(action: "delete" | "unsend" | "clear") {
     if (busy || !current) return;
     if (action !== "clear" && !selectedMessage?.server) return;
@@ -356,13 +488,24 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
         {messages.map((message) => {
           const own = message.authorId === accountId;
           const pending = outbox.find((entry) => entry.messageId === message.id);
+          const attachment = media.find((entry) => entry.messageId === message.id);
           return <li key={message.id} className={own ? "fb-chat-line fb-chat-line-own" : "fb-chat-line"}>
-            <div data-receipt-message={message.id} className={own ? "fb-chat-message fb-chat-message-own" : "fb-chat-message"}>
+            <div data-receipt-message={message.messageType === "TEXT" && message.body && message.unsentAt === undefined ? message.id : undefined} className={own ? "fb-chat-message fb-chat-message-own" : "fb-chat-message"}>
             <span className="sr-only">{own ? "You: " : `${name ? `@${name}` : "Member"}: `}</span>
-            <p dir="auto">{message.unsentAt !== undefined ? "Message unsent" : message.body}</p>
-            {own && <span className="fb-chat-message-status">{message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
+            {message.unsentAt !== undefined ? <p>Message unsent</p> : <>
+            {message.messageType === "MEDIA" && attachment && view?.mode === "CONNECTED" && !view.ownBlocked && <ChatPhoto key={attachment.id} accountId={accountId} conversationId={conversationId} attachment={attachment} onOpen={openPhoto} />}
+            {message.body ? <p dir="auto">{message.body}</p> : !attachment && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
+            {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
               && message.unsentAt === undefined && receipt?.projections === chat.currentProjections && receipt.readIds.has(message.id) ? "Read" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
-              {!message.server && pending?.status === "FAILED" && <button type="button" onClick={() => void refreshMessaging(accountId).catch(() => setError("Could not retry. Try syncing again."))}>Retry</button>}</span>}
+              {(attachment?.state === "FAILED" || (!message.server && pending?.status === "FAILED")) && pending?.status !== "NEEDS_REVIEW" && <button type="button" onClick={() => void refreshMessaging(accountId).catch(() => setError("Could not retry. Try syncing again."))}>Retry</button>}</span>}
+            {own && pending?.status === "NEEDS_REVIEW" && <button type="button" disabled={busy} onClick={() => { setSelectedMessageId(message.id); setSheet("review"); }}>Review message</button>}
+            {own && attachment && !message.server && <button type="button" aria-label="Remove pending photo" onClick={() => {
+              void removeMessagingMessage(accountId, conversationId, message.id, false).catch(() => {
+                setError("Could not confirm this change. Sync and check your chat.");
+                void refreshMessaging(accountId).catch(() => undefined);
+              });
+            }}>Remove</button>}
+            </>}
             </div>
             {message.server && <button type="button" className="fb-chat-icon fb-chat-message-options" aria-label={own ? "Options for your message" : "Options for received message"}
               onClick={() => { setSelectedMessageId(message.id); setSheet("message"); }}><Ellipsis size={16} aria-hidden="true" /></button>}
@@ -372,16 +515,37 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       {view?.ownBlocked && <p className="fb-chat-secondary">You’ve blocked this account. Manage blocked accounts in Privacy settings.</p>}
     </div>
     {error && <p className="fb-chat-error" role="alert">{error}</p>}
+    {photo && <div className="fb-chat-photo-draft" role="status">
+      {photoAllowed && draftUrl && photo.prepared && <img src={draftUrl} alt="Selected photo" style={{ aspectRatio: `${photo.prepared.width} / ${photo.prepared.height}` }} />}
+      {!photoAllowed ? "Photos are available when connected. Remove this photo to send text only." : photoPreparing ? "Preparing photo…" : photo.error ? "Could not prepare photo." : "Photo ready"}
+      {photoAllowed && photo.error && <button type="button" onClick={() => void preparePhoto(photo.source)}>Retry</button>}
+      <button type="button" aria-label="Remove photo" disabled={busy || !!admission.current} onClick={() => { photoController.current?.abort(); admission.current = null; setPhoto(null); setPhotoPreparing(false); }}>Remove</button>
+    </div>}
     {canCompose && <form className="fb-chat-composer" onSubmit={(event) => void send(event)}>
+      {view?.mode === "CONNECTED" && <>
+        <input ref={photoInput} type="file" accept="image/*" aria-label="Choose photo" hidden onChange={(event) => {
+          const source = event.currentTarget.files?.[0]; event.currentTarget.value = "";
+          if (source && Capacitor.getPlatform() !== "android") void preparePhoto(source);
+        }} />
+        <button type="button" className="fb-chat-icon" aria-label="Attach photo" disabled={busy || !!admission.current} onClick={() => void choosePhoto()}><ImagePlus size={21} aria-hidden="true" /></button>
+      </>}
       <label htmlFor="chat-message" className="sr-only">Message</label>
       <textarea id="chat-message" ref={composer} value={draft} onChange={(event) => setDraft(event.target.value)}
-        rows={1} maxLength={100000} disabled={busy} placeholder="Message" />
-      <button type="submit" className="fb-chat-icon" aria-label="Send message" disabled={busy || !draft.trim()}><Send size={21} aria-hidden="true" /></button>
+        rows={1} maxLength={100000} disabled={busy || !!admission.current} placeholder="Message" />
+      <button type="submit" className="fb-chat-icon" aria-label="Send message" disabled={busy || (photo ? !photoAllowed || !photo.prepared : !draft.trim())}><Send size={21} aria-hidden="true" /></button>
     </form>}
+    <PhotoLightbox photo={activeViewer} onClose={closePhoto} />
     <BottomSheet open={sheet !== null} onClose={() => setSheet(null)} title={sheet === "end" ? "End connection?"
       : sheet === "delete" ? "Delete for me?" : sheet === "unsend" ? "Unsend message?"
-        : sheet === "clear" ? "Clear chat for me?" : sheet === "message" ? "Message options" : "Conversation options"} height="medium">
-      {sheet === "end" ? <div className="fb-chat-sheet">
+        : sheet === "clear" ? "Clear chat for me?" : sheet === "review" ? "Review message" : sheet === "message" ? "Message options" : "Conversation options"} height="medium">
+      {sheet === "review" ? <div className="fb-chat-sheet">
+        <p>We couldn’t confirm this older message. Send the text shown here only, or remove your copy. This won’t recall anything already delivered.</p>
+        <p className="fb-chat-review-copy" dir="auto">{selectedMessage?.body || "No saved text. To send a photo, attach it again as a new message."}</p>
+        <div className="fb-chat-actions">
+          <button type="button" disabled={busy || !selectedNeedsReview || !selectedMessage?.body.trim() || !canCompose} onClick={() => void reviewMessage("send")}>Send text only</button>
+          <button type="button" disabled={busy || !selectedNeedsReview} onClick={() => void reviewMessage("delete")}>Delete for me</button>
+        </div>
+      </div> : sheet === "end" ? <div className="fb-chat-sheet">
         <p>Your messages stay here. Either of you can send a new request.</p>
         <div className="fb-chat-actions"><button type="button" disabled={busy} onClick={() => setSheet(null)}>Keep connection</button>
           <button type="button" disabled={busy || !current} onClick={() => void relationship("end")}>End connection</button></div>

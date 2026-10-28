@@ -346,6 +346,20 @@ export async function sendMessagingText(accountId: string, conversationId: strin
   return id;
 }
 
+/** Explicit user recovery, never called by wake/retry. Re-admit the exact old
+ * identity as TEXT only after the user chose to send the displayed text alone. */
+export async function recoverMessagingText(accountId: string, conversationId: string, messageId: string): Promise<void> {
+  const owner = ownerFor(accountId), history = owner.handle.history;
+  const message = await history.getMessage(uuid(messageId));
+  const queued = (await history.listOutbox()).find((entry) => entry.messageId === messageId);
+  assertOwner(owner);
+  if (!message || message.conversationId !== uuid(conversationId) || message.authorId !== accountId
+    || message.server || message.unsentAt !== undefined || message.messageType || !message.body.trim()
+    || queued?.status !== "NEEDS_REVIEW") throw new Error("Message no longer needs review");
+  await owner.session.send(message);
+  assertOwner(owner); await reload(owner); void refreshOwner(owner);
+}
+
 export async function markMessagingConversationRead(accountId: string, conversationId: string, throughSequence: number): Promise<void> {
   const owner = ownerFor(accountId);
   await owner.handle.history.markConversationRead(uuid(conversationId), throughSequence);
