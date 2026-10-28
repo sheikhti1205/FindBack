@@ -9,7 +9,14 @@ type Database = { public: { Tables: Record<string, never>; Views: Record<string,
   findback_commit_chat_media: { Args: { p_actor: string; p_attachment_id: string; p_generation: string; p_object_key: string; p_sha: string; p_mime: string; p_bytes: number; p_width: number; p_height: number }; Returns: undefined };
 }; Enums: Record<string, never>; CompositeTypes: Record<string, never> } };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const respond=(body: object,status: number) => Response.json(body,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
+// Bearer-token API, never cookie credentials. The outer endpoint owns CORS so
+// early validation and normalized auth/transport failures carry it too.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-message-id, x-attachment-id, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+const respond=(body: object,status: number) => Response.json(body,{status,headers:{...CORS_HEADERS,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
 async function bodyBytes(request: Request, signal: AbortSignal): Promise<Uint8Array> {
   if (!request.body) throw Error(); const reader=request.body.getReader(); const chunks: Uint8Array[]=[]; let total=0;
   let onAbort=()=>{};
@@ -22,6 +29,7 @@ async function bodyBytes(request: Request, signal: AbortSignal): Promise<Uint8Ar
 export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: typeof fetch = fetch) {
   let active=false;
   return async (request: Request): Promise<Response> => {
+    if (request.method==="OPTIONS") return new Response(null,{status:204,headers:{...CORS_HEADERS,"Cache-Control":"no-store"}});
     if (request.method!=="POST" && request.method!=="GET") return respond({error:"Method not allowed"},405);
     const messageId=request.headers.get("x-message-id"), attachmentId=request.headers.get("x-attachment-id"), mime=request.headers.get("content-type")?.trim().toLowerCase();
     if (!attachmentId || !UUID.test(attachmentId) || (request.method==="POST" && (!messageId || !UUID.test(messageId)))) return respond({error:"Invalid request"},400);
@@ -29,13 +37,13 @@ export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: t
     const length=request.headers.get("content-length"); if (request.method==="POST" && length!==null && (!/^\d+$/.test(length) || Number(length)>MAX_BYTES)) return respond({error:"Invalid request"},413);
     const controller=new AbortController(); const signal=AbortSignal.any([controller.signal,request.signal]); const timer=setTimeout(()=>controller.abort(),90_000); let activeSignal=signal;
     const boundedFetch: typeof fetch=(input,init)=>transport(input,{...init,signal:AbortSignal.any([signal,activeSignal,...(init?.signal?[init.signal]:[]),...(input instanceof Request?[input.signal]:[])])});
-    const handler=withSupabase<Database>({auth:"user",cors:false,env,errors:{detailed:false},supabaseOptions:{global:{fetch:boundedFetch}}},async (req,ctx)=>{
+    const handler=withSupabase<Database>({auth:"user",cors:"disabled",env,errors:{detailed:false},supabaseOptions:{global:{fetch:boundedFetch}}},async (req,ctx)=>{
       if(req.method==="GET") {
         const actor=ctx.userClaims?.id; if(!actor)return respond({error:"Unauthorized"},401);
         const admin=ctx.supabaseAdmin;
         const result=await downloadChatMedia({now:Date.now,async readTarget(_actor,id,s){activeSignal=s;const {data,error}=await admin.rpc("findback_read_chat_media",{p_actor:actor,p_attachment_id:id}).abortSignal(s);if(error)throw Error();return data;},async download(t,s){activeSignal=s;const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream();if(error || !data)throw Error();return data;}},{actor,attachmentId},{signal});
         if(result.status!=="served")return respond({error:result.status==="retry"?"Unavailable":"Not found"},result.status==="retry"?503:404);
-        return new Response(result.bytes,{status:200,headers:{"Content-Type":result.mime,"Content-Length":String(result.bytes.length),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":"inline"}});
+        return new Response(result.bytes,{status:200,headers:{...CORS_HEADERS,"Content-Type":result.mime,"Content-Length":String(result.bytes.length),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":"inline"}});
       }
       if (active) return respond({error:"Unavailable"},503); active=true;
       try {

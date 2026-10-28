@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import { createChatMediaEndpoint } from "./handler.ts";
+// Synthetic test-only credentials: placeholder API keys and ephemeral locally
+// generated signing keys/JWTs. No deployed credentials or accounts are used.
 const env = { url:"https://project.example.invalid", secretKeys:{default:"sb_secret_placeholder"}, publishableKeys:{default:"sb_publishable_placeholder"}, jwks:{keys:[]} };
-Deno.test("method and invalid headers fail before transport", async () => { let n=0; const transport: typeof fetch = async () => { n++; throw Error("unexpected"); }; const endpoint=createChatMediaEndpoint(env,transport); assert.equal((await endpoint(new Request("https://example.invalid",{method:"PUT"}))).status,405); assert.equal((await endpoint(new Request("https://example.invalid",{method:"POST"}))).status,400); assert.equal(n,0); });
+Deno.test("method and invalid headers fail before transport", async () => { let n=0; const transport: typeof fetch = () => { n++; return Promise.reject(Error("unexpected")); }; const endpoint=createChatMediaEndpoint(env,transport); assert.equal((await endpoint(new Request("https://example.invalid",{method:"PUT"}))).status,405); assert.equal((await endpoint(new Request("https://example.invalid",{method:"POST"}))).status,400); assert.equal(n,0); });
 const id="00000000-0000-4000-8000-000000000001";
 const png=new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137]);
 const key=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
@@ -18,6 +20,96 @@ const actorId="00000000-0000-4000-8000-0000000000aa";
 const actorSigning=`${text({alg:"ES256",kid:"unit"})}.${text({sub:actorId,role:"authenticated",exp:Math.floor(Date.now()/1000)+3600})}`;
 const actorToken=`${actorSigning}.${b64(new Uint8Array(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},key.privateKey,new TextEncoder().encode(actorSigning))))}`;
 const request=(h: Record<string,string> = headers)=>new Request("https://example.invalid",{method:"POST",headers:h,body:png.slice()});
+function assertCors(response: Response) {
+  assert.equal(response.headers.get("access-control-allow-origin"), "*");
+  assert.equal(response.headers.get("access-control-allow-credentials"), null);
+  assert.deepEqual(response.headers.get("access-control-allow-methods")?.split(",").map(x => x.trim()).sort(), ["GET", "OPTIONS", "POST"]);
+  const allowed = response.headers.get("access-control-allow-headers")?.split(",").map(x => x.trim().toLowerCase()) ?? [];
+  for (const header of ["authorization", "apikey", "content-type", "x-client-info", "x-message-id", "x-attachment-id",
+    "x-supabase-client-platform", "x-supabase-client-platform-version", "x-supabase-client-runtime", "x-supabase-client-runtime-version"]) {
+    assert(allowed.includes(header), `Missing CORS request header ${header}`);
+  }
+}
+
+Deno.test("browser preflight permits media methods and headers without auth or data transport", async () => {
+  let calls = 0;
+  const endpoint = createChatMediaEndpoint(testEnv, () => { calls++; return Promise.reject(Error("unexpected transport")); });
+  for (const origin of ["https://app.example.test", "https://localhost"]) {
+    for (const method of ["GET", "POST"]) {
+      const req = new Request("https://example.invalid", { method: "OPTIONS", headers: {
+        origin, "access-control-request-method": method,
+        "access-control-request-headers": "authorization,apikey,content-type,x-message-id,x-attachment-id,x-client-info",
+      } });
+      const response = await endpoint(req);
+      assert.equal(response.status, 204);
+      assert.equal(await response.text(), "");
+      assert.equal(req.bodyUsed, false);
+      assertCors(response);
+    }
+  }
+  assert.equal(calls, 0);
+});
+
+Deno.test("cross-origin validation auth absence and transient failures retain readable generic responses", async () => {
+  const f = fixture();
+  const endpoint = createChatMediaEndpoint(testEnv, f.transport);
+  const cases: Array<[Request, number]> = [
+    [new Request("https://example.invalid", { method: "PUT" }), 405],
+    [request({ ...headers, "x-message-id": "invalid" }), 400],
+    [request({ ...headers, "content-type": "text/plain" }), 415],
+    [request({ ...headers, "content-length": "20971521" }), 413],
+    [new Request("https://example.invalid", { headers: { "x-attachment-id": id } }), 401],
+    [request({ ...headers, authorization: "Bearer synthetic-invalid-jwt" }), 401],
+  ];
+  for (const [req, status] of cases) {
+    req.headers.set("origin", "https://app.example.test");
+    const response = await endpoint(req);
+    assert.equal(response.status, status);
+    assertCors(response);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  assert.equal(f.calls.length, 0);
+  for (const [transport, status] of [
+    [() => Promise.resolve(Response.json(null)), 404],
+    [() => Promise.resolve(Response.json({ message: "private-path", code: "42704" }, { status: 500 })), 503],
+  ] as const) {
+    const response = await createChatMediaEndpoint(testEnv, transport)(new Request("https://example.invalid", {
+      headers: { origin: "https://app.example.test", "x-attachment-id": id, authorization: `Bearer ${token}` },
+    }));
+    assert.equal(response.status, status);
+    assertCors(response);
+    const text = await response.text();
+    assert(!text.includes("private-path"));
+    assert(!text.includes("42704"));
+  }
+});
+
+Deno.test("cross-origin upload and download preserve verified bodies and safe headers", async () => {
+  const f = fixture();
+  const uploaded = await createChatMediaEndpoint(testEnv, f.transport)(request({ ...headers, origin: "https://app.example.test" }));
+  assert.equal(uploaded.status, 200);
+  assertCors(uploaded);
+  const metadata = await uploaded.json();
+  assert.equal(metadata.attachmentId, id);
+  const transport: typeof fetch = (input) => {
+    if (new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname.endsWith("findback_read_chat_media")) {
+      return Promise.resolve(Response.json({ ...metadata, id, bucket: "findback-chat-media", objectKey: `attachments/${id}`,
+        generation: id, expiresAt: "2099-01-01T00:00:00Z" }));
+    }
+    return Promise.resolve(new Response(png.slice()));
+  };
+  const downloaded = await createChatMediaEndpoint(testEnv, transport)(new Request("https://example.invalid", {
+    headers: { origin: "https://app.example.test", "x-attachment-id": id, authorization: `Bearer ${token}` },
+  }));
+  assert.equal(downloaded.status, 200);
+  assertCors(downloaded);
+  assert.equal(downloaded.headers.get("content-type"), "image/png");
+  assert.equal(downloaded.headers.get("content-length"), String(png.length));
+  assert.equal(downloaded.headers.get("cache-control"), "private, no-store");
+  assert.equal(downloaded.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(downloaded.headers.get("content-disposition"), "inline");
+  assert.deepEqual(new Uint8Array(await downloaded.arrayBuffer()), png);
+});
 function fixture() {
   const calls:string[]=[]; let bytes:Uint8Array=png;
   const transport:typeof fetch=async(input,init)=>{ const req=new Request(input,init); const p=new URL(req.url).pathname; calls.push(`${req.method} ${p}`);
@@ -32,8 +124,8 @@ function fixture() {
 Deno.test("verified user uploads through SDK and receives only public metadata",async()=>{ const f=fixture(); const res=await createChatMediaEndpoint(testEnv,f.transport)(request()); const body=await res.text(); assert.equal(res.status,200,body); const value=JSON.parse(body); assert.equal(value.attachmentId,id); assert.equal(value.width,1); assert.equal(value.height,1); assert(!body.includes("attachments/") && !body.includes("generation") && !body.includes("findback-chat-media")); assert.deepEqual(f.calls.map(x=>x.split(" ")[0]),["POST","POST","POST","GET","POST"]); });
 Deno.test("unauthenticated caller cannot access storage",async()=>{const f=fixture(); const h={...headers}; delete (h as Record<string,string>).authorization; const res=await createChatMediaEndpoint(testEnv,f.transport)(request(h)); assert.equal(res.status,401); assert.equal(f.calls.length,0); assert(!(await res.text()).includes("attachments/"));});
 Deno.test("headers and media type are rejected before transport",async()=>{const f=fixture(); const endpoint=createChatMediaEndpoint(testEnv,f.transport); for (const [h,status] of [[{...headers,"x-message-id":"bad"},400],[{...headers,"content-type":"text/plain"},415],[{...headers,"content-length":"20971521"},413]] as const) { const res=await endpoint(request(h)); assert.equal(res.status,status); assert(!(await res.text()).includes("attachments/")); } assert.equal(f.calls.length,0);});
-Deno.test("request abort reaches actual upload and does not commit",async()=>{ const f=fixture(); const c=new AbortController(); let aborted=false; const transport:typeof fetch=(input,init)=>{const req=new Request(input,init); if(req.method==="POST" && new URL(req.url).pathname.includes("/storage/")) return new Promise((_resolve,reject)=>{req.signal.addEventListener("abort",()=>{aborted=true;reject(Error("private"));},{once:true});c.abort();}); return f.transport(input,init);}; const res=await createChatMediaEndpoint(testEnv,transport)(new Request(request(),{signal:c.signal})); assert.equal(res.status,503); assert(aborted); assert(!f.calls.some(x=>x.includes("commit"))); assert(!(await res.text()).includes("private")); });
-Deno.test("stream above cap is cancelled without storage access",async()=>{const f=fixture(); let cancelled=false; const stream=new ReadableStream<Uint8Array>({pull(c){c.enqueue(new Uint8Array(1048576));},cancel(){cancelled=true;}}); const req=new Request("https://example.invalid",{method:"POST",headers,body:stream,duplex:"half"} as RequestInit); const res=await createChatMediaEndpoint(testEnv,f.transport)(req); assert.equal(res.status,400); assert(cancelled); assert.equal(f.calls.length,0);});
+Deno.test("request abort reaches actual upload and does not commit",async()=>{ const f=fixture(); const c=new AbortController(); let aborted=false; const transport:typeof fetch=(input,init)=>{const req=new Request(input,init); if(req.method==="POST" && new URL(req.url).pathname.includes("/storage/")) return new Promise((_resolve,reject)=>{req.signal.addEventListener("abort",()=>{aborted=true;reject(Error("private"));},{once:true});c.abort();}); return f.transport(input,init);}; const res=await createChatMediaEndpoint(testEnv,transport)(new Request(request(),{signal:c.signal})); assert.equal(res.status,503); assertCors(res); assert(aborted); assert(!f.calls.some(x=>x.includes("commit"))); assert(!(await res.text()).includes("private")); });
+Deno.test("stream above cap is cancelled without storage access",async()=>{const f=fixture(); let cancelled=false; const stream=new ReadableStream<Uint8Array>({pull(c){c.enqueue(new Uint8Array(1048576));},cancel(){cancelled=true;}}); const req=new Request("https://example.invalid",{method:"POST",headers,body:stream,duplex:"half"} as RequestInit); const res=await createChatMediaEndpoint(testEnv,f.transport)(req); assert.equal(res.status,400); assertCors(res); assert(cancelled); assert.equal(f.calls.length,0);});
 
 Deno.test("GET verifies exact media and returns safe headers",async()=>{const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",png)),x=>x.toString(16).padStart(2,"0")).join(""); let actor="";const transport:typeof fetch=async(input,init)=>{const req=new Request(input,init); if(new URL(req.url).pathname.endsWith("findback_read_chat_media")){actor=(await req.json()).p_actor;return Response.json({id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,generation:id,sha256:digest,mime:"image/png",bytes:png.length,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"});}return new Response(png.slice());};const res=await createChatMediaEndpoint(testEnv,transport)(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${actorToken}`}}));assert.equal(res.status,200);assert.equal(actor,actorId);assert.notEqual(actorId,id);assert.deepEqual(new Uint8Array(await res.arrayBuffer()),png);assert.equal(res.headers.get("content-type"),"image/png");assert.equal(res.headers.get("content-length"),String(png.length));assert.equal(res.headers.get("cache-control"),"private, no-store");assert.equal(res.headers.get("x-content-type-options"),"nosniff");assert.equal(res.headers.get("content-disposition"),"inline");assert(!JSON.stringify([...res.headers]).includes("attachments/"));assert(!JSON.stringify([...res.headers]).includes("generation"));assert(!JSON.stringify([...res.headers]).includes("findback-chat-media"));});
-Deno.test("GET validates identity, authentication and absence without leaks",async()=>{let calls=0;const transport:typeof fetch=async()=>{calls++;return Response.json(null);};const endpoint=createChatMediaEndpoint(testEnv,transport);for(const h of [{},{"x-attachment-id":"BAD"}] as Record<string,string>[])assert.equal((await endpoint(new Request("https://example.invalid",{headers:h}))).status,400);assert.equal((await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id}}))).status,401);assert.equal(calls,0);const res=await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${token}`}}));assert.equal(res.status,404);const out=await res.text()+JSON.stringify([...res.headers]);for(const value of ["attachments/","generation","findback-chat-media"])assert(!out.includes(value));assert.equal(calls,1);});
+Deno.test("GET validates identity, authentication and absence without leaks",async()=>{let calls=0;const transport:typeof fetch=()=>{calls++;return Promise.resolve(Response.json(null));};const endpoint=createChatMediaEndpoint(testEnv,transport);for(const h of [{},{"x-attachment-id":"BAD"}] as Record<string,string>[])assert.equal((await endpoint(new Request("https://example.invalid",{headers:h}))).status,400);assert.equal((await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id}}))).status,401);assert.equal(calls,0);const res=await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${token}`}}));assert.equal(res.status,404);const out=await res.text()+JSON.stringify([...res.headers]);for(const value of ["attachments/","generation","findback-chat-media"])assert(!out.includes(value));assert.equal(calls,1);});

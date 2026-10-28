@@ -2,6 +2,14 @@
 
 POST exactly one image as the request body with `x-message-id` and `x-attachment-id` containing lowercase UUIDs and `content-type` set to the matching JPEG, PNG or WebP type. The canonical wrapper verifies the user JWT; deploy with `--no-verify-jwt`. A successful response contains only attachment identity and verified metadata. Responses are not cached. No Storage target or credential is returned.
 
+Browser/WebView CORS: OPTIONS returns 204 before auth or data access, permitting
+GET/POST and the explicit SDK/auth/content-type/media identity request headers.
+Every success/error response carries the same wildcard-origin policy without
+Allow-Credentials. Clients send an explicit bearer JWT, not cookies; CORS grants
+no data authority and all real GET/POST requests still require verified user
+claims. The outer endpoint owns CORS (including early errors), not the SDK's
+inner wrapper. Host handler tests do not establish hosted proxy/deployment CORS.
+
 The gateway buffers a maximum of 20 MiB, checks format headers and dimensions (1–8192), and hashes the exact bytes. It reserves under the user's JWT, gets the target with the admin client, writes without upsert, verifies length and SHA-256 from Storage, and then commits through the service RPC. Duplicate immutable writes are accepted only after matching read-back. A reservation with 120 seconds or less remaining is rejected before any Storage operation. This margin allows a conservative interval for processing and communication; the attempt is also capped at 90 seconds and aborts at the earlier of that limit or 120 seconds before expiry. Actual SDK fetches receive the abort signal.
 
 Header inspection is not full decoding, image integrity validation, metadata stripping, malware scanning, or confirmation of renderability. An image can have valid dimensions and still be corrupt elsewhere.
