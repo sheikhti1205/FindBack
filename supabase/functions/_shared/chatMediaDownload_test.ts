@@ -1,0 +1,11 @@
+import { strict as assert } from "node:assert";
+import { downloadChatMedia } from "./chatMediaDownload.ts";
+const id="00000000-0000-4000-8000-000000000001";
+const data=new TextEncoder().encode("hello");
+const sha=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",data)),x=>x.toString(16).padStart(2,"0")).join("");
+const target={id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,generation:id,sha256:sha,mime:"image/png",bytes:5,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"};
+const stream=(b:Uint8Array)=>new ReadableStream<Uint8Array>({start(c){c.enqueue(b);c.close();}});
+Deno.test("verified bytes and private metadata stay private",async()=>{const result=await downloadChatMedia({readTarget:async()=>target,download:async()=>stream(data),now:()=>0},{actor:id,attachmentId:id}); assert.equal(result.status,"served"); if(result.status==="served") assert.deepEqual(result.bytes,data); assert(!JSON.stringify(result).includes("attachments/")); assert(!JSON.stringify(result).includes("generation"));});
+Deno.test("invalid targets and expired do not access storage",async()=>{for(const change of [{id:"bad"},{bucket:"wrong"},{objectKey:"other/key"},{sha256:"x"},{mime:"x"},{bytes:0},{width:8193},{height:0},{expiresAt:"bad"},{expiresAt:"1970-01-01T00:00:00Z"}]){let called=false;const result=await downloadChatMedia({readTarget:async()=>({...target,...change}),download:async()=>{called=true;return stream(data);},now:()=>1},{actor:id,attachmentId:id}); assert.equal(result.status,change.expiresAt==="1970-01-01T00:00:00Z"?"expired":"retry");assert.equal(called,false);}});
+Deno.test("short, long, and corrupt streams never serve",async()=>{for(const bytes of [data.slice(0,4),new Uint8Array(6),new Uint8Array(5)]){const result=await downloadChatMedia({readTarget:async()=>target,download:async()=>stream(bytes),now:()=>0},{actor:id,attachmentId:id}); assert.equal(result.status,"retry");}});
+Deno.test("deadline crossing while reading aborts",async()=>{let time=0;let signal:AbortSignal|undefined; const result=await downloadChatMedia({readTarget:async()=>target,download:async(_t,s)=>{signal=s;return new ReadableStream({pull(c){time=90001;c.enqueue(data);}});},now:()=>time},{actor:id,attachmentId:id});assert.equal(result.status,"retry");assert(signal?.aborted);});

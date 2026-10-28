@@ -15,3 +15,11 @@ One upload runs at a time per function instance. A 20 MiB image is held in memor
 Aborting a fetch does not establish that an already accepted remote write has stopped: bytes may still arrive afterward. The 20 MiB cap, the one-hour cleanup grace and Stage E's seven-day rechecked tombstone mitigate this: verified removal leaves a tombstone and late-arriving bytes can be swept again. Bytes are hashed and dimension-checked but never re-encoded, so metadata the client did not strip (EXIF GPS, for example) is preserved. Stripping is a client-side obligation and is not performed here.
 
 This implementation does not establish actual hosted timing, cancellation, tombstone operation, deployment, real Storage behavior, or device acceptance; those require separate validation.
+
+## Download
+
+GET with `x-attachment-id` set to the lowercase UUID and a verified user JWT. The server obtains the authorized target with the service-only read RPC, refuses expired metadata, and reads at most 20 MiB with a 90-second deadline. It checks the complete length and SHA-256 before returning any bytes. Success is 200 with verified content type and length, `private, no-store`, `nosniff`, and inline disposition. Invalid IDs return 400; unauthenticated callers 401; not visible, absent, or expired all return 404; transient or integrity failures return 503. GET is used because it retrieves the body, unlike HEAD.
+
+Downloads are not serialized with uploads or each other. Each download allocates up to 20 MiB for the verified body, plus runtime, transport chunk and cryptographic buffering; total isolate memory grows with concurrent requests and is not globally bounded by this endpoint.
+
+Residual risk / what this does not prove: no CDN or caching semantics, range requests, or hosted verification are established. Authorization is an admission decision and cannot retract bytes after admission.

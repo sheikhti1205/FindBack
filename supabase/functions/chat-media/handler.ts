@@ -1,9 +1,11 @@
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import { MAX_BYTES, uploadChatMedia, type GatewayPorts } from "../_shared/chatMediaGateway.ts";
+import { downloadChatMedia } from "../_shared/chatMediaDownload.ts";
 
 type Database = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: {
   findback_reserve_chat_media: { Args: { p_account_id: string; p_message_id: string; p_attachment_id: string }; Returns: string };
   findback_chat_media_upload_target: { Args: { p_actor: string; p_attachment_id: string }; Returns: unknown };
+  findback_read_chat_media: { Args: { p_actor: string; p_attachment_id: string }; Returns: unknown };
   findback_commit_chat_media: { Args: { p_actor: string; p_attachment_id: string; p_generation: string; p_object_key: string; p_sha: string; p_mime: string; p_bytes: number; p_width: number; p_height: number }; Returns: undefined };
 }; Enums: Record<string, never>; CompositeTypes: Record<string, never> } };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -20,14 +22,21 @@ async function bodyBytes(request: Request, signal: AbortSignal): Promise<Uint8Ar
 export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: typeof fetch = fetch) {
   let active=false;
   return async (request: Request): Promise<Response> => {
-    if (request.method!=="POST") return respond({error:"Method not allowed"},405);
+    if (request.method!=="POST" && request.method!=="GET") return respond({error:"Method not allowed"},405);
     const messageId=request.headers.get("x-message-id"), attachmentId=request.headers.get("x-attachment-id"), mime=request.headers.get("content-type")?.trim().toLowerCase();
-    if (!messageId || !UUID.test(messageId) || !attachmentId || !UUID.test(attachmentId)) return respond({error:"Invalid request"},400);
-    if (!mime || !["image/jpeg","image/png","image/webp"].includes(mime)) return respond({error:"Invalid request"},415);
-    const length=request.headers.get("content-length"); if (length!==null && (!/^\d+$/.test(length) || Number(length)>MAX_BYTES)) return respond({error:"Invalid request"},413);
+    if (!attachmentId || !UUID.test(attachmentId) || (request.method==="POST" && (!messageId || !UUID.test(messageId)))) return respond({error:"Invalid request"},400);
+    if (request.method==="POST" && (!mime || !["image/jpeg","image/png","image/webp"].includes(mime))) return respond({error:"Invalid request"},415);
+    const length=request.headers.get("content-length"); if (request.method==="POST" && length!==null && (!/^\d+$/.test(length) || Number(length)>MAX_BYTES)) return respond({error:"Invalid request"},413);
     const controller=new AbortController(); const signal=AbortSignal.any([controller.signal,request.signal]); const timer=setTimeout(()=>controller.abort(),90_000); let activeSignal=signal;
     const boundedFetch: typeof fetch=(input,init)=>transport(input,{...init,signal:AbortSignal.any([signal,activeSignal,...(init?.signal?[init.signal]:[]),...(input instanceof Request?[input.signal]:[])])});
     const handler=withSupabase<Database>({auth:"user",cors:false,env,errors:{detailed:false},supabaseOptions:{global:{fetch:boundedFetch}}},async (req,ctx)=>{
+      if(req.method==="GET") {
+        const actor=ctx.userClaims?.id; if(!actor)return respond({error:"Unauthorized"},401);
+        const admin=ctx.supabaseAdmin;
+        const result=await downloadChatMedia({now:Date.now,async readTarget(_actor,id,s){activeSignal=s;const {data,error}=await admin.rpc("findback_read_chat_media",{p_actor:actor,p_attachment_id:id}).abortSignal(s);if(error)throw Error();return data;},async download(t,s){activeSignal=s;const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream();if(error || !data)throw Error();return data;}},{actor,attachmentId},{signal});
+        if(result.status!=="served")return respond({error:result.status==="retry"?"Unavailable":"Not found"},result.status==="retry"?503:404);
+        return new Response(result.bytes,{status:200,headers:{"Content-Type":result.mime,"Content-Length":String(result.bytes.length),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":"inline"}});
+      }
       if (active) return respond({error:"Unavailable"},503); active=true;
       try {
         const actor=ctx.userClaims?.id; if (!actor) return respond({error:"Unauthorized"},401);
@@ -40,7 +49,7 @@ export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: t
           async readBack(t,s) { activeSignal=s; const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream(); if (error || !data) throw Error(); return data; },
           async commit(t,a,s) { activeSignal=s; const {error}=await admin.rpc("findback_commit_chat_media",{p_actor:actor,p_attachment_id:t.id,p_generation:t.generation,p_object_key:t.objectKey,p_sha:a.sha256,p_mime:a.mime,p_bytes:a.bytes,p_width:a.width,p_height:a.height}).abortSignal(s); if (error) throw Error(); },
         };
-        const result=await uploadChatMedia(io,{actor,messageId,attachmentId,bytes,declaredMime:mime},{signal});
+        const result=await uploadChatMedia(io,{actor,messageId:messageId!,attachmentId,bytes,declaredMime:mime!},{signal});
         if (result.status!=="attached") return respond({error:result.status==="invalid"?"Invalid request":"Unavailable"},result.status==="invalid"?400:503);
         const {status: _status,...body}=result; return respond(body,200);
       } finally { active=false; }
