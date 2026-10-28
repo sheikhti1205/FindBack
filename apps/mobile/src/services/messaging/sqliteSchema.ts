@@ -197,6 +197,20 @@ const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as dir
 
 export const MESSAGING_SQLITE_STATEMENTS = {
   getMeta: `select value from messaging_meta where key = ?`,
+  purgeHistory: [
+    "delete from media_attachments", "delete from outbox", "delete from mailbox_seen",
+    "delete from tombstones", "delete from deleted_for_me", "delete from conversation_cleared",
+    "delete from conversation_state", "delete from messaging_state_events", "delete from messages",
+    "delete from conversations",
+    "delete from messaging_meta where key not in ('account_id', 'device_id', 'schema_version', 'history_purged', 'media_purged')",
+  ],
+  historyRowCount: `select (select count(*) from media_attachments) + (select count(*) from outbox)
+    + (select count(*) from mailbox_seen) + (select count(*) from tombstones)
+    + (select count(*) from deleted_for_me) + (select count(*) from conversation_cleared)
+    + (select count(*) from conversation_state) + (select count(*) from messaging_state_events)
+    + (select count(*) from messages) + (select count(*) from conversations)
+    + (select count(*) from messaging_meta where key not in
+      ('account_id', 'device_id', 'schema_version', 'history_purged', 'media_purged')) as n`,
   getStateCursor: `select event_id as eventId, sequence from messaging_state_events order by sequence desc limit 1`,
   getStateEvent: `select sequence, change_json as changeJson from messaging_state_events where event_id = ?`,
   insertStateEvent: `insert into messaging_state_events(event_id,sequence,change_json) values(?,?,?)`,

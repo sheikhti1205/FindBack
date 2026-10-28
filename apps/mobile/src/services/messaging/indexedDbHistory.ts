@@ -145,7 +145,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   /** Never resolve a durable operation from request success; only tx complete. */
   function transaction<T>(mode: IDBTransactionMode, action: (
     tx: IDBTransaction, result: (value: T) => void, guard: (callback: () => void) => () => void,
-  ) => void, onCommitted?: () => void): Promise<T> {
+  ) => void, onCommitted?: () => void, allowPurged = false): Promise<T> {
     assertOpen();
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(STORES, mode, mode === "readwrite" ? { durability: "strict" } : undefined);
@@ -179,7 +179,15 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         if (mode === "readwrite" && tx.durability !== "strict") {
           throw new Error("Messaging storage requires strict transaction durability");
         }
-        action(tx, (result) => { value = result; }, guard);
+        const start = () => action(tx, (result) => { value = result; }, guard);
+        if (allowPurged) start();
+        else {
+          const fence = tx.objectStore("mediaLifecycle").get("historyPurged");
+          fence.onsuccess = guard(() => {
+            if (fence.result !== undefined) throw new Error("Messaging history purged");
+            start();
+          });
+        }
       })();
     });
   }
@@ -511,8 +519,13 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
 
   async function persistInboundAndAck(envelope: MailboxEnvelope, ack: (receipt: PersistenceReceipt) => Promise<void>): Promise<void> {
     const receipt = await serializedPersist(envelope);
-    assertOpen(); // Sign-out between commit and ACK fails closed; replay can ACK later.
-    await ack(receipt);
+    const { completion } = await serial(async () => {
+      assertOpen();
+      const completion = Promise.resolve(ack(receipt));
+      void completion.catch(() => undefined);
+      return { completion };
+    })();
+    await completion;
   }
 
   // Loud, not silent: a backup restored into the web adapter must fail visibly
@@ -792,14 +805,46 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     await store.clearAccount(scope.accountId);
   }
 
+  function historyIsPurged(): Promise<boolean> {
+    return transaction("readonly", (tx, result, guard) => {
+      const request = tx.objectStore("mediaLifecycle").get("historyPurged");
+      request.onsuccess = guard(() => result(request.result !== undefined));
+    }, undefined, true);
+  }
+
+  async function purgeHistory(): Promise<void> {
+    const store = byteStore();
+    await transaction("readwrite", (tx, result, guard) => {
+      for (const name of STORES) tx.objectStore(name).clear();
+      const lifecycle = tx.objectStore("mediaLifecycle");
+      lifecycle.put(true, "historyPurged"); lifecycle.put(true, "purged");
+      for (const name of STORES) {
+        const count = tx.objectStore(name).count();
+        count.onsuccess = guard(() => {
+          if (count.result !== (name === "mediaLifecycle" ? 2 : 0)) throw new Error("Messaging history purge incomplete");
+        });
+      }
+      result(undefined);
+    }, undefined, true);
+    mediaPurged = true;
+    await store.clearAccount(scope.accountId);
+    if ((await store.keys(scope.accountId)).length) {
+      throw new Error("Messaging history bytes remain");
+    }
+  }
+
   let tail: Promise<unknown> = Promise.resolve();
-  function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>) {
+  function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>, allowPurged = false) {
     return async (...args: Args): Promise<Result> => {
       const captured = structuredClone(args);
       const next = tail.then(() => {
         assertOpen();
-        return withHistoryLock(scope.accountId, lockLifetime.signal, !!options.mediaBytes,
-          () => { assertOpen(); return work(...captured); });
+        return withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes,
+          async () => {
+            assertOpen();
+            if (!allowPurged && await historyIsPurged()) throw new Error("Messaging history purged");
+            assertOpen(); return work(...captured);
+          });
       });
       tail = next.catch(() => undefined);
       return next;
@@ -838,7 +883,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   }
 
   if (options.mediaBytes) {
-    try { await serial(sweepOrphanMedia)(100); }
+    try { await serial(async () => { if (!await historyIsPurged()) await sweepOrphanMedia(100); }, true)(); }
     catch (error) { await close(); throw error; }
   }
 
@@ -852,5 +897,6 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     completeMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, true)),
     persistVerifiedMediaAndAck, markMediaReady: serializedMediaReady, listMedia: serial(listMedia), readMedia: serial(readMedia),
     evictMedia: serial(evictMedia), sweepOrphanMedia: serial(sweepOrphanMedia),
-    removeMediaForMessage: serial(removeMediaForMessage), clearMedia: serial(clearMedia), exportSnapshot, importSnapshot };
+    removeMediaForMessage: serial(removeMediaForMessage), clearMedia: serial(clearMedia), purgeHistory: serial(purgeHistory, true),
+    exportSnapshot: serial(exportSnapshot), importSnapshot: serial(importSnapshot) };
 }

@@ -559,3 +559,31 @@ transport; runtime tests also use the real platform opener and SDK with a fake
 network. Synthetic container fixtures replace decoding on Node. These tests are
 not proof of native/browser decoding, CORS, hosted deployment, configured builds
 or physical-device acceptance.
+
+### F2b-3C1 — full logical purge primitive (not account-deletion integration)
+
+`history.purgeHistory()` permanently fences this metadata database and removes
+all application content: messages, outbox, conversation projections/read state,
+mailbox/event receipts, erasure metadata and backup-source rows. SQLite retains
+only schema/account/device binding and purge flags. IndexedDB retains only purge
+flags in its lifecycle store; its name already captures account/installation.
+The current adapters reject normal reads/writes/import/export/ACK entry after
+that fence, including stale handles and reopen. Only purge retry and close remain.
+
+The captured byte port is required even for text-only history: absence of media
+rows does not disprove orphan bytes. Strict metadata deletion/fence commits first;
+then all captured-account bytes are cleared and an empty key inventory checked.
+Failures propagate. Metadata failure never deletes bytes; unknown SQLite outcomes
+invalidate the handle and retain bytes until explicit reopen/retry. Opening a
+purged database skips bounded orphan sweep, which is not full cleanup. All purge
+work and ACK entry use the existing account Web Lock; already-entered remote ACK
+cannot be recalled, and asynchronous ACK completion never holds the storage lock.
+Ordinary logout/close remains non-destructive.
+
+C1 is a low-level primitive, not an auth cleanup call or deletion-complete claim.
+C2 still must fence/enumerate all known scopes in the durable ownership registry
+and provide platform/runtime cleanup-only opening. C3 must integrate the existing
+auth deletion owner, durable retry/dismissal, and captured-A cleanup after B signs
+in before the server reply. Direct raw-byte access and other metadata namespaces
+are not protected by this per-database fence. No native file/WAL/free-page forensic
+erasure or external backup deletion is established by logical row removal.

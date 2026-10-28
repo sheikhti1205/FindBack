@@ -344,7 +344,11 @@ export async function openSqliteMessagingHistory(
     throw error;
   }
 
-  async function assertOpen() {
+  async function historyIsPurged() {
+    return (await driver.all(S.getMeta, ["history_purged"])).length > 0;
+  }
+
+  async function assertOpen(allowPurged = false) {
     if (closed) throw new Error("Messaging history closed");
     const binding = new Map(
       (await driver.all<{ key: string; value: string }>(S.getMetaRows)).map((row) => [row.key, row.value]),
@@ -353,15 +357,18 @@ export async function openSqliteMessagingHistory(
     if (binding.get("account_id") !== scope.accountId || binding.get("device_id") !== scope.deviceId) {
       throw new Error("Messaging database binding conflict");
     }
+    if (!allowPurged && await historyIsPurged()) throw new Error("Messaging history purged");
+    if (closed) throw new Error("Messaging history closed");
   }
 
   async function transaction<T>(work: () => Promise<T>,
-    onOutcome?: (outcome: "committed" | "rolled-back" | "unknown") => void): Promise<T> {
+    onOutcome?: (outcome: "committed" | "rolled-back" | "unknown") => void, allowPurged = false): Promise<T> {
     let committed = false;
     try {
       // A rejected bridge reply does not prove BEGIN failed to execute. Include
       // acquisition in rollback/invalidation so it cannot leak a writer lock.
       await driver.exec("begin immediate");
+      await assertOpen(allowPurged);
       const result = await work();
       // Text suppression and attachment suppression share the metadata commit.
       // Bytes go afterwards: failed cleanup leaves garbage, never a live lie.
@@ -737,8 +744,15 @@ export async function openSqliteMessagingHistory(
     ack: (receipt: PersistenceReceipt) => Promise<void>,
   ): Promise<void> {
     const receipt = await serializedPersist(envelope);
-    await assertOpen();
-    await ack(receipt);
+    const { completion } = await serial(async () => {
+      // As for media: validate under the account lock and dispatch without an
+      // await gap. Async ACK completion must not hold the queue or lock.
+      if (closed) throw new Error("Messaging history closed");
+      const completion = Promise.resolve(ack(receipt));
+      void completion.catch(() => undefined);
+      return { completion };
+    })();
+    await completion;
   }
 
   async function recordUnsend(tombstone: {
@@ -1322,6 +1336,25 @@ export async function openSqliteMessagingHistory(
     await store.clearAccount(scope.accountId);
   }
 
+  async function purgeHistory(): Promise<void> {
+    const store = byteStore();
+    await transaction(async () => {
+      await driver.run(S.setMetaIfAbsent, ["history_purged", "1"]);
+      await driver.run(S.setMetaIfAbsent, ["media_purged", "1"]);
+      for (const statement of S.purgeHistory) await driver.run(statement);
+      if ((await driver.all<{ n: number }>(S.historyRowCount))[0]?.n !== 0) {
+        throw new Error("Messaging history purge incomplete");
+      }
+    }, undefined, true);
+    mediaPurged = true;
+    // Never compensate byte deletion on ambiguous metadata outcomes. A lost
+    // COMMIT response leaves the durable fence for an explicit reopened retry.
+    await store.clearAccount(scope.accountId);
+    if ((await store.keys(scope.accountId)).length) {
+      throw new Error("Messaging history bytes remain");
+    }
+  }
+
   const lockLifetime = new AbortController();
   let tail: Promise<unknown> = Promise.resolve();
   let closing: Promise<void> | null = null;
@@ -1331,14 +1364,14 @@ export async function openSqliteMessagingHistory(
     // owner has already queued a close behind the current transaction.
     return driverClosing ??= Promise.resolve().then(() => driver.close());
   }
-  function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>) {
+  function serial<Args extends unknown[], Result>(work: (...args: Args) => Promise<Result>, allowPurged = false) {
     return async (...args: Args): Promise<Result> => {
       // Snapshot BEFORE joining the queue; callers cannot mutate a delayed write.
       const captured = structuredClone(args);
       const next = tail.then(async () => {
         if (closed) throw new Error("Messaging history closed");
-        const result = await withHistoryLock(scope.accountId, lockLifetime.signal, !!options.mediaBytes,
-          async () => { await assertOpen(); return work(...captured); });
+        const result = await withHistoryLock(scope.accountId, lockLifetime.signal, allowPurged || !!options.mediaBytes,
+          async () => { await assertOpen(allowPurged); return work(...captured); });
         if (closed) throw new Error("Messaging history closed");
         return result;
       });
@@ -1392,7 +1425,7 @@ export async function openSqliteMessagingHistory(
   }
 
   if (options.mediaBytes) {
-    try { await serial(sweepOrphanMedia)(100); }
+    try { await serial(async () => { if (!await historyIsPurged()) await sweepOrphanMedia(100); }, true)(); }
     catch (error) { await close(); throw error; }
   }
 
@@ -1404,7 +1437,7 @@ export async function openSqliteMessagingHistory(
     persistVerifiedMediaAndAck, markMediaReady: serializedMediaReady,
     listMedia: serial(listMedia), readMedia: serial(readMedia), evictMedia: serial(evictMedia),
     sweepOrphanMedia: serial(sweepOrphanMedia), removeMediaForMessage: serial(removeMediaForMessage),
-    clearMedia: serial(clearMedia),
+    clearMedia: serial(clearMedia), purgeHistory: serial(purgeHistory, true),
     enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage),
     listMessages: serial(listMessages), listOutbox: serial(listOutbox),
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),

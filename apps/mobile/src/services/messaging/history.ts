@@ -235,9 +235,15 @@ export interface MessagingHistory {
   sweepOrphanMedia(limit: number): Promise<number>;
   /** Local deletion: remove the row and then its bytes for one message. */
   removeMediaForMessage(messageId: string): Promise<void>;
-   /** Account deletion in this history/byte scope: a durable fence prevents
-    * re-admission after reopen. Cleanup is retryable if byte deletion fails. */
+  /** Media-only purge; retains text/history. Not full account deletion. */
   clearMedia(): Promise<void>;
+  /** Permanent logical purge of this metadata database and captured-account
+   * bytes (requires its byte port). Commits a full-history fence and removes all
+   * content/index/receipt/backup-source rows before clearing/verifying bytes.
+   * Ordinary operations then refuse across handles/reopen; purge retry and close
+   * remain available. Failure is not completion. This is not SQLite/WAL forensic
+   * erasure or an all-scopes account-deletion owner; platform/registry owns that. */
+  purgeHistory(): Promise<void>;
   /** Portable history data for a backup. Never includes mailbox receipts, the
    * outbox or per-device read state. */
   exportSnapshot(): Promise<HistorySnapshot>;
