@@ -27,17 +27,24 @@ values ('cfu-lost','00000000-0000-4000-9400-000000000001','LOST','Keys','Synthet
 insert into public.report_matches(id,lost_report_id,found_report_id,proposed_by)
 values ('cfu-pending','cfu-lost','cfu-found','00000000-0000-4000-9400-000000000001');
 
+create temp table cfu_guard(label text primary key, outcome text) on commit drop;
+grant insert, select on cfu_guard to authenticated;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9400-000000000003',true);
 do $$
 begin
   perform public.findback_confirm_match('cfu-pending');
-  raise exception 'CFU3 outsider confirmation unexpectedly succeeded' using errcode='XX000';
-exception when insufficient_privilege then null;
+  insert into cfu_guard values ('CFU3','accepted');
+exception when others then
+  -- A foreign caller must learn nothing: the same generic unavailable answer
+  -- as a missing relationship, never 42501 naming the ownership rule.
+  insert into cfu_guard values ('CFU3', sqlstate);
 end $$;
 reset role;
-select 'CFU3 outsider refusal changes no consent or report state' as probe
-where not exists(select 1 from public.match_confirmations where match_id='cfu-pending')
+select 'CFU3 outsider refusal is generic and changes no consent or report state' as probe
+where (select outcome from cfu_guard where label='CFU3')='P0002'
+  and not exists(select 1 from public.match_confirmations where match_id='cfu-pending')
   and (select status from public.report_matches where id='cfu-pending')='PENDING'
   and (select count(*) from public.item_posts where id in ('cfu-lost','cfu-found') and status='OPEN')=2;
 

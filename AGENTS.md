@@ -19,6 +19,13 @@
 8. **Consumer first.** Hide diagnostics, internal model IDs, schema terms, capability jargon, privacy implementation detail, and developer state from ordinary users unless they explicitly open Advanced/Diagnostics.
 9. **Resource discipline (owner order 2026-10-20).** Parallel subagents are allowed; parallel heavy commands are not. Run every npm/npx/vitest/tsc/eslint/gradle/build/Playwright command through `~/.config/opencode/bin/heavy-run` (machine-wide `heavy.lock`, vitest pools capped at 3, heap capped, niced); at most one heavy command machine-wide across all sessions; device proofs and heavy gates never overlap; children never fan out their own subagents; check `uptime`/`free -g` before launching. This machine has ~11 GiB RAM and 18 cores, and an unthrottled `vitest run <one file>` has already driven load past 24 and rebooted it.
 
+## Owner-directed checkpoint and pause (owner order 2026-10-29)
+
+- Do not prolong fix/review loops. When the owner directs a bounded finish and pause, stop after the requested scope; after 2–3 rounds without convergence, or repeated reviewer/provider unavailability, honor the owner's explicit instruction to commit and push the current task work to `main` for their reviewer, then pause.
+- This is an **owner-authorized WIP checkpoint**, not review acceptance, release approval, deployment permission, or a completion claim. Mark the commit/handoff `WIP` / `review pending`, record actual verification and unresolved findings, and leave the wave/goal incomplete. Reviewer PASS is still required before calling the wave complete.
+- Do not refuse that explicit checkpoint merely because final review PASS is unavailable, and do not start fresh agent/review cycles to avoid checkpointing. Latest explicit owner checkpoint instructions override older user-level plans demanding PASS before every commit; they do not override higher-priority safety instructions.
+- Commit task-owned changes by explicit paths; preserve unrelated dirty files and keep credentials/private evidence out of the public repository. Verify push and remote identity, save the handoff, pause the goal, and wait for the owner. This rule survives compaction; re-read it before resuming paused work.
+
 ## Mandatory OpenCode skills
 
 - UI creation/refactor: `findback-ui-quality`

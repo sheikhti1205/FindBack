@@ -242,6 +242,9 @@ where (select status from public.item_posts where id='cflr5-lost')='OPEN'
   and not exists (select 1 from public.successful_returns where lost_post_id='cflr5-lost');
 
 -- L13: the Wrong match action reopens a confirmed link before recovery.
+select 'L13pre confirmed link occupies both reports before cancellation' as probe
+where (select count(*) from public.report_match_occupancy where match_id='cflr2-match')=2;
+
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9700-000000000001',true);
 do $$
@@ -261,6 +264,11 @@ where (select status from public.report_matches where id='cflr2-match')='CANCELL
   and (select count(*) from public.item_posts
         where id in ('cflr2-lost','cflr2-found') and status='OPEN')=2
   and (select count(*) from public.match_confirmations where match_id='cflr2-match')=2;
+
+select 'L13occupancy cancellation releases both occupied reports' as probe
+where not exists (select 1 from public.report_match_occupancy
+                   where match_id='cflr2-match'
+                      or report_id in ('cflr2-lost','cflr2-found'));
 
 -- L16: a cancelled pair can be proposed again with a new identity.
 set local role authenticated;
@@ -357,7 +365,8 @@ where (select outcome from cflr_guard where label='L19c')='42501';
 --
 -- A proposal can never be confirmed once the report is RECOVERED, so leaving it
 -- PENDING made confirm fail with an unrelated reason and left dead state on the
--- pair. The acknowledgement stays as CANCELLED history.
+-- pair. The proposer's own acknowledgement stays as durable history on the
+-- cancelled row; no counterpart consent is invented.
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9700-000000000002',true);
 select set_config('cflr.match_c', public.findback_propose_match('cflr7-lost','cflr7-found'), true);
@@ -368,11 +377,24 @@ reset role;
 
 select 'L21b the pending proposal was closed, not left dangling' as probe
 where (select status from public.report_matches where id=current_setting('cflr.match_c'))='CANCELLED'
-  and (select count(*) from public.match_confirmations where match_id=current_setting('cflr.match_c'))=0
+  and (select count(*) from public.match_confirmations
+        where match_id=current_setting('cflr.match_c'))=1
+  and (select count(*) from public.match_confirmations
+        where match_id=current_setting('cflr.match_c')
+          and owner_id_original='00000000-0000-4000-9700-000000000002')=1
   and (select status from public.item_posts where id='cflr7-lost')='RECOVERED';
 
 -- Scenario D: history survives deletion of the match row.
+select 'L6pre recovered relationship still occupies both reports before deletion' as probe
+where (select count(*) from public.report_match_occupancy
+        where match_id=current_setting('cflr.match_a'))=2;
+
 delete from public.report_matches where id=current_setting('cflr.match_a');
+
+select 'L6occupancy relationship deletion releases both occupied reports' as probe
+where not exists (select 1 from public.report_match_occupancy
+                   where match_id=current_setting('cflr.match_a')
+                      or report_id in ('cflr-lost','cflr-found'));
 
 -- The retention columns do not exist before the repair. Read them through
 -- dynamic SQL so a missing column is a reported failure (-1) instead of an
