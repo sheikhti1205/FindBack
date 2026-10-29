@@ -547,6 +547,9 @@ export async function openSqliteMessagingHistory(
           }
           await driver.run(S.bindMessageType, ["TEXT", outgoing.id]);
         }
+        // The user re-admitted this identity deliberately, so it may bind the
+        // boundary it is being sent at. A row that already carries one keeps it.
+        if (expectedEpoch) await driver.run(S.bindOutboxEpoch, [expectedEpoch, outgoing.id]);
         return;
       }
       if (tombstone) {
@@ -603,7 +606,10 @@ export async function openSqliteMessagingHistory(
       const prior = localState(row).projection;
       if (prior && prior.revision > projection.revision) return;
       if (prior?.revision === projection.revision && JSON.stringify(prior) !== JSON.stringify(projection)) {
-        throw new Error("Conversation revision conflict");
+        // A projection cached by a pre-R4 build has no `epoch`, so its JSON can
+        // never equal a server projection. Accept the upgrade once; every later
+        // same-revision change is still a real conflict.
+        if (prior.epoch !== undefined) throw new Error("Conversation revision conflict");
       }
       await driver.run(S.cacheConversation, [JSON.stringify(projection), now(), projection.conversationId]);
     });
@@ -622,13 +628,17 @@ export async function openSqliteMessagingHistory(
     });
   }
 
-  async function claimNextOutgoing(): Promise<OutgoingAttempt | null> {
+  async function claimNextOutgoing(except: readonly string[] = []): Promise<OutgoingAttempt | null> {
     await assertOpen();
     const token = tokenFactory();
     if (typeof token !== "string" || !token) throw new Error("Invalid messaging lease token");
+    const skip = except.filter((id) => typeof id === "string" && id.length > 0);
+    const sql = skip.length
+      ? S.nextOutbox.replace("/*exclude*/", `and o.message_id not in (${skip.map(() => "?").join(",")})`)
+      : S.nextOutbox.replace("/*exclude*/", "");
     return transaction(async () => {
       const nowMs = positiveTimestamp(now());
-      const candidate = (await driver.all<{ messageId: string }>(S.nextOutbox, [nowMs]))[0];
+      const candidate = (await driver.all<{ messageId: string }>(sql, [nowMs, ...skip]))[0];
       if (!candidate) return null;
       await driver.run(S.claimOutbox, [token, nowMs + leaseMs, candidate.messageId]);
       const claimed = (await driver.all<{ messageId: string; attempts: number; expectedEpoch: string | null }>(
@@ -652,6 +662,15 @@ export async function openSqliteMessagingHistory(
       if (claimed.expectedEpoch !== null) attempt.expectedEpoch = claimed.expectedEpoch;
       return attempt;
     });
+  }
+
+  async function retryOutgoing(messageId: string, expectedEpoch: string): Promise<boolean> {
+    await assertOpen();
+    const id = uuid(messageId);
+    if (typeof expectedEpoch !== "string" || !/^[0-9a-f]{64}$/.test(expectedEpoch)) {
+      throw new Error("Invalid messaging boundary");
+    }
+    return transaction(async () => (await driver.run(S.retryOutbox, [expectedEpoch, id])) === 1);
   }
 
   async function failOutgoing(attempt: OutgoingAttempt): Promise<boolean> {
@@ -1498,7 +1517,8 @@ export async function openSqliteMessagingHistory(
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
     markConversationRead: serial(markConversationRead),
     getStateCursor: serial(getStateCursor), applyStateChange: serial(applyStateChange),
-    claimNextOutgoing: serial(claimNextOutgoing), failOutgoing: serial(failOutgoing),
+    claimNextOutgoing: serial(claimNextOutgoing), retryOutgoing: serial(retryOutgoing),
+    failOutgoing: serial(failOutgoing),
     persistInbound: serializedPersist, persistInboundAndAck, close,
     recordUnsend: serial(recordUnsend), deleteForMe: serial(deleteForMe), clearThrough: serial(clearThrough),
     exportSnapshot: serial(exportSnapshot),

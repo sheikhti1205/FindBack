@@ -62,16 +62,18 @@ jobs:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
-          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-chat-media" \
+          # No body and no content-type: both workers reject any payload, and an
+          # empty JSON content-type is what made the first version of this lane
+          # answer 400 forever. --fail-with-body prints the worker's own JSON
+          # reason instead of only a curl status code.
+          curl -sS --fail-with-body -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-chat-media" \
             -H "apikey: ${SUPABASE_SECRET_KEY}" \
-            -H "content-type: application/json" \
             --retry 2 --retry-all-errors --max-time 90
       - name: Copy pending moderation evidence
         env:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
-          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/copy-chat-evidence" \
+          curl -sS --fail-with-body -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/copy-chat-evidence" \
             -H "apikey: ${SUPABASE_SECRET_KEY}" \
-            -H "content-type: application/json" \
             --retry 2 --retry-all-errors --max-time 90

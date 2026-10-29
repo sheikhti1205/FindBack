@@ -360,6 +360,35 @@ export async function recoverMessagingText(accountId: string, conversationId: st
   assertOwner(owner); await reload(owner); void refreshOwner(owner);
 }
 
+/**
+ * Explicit user retry of one failed queued send. Rebinds it to the relationship
+ * boundary the user is acting in, then flushes.
+ *
+ * This is the only path allowed to move a stored boundary. An automatic flush
+ * deliberately refuses a stale send instead of recasting it, so a retry that
+ * only re-flushed the same row could never succeed — the row has to be rebound
+ * first, and only a human choosing "Retry" may authorize that.
+ */
+export async function retryMessagingMessage(accountId: string, conversationId: string, messageId: string): Promise<void> {
+  const owner = ownerFor(accountId);
+  const message = await owner.handle.history.getMessage(uuid(messageId));
+  if (!message || message.conversationId !== uuid(conversationId) || message.authorId !== accountId) {
+    throw new Error("Message unavailable");
+  }
+  await owner.session.retryOutgoing(messageId);
+  assertOwner(owner);
+  await reload(owner);
+  try {
+    await owner.session.flush();
+  } finally {
+    // The rebind already happened, so show the real durable state even when the
+    // resend fails again.
+    assertOwner(owner);
+    await reload(owner);
+    void refreshOwner(owner);
+  }
+}
+
 export async function markMessagingConversationRead(accountId: string, conversationId: string, throughSequence: number): Promise<void> {
   const owner = ownerFor(accountId);
   await owner.handle.history.markConversationRead(uuid(conversationId), throughSequence);

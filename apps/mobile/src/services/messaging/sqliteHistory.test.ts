@@ -2026,3 +2026,67 @@ describe("chat media records", () => {
     await history.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// R4 relationship boundary: a refused send must be recoverable only by an
+// explicit user retry, and must never block the rest of the queue.
+// ---------------------------------------------------------------------------
+describe("relationship-boundary retry", () => {
+  const EPOCH_A = "a".repeat(64);
+  const EPOCH_B = "b".repeat(64);
+
+  it("skips a failed row so one refused boundary cannot starve the queue", async () => {
+    const history = await open();
+    await history.enqueueOutgoing(outgoing, EPOCH_A);
+    await history.enqueueOutgoing({ ...outgoing, id: MESSAGE_2, body: "Second" }, EPOCH_A);
+    const first = await history.claimNextOutgoing();
+    if (!first) throw new Error("claim failed");
+    expect(await history.failOutgoing(first)).toBe(true);
+    // FAILED is immediately claimable again, so a pass that does not exclude it
+    // would retry the same undeliverable row forever and never reach message 2.
+    expect((await history.claimNextOutgoing())?.message.id).toBe(MESSAGE);
+    expect((await history.claimNextOutgoing([first.message.id]))?.message.id).toBe(MESSAGE_2);
+    await history.close();
+  });
+
+  it("rebinds a refused row only through an explicit retry", async () => {
+    const history = await open();
+    await history.enqueueOutgoing(outgoing, EPOCH_A);
+    expect(await history.retryOutgoing(MESSAGE, EPOCH_B)).toBe(true);
+    expect(await history.listOutbox()).toEqual([
+      { messageId: MESSAGE, status: "QUEUED", attempts: 0, expectedEpoch: EPOCH_B },
+    ]);
+    expect((await history.claimNextOutgoing())?.expectedEpoch).toBe(EPOCH_B);
+    // A SENDING lease is not silently rebindable: a retry cannot race a live send.
+    await expect(history.retryOutgoing(MESSAGE, EPOCH_A)).resolves.toBe(false);
+    expect((await history.listOutbox())[0]).toMatchObject({ status: "SENDING", expectedEpoch: EPOCH_B });
+    await history.close();
+  });
+
+  it("binds a boundary to a legacy NULL row but never overwrites an observed one", async () => {
+    const history = await open();
+    // A row queued by a build that predates the epoch carries none.
+    await history.enqueueOutgoing(outgoing);
+    expect((await history.listOutbox())[0]).not.toHaveProperty("expectedEpoch");
+    await history.enqueueOutgoing(outgoing, EPOCH_A);
+    expect((await history.listOutbox())[0]).toMatchObject({ expectedEpoch: EPOCH_A });
+    // The second admission must not recast the intent the first one bound.
+    await history.enqueueOutgoing(outgoing, EPOCH_B);
+    expect((await history.listOutbox())[0]).toMatchObject({ expectedEpoch: EPOCH_A });
+    await history.close();
+  });
+
+  it("accepts one pre-R4 projection without a boundary, then still refuses a real conflict", async () => {
+    const history = await open();
+    const legacy = { conversationId: CONVERSATION, peerId: B, mode: "CONNECTED" as const, request: "NONE" as const,
+      requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 1 };
+    await history.cacheConversation(legacy);
+    // The server projection always carries `epoch`, so its JSON can never equal
+    // the pre-R4 cache: that single upgrade is not a conflict.
+    await history.cacheConversation({ ...legacy, epoch: EPOCH_A });
+    expect((await history.listConversations())[0]?.cachedProjection?.epoch).toBe(EPOCH_A);
+    await expect(history.cacheConversation({ ...legacy, epoch: EPOCH_B }))
+      .rejects.toThrow("Conversation revision conflict");
+    await history.close();
+  });
+});

@@ -195,8 +195,19 @@ export interface MessagingHistory {
   getStateCursor(): Promise<StateCursor | null>;
   applyStateChange(envelope: StateChangeEnvelope): Promise<StateCursor>;
   listOutbox(): Promise<OutboxEntry[]>;
-  /** A 60-second durable lease; expired SENDING is eligible after crash/reopen. */
-  claimNextOutgoing(): Promise<OutgoingAttempt | null>;
+  /**
+   * A 60-second durable lease; expired SENDING is eligible after crash/reopen.
+   * `except` lets one flush pass walk past rows it already failed, so a single
+   * undeliverable message cannot starve the rest of the queue.
+   */
+  claimNextOutgoing(except?: readonly string[]): Promise<OutgoingAttempt | null>;
+  /**
+   * Explicit user retry only. Rebinds a queued/failed row to the boundary the
+   * user is acting in and makes it claimable again; the flush loop must never
+   * call this, because silently re-binding stale intent is exactly what the
+   * relationship epoch exists to prevent.
+   */
+  retryOutgoing(messageId: string, expectedEpoch: string): Promise<boolean>;
   /** A late failure cannot overwrite a newer attempt or authoritative success. */
   failOutgoing(attempt: OutgoingAttempt): Promise<boolean>;
   /** Requires accepted strict write durability, then transaction completion. Echo confirms sent. */

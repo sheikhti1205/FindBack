@@ -15,6 +15,7 @@ import {
   changeMessagingRelationship, markMessagingConversationRead, readMessagingThreadState,
   refreshMessaging, sendMessagingText, sendMessagingMedia, clearMessagingConversation, removeMessagingMessage,
   fetchMessagingReceiptView, observeMessagingReceipt, readMessagingMedia, downloadMessagingMedia, recoverMessagingText,
+  retryMessagingMessage,
 } from "../services/messaging/runtime";
 import type { MediaAttachment, OutboxEntry, StoredHumanMessage } from "../services/messaging/history";
 import { prepareMessagingPhoto, type PreparedMessagingPhoto } from "../services/messaging/preparePhoto";
@@ -497,7 +498,16 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             {message.body ? <p dir="auto">{message.body}</p> : !attachment && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
             {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
               && message.unsentAt === undefined && receipt?.projections === chat.currentProjections && receipt.readIds.has(message.id) ? "Read" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
-              {(attachment?.state === "FAILED" || (!message.server && pending?.status === "FAILED")) && pending?.status !== "NEEDS_REVIEW" && <button type="button" onClick={() => void refreshMessaging(accountId).catch(() => setError("Could not retry. Try syncing again."))}>Retry</button>}</span>}
+              {(attachment?.state === "FAILED" || (!message.server && pending?.status === "FAILED")) && pending?.status !== "NEEDS_REVIEW" && <button type="button" onClick={() => {
+              // A refused send keeps its original boundary; re-flushing it can only
+              // fail again. The message-level retry rebinds that boundary because a
+              // human asked for it, then flushes. A failed upload on an already
+              // accepted message has no boundary to move.
+              const retry = !message.server && pending?.status === "FAILED"
+                ? retryMessagingMessage(accountId, conversationId, message.id)
+                : refreshMessaging(accountId);
+              void retry.catch(() => setError("Could not retry. Try syncing again."));
+            }}>Retry</button>}</span>}
             {own && pending?.status === "NEEDS_REVIEW" && <button type="button" disabled={busy} onClick={() => { setSelectedMessageId(message.id); setSheet("review"); }}>Review message</button>}
             {own && attachment && !message.server && <button type="button" aria-label="Remove pending photo" onClick={() => {
               void removeMessagingMessage(accountId, conversationId, message.id, false).catch(() => {

@@ -111,4 +111,51 @@ describe("human messaging session delivery",()=>{
   await expect(f.session.request(B)).rejects.toThrow(/closed/i);
   expect(f.acked()).toBe(false);
  });
+ it("does not starve the queue behind a refused boundary and recovers it only on explicit retry",async()=>{
+  const EPOCH_A="a".repeat(64), EPOCH_B="b".repeat(64);
+  const SECOND="00000000-0000-4000-8000-000000000009";
+  const factory=new IDBFactory();
+  const history=await openWebMessagingHistory(scope,{indexedDB:factory}); handles.push(history);
+  const boundary=(epoch:string,revision:number)=>({conversationId:CONV,peerId:B,mode:"CONNECTED" as const,
+   request:"NONE" as const,requestEpoch:null,ownBlocked:false,ownDeclined:false,ownHidden:false,revision,epoch});
+  await history.cacheConversation(boundary(EPOCH_A,1));
+  const envelopes=new Map<string,MailboxEnvelope>(); let sequence=0;
+  const rpc:MessagingRpc=async(input)=>{
+   if(input.action==="SEND"){
+    const args=input.args as {messageId:string;expectedEpoch?:string;body:string};
+    // The server refuses intent composed at a boundary that has since moved.
+    if(args.expectedEpoch!==EPOCH_B) throw new Error("Relationship boundary moved");
+    sequence+=1;
+    envelopes.set(args.messageId,{...scope,mailboxId:MAIL,event:{kind:"TEXT",eventId:args.messageId,
+     sequence,message:{id:args.messageId,conversationId:CONV,authorId:A,recipientId:B,body:args.body}}});
+    return args.messageId;
+   }
+   if(input.action==="SYNC") return [...envelopes.values()];
+   if(input.action==="STATE_SYNC") return [];
+   if(input.action==="ACK") return null;
+   return null;
+  };
+  const session=createMessagingSession(scope,history,rpc);
+  await session.send(message);
+  await session.send({...message,id:SECOND,body:"Second"});
+  // One pass must attempt both rows: the refused one may not monopolise the queue.
+  await expect(session.flush()).rejects.toThrow("Relationship boundary moved");
+  expect(await history.listOutbox()).toEqual([
+   {messageId:ID,status:"FAILED",attempts:1,expectedEpoch:EPOCH_A},
+   {messageId:SECOND,status:"FAILED",attempts:1,expectedEpoch:EPOCH_A},
+  ]);
+  // The sync that delivered the new boundary does not, by itself, resend anything.
+  await history.cacheConversation(boundary(EPOCH_B,2));
+  await expect(session.flush()).rejects.toThrow("Relationship boundary moved");
+  expect((await history.listOutbox()).find((row)=>row.messageId===ID)?.expectedEpoch).toBe(EPOCH_A);
+  // Only the human retry re-binds the queued intent to the boundary they see now.
+  await session.retryOutgoing(ID);
+  expect((await history.listOutbox()).find((row)=>row.messageId===ID)?.expectedEpoch).toBe(EPOCH_B);
+  // The re-bound row delivers; the still-stale one keeps its own boundary.
+  await expect(session.flush()).rejects.toThrow("Relationship boundary moved");
+  expect((await history.getMessage(ID))?.server).toMatchObject({eventId:ID});
+  expect(await history.listOutbox()).toEqual([
+   {messageId:SECOND,status:"FAILED",attempts:3,expectedEpoch:EPOCH_A},
+  ]);
+ });
 });

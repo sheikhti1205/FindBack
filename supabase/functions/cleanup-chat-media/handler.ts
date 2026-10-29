@@ -1,3 +1,4 @@
+import { rejectNonEmptyBody } from "../_shared/emptyPost.ts";
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import {
   sweepChatMediaCleanup,
@@ -43,11 +44,11 @@ export function createChatMediaCleanupEndpoint(env?: Partial<SupabaseEnv>, trans
       status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
     });
     if (request.method !== "POST") return respond({ error: "Method not allowed" }, 405);
-    // Reject caller-selected buckets, keys or batch sizes before body buffering.
-    if (request.body !== null) {
-      void request.body.cancel().catch(() => {});
-      return respond({ error: "Empty request required" }, 400);
-    }
+    // Reject caller-selected buckets, keys, batches or reports before
+    // withSupabase's body buffering. The lane is cron-only: no payload is input,
+    // and a declared-zero length is empty, not an attack.
+    const payload = rejectNonEmptyBody(request);
+    if (payload) return payload;
     const invocationAbort = new AbortController();
     const invocationSignal = AbortSignal.any([request.signal, invocationAbort.signal]);
     const timer = setTimeout(() => invocationAbort.abort(), 90_000);

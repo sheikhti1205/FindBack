@@ -325,6 +325,7 @@ export const MESSAGING_SQLITE_STATEMENTS = {
         and m.unsent_at is null
          and m.server_event_id is null
          and m.message_type is not null
+      /*exclude*/
       order by o.message_id
       limit 1
     `,
@@ -336,6 +337,17 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   /** v7 -> v8 additive migration; `pragma table_info` makes it idempotent. */
   outboxColumns: `pragma table_info(outbox)`,
   addOutboxEpoch: `alter table outbox add column expected_epoch text`,
+  /**
+   * Explicit admission may bind the boundary to a row queued by a build that
+   * predates the epoch. A boundary the row already carries is never overwritten:
+   * that intent belongs to the moment the user composed it.
+   */
+  bindOutboxEpoch: `update outbox set expected_epoch = ?
+    where message_id = ? and expected_epoch is null`,
+  /** User-initiated retry: rebind to the current boundary and clear the lease. */
+  retryOutbox: `update outbox
+    set status = 'QUEUED', attempts = 0, token = null, lease_until = null, expected_epoch = ?
+    where message_id = ? and status in ('QUEUED', 'FAILED')`,
   failOutbox: `update outbox set status = 'FAILED', token = null, lease_until = null
     where message_id = ? and token = ? and attempts = ? and status = 'SENDING'`,
   completeOutbox: `delete from outbox where message_id = ?`,

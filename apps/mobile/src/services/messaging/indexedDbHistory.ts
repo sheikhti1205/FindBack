@@ -239,6 +239,13 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           if (media.result) throw new Error("Media parent classification conflict");
           messages.put({ ...existing, messageType: "TEXT" });
         }
+        // Explicit admission may bind a boundary to a row queued before the
+        // epoch existed. A boundary the row already carries is never overwritten:
+        // that intent belongs to the moment the user composed it.
+        if (existing && expectedEpoch) {
+          const entry = queued.result as OutboxEntry | undefined;
+          if (entry && !entry.expectedEpoch) tx.objectStore("outbox").put({ ...entry, expectedEpoch });
+        }
         // Existing queued/failed/sending/sent records are never reset by retry.
         result(undefined);
       });
@@ -305,7 +312,12 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       updateConversation(tx, guard, projection.conversationId, projection.peerId, (state) => {
         if (state.projection && state.projection.revision > projection.revision) return state;
         if (state.projection?.revision === projection.revision
-          && JSON.stringify(state.projection) !== JSON.stringify(projection)) throw new Error("Conversation revision conflict");
+          && JSON.stringify(state.projection) !== JSON.stringify(projection)) {
+          // A pre-R4 cache has no `epoch`, so it can never equal a server
+          // projection. Accept that one upgrade; later same-revision changes
+          // remain real conflicts.
+          if (state.projection.epoch !== undefined) throw new Error("Conversation revision conflict");
+        }
         return { ...state, projection, observedAt: Date.now() };
       });
       result(undefined);
@@ -329,7 +341,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
 
-  async function claimNextOutgoing(): Promise<OutgoingAttempt | null> {
+  async function claimNextOutgoing(except: readonly string[] = []): Promise<OutgoingAttempt | null> {
+    const skip = new Set(except.filter((id) => typeof id === "string" && id.length > 0));
     return transaction("readwrite", (tx, result, guard) => {
       const outbox = tx.objectStore("outbox");
       const cursor = outbox.openCursor();
@@ -337,6 +350,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         const current = cursor.result;
         if (!current) { result(null); return; }
         const entry = current.value as OutboxEntry;
+        if (skip.has(entry.messageId)) { current.continue(); return; }
         const now = Date.now();
         if (entry.status === "SENDING" && (entry.leaseUntil ?? Infinity) > now) {
           current.continue(); return;
@@ -357,6 +371,24 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           result({ message: copyReceivedMessage(message), token, attempt: attempts,
             ...(entry.expectedEpoch ? { expectedEpoch: entry.expectedEpoch } : {}) });
         });
+      });
+    });
+  }
+
+  async function retryOutgoing(messageId: string, expectedEpoch: string): Promise<boolean> {
+    assertOpen();
+    const id = uuid(messageId);
+    if (typeof expectedEpoch !== "string" || !/^[0-9a-f]{64}$/.test(expectedEpoch)) {
+      throw new Error("Invalid messaging boundary");
+    }
+    return transaction("readwrite", (tx, result, guard) => {
+      const outbox = tx.objectStore("outbox");
+      const request = outbox.get(id);
+      request.onsuccess = guard(() => {
+        const entry = request.result as OutboxEntry | undefined;
+        if (!entry || entry.status === "SENDING") { result(false); return; }
+        outbox.put({ messageId: id, status: "QUEUED", attempts: 0, expectedEpoch } satisfies OutboxEntry);
+        result(true);
       });
     });
   }
@@ -953,7 +985,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
     markConversationRead: serial(markConversationRead), getStateCursor: serial(getStateCursor),
     applyStateChange: serial(applyStateChange), listOutbox: serial(listOutbox), claimNextOutgoing: serial(claimNextOutgoing),
-    failOutgoing: serial(failOutgoing), persistInbound: serializedPersist, persistInboundAndAck, close,
+    retryOutgoing: serial(retryOutgoing), failOutgoing: serial(failOutgoing), persistInbound: serializedPersist, persistInboundAndAck, close,
     enqueueOutgoingWithMedia: serial(enqueueOutgoingWithMedia), claimNextMediaUpload: serial(claimNextMediaUpload),
     failMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, false)),
     completeMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, true)),

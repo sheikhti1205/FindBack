@@ -1042,3 +1042,55 @@ describe("chat media records (web parity with SQLite)", () => {
     store.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// R4 relationship boundary, web adapter parity with SQLite.
+// ---------------------------------------------------------------------------
+describe("relationship-boundary retry (web)", () => {
+  const EPOCH_A = "a".repeat(64);
+  const EPOCH_B = "b".repeat(64);
+  const SECOND = "00000000-0000-4000-8000-0000000000aa";
+
+  it("skips a failed row so one refused boundary cannot starve the queue", async () => {
+    const store = await open();
+    await store.enqueueOutgoing(text, EPOCH_A);
+    await store.enqueueOutgoing({ ...text, id: SECOND, body: "Second" }, EPOCH_A);
+    const first = (await store.claimNextOutgoing())!;
+    expect(await store.failOutgoing(first)).toBe(true);
+    expect((await store.claimNextOutgoing())?.message.id).toBe(MESSAGE);
+    expect((await store.claimNextOutgoing([first.message.id]))?.message.id).toBe(SECOND);
+  });
+
+  it("rebinds a refused row only through an explicit retry", async () => {
+    const store = await open();
+    await store.enqueueOutgoing(text, EPOCH_A);
+    expect(await store.retryOutgoing(MESSAGE, EPOCH_B)).toBe(true);
+    expect(await store.listOutbox()).toEqual([
+      { messageId: MESSAGE, status: "QUEUED", attempts: 0, expectedEpoch: EPOCH_B },
+    ]);
+    expect((await store.claimNextOutgoing())?.expectedEpoch).toBe(EPOCH_B);
+    // A live lease is not silently rebindable.
+    await expect(store.retryOutgoing(MESSAGE, EPOCH_A)).resolves.toBe(false);
+  });
+
+  it("binds a boundary to a legacy row without one but never overwrites an observed one", async () => {
+    const store = await open();
+    await store.enqueueOutgoing(text);
+    expect((await store.listOutbox())[0]).not.toHaveProperty("expectedEpoch");
+    await store.enqueueOutgoing(text, EPOCH_A);
+    expect((await store.listOutbox())[0]).toMatchObject({ expectedEpoch: EPOCH_A });
+    await store.enqueueOutgoing(text, EPOCH_B);
+    expect((await store.listOutbox())[0]).toMatchObject({ expectedEpoch: EPOCH_A });
+  });
+
+  it("accepts one pre-R4 projection without a boundary, then still refuses a real conflict", async () => {
+    const store = await open();
+    const legacy = { conversationId: CONVERSATION, peerId: B, mode: "CONNECTED" as const, request: "NONE" as const,
+      requestEpoch: null, ownBlocked: false, ownDeclined: false, ownHidden: false, revision: 1 };
+    await store.cacheConversation(legacy);
+    await store.cacheConversation({ ...legacy, epoch: EPOCH_A });
+    expect((await store.listConversations())[0]?.cachedProjection?.epoch).toBe(EPOCH_A);
+    await expect(store.cacheConversation({ ...legacy, epoch: EPOCH_B }))
+      .rejects.toThrow("Conversation revision conflict");
+  });
+});

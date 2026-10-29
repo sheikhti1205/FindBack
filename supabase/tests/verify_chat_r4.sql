@@ -331,6 +331,24 @@ select pg_temp.r4_check('explicit evidence erasure removes the copy and its sour
 -- ---------------------------------------------------------------------------
 -- Block is separate from mode and never reconnects on unblock
 -- ---------------------------------------------------------------------------
+-- Capture both member revisions and the pair epoch before the boundary moves.
+-- The epoch is part of *every* member projection, so a peer that is not the
+-- blocker still sees different projection contents. If its revision does not
+-- move with the epoch the client cache rejects the new projection as a
+-- same-revision conflict and can never recover.
+create function pg_temp.r4_member_rev(p_user text) returns bigint
+language sql stable as $$
+ select revision from public.chat_member_state
+  where conversation_id=current_setting('r4.conversation') and user_id=p_user
+$$;
+create function pg_temp.r4_pair_epoch() returns text
+language sql stable as $$
+ select public.findback_chat_relationship_epoch(c) from public.chat_conversations c
+  where c.id=current_setting('r4.conversation')
+$$;
+select set_config('r4.a_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000001')::text),true);
+select set_config('r4.b_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')::text),true);
+select set_config('r4.epoch',(select pg_temp.r4_pair_epoch()),true);
 set local role authenticated;
 -- Pin the actor: the preceding sections deliberately leave different identities
 -- in place, and a block must never be proven with an ambiguous caller.
@@ -339,12 +357,34 @@ select public.findback_block_user('00000000-0000-4000-9940-000000000001');
 reset role;
 select pg_temp.r4_check('block ends the connection without a third mode',
  (select state='REQUEST' from public.chat_conversations where id=current_setting('r4.conversation')));
+select pg_temp.r4_check('block rotates the pair epoch for both members',
+ pg_temp.r4_pair_epoch() is distinct from current_setting('r4.epoch'));
+select pg_temp.r4_check('block moves the blocked peer revision with its changed projection',
+ pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000001')
+  > current_setting('r4.a_rev')::bigint
+ and pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')
+  > current_setting('r4.b_rev')::bigint);
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
 select public.findback_unblock_user('00000000-0000-4000-9940-000000000001');
 reset role;
 select pg_temp.r4_check('global unblock does not silently restore CONNECTED',
  (select state='REQUEST' from public.chat_conversations where id=current_setting('r4.conversation')));
+
+-- The reported failure was a block in REQUEST, where only the blocker's
+-- revision used to move. Prove that exact case separately.
+select set_config('r4.a_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000001')::text),true);
+select set_config('r4.b_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')::text),true);
+select set_config('r4.epoch',(select pg_temp.r4_pair_epoch()),true);
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select public.findback_block_user('00000000-0000-4000-9940-000000000002');
+reset role;
+select pg_temp.r4_check('a REQUEST-state block also moves the peer revision and epoch',
+ (select state='REQUEST' from public.chat_conversations where id=current_setting('r4.conversation'))
+ and pg_temp.r4_pair_epoch() is distinct from current_setting('r4.epoch')
+ and pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')
+  > current_setting('r4.b_rev')::bigint);
 
 do $$
 declare failures text;

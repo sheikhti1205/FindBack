@@ -204,8 +204,13 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     const run = async () => {
       assertOpen();
       await syncState();
+      // One undeliverable row must not starve the rest of the queue: a refused
+      // stale boundary is a permanent failure until the user retries it, and
+      // every later message would otherwise wait behind it forever.
+      const failed: string[] = [];
+      let firstError: unknown;
       while (true) {
-        const attempt = await history.claimNextOutgoing();
+        const attempt = await history.claimNextOutgoing(failed);
         if (!attempt) break;
         try {
           const hasMedia = attempt.message.messageType === "MEDIA";
@@ -234,7 +239,9 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
           if (accepted !== message.id) throw new Error("Invalid messaging acknowledgement");
         } catch (error) {
           await history.failOutgoing(attempt);
-          throw error;
+          failed.push(attempt.message.id);
+          firstError ??= error;
+          continue;
         }
         // Echo persistence, not the HTTP result, removes the durable outbox entry.
         await sync();
@@ -242,6 +249,9 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       // A prior HTTP send can succeed before persistence/ACK fails. Retry its
       // mailbox even while the durable outbox lease remains active.
       await sync();
+      // The queue drained as far as it can; surface the first real failure so
+      // callers still see the error contract they test against.
+      if (firstError) throw firstError;
     };
     flushing = run().finally(() => { flushing = null; });
     return flushing;
@@ -431,6 +441,24 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
      * pending upload or download can commit under the pre-action authority.
      */
     fence: <T>(work: () => Promise<T>): Promise<T> => withMediaMutation(work),
+    /**
+     * Explicit user retry of one failed send. Rebinds the durable row to the
+     * boundary the user is acting in and makes it claimable again.
+     *
+     * Only the user may do this. A flush pass that silently rebound a refused
+     * send would recast intent composed in an older request/connection into the
+     * current one, which is exactly what the relationship epoch prevents.
+     */
+    async retryOutgoing(messageId: string) {
+      assertOpen();
+      const id = uuid(messageId);
+      const message = await history.getMessage(id);
+      if (!message || message.authorId !== scope.accountId || message.server) throw new Error("Message unavailable");
+      const epoch = await observedEpoch(message.conversationId);
+      if (!epoch) throw new Error("Conversation boundary unavailable");
+      if (!await history.retryOutgoing(id, epoch)) throw new Error("Message is no longer retryable");
+      assertOpen();
+    },
     sync, syncState, flush, refreshConversations, flushMedia, syncMedia,
     close() { controller.abort(); mediaController.abort(); return Promise.resolve(history.close()); },
   };
