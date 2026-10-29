@@ -19,6 +19,7 @@ import { friendlyError } from "../utils/friendlyErrors";
 import { invalidateFeedCaches } from "../hooks/feedCache";
 import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
 import { RecoverySheet } from "../components/RecoverySheet";
+import { MatchActivity } from "../components/MatchActivity";
 
 const MY_CACHE_BASE = "my:reports";
 
@@ -498,8 +499,33 @@ export function MyPosts() {
     [clearStatusUndo, patchItem, removeItem],
   );
 
+  // Recovery is a relationship, not a status write: the owner names the helper
+  // and the server writes the return row and the status together. Only a lost
+  // report that is not already recovered can start one.
+  const requestRecovery = (post: PostItem) => {
+    if (post.status === "MATCHED") {
+      navigate(`/posts/${post.id}#detail-matches`);
+      return;
+    }
+    if (post.status === "RECOVERED") {
+      const message = "This report is already recorded as recovered.";
+      setActionError(message);
+      announce(message);
+      return;
+    }
+    if (post.type !== "LOST") {
+      const message = "Only a lost-item report can be marked recovered.";
+      setActionError(message);
+      announce(message);
+      return;
+    }
+    setRecoveryPost(post);
+  };
+
   const actions: OwnerReportActionHandlers = {
     onChangeStatus: changeStatus,
+    onRecordRecovery: requestRecovery,
+    onManageMatch: (post) => navigate(`/posts/${post.id}#detail-matches`),
     onEdit: (post) => navigate(`/my/${post.id}/edit`),
     onShare: shareOne,
     onCopy: copyOne,
@@ -605,6 +631,7 @@ export function MyPosts() {
 
       <OwnerReportActionsProvider value={actions}>
         <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="flex-1">
+          <MatchActivity accountId={user?.id ?? null} />
           <PostList
             items={items}
             loading={loading}

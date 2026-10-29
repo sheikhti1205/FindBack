@@ -129,9 +129,9 @@ async function openCommentActions(author = "commenter") {
   return screen.getByRole("menu", { name: `Comment actions for ${author}` });
 }
 
-function renderDetail() {
+function renderDetail(entry = "/posts/p1") {
   return render(
-    <MemoryRouter initialEntries={["/posts/p1"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/posts/:id" element={<PostDetail />} />
       </Routes>
@@ -148,6 +148,22 @@ describe("PostDetail overflow", () => {
   });
 
   afterEach(cleanup);
+
+  it("focuses the canonical matches section from an owner handover link", async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scroll = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll });
+    try {
+      renderDetail("/posts/p1#detail-matches");
+      const section = await screen.findByRole("region", { name: "Matches" });
+      await waitFor(() => expect(document.activeElement).toBe(section));
+      expect(section.tabIndex).toBe(-1);
+      expect(scroll.mock.contexts).toContain(section);
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+      else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
 
   it("breaks long titles and location labels instead of overflowing", async () => {
     const { container } = renderDetail();
@@ -454,7 +470,7 @@ describe("PostDetail mutation locks", () => {
     renderDetail();
     const likeButton = await screen.findByTestId("detail-like");
     fireEvent.click(likeButton);
-    const status = screen.getByRole("radio", { name: "Matched" });
+    const status = screen.getByRole("radio", { name: "Closed" });
     expect(status.getAttribute("aria-disabled")).toBe("true");
     await act(async () => reaction.resolve({ postId: "p1", likeCount: 1, dislikeCount: 0, myReaction: "LIKE" }));
     expect(status.getAttribute("aria-disabled")).toBe("false");
@@ -987,7 +1003,7 @@ describe("PostDetail recovery", () => {
 
   it("opens the recovery sheet for a LOST report and never writes a bare status", async () => {
     renderDetail();
-    const recovered = await screen.findByRole("radio", { name: "Recovered" });
+    const recovered = await screen.findByRole("button", { name: "Record recovery…" });
     fireEvent.click(recovered);
 
     await waitFor(() => expect(recoverySheet.open).toBe(true));
@@ -995,15 +1011,25 @@ describe("PostDetail recovery", () => {
     expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /confirm recovery/i }));
-    await waitFor(() => expect(recovered.getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Manage report" })).getByText("Recovered")).toBeTruthy());
+    expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
     expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
   });
 
   it("does not offer Recovered on a FOUND report", async () => {
     postsMock.fetchPost.mockResolvedValue({ ...basePost, type: "FOUND" });
     renderDetail();
-    await screen.findByRole("radio", { name: "Matched" });
+    await screen.findByRole("radio", { name: "Closed" });
     expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record recovery…" })).toBeNull();
+  });
+
+  it.each(["MATCHED", "RECOVERED"] as const)("does not offer an unlinked recovery or owner lifecycle writes on %s reports", async (status) => {
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, type: "LOST", status });
+    renderDetail();
+    const closed = await screen.findByRole("radio", { name: "Closed" });
+    expect(closed.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Record recovery…" })).toBeNull();
   });
 });
 
@@ -1049,7 +1075,7 @@ describe("PostDetail recovery route lifetime", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("radio", { name: "Recovered" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Record recovery…" }));
     fireEvent.click(await screen.findByRole("radio", { name: /someone outside findback/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(recoveryService.markRecovered).toHaveBeenCalledWith(

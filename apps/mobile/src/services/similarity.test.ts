@@ -10,7 +10,12 @@ import {
   MATCH_RESULT_LIMIT,
   MIN_COSINE_CUTOFF,
   rankMatches,
+  rankTextMatches,
   rankingMetrics,
+  deriveTextMatchReasons,
+  matchTextTokens,
+  textOverlap,
+  TEXT_MATCH_MIN_OVERLAP,
   type MatchCandidate,
   type MatchReason,
 } from "./similarity";
@@ -141,5 +146,70 @@ describe("consumer reasons (actual ranking bonuses only)", () => {
     const invented: MatchReason = { signal: "date", text: "Events 2 days apart" };
     expect(isReasonSupported(invented, lost, found)).toBe(false);
     expect(isReasonSupported({ signal: "location", text: "Within 5 km" }, lost, { ...found, locationLat: null })).toBe(false);
+  });
+});
+
+describe("text/structured fallback (no embedding model)", () => {
+  const lost: MatchCandidate = {
+    id: "lost-1",
+    title: "Black umbrella",
+    description: "Wooden handle, left in the bus",
+    category: "Clothing",
+    eventDate: "2026-09-10",
+    locationLat: 23.81,
+    locationLng: 90.41,
+    locationLabel: "Dhaka",
+  };
+
+  function cand(over: Partial<MatchCandidate> & { id: string }): MatchCandidate {
+    return { ...lost, ...over };
+  }
+
+  it("normalizes punctuation, case and stopwords before comparing", () => {
+    expect(matchTextTokens("The BLACK umbrella, in the bus!")).toEqual(["black", "umbrella", "bus"]);
+    // A one-letter token is not a matching signal.
+    expect(matchTextTokens("a b umbrella")).toEqual(["umbrella"]);
+    expect(matchTextTokens("")).toEqual([]);
+  });
+
+  it("scores shared wording symmetrically and ignores unrelated text", () => {
+    expect(textOverlap("black umbrella", "black umbrella")).toBeCloseTo(1);
+    expect(textOverlap("black umbrella", "red bicycle")).toBe(0);
+    expect(textOverlap("black umbrella", "umbrella")).toBeCloseTo(2 * 1 / (2 + 1));
+  });
+
+  it("works on Bangla and Banglish descriptions without a language model", () => {
+    // Combining vowel signs stay inside the word: "কালো" is one token, not four
+    // single letters, or every Bangla description would score zero.
+    expect(matchTextTokens("কালো ছাতা")).toEqual(["কালো", "ছাতা"]);
+    const bangla = "কালো ছাতা কাঠের হাতল";
+    expect(textOverlap(bangla, "কালো ছাতা")).toBeGreaterThan(TEXT_MATCH_MIN_OVERLAP);
+    expect(textOverlap(bangla, "লাল সাইকেল")).toBe(0);
+    expect(textOverlap("kalo chata kather hathol", "kalo chata")).toBeGreaterThan(TEXT_MATCH_MIN_OVERLAP);
+  });
+
+  it("ranks by wording plus the same structured bonuses, and explains itself", () => {
+    const results = rankTextMatches(lost, [
+      cand({ id: "same-words", title: "Black umbrella", description: "Wooden handle" }),
+      cand({ id: "same-category", title: "Blue scarf", description: "Silk", eventDate: "2026-09-10" }),
+      cand({ id: "noise", title: "Red bicycle", description: "Chained outside", category: "Other", eventDate: "2026-09-10" }),
+    ]);
+    expect(results.map((r) => r.post.id)).toEqual(["same-words", "same-category"]);
+    expect(results[0]!.reasons).toContain("Similar wording");
+    expect(results[0]!.reasons).toContain("Same category");
+    // The category+same-day lead has no wording claim.
+    expect(results[1]!.reasons).not.toContain("Similar wording");
+    expect(results.every((r) => r.score <= 1)).toBe(true);
+  });
+
+  it("drops a candidate that shares neither wording nor category-and-day", () => {
+    expect(
+      rankTextMatches(lost, [cand({ id: "far", title: "Red bicycle", description: "Chained", category: "Other", eventDate: "2026-08-01" })]),
+    ).toEqual([]);
+  });
+
+  it("never emits a wording reason below the overlap threshold", () => {
+    const reasons = deriveTextMatchReasons(lost, cand({ id: "x", title: "Umbrella" }), TEXT_MATCH_MIN_OVERLAP - 0.01);
+    expect(reasons.some((r) => r.signal === "text")).toBe(false);
   });
 });

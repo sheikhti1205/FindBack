@@ -206,8 +206,30 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
     fireEvent.pointerMove(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
     fireEvent.pointerUp(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark matched" }));
-    expect(onChangeStatus).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }), "MATCHED");
+    fireEvent.click(screen.getByRole("button", { name: "Mark closed" }));
+    expect(onChangeStatus).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }), "CLOSED");
+  });
+
+  it("offers no swipe step for a report whose status belongs to a relationship", () => {
+    // MATCHED is written by the mutual confirmation and RECOVERED by the
+    // durable recovery writer. Neither is an owner-writable status, so the row
+    // must not reveal a one-swipe shortcut that the server would refuse.
+    render(
+      <MemoryRouter>
+        <OwnerReportActionsProvider
+          value={{
+            onChangeStatus: vi.fn(),
+            onEdit: vi.fn(),
+            onShare: vi.fn(),
+            onDelete: vi.fn(),
+          }}
+        >
+          <OwnerReportCard post={imagePost(1, { status: "MATCHED" as PostStatus })} />
+        </OwnerReportActionsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("owner-status-swipe-surface")).toBeNull();
+    expect(screen.getByTestId("owner-report-status").textContent).toContain("Potential match");
   });
 
   it("never conflates LOST/FOUND type with lifecycle state", () => {

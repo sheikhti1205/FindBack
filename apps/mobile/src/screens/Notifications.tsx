@@ -698,7 +698,17 @@ function NotificationOverflow({
   );
 }
 
+// Exact legacy system templates only. Historical MATCHED rows predate current
+// mutual-consent enforcement: never retroactively claim both owners agreed.
+const LEGACY_STATUS_PREVIEWS = new Map([
+  ["Your report status changed to MATCHED", "Your report was marked as matched. Review its match activity."],
+  ["Your report status changed to RECOVERED", "Recovery recorded. The item has been returned."],
+  ["Your report status changed to CLOSED", "Your report is closed."],
+]);
+
 function NotificationBody({ item }: { item: NotificationItem }) {
+  const preview = item.type === "STATUS" && item.preview
+    ? LEGACY_STATUS_PREVIEWS.get(item.preview) ?? item.preview : item.preview;
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
@@ -726,8 +736,8 @@ function NotificationBody({ item }: { item: NotificationItem }) {
       {item.postTitle ? (
         <p className="text-sm font-medium [overflow-wrap:anywhere]">{item.postTitle}</p>
       ) : null}
-      {item.preview && item.preview !== item.postTitle ? (
-        <p className={`${item.type === "MODERATION" ? "" : "line-clamp-2 "}text-sm text-on-surface-variant [overflow-wrap:anywhere]`}>{item.preview}</p>
+      {preview && preview !== item.postTitle ? (
+        <p className={`${item.type === "MODERATION" || item.type === "STATUS" ? "" : "line-clamp-2 "}text-sm text-on-surface-variant [overflow-wrap:anywhere]`}>{preview}</p>
       ) : null}
       <time
         dateTime={item.createdAt}

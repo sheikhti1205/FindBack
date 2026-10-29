@@ -163,4 +163,24 @@ describe("the overflow menu", () => {
     render(<OwnerReportMenu post={post} />);
     expect(screen.queryByRole("button", { name: /manage report/i })).toBeNull();
   });
+
+  it("routes a MATCHED owner to handover/correction instead of an unlinked recovery or bare status write", () => {
+    const value = handlers({ onRecordRecovery: vi.fn(), onManageMatch: vi.fn() });
+    const report = { ...post, status: "MATCHED" as const };
+    renderMenu(value, report);
+    fireEvent.click(screen.getByRole("button", { name: /manage report/i }));
+    const match = screen.getByRole("menuitem", { name: "Match and handover…" });
+    expect(document.activeElement).toBe(match);
+    expect(screen.queryByRole("menuitem", { name: "Record recovery…" })).toBeNull();
+    for (const radio of screen.getAllByRole("menuitemradio")) {
+      expect((radio as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(radio);
+    }
+    expect(value.onChangeStatus).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Home" });
+    expect(document.activeElement).toBe(match);
+    fireEvent.click(match);
+    expect(value.onManageMatch).toHaveBeenCalledWith(report);
+    expect(value.onRecordRecovery).not.toHaveBeenCalled();
+  });
 });

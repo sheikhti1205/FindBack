@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { PostItem, PostStatus } from "@findback/shared";
-import { POST_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@findback/shared";
-import { Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
+import { OWNER_SELECTABLE_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@findback/shared";
+import { CircleCheck, Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
 
 /**
  * The owner controls on a My Reports row.
@@ -13,6 +13,16 @@ import { Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react"
 export interface OwnerReportActionHandlers {
   /** Change the lifecycle status of one of the caller's own reports. */
   onChangeStatus: (post: PostItem, status: PostStatus) => void;
+  /**
+   * Open the durable recovery handover for a lost report.
+   *
+   * Recovery is a relationship, not a status: it creates the return record that
+   * unlocks return counts and ratings. It therefore has its own action and is
+   * never offered as a status radio the owner could "set" on its own.
+   */
+  onRecordRecovery?: (post: PostItem) => void;
+  /** Open the canonical linked handover / wrong-match correction controls. */
+  onManageMatch?: (post: PostItem) => void;
   /** Open the editor for one report. */
   onEdit: (post: PostItem) => void;
   /** Share one report through the canonical share path. */
@@ -46,7 +56,7 @@ export function useOwnerReportActions(): OwnerReportActionHandlers | null {
 }
 
 const MENU_ITEM_CLASS =
-  "flex w-full min-h-[44px] items-center gap-2 rounded-m3-sm px-3 text-left text-sm font-medium text-on-surface";
+  "flex w-full min-w-0 min-h-[44px] items-center gap-2 rounded-m3-sm px-3 py-1 text-left text-sm font-medium text-on-surface [&>span]:min-w-0 [&>span]:break-words";
 
 function statusLabel(status: PostStatus): string {
   return POST_STATUS_LABELS[status];
@@ -68,7 +78,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
 
   useEffect(() => {
     if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')?.focus();
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled),[role="menuitemradio"]:not(:disabled)')?.focus();
     function onPointerDown(event: PointerEvent) {
       const target = event.target as Node;
       if (triggerRef.current?.contains(target)) return;
@@ -106,7 +116,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
       return;
     }
     const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"],[role="menuitemradio"]') ?? [],
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled),[role="menuitemradio"]:not(:disabled)') ?? [],
     );
     if (items.length === 0) return;
     if (event.key === "Home" || event.key === "End") {
@@ -122,6 +132,7 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
   }
 
   const resolved = RESOLVED_STATUSES.includes(post.status);
+  const matched = post.status === "MATCHED";
 
   return (
     <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}>
@@ -162,27 +173,47 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           aria-label={`Manage ${post.title}`}
           ref={menuRef}
           onKeyDown={onMenuKeyDown}
-          className="absolute right-0 z-20 mt-1 flex max-h-[calc(100dvh-5rem)] w-56 flex-col gap-0.5 overflow-y-auto rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
+          className="absolute right-0 z-20 mt-1 flex max-h-[calc(100dvh-5rem)] w-56 max-w-[calc(100vw-2rem)] flex-col gap-0.5 overflow-y-auto rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
         >
+          {matched && actions.onManageMatch && (
+            <button type="button" role="menuitem"
+              onClick={() => run(() => actions.onManageMatch?.(post))}
+              className={MENU_ITEM_CLASS}>
+              <CircleCheck size={16} aria-hidden />
+              <span className="flex-1">Match and handover…</span>
+            </button>
+          )}
           <p
             role="presentation"
             className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant"
           >
             Status
           </p>
-          {POST_STATUSES.filter((status) => status !== "RECOVERED" || post.type === "LOST").map((status) => (
+          {OWNER_SELECTABLE_STATUSES.map((status) => (
             <button
               key={status}
               type="button"
               role="menuitemradio"
               aria-checked={status === post.status}
+              disabled={matched}
               onClick={() => run(() => actions.onChangeStatus(post, status))}
-              className={MENU_ITEM_CLASS}
+              className={`${MENU_ITEM_CLASS} disabled:opacity-50`}
             >
               <span className="flex-1">{statusLabel(status)}</span>
               {status === post.status && <span className="text-xs text-on-surface-variant">Current</span>}
             </button>
           ))}
+          {actions.onRecordRecovery && post.type === "LOST" && !resolved && !matched && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => run(() => actions.onRecordRecovery?.(post))}
+              className={MENU_ITEM_CLASS}
+            >
+              <CircleCheck size={16} aria-hidden />
+              <span className="flex-1">Record recovery…</span>
+            </button>
+          )}
           <hr role="separator" className="my-1 border-outline-variant" />
           <button
             type="button"

@@ -60,16 +60,17 @@ function OwnerMetrics({ post }: { post: PostItem }) {
 
 /**
  * The one lifecycle step the row's swipe can reveal. The overflow menu keeps
- * every other status (and every other action) reachable without a gesture.
+ * every other action reachable without a gesture.
+ *
+ * Only owner-writable statuses appear here. `MATCHED` belongs to the mutual
+ * confirmation and `RECOVERED` to the durable recovery writer, so a swipe that
+ * offered either would be a control the server refuses — and would imply a
+ * consent nobody gave. A match-linked or recovered report has no swipe step.
  */
-function nextOwnerStatus(post: PostItem): { status: PostStatus; label: string } {
-  if (post.status === "OPEN") return { status: "MATCHED", label: "Mark matched" };
-  if (post.status === "MATCHED") {
-    return post.type === "LOST"
-      ? { status: "RECOVERED", label: "Mark recovered" }
-      : { status: "CLOSED", label: "Mark closed" };
-  }
-  return { status: "OPEN", label: "Reopen" };
+function nextOwnerStatus(post: PostItem): { status: PostStatus; label: string } | null {
+  if (post.status === "OPEN") return { status: "CLOSED", label: "Mark closed" };
+  if (post.status === "CLOSED") return { status: "OPEN", label: "Reopen" };
+  return null;
 }
 
 function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
@@ -234,7 +235,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   return (
     <article data-testid="owner-report-article">
       <div className="flex items-start gap-1">
-        {actions ? (
+        {actions && swipe ? (
           <OwnerStatusSwipe
             className="min-w-0 flex-1 shadow-sm"
             actionLabel={swipe.label}

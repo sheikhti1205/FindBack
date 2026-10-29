@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, Tag, ThumbsDown, X } from "lucide-react";
+import { CalendarDays, CircleCheck, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, Tag, ThumbsDown, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
-import { POST_STATUSES } from "@findback/shared";
+import { OWNER_SELECTABLE_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { UserAvatar } from "../components/UserAvatar";
@@ -32,7 +32,7 @@ import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
 import { RecoverySheet } from "../components/RecoverySheet";
 import { PostActionRow } from "../components/PostActionRow";
 import { SavePostButton } from "../components/SavePostButton";
-import { PossibleMatches } from "../components/PossibleMatches";
+import { ReportMatches } from "../components/ReportMatches";
 import { announce } from "../components/LiveRegion";
 import { listItemVariants, motionDurations, shouldReduceMotion } from "../components/uiMotion";
 import { friendlyError } from "../utils/friendlyErrors";
@@ -405,7 +405,7 @@ export function PostDetail() {
   // A feed Comments shortcut targets the existing section once the shell is
   // mounted. Retry/social/realtime hydration must not keep stealing focus.
   useEffect(() => {
-    if (loading || post?.id !== id || !["#detail-comments", "#detail-activity", "#detail-manage"].includes(hash)) return;
+    if (loading || post?.id !== id || !["#detail-comments", "#detail-activity", "#detail-manage", "#detail-matches"].includes(hash)) return;
     if (linkedComment && commentsLoading) return;
     const focusKey = `${id}:${locationKey}:${hash}:${linkedComment ?? ""}`;
     if (focusedLink.current === focusKey) return;
@@ -763,20 +763,6 @@ export function PostDetail() {
       announce(message);
       return;
     }
-    // Recovered is not a status write: it is the durable recovery
-    // relationship (MC D25), so the owner chooses the helper first and the
-    // server writes the row and the status together. A FOUND report cannot be
-    // "recovered" by this path.
-    if (status === "RECOVERED") {
-      if (current.type !== "LOST") {
-        const message = "Only a lost-item report can be marked recovered.";
-        setActionError(message);
-        announce(message);
-        return;
-      }
-      setRecoveryPost(current);
-      return;
-    }
     // Closed is terminal for the searcher: confirm explicitly.
     if (status === "CLOSED") {
       const ok = window.confirm("Close this report? It will leave the open search.");
@@ -809,7 +795,7 @@ export function PostDetail() {
   const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
 
   // Owner status control is disabled while any mutation is active
-  const ownerControlsDisabled = reactionPending || statusPending;
+  const ownerControlsDisabled = reactionPending || statusPending || current.status === "MATCHED" || current.status === "RECOVERED";
 
   const strippedDescription = stripMarkdown(current.description ?? "");
   const descriptionIsLong = strippedDescription.length > DESCRIPTION_PREVIEW_LIMIT;
@@ -1225,9 +1211,19 @@ export function PostDetail() {
               wrapLongLabels
               value={post.status}
               onChange={(s) => void onChangeStatus(s)}
-              options={POST_STATUSES.filter((s) => s !== "RECOVERED" || current.type === "LOST").map((s) => ({ value: s, label: statusLabel(s) }))}
+              options={OWNER_SELECTABLE_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))}
               disabled={ownerControlsDisabled}
             />
+            {current.type === "LOST" && (current.status === "OPEN" || current.status === "CLOSED") && (
+              <button
+                type="button"
+                onClick={() => setRecoveryPost(current)}
+                disabled={ownerControlsDisabled}
+                className="mt-2 flex min-h-[44px] items-center gap-1.5 text-sm font-medium underline disabled:opacity-50 focus:outline-2 focus:outline-offset-2 focus:outline-on-surface"
+              >
+                <CircleCheck size={16} aria-hidden /> Record recovery…
+              </button>
+            )}
             {/* The owner's edit entry lives HERE, in the manage card — not in
                 the compact four-slot action row, whose like/comment/share/save
                 shape is fixed. A native router link: keyboard and
@@ -1361,12 +1357,12 @@ export function PostDetail() {
         </section>
 
         {/* Matches: dedicated compact section, async, never blocks the shell. */}
-        <section id="detail-matches" aria-label="Matches" className="flex flex-col gap-2">
+        <section id="detail-matches" tabIndex={-1} aria-label="Matches" className="flex scroll-mt-4 flex-col gap-2">
           <h2 className="text-base font-semibold">Matches</h2>
           <p className="text-sm text-on-surface-variant">
             Reports of the opposite type with similar details. Review them yourself before reaching out.
           </p>
-          {post.status === "OPEN" && <PossibleMatches post={post} />}
+           <ReportMatches accountId={user?.id ?? null} post={post} onChanged={() => { void loadPost(loadGen.current); }} />
         </section>
         </BlockedByViewerShield>
 

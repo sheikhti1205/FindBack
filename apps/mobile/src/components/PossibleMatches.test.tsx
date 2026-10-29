@@ -59,27 +59,28 @@ describe("PossibleMatches", () => {
     expect(screen.getByText(/1 possible match to review/i)).toBeTruthy();
   });
 
-  it("offers the confirm action only when the recovery lane supplies a handler", async () => {
+  it("offers the propose action only when the matching lane supplies a handler", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
       { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: ["Similar title"] },
     ] });
     const onConfirmMatch = vi.fn();
     render(<MemoryRouter><PossibleMatches post={post} onConfirmMatch={onConfirmMatch} /></MemoryRouter>);
-    const button = await screen.findByRole("button", { name: /confirm match: black umbrella/i });
+    const button = await screen.findByRole("button", { name: /propose match: black umbrella/i });
     fireEvent.click(button);
     expect(onConfirmMatch).toHaveBeenCalledTimes(1);
     expect(onConfirmMatch.mock.calls[0]![0]).toMatchObject({ post: { id: "found-1" } });
-    // With a handler there is nothing to apologise for.
-    expect(screen.queryByText(/isn.t available here/i)).toBeNull();
+    // Proposing is consent to ASK, never a confirmation of the match.
+    expect(button.textContent).toMatch(/propose match/i);
+    expect(screen.queryByText(/confirming a match isn.t available here/i)).toBeNull();
   });
 
-  it("says plainly that confirming is not available when no handler is supplied", async () => {
+  it("says plainly that proposing is not available when no handler is supplied", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
       { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: ["Similar title"] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     await screen.findByText("Black umbrella");
-    expect(screen.queryByRole("button", { name: /confirm match/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /propose match/i })).toBeNull();
     expect(screen.getByText(/confirming a match isn.t available here/i)).toBeTruthy();
   });
 
@@ -98,10 +99,36 @@ describe("PossibleMatches", () => {
     await waitFor(() => expect(findMock).toHaveBeenCalledTimes(4));
   });
 
-  it("shows an informative empty state when the embedder is unavailable", async () => {
-    findMock.mockResolvedValue({ available: false, candidatesConsidered: 0, matches: [], unavailableReason: "embed" });
+  it("still shows suggestions and says which comparison produced them when the model is unavailable", async () => {
+    findMock.mockResolvedValue({
+      available: true,
+      candidatesConsidered: 2,
+      mode: "text",
+      unavailableReason: "embed",
+      matches: [
+        { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: ["Similar wording"] },
+      ],
+    });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    await waitFor(() => expect(screen.getByText(/needs the on-device model/i)).toBeTruthy());
+    expect(await screen.findByText("Black umbrella")).toBeTruthy();
+    expect(screen.getByText(/compare wording, category, date and place only/i)).toBeTruthy();
+    // No semantic or visual claim is made for a text-only result.
+    expect(screen.queryByText(/text-similarity suggestions/i)).toBeNull();
+  });
+
+  it("does not describe a semantic result as a text-only comparison", async () => {
+    findMock.mockResolvedValue({
+      available: true,
+      candidatesConsidered: 1,
+      mode: "semantic",
+      matches: [
+        { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: ["Same category"] },
+      ],
+    });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    expect(await screen.findByText("Black umbrella")).toBeTruthy();
+    expect(screen.getByText(/text-similarity suggestions/i)).toBeTruthy();
+    expect(screen.queryByText(/compare wording, category, date and place only/i)).toBeNull();
   });
 
   it("offers a retry when candidate loading fails", async () => {

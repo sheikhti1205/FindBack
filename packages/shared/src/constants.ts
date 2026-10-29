@@ -70,6 +70,16 @@ export const POST_STATUS_LABELS: Record<PostStatus, string> = {
 /** When a found/lost item is resolved by the owner. */
 export const RESOLVED_STATUSES: PostStatus[] = ["RECOVERED", "CLOSED"];
 
+/**
+ * The statuses a report owner may set directly through the status writer.
+ *
+ * `MATCHED` is written only by the mutual-consent confirmation and `RECOVERED`
+ * only by the durable recovery writer. Both are relationship facts, so a status
+ * picker offering them would be a control the server must refuse — and one that
+ * lets a user believe they confirmed a match nobody agreed to.
+ */
+export const OWNER_SELECTABLE_STATUSES: readonly PostStatus[] = ["OPEN", "CLOSED"];
+
 /** Cursor page size for the feed. */
 export const DEFAULT_PAGE_SIZE = 10;
 export const MAX_PAGE_SIZE = 20;

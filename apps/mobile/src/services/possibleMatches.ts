@@ -3,7 +3,7 @@ import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi"
 import { embeddingInput, embedTexts, validateEmbeddingVectors } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
 import type { PostItem } from "@findback/shared";
-import { cosineSimilarity, rankMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
+import { cosineSimilarity, rankMatches, rankTextMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
 /** Matching engine selection. USE is the default incumbent; Needle is an
  * explicit, installed-and-verified challenger only (enforced by
@@ -38,7 +38,17 @@ export interface PossibleMatchesResult {
   matches: PossibleMatch[];
   candidatesConsidered: number;
   available: boolean;
-  /** Why matching is unavailable: candidates fetch vs on-device embedding. */
+  /**
+   * How the suggestions were produced.
+   *
+   * `semantic` is the on-device embedding comparison. `text` is the declared
+   * fallback: normalized wording plus the same transparent category/date/place
+   * bonuses, used when the embedder is missing or returns an unusable payload.
+   * The surface must state which one it used; a text result is never presented
+   * as a semantic (let alone visual) comparison.
+   */
+  mode: "semantic" | "text";
+  /** Why the semantic pass did not produce the result: candidates fetch vs embed. */
   unavailableReason?: "candidates" | "embed";
 }
 
@@ -73,7 +83,8 @@ async function defaultFetchCandidates(targetId: string): Promise<PostItem[]> {
 /** Finds possible matches for a target post by comparing against the most recent relevant open reports.
  * Embeds target and candidates in a single batch, ranks with transparent bonuses, returns the
  * top suggestions (see `MATCH_RESULT_LIMIT`).
- * On embed failure, returns an unavailability object instead of throwing.
+ * On embed failure, degrades to the declared text/structured comparison instead
+ * of throwing or claiming a semantic result.
  *
  * VISUAL MATCHING: there is no visual pass in this build, and none is faked.
  * The only embedding capability that exists is TEXT (`FindBackEmbeddings`
@@ -101,7 +112,7 @@ export async function findPossibleMatches(
   try {
     fetched = await fetchCandidates(target.id);
   } catch {
-    return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "candidates" };
+    return { matches: [], candidatesConsidered: 0, available: false, mode: "semantic", unavailableReason: "candidates" };
   }
 
   // O5 (CF-050) — the exclusion is the SERVER's, and it is total.
@@ -136,11 +147,22 @@ export async function findPossibleMatches(
       await embed([targetInput, ...candidateInputs]),
     );
   } catch {
-    return { matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" };
+    // The semantic pass is unavailable (missing model, failed load, or an
+    // unusable vector payload). Wording plus category/date/place still compare,
+    // so the surface keeps working and says which comparison it used. This is
+    // NOT a fallback to a different semantic model: no vector is computed from
+    // a payload we refused, and no score here is a cosine.
+    return {
+      matches: rankTextMatches(toMatchCandidate(target), candidates),
+      candidatesConsidered: candidates.length,
+      available: true,
+      mode: "text",
+      unavailableReason: "embed",
+    };
   }
 
   if (candidates.length === 0) {
-    return { matches: [], candidatesConsidered: 0, available: true };
+    return { matches: [], candidatesConsidered: 0, available: true, mode: "semantic" };
   }
 
   const targetVector = vectors[0] ?? [];
@@ -163,5 +185,6 @@ export async function findPossibleMatches(
     matches,
     candidatesConsidered: candidates.length,
     available: true,
+    mode: "semantic",
   };
 }

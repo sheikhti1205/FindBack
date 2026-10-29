@@ -29,6 +29,7 @@ export const MATCH_REASON_MIN = 3;
  * explanation is inferred from a combined text vector or a photo URL.
  */
 export type MatchReasonSignal =
+  | "text"
   | "location"
   | "date"
   | "category";
@@ -244,6 +245,145 @@ export function rankMatches(
     .slice(0, Math.max(0, limit));
 
   return ranked;
+}
+
+/**
+ * Weight of the lexical overlap term in the structured/text fallback.
+ *
+ * The fallback exists because a device without the embedding model must still
+ * get working suggestions (M1 packet: "text/structured matching remains
+ * functional"). It is NOT a semantic comparison and never claims to be: it
+ * compares normalized words, then adds the same transparent category/date/
+ * place bonuses the semantic path uses. 0.55 keeps shared wording the dominant
+ * signal while letting the structured bonuses break ties.
+ */
+export const TEXT_OVERLAP_WEIGHT = 0.55;
+
+/**
+ * Minimum lexical overlap for a candidate that has no structured alignment.
+ *
+ * 0.2 (Dice) means roughly one shared content word in five across both reports;
+ * lower values surface pairs that share only a category word ("phone", "bag")
+ * and would read as noise.
+ */
+export const TEXT_MATCH_MIN_OVERLAP = 0.2;
+
+/**
+ * Words that carry no matching signal in English. Deliberately tiny: a longer
+ * list would be a language decision this build has not measured. Bangla and
+ * Banglish content words are left untouched, because dropping them would
+ * silently degrade exactly the users this fallback is meant to serve.
+ */
+const TEXT_STOPWORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "been", "but", "by", "for", "from",
+  "had", "has", "have", "he", "her", "his", "i", "if", "in", "is", "it", "its",
+  "my", "no", "not", "of", "on", "or", "our", "she", "so", "that", "the",
+  "their", "them", "then", "there", "these", "they", "this", "to", "was",
+  "we", "were", "what", "when", "where", "which", "who", "will", "with",
+  "you", "your",
+]);
+
+/** Normalizes report text into comparable content tokens (Unicode-aware).
+ * `\p{M}` keeps combining marks, so Bangla vowel signs stay part of the word
+ * instead of splitting "কালো" into single letters. */
+export function matchTextTokens(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}\p{M}]+/u)
+    .filter((token) => token.length > 1 && !TEXT_STOPWORDS.has(token));
+}
+
+/** The comparable text of one report: title plus description, in that order. */
+function reportText(candidate: MatchCandidate): string {
+  return `${candidate.title} ${candidate.description ?? ""}`.trim();
+}
+
+/**
+ * Dice coefficient over the two reports' content tokens, in [0, 1].
+ *
+ * Order-insensitive and length-normalized, so a long description cannot win by
+ * sheer size. Language-agnostic: it compares the tokens the writer actually
+ * used, which is what makes Bangla and Banglish descriptions work without a
+ * language-specific model.
+ */
+export function textOverlap(targetText: string, candidateText: string): number {
+  const a = matchTextTokens(targetText);
+  const b = matchTextTokens(candidateText);
+  if (a.length === 0 || b.length === 0) return 0;
+  const bCounts = new Map<string, number>();
+  for (const token of b) bCounts.set(token, (bCounts.get(token) ?? 0) + 1);
+  let shared = 0;
+  for (const token of a) {
+    const left = bCounts.get(token) ?? 0;
+    if (left > 0) {
+      shared++;
+      bCounts.set(token, left - 1);
+    }
+  }
+  return (2 * shared) / (a.length + b.length);
+}
+
+/**
+ * Reasons for a structured/text suggestion: the same derived structured facts
+ * as the semantic path, plus a wording signal when the overlap threshold fired.
+ * Nothing here is inferred from a model.
+ */
+export function deriveTextMatchReasons(
+  target: MatchCandidate,
+  candidate: MatchCandidate,
+  overlap: number,
+): MatchReason[] {
+  const reasons: MatchReason[] = [];
+  if (overlap >= TEXT_MATCH_MIN_OVERLAP) reasons.push({ signal: "text", text: "Similar wording" });
+  reasons.push(...deriveMatchReasons(target, candidate));
+  return reasons;
+}
+
+/**
+ * Ranks candidates WITHOUT the embedding model, using wording overlap plus the
+ * same structured bonuses. Used only as the declared fallback when the semantic
+ * embedder is unavailable or returns an unusable payload.
+ *
+ * A candidate qualifies when it shares enough wording, or when it shares both
+ * the category and an event date within a day — a structured lead that is worth
+ * showing even when the two descriptions were written in different words.
+ */
+export function rankTextMatches(
+  target: MatchCandidate,
+  candidates: MatchCandidate[],
+  limit: number = MATCH_RESULT_LIMIT,
+): PossibleMatch[] {
+  const targetText = reportText(target);
+  return candidates
+    .map((candidate) => {
+      const overlap = textOverlap(targetText, reportText(candidate));
+      const days = dateDistanceDays(target.eventDate, candidate.eventDate);
+      const sameCategorySameDay = target.category === candidate.category && days !== null && days < 1;
+      let bonus = 0;
+      if (target.category === candidate.category) bonus += CATEGORY_BONUS;
+      bonus += dateProximityBonus(target.eventDate, candidate.eventDate);
+      bonus += locationProximityBonus(
+        target.locationLat,
+        target.locationLng,
+        candidate.locationLat,
+        candidate.locationLng,
+      );
+      const score = Math.max(0, Math.min(1, TEXT_OVERLAP_WEIGHT * overlap + bonus));
+      return { candidate, overlap, score, qualifies: overlap >= TEXT_MATCH_MIN_OVERLAP || sameCategorySameDay };
+    })
+    .filter((entry) => entry.qualifies)
+    .map(({ candidate, overlap, score }) => ({
+      post: candidate,
+      score,
+      reasons: deriveTextMatchReasons(target, candidate, overlap).map((reason) => reason.text),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.post.id.localeCompare(b.post.id);
+    })
+    .slice(0, Math.max(0, limit));
 }
 
 /**

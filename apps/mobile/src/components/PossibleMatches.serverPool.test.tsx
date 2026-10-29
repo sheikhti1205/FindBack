@@ -55,13 +55,13 @@ describe("Possible Matches — server-owned candidate pool", () => {
 
   it("keeps an empty eligible pool available, without claiming why it is empty", async () => {
     const result = await findPossibleMatches(target, { fetchCandidates: async () => [], embed: embedder() });
-    expect(result).toEqual({ available: true, matches: [], candidatesConsidered: 0 });
+    expect(result).toEqual({ available: true, matches: [], candidatesConsidered: 0, mode: "semantic" });
   });
 
   it("does not silently fall back to the feed when the required reader fails", async () => {
     const embed = embedder();
     const result = await findPossibleMatches(target, { fetchCandidates: async () => { throw new Error("reader unavailable"); }, embed });
-    expect(result).toEqual({ available: false, unavailableReason: "candidates", matches: [], candidatesConsidered: 0 });
+    expect(result).toEqual({ available: false, unavailableReason: "candidates", matches: [], candidatesConsidered: 0, mode: "semantic" });
     expect(embed).not.toHaveBeenCalled();
   });
 

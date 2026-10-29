@@ -118,13 +118,14 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
   }
 
   if (!result.available) {
-    const subtitle =
-      result.unavailableReason === "embed"
-        ? "Matching needs the on-device model, which is not available in this build."
-        : "Could not load reports to compare. Check your connection and try again.";
+    // Only a failed candidate fetch reaches here: the semantic pass degrades to
+    // the text/structured comparison instead of hiding the whole surface.
     return (
       <div className="flex flex-col items-center gap-3">
-        <EmptyState title="Possible matches unavailable" subtitle={subtitle} />
+        <EmptyState
+          title="Possible matches unavailable"
+          subtitle="Could not load reports to compare. Check your connection and try again."
+        />
         <button
           type="button"
           onClick={() => setAttempt((a) => a + 1)}
@@ -235,10 +236,10 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
                 <button
                   type="button"
                   onClick={() => onConfirmMatch(match)}
-                  aria-label={`Confirm match: ${match.post.title}`}
+                   aria-label={`Propose match: ${match.post.title}`}
                   className="min-h-[40px] w-full rounded-m3-sm border border-outline-variant px-2 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
                 >
-                  Confirm match
+                   Propose match
                 </button>
               )}
             </div>
@@ -246,7 +247,9 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
         ))}
       </ul>
       <p className="mt-3 text-xs text-on-surface-variant" role="note">
-        These are text-similarity suggestions, not confirmed matches.
+        {result.mode === "text"
+          ? "These suggestions compare wording, category, date and place only — the on-device model isn’t available. They are not confirmed matches."
+          : "These are text-similarity suggestions, not confirmed matches."}
       </p>
       {!onConfirmMatch && (
         <p className="mt-1 text-xs text-on-surface-variant">

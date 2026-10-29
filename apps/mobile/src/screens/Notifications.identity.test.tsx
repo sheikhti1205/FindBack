@@ -62,6 +62,29 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Notifications identity (W7)", () => {
+  it("does not truncate a system status outcome or its handover instruction", async () => {
+    const preview = "Both owners confirmed a match. Record the handover after the item is returned.";
+    fetchMock.mockResolvedValue([item({ type: "STATUS", actorId: null, actorUsername: null, preview })]);
+    renderNotifications();
+    expect((await screen.findByText(preview)).className).not.toContain("line-clamp-2");
+  });
+  it.each([
+    ["MATCHED", "Your report was marked as matched. Review its match activity."],
+    ["RECOVERED", "Recovery recorded. The item has been returned."],
+    ["CLOSED", "Your report is closed."],
+  ])("uses consumer copy for an existing %s status row without claiming new consent", async (status, expected) => {
+    fetchMock.mockResolvedValue([item({ type: "STATUS", actorId: null, actorUsername: null,
+      preview: `Your report status changed to ${status}` })]);
+    renderNotifications();
+    expect(await screen.findByText(expected)).toBeTruthy();
+    expect(screen.queryByText(`Your report status changed to ${status}`)).toBeNull();
+  });
+
+  it("does not rewrite user-authored comment text that resembles a legacy status preview", async () => {
+    fetchMock.mockResolvedValue([item({ type: "COMMENT", preview: "Your report status changed to MATCHED" })]);
+    renderNotifications();
+    expect(await screen.findByText("Your report status changed to MATCHED")).toBeTruthy();
+  });
   it("renders the canonical UserAvatar for the actor, seeded from the username", async () => {
     fetchMock.mockResolvedValue([item()]);
     renderNotifications();

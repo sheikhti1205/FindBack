@@ -170,7 +170,7 @@ describe("PostDetail photo gallery (G17)", () => {
     expect(screen.queryByRole("button", { name: /previous photo/i })).toBeNull();
   });
 
-  it("Closed needs confirmation, Matched stays direct, Recovered is not a status", async () => {
+  it("Closed needs confirmation; Matched belongs to mutual consent, not the status picker", async () => {
     postsMock.fetchPost.mockResolvedValue({ ...basePost, attachments: [] });
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     try {
@@ -182,6 +182,7 @@ describe("PostDetail photo gallery (G17)", () => {
       // rather than confirmable (PostDetail.test.tsx owns the LOST contract:
       // the picker opens and no bare status is written).
       expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
+      expect(screen.queryByRole("radio", { name: "Matched" })).toBeNull();
 
       // Closed is terminal for the searcher: a declined confirm writes nothing.
       fireEvent.click(screen.getByRole("radio", { name: "Closed" }));
@@ -192,11 +193,6 @@ describe("PostDetail photo gallery (G17)", () => {
       fireEvent.click(screen.getByRole("radio", { name: "Closed" }));
       await waitFor(() => expect(postsMock.updatePostStatus).toHaveBeenCalledWith("p1", "CLOSED"));
 
-      // MATCHED is not a destructive close: no confirmation.
-      confirmSpy.mockClear();
-      fireEvent.click(screen.getByRole("radio", { name: "Matched" }));
-      await waitFor(() => expect(postsMock.updatePostStatus).toHaveBeenCalledWith("p1", "MATCHED"));
-      expect(confirmSpy).not.toHaveBeenCalled();
     } finally {
       confirmSpy.mockRestore();
     }

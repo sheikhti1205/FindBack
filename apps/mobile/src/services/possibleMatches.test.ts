@@ -63,9 +63,16 @@ describe("findPossibleMatches", () => {
     expect(result.available).toBe(true);
   });
 
-  it("reports unavailability instead of throwing when the embedder is missing", async () => {
+  it("falls back to the declared text/structured comparison when the embedder is missing", async () => {
     const result = await findPossibleMatches(target, { fetchCandidates: vi.fn().mockResolvedValue([]), embed: vi.fn().mockRejectedValue(new Error("MODEL_UNAVAILABLE")) });
-    expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
+    // No candidates to compare: still available, still honest about the mode.
+    expect(result).toEqual({
+      matches: [],
+      candidatesConsidered: 0,
+      available: true,
+      mode: "text",
+      unavailableReason: "embed",
+    });
   });
 
   it("caps the candidate pool at 20, the spec pool", async () => {
@@ -103,30 +110,55 @@ describe("findPossibleMatches", () => {
   });
 
   // Seam contract: vectors are validated BEFORE cosine. A short/malformed payload
-  // must degrade to "unavailable", never to fabricated scores (cosine returns 0 for
-  // a length mismatch, which maps to base 0.5 and passes MIN_COSINE_CUTOFF = 0.0).
-  it("never fabricates matches when the embedder returns fewer vectors than inputs", async () => {
+  // must never produce a semantic result (cosine returns 0 for a length
+  // mismatch, which maps to base 0.5 and passes MIN_COSINE_CUTOFF = 0.0). The
+  // declared text/structured comparison may still run, and says so.
+  it("never fabricates a semantic result when the embedder returns fewer vectors than inputs", async () => {
     const embed = vi.fn().mockResolvedValue([[1, 0]]); // target only; candidate vector missing
     const result = await findPossibleMatches(target, { fetchCandidates: vi.fn().mockResolvedValue([rawPost("c0")]), embed });
-    expect(result.matches).toEqual([]);
-    expect(result.available).toBe(false);
+    expect(result.mode).toBe("text");
     expect(result.unavailableReason).toBe("embed");
+    expect(result.matches.every((match) => match.reasons.includes("Similar wording"))).toBe(true);
   });
 
-  it("never ranks non-finite or mismatched-dimension vectors", async () => {
+  it("never ranks non-finite or mismatched-dimension vectors as semantic scores", async () => {
     const fetchCandidates = vi.fn().mockResolvedValue([rawPost("c0")]);
 
     const nonFinite = await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([[1, 0], [Number.NaN, 0]]) });
-    expect(nonFinite.available).toBe(false);
+    expect(nonFinite.mode).toBe("text");
     expect(nonFinite.unavailableReason).toBe("embed");
 
     const mismatchedDim = await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([[1, 0], [1, 0, 0]]) });
-    expect(mismatchedDim.available).toBe(false);
+    expect(mismatchedDim.mode).toBe("text");
     expect(mismatchedDim.unavailableReason).toBe("embed");
 
     const emptyPayload = await findPossibleMatches(target, { fetchCandidates, embed: vi.fn().mockResolvedValue([]) });
-    expect(emptyPayload.available).toBe(false);
+    expect(emptyPayload.mode).toBe("text");
     expect(emptyPayload.unavailableReason).toBe("embed");
+  });
+
+  it("still returns useful suggestions from wording alone when the embedder fails", async () => {
+    const result = await findPossibleMatches(target, {
+      fetchCandidates: vi.fn().mockResolvedValue([
+        rawPost("same-item"),
+        rawPost("unrelated", { title: "gym membership card", description: "laminated", category: "Documents & IDs" }),
+      ]),
+      embed: vi.fn().mockRejectedValue(new Error("MODEL_UNAVAILABLE")),
+    });
+    expect(result.available).toBe(true);
+    expect(result.mode).toBe("text");
+    expect(result.candidatesConsidered).toBe(2);
+    expect(result.matches.map((match) => match.post.id)).toEqual(["same-item"]);
+    expect(result.matches[0]!.reasons).toContain("Similar wording");
+  });
+
+  it("does not claim a semantic comparison when the embedder succeeded", async () => {
+    const result = await findPossibleMatches(target, {
+      fetchCandidates: vi.fn().mockResolvedValue([rawPost("found")]),
+      embed: async () => [[1, 0], [1, 0]],
+    });
+    expect(result.mode).toBe("semantic");
+    expect(result.unavailableReason).toBeUndefined();
   });
 });
 
@@ -143,7 +175,7 @@ describe("matching engine selection (Lane E)", () => {
     expect(resolveMatchingBackend({ matchingBackend: "needle" })).toBe("needle");
   });
 
-  it("a failing Needle embedder degrades to unavailable, never a silent USE fallback", async () => {
+  it("a failing Needle embedder degrades to the text comparison, never a silent USE fallback", async () => {
     const result = await findPossibleMatches(target, {
       fetchCandidates: async () => [rawPost("found")],
       aiService: {
@@ -151,6 +183,10 @@ describe("matching engine selection (Lane E)", () => {
         embedNeedle: async () => { throw new Error("Model is not installed and verified"); },
       },
     });
-    expect(result).toEqual({ matches: [], candidatesConsidered: 0, available: false, unavailableReason: "embed" });
+    // Never USE vectors under a Needle choice: the semantic pass simply did not
+    // run, and the declared text/structured comparison produced the result.
+    expect(result.mode).toBe("text");
+    expect(result.unavailableReason).toBe("embed");
+    expect(result.available).toBe(true);
   });
 });

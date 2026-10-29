@@ -8,6 +8,13 @@ create role supabase_admin nologin noinherit bypassrls;
 create role supabase_auth_admin nologin noinherit;
 create role supabase_storage_admin nologin noinherit;
 create role authenticator nologin noinherit;
+-- Hosted catalog readback 2026-10-29: Supabase grants EXECUTE by default for
+-- public functions. Mirror it so explicit private-delegate revokes are actually
+-- tested against platform grants, not an artificially restrictive local role.
+alter default privileges for role postgres in schema public
+  grant execute on functions to anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema public
+  grant execute on functions to postgres, anon, authenticated, service_role;
 create schema auth;
 create schema storage;
 create schema graphql;

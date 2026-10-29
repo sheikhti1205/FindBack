@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchFeedMock, updatePostStatusMock, deletePostMock, shareReportMock, copyReportLinkMock } =
@@ -24,6 +24,8 @@ vi.mock("../utils/shareReport", () => ({
 const { authState } = vi.hoisted(() => ({
   authState: { user: { id: "u1", username: "alice" } as { id: string; username: string } | null },
 }));
+const { listMatchesMock } = vi.hoisted(() => ({ listMatchesMock: vi.fn() }));
+vi.mock("../services/matches", () => ({ listMyMatches: listMatchesMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => ({ tapCount: 0 }) }));
 
@@ -106,6 +108,7 @@ function renderMyPosts() {
 
 beforeEach(() => {
   fetchFeedMock.mockReset();
+  listMatchesMock.mockReset().mockResolvedValue([]);
   updatePostStatusMock.mockReset();
   deletePostMock.mockReset();
   shareReportMock.mockReset();
@@ -232,17 +235,51 @@ function openFirstRowMenu() {
 }
 
 describe("MyPosts management (owner row actions)", () => {
-  it("offers the canonical statuses plus edit, share and delete on every row", async () => {
+  it("discovers an incoming proposal without requiring the owner to know which report received it", async () => {
+    listMatchesMock.mockResolvedValue([{
+      matchId: "incoming", state: "PENDING", myReportId: "p2", myTitle: "Report p2",
+      myReportType: "LOST", peerReportId: "peer", peerTitle: "Blue wallet", peerAvailable: true,
+      peerReportType: "FOUND", proposedByMe: false, myConfirmed: false, myHandover: false,
+      cancelReason: null, proposedAt: "2026-10-29T00:00:00Z", returnId: null,
+    }]);
+    renderMyPosts();
+    fireEvent.click(await screen.findByText("Match activity"));
+    const link = await screen.findByRole("link", { name: /Report p2.*Proposal to review/i });
+    expect(link.getAttribute("href")).toBe("/posts/p2#detail-matches");
+    expect(listMatchesMock).toHaveBeenCalledWith("u1", {});
+    expect(updatePostStatusMock).not.toHaveBeenCalled();
+  });
+  it.each(["LOST", "FOUND"] as const)("routes a MATCHED %s owner to canonical match controls", async (type) => {
+    fetchFeedMock.mockResolvedValue({ items: [post("p1", "MATCHED", type)], nextCursor: null, total: 1 });
+    function Destination() {
+      const location = useLocation();
+      return <p>{`destination:${location.pathname}${location.hash}`}</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/my-reports"]}>
+        <Routes>
+          <Route path="/my-reports" element={<ReportDeletionFeedbackProvider><MyPosts /></ReportDeletionFeedbackProvider>} />
+          <Route path="/posts/:id" element={<Destination />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByTestId("owner-report-card");
+    const menu = openFirstRowMenu();
+    expect(within(menu).queryByRole("menuitem", { name: "Record recovery…" })).toBeNull();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Match and handover…" }));
+    expect(await screen.findByText("destination:/posts/p1#detail-matches")).toBeTruthy();
+    expect(recoverySheet.open).toBe(false);
+    expect(updatePostStatusMock).not.toHaveBeenCalled();
+  });
+  it("offers only the owner-writable statuses plus recovery, edit, share and delete", async () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
     const statuses = within(menu).getAllByRole("menuitemradio").map((el) => el.textContent);
-    expect(statuses.map((text) => text?.replace("Current", "").trim())).toEqual([
-      "Open",
-      "Matched",
-      "Recovered",
-      "Closed",
-    ]);
+    // MATCHED belongs to the mutual confirmation and RECOVERED to the durable
+    // recovery writer; neither is a status the owner can set by picking it.
+    expect(statuses.map((text) => text?.replace("Current", "").trim())).toEqual(["Open", "Closed"]);
+    expect(within(menu).getByRole("menuitem", { name: /record recovery/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /edit details/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /share/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /copy link/i })).toBeTruthy();
@@ -253,11 +290,11 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
-    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "MATCHED"));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "CLOSED"));
     // The row is patched where it sits — no refetch, no reorder.
     await waitFor(() =>
-      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
     );
   });
 
@@ -289,10 +326,10 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
 
     // Optimistic: the row changed before the server answered.
-    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match");
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
     expect(screen.getByTestId("my-posts-status-undo")).toBeTruthy();
 
     await act(async () => {
@@ -321,9 +358,9 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
-    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match");
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
 
     // Undo before the original write settles. Both writes are optimistic;
     // neither may become the rollback target when both are refused.
@@ -363,21 +400,21 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     let menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
-    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /open/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
 
     // The first write settles successfully while the second is queued; its
-    // MATCHED is now the server truth and must be the second failure's target.
+    // CLOSED is now the server truth and must be the second failure's target.
     await act(async () => {
-      resolveFirst(post("p1", "MATCHED"));
+      resolveFirst(post("p1", "CLOSED"));
       await Promise.resolve();
     });
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "CLOSED"));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "OPEN"));
 
     await act(async () => {
       rejectSecond(new Error("network down"));
@@ -385,7 +422,7 @@ describe("MyPosts management (owner row actions)", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
     );
     expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
   });
@@ -404,16 +441,16 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     fireEvent.click(within(screen.getByTestId("my-posts-status-undo")).getByRole("button", { name: /undo/i }));
     expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
 
-    // The original change lands MATCHED while the Undo waits. The Undo's
+    // The original change lands CLOSED while the Undo waits. The Undo's
     // failure must restore that confirmed status, not the optimistic OPEN.
     await act(async () => {
-      resolveFirst(post("p1", "MATCHED"));
+      resolveFirst(post("p1", "CLOSED"));
       await Promise.resolve();
     });
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
@@ -425,7 +462,7 @@ describe("MyPosts management (owner row actions)", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
     );
     expect(screen.getByRole("alert").textContent).toMatch(/network problem/i);
   });
@@ -434,9 +471,9 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() =>
-      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Potential match"),
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
     );
 
     const undo = screen.getByTestId("my-posts-status-undo");
@@ -456,30 +493,30 @@ describe("MyPosts management (owner row actions)", () => {
     });
     updatePostStatusMock
       .mockReturnValueOnce(first)
-      .mockResolvedValueOnce(post("p1", "CLOSED"));
+      .mockResolvedValueOnce(post("p1", "OPEN"));
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     let menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     // The second choice is optimistic immediately, but its write must wait
     // for the first so the server's final state is the user's final choice.
     menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
-    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
+    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /open/i }));
+    expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
     expect(updatePostStatusMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      resolveFirst(post("p1", "MATCHED"));
+      resolveFirst(post("p1", "CLOSED"));
       await Promise.resolve();
     });
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
+      expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing"),
     );
-    expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "CLOSED");
+    expect(updatePostStatusMock).toHaveBeenLastCalledWith("p1", "OPEN");
   });
 
   it("copies the report link explicitly from the owner menu", async () => {
@@ -517,15 +554,15 @@ describe("MyPosts management (owner row actions)", () => {
     fireEvent.pointerMove(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
     fireEvent.pointerUp(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Mark matched" }));
-    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "MATCHED"));
+    fireEvent.click(screen.getByRole("button", { name: "Mark closed" }));
+    await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "CLOSED"));
   });
 
   it("routes Recovered through the recovery sheet, never a bare status write", async () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /recovered/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /record recovery/i }));
 
     await waitFor(() => expect(recoverySheet.open).toBe(true));
     expect(recoverySheet.post).toMatchObject({ id: "p1", type: "LOST" });
@@ -584,7 +621,7 @@ describe("MyPosts management (owner row actions)", () => {
     const view = renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /recovered/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /record recovery/i }));
     await waitFor(() => expect(recoverySheet.open).toBe(true));
 
     authState.user = { id: "u2", username: "bob" };
@@ -606,6 +643,7 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(1));
     const menu = openFirstRowMenu();
     expect(within(menu).queryByRole("menuitemradio", { name: /recovered/i })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /record recovery/i })).toBeNull();
   });
 
   it("shares through the canonical share path", async () => {
@@ -745,7 +783,7 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     fireEvent.click(screen.getByRole("radio", { name: "Open" }));
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ status: "OPEN" }), undefined));
-    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitemradio", { name: /matched/i }));
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitemradio", { name: /closed/i }));
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("Report p1")).toBeNull());
     expect(screen.getByText(/1 report ·/)).toBeTruthy();
