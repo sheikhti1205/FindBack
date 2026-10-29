@@ -188,10 +188,14 @@ function matchesOf(code: string, pattern: RegExp): string[] {
 }
 
 /** Rules that must hold in every shipped (non-test) module. */
-const SHIPPED_RULES: Array<{ id: string; re: RegExp }> = [
+const SHIPPED_RULES: Array<{ id: string; re: RegExp; except?: string[] }> = [
   { id: "legacy ai-help symbol", re: /ai-help/i },
   { id: "legacy ai-relay route", re: /ai-relay/i },
-  { id: "legacy functions/v1 endpoint", re: /functions\/v1/ },
+  // The canonical Edge gateway builds `<project>/functions/v1/<name>` for the
+  // server-side functions that have no REST/RPC surface (chat-media). It is the
+  // only module allowed to carry that literal; the ai-help/ai-relay bans above
+  // still apply to it, so a legacy AI route cannot hide behind the exemption.
+  { id: "legacy functions/v1 endpoint", re: /functions\/v1/, except: ["services/supabaseClient.ts"] },
   { id: "LLM_MODEL second route", re: /\bLLM_MODEL\b/ },
   { id: "LLM_BASE_URL second route", re: /\bLLM_BASE_URL\b/ },
   { id: "non-free openrouter route", re: /openrouter\/(?!free\b)/ },
@@ -242,10 +246,11 @@ const files: SourceFile[] = walk(mobileSrcRoot)
 const shipped = files.filter((f) => !f.isTest);
 const tests = files.filter((f) => f.isTest);
 
-function violations(list: SourceFile[], rules: Array<{ id: string; re: RegExp }>): string[] {
+function violations(list: SourceFile[], rules: Array<{ id: string; re: RegExp; except?: string[] }>): string[] {
   const out: string[] = [];
   for (const file of list) {
     for (const rule of rules) {
+      if (rule.except?.includes(file.rel)) continue;
       for (const hit of matchesOf(file.code, rule.re)) out.push(`${file.rel} :: ${rule.id} :: ${hit}`);
     }
   }
