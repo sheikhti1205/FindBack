@@ -211,3 +211,53 @@ Deno.test("response never exposes object keys, generations or raw storage errors
   const text = JSON.stringify(await res.json());
   ok(!text.includes(uuid(21)) && !text.includes(uuid(11)) && !text.includes("attachments/"));
 });
+
+Deno.test("hosted HEAD 400 is confirmed absent only by structured object-info 404", async () => {
+  const f = fixture();
+  const transport: typeof fetch = (input, init) => {
+    const req = new Request(input, init);
+    if (req.method === "HEAD") return Promise.resolve(new Response(null, { status: 400 }));
+    if (new URL(req.url).pathname.includes("/object/info/")) return Promise.resolve(Response.json({
+      statusCode: "404", error: "not_found", code: "NoSuchKey", message: "Object not found",
+    }, { status: 400 }));
+    return f.transport(input, init);
+  };
+  const response = await createChatMediaCleanupEndpoint(env, transport)(request());
+  equal(response.status, 200);
+  const result = await response.json();
+  equal(result.confirmed, 1);
+  equal(result.deferred, 0);
+  equal(f.confirmed.length, 1);
+});
+
+for (const status of [400, 401, 403, 500]) {
+  Deno.test(`HEAD 400 with ambiguous object-info ${status} never acknowledges`, async () => {
+    const f = fixture();
+    const transport: typeof fetch = (input, init) => {
+      const req = new Request(input, init);
+      if (req.method === "HEAD") return Promise.resolve(new Response(null, { status: 400 }));
+      if (new URL(req.url).pathname.includes("/object/info/")) return Promise.resolve(
+        Response.json({ message: "unavailable", statusCode: String(status) }, { status }));
+      return f.transport(input, init);
+    };
+    const response = await createChatMediaCleanupEndpoint(env, transport)(request());
+    const result = await response.json();
+    equal(result.confirmed, 0);
+    equal(result.deferred, 1);
+    equal(f.confirmed.length, 0);
+  });
+}
+
+Deno.test("object-info auth failure cannot masquerade as absence", async () => {
+  const f = fixture();
+  const transport: typeof fetch = (input, init) => {
+    const req = new Request(input, init);
+    if (req.method === "HEAD") return Promise.resolve(new Response(null, { status: 400 }));
+    if (new URL(req.url).pathname.includes("/object/info/")) return Promise.resolve(
+      Response.json({ statusCode: "404", message: "denied" }, { status: 403 }));
+    return f.transport(input, init);
+  };
+  const response = await createChatMediaCleanupEndpoint(env, transport)(request());
+  equal((await response.json()).confirmed, 0);
+  equal(f.confirmed.length, 0);
+});

@@ -92,9 +92,18 @@ export function createChatMediaCleanupEndpoint(env?: Partial<SupabaseEnv>, trans
           async exists(candidate) {
             const { data, error } = await storage(candidate).exists(candidate.objectKey);
             if (error) {
-              // Only an exact object-not-found proves absence. A 400, proxy or
-              // authorization failure must defer instead of deleting metadata.
+              // Only an exact object-not-found proves absence. Proxy or
+              // authorization failures defer instead of deleting metadata.
               if (error.status === 404) return false;
+              // Hosted Storage HEAD returns a body-less 400 for missing keys,
+              // indistinguishable from other failures. Only structured info
+              // for this exact key can establish absence; never trust 400 alone.
+              if (error.status === 400) {
+                const info = await storage(candidate).info(candidate.objectKey);
+                if (!info.error) return true;
+                if ((info.error.status === 400 || info.error.status === 404)
+                  && info.error.statusCode === "404") return false;
+              }
               throw new Error("Verification unavailable");
             }
             return data === true;
