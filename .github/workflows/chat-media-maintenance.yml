@@ -1,0 +1,77 @@
+# FindBack — chat media maintenance scheduler (R4).
+#
+# Every 15 minutes, drain the two internal chat work queues:
+#   1. `cleanup-chat-media` removes bytes of deleted/expired chat attachments and
+#      of expired moderation-evidence copies, through the Storage API only. A
+#      candidate is acked only after absence is verified, so nothing is lost.
+#   2. `copy-chat-evidence` copies a reported photo into the separate private
+#      evidence bucket before the ordinary attachment expires.
+#
+# Both functions are internal-only: `auth: "secret"` means the caller must
+# present the project's `default` secret key in the `apikey` header (the SDK
+# validates `apikey`, not the Authorization bearer). This lane therefore needs a
+# dedicated GitHub secret. Names only — the value is never echoed.
+#
+# Trigger: schedule + manual dispatch ONLY. Never on push/tag: a code push must
+# not sweep production Storage.
+#
+# Required repo configuration (owner actions):
+#   Secrets:   SUPABASE_SECRET_KEY  (project secret key, service-role equivalent)
+#   Variables: SUPABASE_PROJECT_REF
+#
+# Until that secret is provisioned the scheduled run fails loudly instead of
+# looking like a successful sweep: the queues are NOT drained by this lane, and
+# expired chat media stays in private Storage until the secret exists.
+
+name: Chat media maintenance
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One sweep at a time. An interrupted sweep is reclaimed by lease expiry, but
+# serializing keeps queue churn and Storage API calls minimal.
+concurrency:
+  group: findback-chat-media-maintenance
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify configuration
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::SUPABASE_SECRET_KEY is not provisioned; chat media and evidence queues were NOT drained."
+            exit 1
+          fi
+          if [ -z "$PROJECT_REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is not set; chat media and evidence queues were NOT drained."
+            exit 1
+          fi
+      - name: Sweep orphaned chat media
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-chat-media" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "content-type: application/json" \
+            --retry 2 --retry-all-errors --max-time 90
+      - name: Copy pending moderation evidence
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/copy-chat-evidence" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            -H "content-type: application/json" \
+            --retry 2 --retry-all-errors --max-time 90
