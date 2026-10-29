@@ -92,12 +92,18 @@ export interface OutboxEntry {
   attempts: number;
   token?: string;
   leaseUntil?: number;
+  /** Opaque relationship epoch observed when the send was queued. It is part of
+   * the queued intent, not of the message, so a restart cannot re-bind an older
+   * send to a newer request/connection boundary. */
+  expectedEpoch?: string;
 }
 
 export interface OutgoingAttempt {
   message: HumanMessage;
   token: string;
   attempt: number;
+  /** The boundary this queued send observed; absent only for legacy rows. */
+  expectedEpoch?: string;
 }
 
 /**
@@ -175,7 +181,9 @@ export interface ImportReport {
 
 /** Canonical account/device-local history on SQLite or IndexedDB. */
 export interface MessagingHistory {
-  enqueueOutgoing(message: HumanMessage): Promise<void>;
+  /** `expectedEpoch` is the cached relationship boundary the caller observed;
+   * the server refuses a new send that no longer matches it. */
+  enqueueOutgoing(message: HumanMessage, expectedEpoch?: string): Promise<void>;
   getMessage(id: string): Promise<StoredHumanMessage | null>;
   listMessages(conversationId: string): Promise<StoredHumanMessage[]>;
   /** Local inbox remains enumerable offline, including cached relationship rows. */
@@ -203,7 +211,8 @@ export interface MessagingHistory {
    * only a positively acknowledged rollback permits new-byte compensation.
    * An unknown transaction outcome invalidates the SQLite handle; reopen it.
    */
-  enqueueOutgoingWithMedia(message: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer): Promise<void>;
+  enqueueOutgoingWithMedia(message: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer,
+    expectedEpoch?: string): Promise<void>;
   /**
    * The only upload claim. Never returns an attachment whose bytes are absent,
    * whose parent is invisible, or whose text echo has not landed yet.

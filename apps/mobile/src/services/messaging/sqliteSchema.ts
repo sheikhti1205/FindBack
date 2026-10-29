@@ -30,8 +30,17 @@
  * `mediaBytes` IndexedDB store on every platform. This row is the claim that a
  * verified byte entry exists, and the write order (bytes, then row) is what makes
  * that claim true.
+ *
+ * v7: `messages.message_type` records the authoritative classification, so a
+ * legacy row is never guessed to be TEXT from its body.
+ *
+ * v8: `outbox.expected_epoch` stores the relationship boundary each queued send
+ * observed. The server refuses a send/accept whose boundary is stale, so the
+ * epoch must survive a restart with the queued intent rather than be re-read at
+ * flush time. Purely additive: an existing outbox gains the column and every
+ * queued row keeps its lease, attempts and status.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 7;
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 8;
 
 /**
  * The v5 `messages` body CHECK, recognised in `sqlite_master`.
@@ -114,6 +123,9 @@ export const MESSAGING_SQLITE_SCHEMA = [
     attempts integer not null default 0,
     token text,
     lease_until integer,
+    -- v8: the boundary observed at enqueue time. NULL only for rows queued by a
+    -- pre-v8 build; the server refuses those rather than guessing.
+    expected_epoch text,
     check ((status = 'SENDING') = (token is not null and lease_until is not null))
   )`,
   // Identity of every applied envelope, validated before any receipt or ACK.
@@ -296,10 +308,11 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   /** Legacy v3 tombstone gains its recipient once an authoritative event names it. */
   bindTombstoneRecipient: `update tombstones set recipient_id = ?
     where message_id = ? and recipient_id is null`,
-  enqueueOutbox: `insert or ignore into outbox (message_id, status) values (?, 'QUEUED')`,
+  enqueueOutbox: `insert or ignore into outbox (message_id, status, expected_epoch)
+    values (?, 'QUEUED', ?)`,
   listOutbox: `select o.message_id as messageId,
     case when m.message_type is null then 'NEEDS_REVIEW' else o.status end as status,
-    o.attempts, o.token, o.lease_until as leaseUntil
+    o.attempts, o.token, o.lease_until as leaseUntil, o.expected_epoch as expectedEpoch
     from outbox o join messages m on m.id=o.message_id order by o.message_id`,
   // Android24 ships SQLite older than RETURNING/UPSERT. The adapter executes
   // selection/claim/read-back under BEGIN IMMEDIATE, not as independent writes.
@@ -318,7 +331,11 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   claimOutbox: `update outbox
     set status = 'SENDING', token = ?, lease_until = ?, attempts = attempts + 1
     where message_id = ?`,
-  getOutboxClaim: `select message_id as messageId, attempts from outbox where message_id = ?`,
+  getOutboxClaim: `select message_id as messageId, attempts, expected_epoch as expectedEpoch
+    from outbox where message_id = ?`,
+  /** v7 -> v8 additive migration; `pragma table_info` makes it idempotent. */
+  outboxColumns: `pragma table_info(outbox)`,
+  addOutboxEpoch: `alter table outbox add column expected_epoch text`,
   failOutbox: `update outbox set status = 'FAILED', token = null, lease_until = null
     where message_id = ? and token = ? and attempts = ? and status = 'SENDING'`,
   completeOutbox: `delete from outbox where message_id = ?`,

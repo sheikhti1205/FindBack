@@ -52,7 +52,10 @@
 .fb-chat-photo { width:min(15rem, 65vw); max-width:100%; max-height:20rem; overflow:hidden; border-radius:.6rem; background:var(--fb-surface); }
 .fb-chat-photo > button { display:block; width:100%; height:100%; min-width:44px; min-height:44px; }
 .fb-chat-photo img { display:block; width:100%; height:100%; object-fit:contain; }
-.fb-chat-photo > div { display:flex; height:100%; min-height:5rem; flex-direction:column; align-items:center; justify-content:center; padding:.5rem; font-size:.875rem; }
-.fb-chat-photo button:not(:first-child), .fb-chat-photo-draft button, .fb-chat-message > button { min-height:44px; min-width:44px; padding:.3rem .5rem; text-decoration:underline; }
+.fb-chat-photo > div { display:flex; height:100%; min-height:5rem; flex-direction:column; align-items:center; justify-content:center; gap:.4rem; padding:.5rem; font-size:.875rem; }
+/* The retry button is the only ELEMENT child of its status box, so a
+   `:not(:first-child)` rule never reached it and it measured 21px tall.
+   Match the status box's button directly and keep the 44px house minimum. */
+.fb-chat-photo > div button, .fb-chat-photo-draft button, .fb-chat-message > button { min-height:44px; min-width:44px; padding:.3rem .5rem; text-decoration:underline; }
 .fb-chat-photo-draft { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.35rem .8rem; font-size:.875rem; }
 .fb-chat-photo-draft img { width:4rem; max-height:4rem; object-fit:contain; border-radius:.4rem; }

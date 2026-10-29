@@ -9,6 +9,10 @@ export interface ConversationProjection {
   mode: "REQUEST" | "CONNECTED";
   request: "INCOMING" | "OUTGOING" | "NONE";
   requestEpoch: string | null;
+  /** Opaque relationship boundary this projection was observed at. A send or
+   * accept binds to it; the server refuses stale intent. Absent only for
+   * projections cached by a build that predates the boundary. */
+  epoch?: string;
   ownHidden: boolean;
   ownDeclined: boolean;
   ownBlocked: boolean;
@@ -61,8 +65,18 @@ export function copyConversationProjection(input: ConversationProjection): Conve
     || typeof input.ownBlocked !== "boolean") throw new Error("Invalid conversation projection");
   const revision = nonnegativeSequence(input.revision);
   const requestEpoch = input.requestEpoch === null ? null : uuid(input.requestEpoch);
+  // The boundary is 64 lowercase hex. A malformed value is refused rather than
+  // dropped: silently discarding it would let a queued send bind to whatever
+  // boundary happens to be current later.
+  const rawEpoch = (input as { epoch?: unknown }).epoch;
+  if (rawEpoch !== undefined && rawEpoch !== null
+    && (typeof rawEpoch !== "string" || !/^[0-9a-f]{64}$/.test(rawEpoch))) {
+    throw new Error("Invalid conversation projection");
+  }
+  const epoch = typeof rawEpoch === "string" ? rawEpoch : null;
   return { conversationId, peerId, mode: input.mode, request: input.request, requestEpoch,
-    ownHidden: input.ownHidden, ownDeclined: input.ownDeclined, ownBlocked: input.ownBlocked, revision };
+    ownHidden: input.ownHidden, ownDeclined: input.ownDeclined, ownBlocked: input.ownBlocked, revision,
+    ...(epoch ? { epoch } : {}) };
 }
 
 /** Both durable adapters use the same local-only inbox semantics. Pending

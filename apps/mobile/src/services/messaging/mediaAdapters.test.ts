@@ -96,7 +96,11 @@ describe.each(["sqlite", "web"] as const)("%s media with actual byte storage", (
 
   it("drains failed admission cleanup before another handle commits the same bytes", async () => {
     const one = await open(), two = await open();
-    await one.enqueueOutgoing(message(1));
+    // The parent must already be MEDIA-typed. A row admitted through the text
+    // path is classified TEXT (v7) and can never be re-admitted as media, so a
+    // text pre-seed would make both admissions fail for the wrong reason.
+    await one.persistInbound({ ...scope, mailboxId: id(450), event: { kind: "TEXT", eventId: id(350),
+      sequence: 1, message: { ...message(1), messageType: "MEDIA" } } });
     const fixture = await mediaFixture(id(201), message(1).id);
     const entered = deferred(), release = deferred();
     const remove = bytes.delete.bind(bytes);

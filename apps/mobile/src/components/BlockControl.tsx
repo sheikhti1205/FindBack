@@ -3,6 +3,7 @@ import { useAuth } from "../auth";
 import { announce } from "./LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { blockUser, listMyBlocks, unblockUser } from "../services/blocks";
+import { runMessagingAuthorityAction } from "../services/messaging/runtime";
 import { BLOCKING_EXPLANATION, UNAVAILABLE_SENTENCES, unblockOutcome } from "../utils/safetyCopy";
 import { isMissingServerFunction } from "../utils/safetyService";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
@@ -21,10 +22,11 @@ export interface BlockControlProps {
 export function BlockControl(props: BlockControlProps) {
   const { user } = useAuth();
   if (!user || user.id === props.userId) return null;
-  return <ScopedBlockControl key={`${user.id}:${props.userId}`} {...props} />;
+  return <ScopedBlockControl key={`${user.id}:${props.userId}`} accountId={user.id} {...props} />;
 }
 
-function ScopedBlockControl({ userId, name, blocked, onChanged, className }: BlockControlProps) {
+function ScopedBlockControl({ userId, name, blocked, onChanged, className, accountId }:
+  BlockControlProps & { accountId: string }) {
   const alive = useSafetyLifetime();
   const [known, setKnown] = useState<boolean | null>(blocked ?? null);
   const [busy, setBusy] = useState(false);
@@ -54,10 +56,12 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className }: Blo
     setBusy(true); setError(null); setMessage(null);
     try {
       let stillHidden = true;
+      // The live chat session fences pending media work around this intent, so a
+      // photo already in flight cannot land under the previous authority.
       if (known) {
-        stillHidden = (await unblockUser(userId)).stillHidden;
+        stillHidden = (await runMessagingAuthorityAction(accountId, () => unblockUser(userId))).stillHidden;
       } else {
-        await blockUser(userId);
+        await runMessagingAuthorityAction(accountId, () => blockUser(userId));
       }
       if (!alive.current) return;
       const next = !known;

@@ -211,7 +211,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
 
-  async function enqueueOutgoing(input: HumanMessage): Promise<void> {
+  async function enqueueOutgoing(input: HumanMessage, expectedEpoch?: string): Promise<void> {
     assertOpen();
     const message = copyMessage(input);
     if (message.authorId !== scope.accountId) throw new Error("Outgoing messaging scope mismatch");
@@ -230,7 +230,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         if (existing && !sameMessage(existing, message)) throw new Error("Immutable message conflict");
         if (!existing) {
           messages.add(message);
-          tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0 } satisfies OutboxEntry);
+          tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0,
+            ...(expectedEpoch ? { expectedEpoch } : {}) } satisfies OutboxEntry);
           updateConversation(tx, guard, message.conversationId, conversationPeer(scope, message),
             (state) => ({ ...state, updatedAt: Date.now() }));
         } else if (!existing.messageType && !existing.server && existing.unsentAt === undefined && queued.result) {
@@ -349,8 +350,12 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           if (!message.messageType) { current.continue(); return; }
           const token = crypto.randomUUID();
           const attempts = entry.attempts + 1;
-          outbox.put({ messageId: entry.messageId, status: "SENDING", attempts, token, leaseUntil: now + LEASE_MS } satisfies OutboxEntry);
-          result({ message: copyReceivedMessage(message), token, attempt: attempts });
+          outbox.put({ messageId: entry.messageId, status: "SENDING", attempts, token, leaseUntil: now + LEASE_MS,
+            ...(entry.expectedEpoch ? { expectedEpoch: entry.expectedEpoch } : {}) } satisfies OutboxEntry);
+          // A legacy row has no boundary; leaving it absent makes the server
+          // refuse the send instead of this client inventing one for it.
+          result({ message: copyReceivedMessage(message), token, attempt: attempts,
+            ...(entry.expectedEpoch ? { expectedEpoch: entry.expectedEpoch } : {}) });
         });
       });
     });
@@ -375,7 +380,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         const stored = tx.objectStore("messages").get(message.id);
         stored.onsuccess = guard(() => {
           if (!stored.result || !sameMessage(stored.result as StoredHumanMessage, message)) throw new Error("Outgoing attempt identity conflict");
-          outbox.put({ messageId: message.id, status: "FAILED", attempts: attempt } satisfies OutboxEntry);
+          outbox.put({ messageId: message.id, status: "FAILED", attempts: attempt,
+            ...(entry.expectedEpoch ? { expectedEpoch: entry.expectedEpoch } : {}) } satisfies OutboxEntry);
           result(true);
         });
       });
@@ -645,7 +651,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     return cachedMediaAllowed(view.states.find((state) => state.conversationId === conversationId)?.projection);
   }
 
-  async function storeMedia(record: MediaAttachment, bytes: ArrayBuffer, message?: HumanMessage): Promise<MediaAttachment> {
+  async function storeMedia(record: MediaAttachment, bytes: ArrayBuffer, message?: HumanMessage,
+    expectedEpoch?: string): Promise<MediaAttachment> {
     const store = byteStore();
     await mediaTransaction("readonly", (view) => {
       if (view.purged) throw new Error("Messaging media purged");
@@ -682,12 +689,16 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           if (deleted.result || unsent.result) throw new MediaParentUnavailableError(message.id);
           const parent = request.result as StoredHumanMessage | undefined;
           if (parent) {
-            mediaParent(view, record);
+            // Identity first: a TEXT parent and a MEDIA admission are two known,
+            // contradictory classifications, and that is the answer the caller
+            // needs. Classification alone would also hide a body/scope conflict.
             if (!sameMessage(parent, message)) throw new Error("Immutable message identity conflict");
+            mediaParent(view, record);
             if (!parent.messageType) tx.objectStore("messages").put({ ...parent, messageType: "MEDIA" });
           } else {
             tx.objectStore("messages").add(message);
-            tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0 } satisfies OutboxEntry);
+            tx.objectStore("outbox").add({ messageId: message.id, status: "QUEUED", attempts: 0,
+              ...(expectedEpoch ? { expectedEpoch } : {}) } satisfies OutboxEntry);
             updateConversation(tx, guard, message.conversationId, conversationPeer(scope, message),
               (state) => ({ ...state, updatedAt: Date.now() }));
           }
@@ -702,14 +713,15 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     }
   }
 
-  async function enqueueOutgoingWithMedia(input: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer): Promise<void> {
+  async function enqueueOutgoingWithMedia(input: HumanMessage, metadata: MediaMetadata, bytes: ArrayBuffer,
+    expectedEpoch?: string): Promise<void> {
     assertOpen();
     const message = copyMediaMessage(input);
     const record = copyMediaAttachment({ ...metadata, state: "QUEUED", attempts: 0, lastAccessAt: Date.now() });
     if (message.authorId !== scope.accountId || record.direction !== "OUT" || record.messageId !== message.id) {
       throw new Error("Outgoing media scope mismatch");
     }
-    await storeMedia(record, bytes, message);
+    await storeMedia(record, bytes, message, expectedEpoch);
   }
 
   async function claimNextMediaUpload(): Promise<MediaUploadAttempt | null> {

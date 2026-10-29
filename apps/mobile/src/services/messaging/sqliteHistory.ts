@@ -83,6 +83,7 @@ interface OutboxRow {
   attempts: number;
   token: string | null;
   leaseUntil: number | null;
+  expectedEpoch: string | null;
 }
 
 interface TombstoneRow {
@@ -119,7 +120,7 @@ const LEASE_MS = 60_000;
  * is a file written by a newer build, and it is refused before any mutation.
  */
 const SUPPORTED_PRIOR_VERSIONS: readonly string[] = [
-  "1", "2", "3", "4", "5", "6", String(MESSAGING_SQLITE_SCHEMA_VERSION),
+  "1", "2", "3", "4", "5", "6", "7", String(MESSAGING_SQLITE_SCHEMA_VERSION),
 ];
 
 function defaultToken(): string {
@@ -335,6 +336,13 @@ export async function openSqliteMessagingHistory(
       await driver.exec(S.addMessageType);
       await driver.run(S.backfillMediaType);
     }
+    // v8: a queued send carries the relationship boundary it observed. Additive,
+    // and old rows keep a NULL epoch, which the server refuses rather than
+    // silently re-binds to a newer request or connection.
+    const outboxColumns = await driver.all<{ name: string }>(S.outboxColumns);
+    if (!outboxColumns.some((column) => column.name === "expected_epoch")) {
+      await driver.exec(S.addOutboxEpoch);
+    }
     await driver.run(S.setMetaIfAbsent, ["account_id", scope.accountId]);
     await driver.run(S.setMetaIfAbsent, ["device_id", scope.deviceId]);
     await driver.run(S.setMetaIfAbsent, ["schema_version", String(MESSAGING_SQLITE_SCHEMA_VERSION)]);
@@ -506,7 +514,7 @@ export async function openSqliteMessagingHistory(
     return { ...tombstone, recipientId };
   }
 
-  async function enqueueOutgoing(message: HumanMessage): Promise<void> {
+  async function enqueueOutgoing(message: HumanMessage, expectedEpoch?: string): Promise<void> {
     const outgoing = copyMessage(message);
     await assertOpen();
     if (outgoing.authorId !== scope.accountId) {
@@ -553,7 +561,7 @@ export async function openSqliteMessagingHistory(
       await driver.run(S.insertMessage, [
         outgoing.id, outgoing.conversationId, outgoing.authorId, outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null,
       ]);
-      await driver.run(S.enqueueOutbox, [outgoing.id]);
+      await driver.run(S.enqueueOutbox, [outgoing.id, expectedEpoch ?? null]);
       await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
     });
   }
@@ -575,6 +583,7 @@ export async function openSqliteMessagingHistory(
       const entry: OutboxEntry = { messageId: row.messageId, status: row.status, attempts: row.attempts };
       if (row.token !== null) entry.token = row.token;
       if (row.leaseUntil !== null) entry.leaseUntil = row.leaseUntil;
+      if (row.expectedEpoch !== null) entry.expectedEpoch = row.expectedEpoch;
       return entry;
     });
   }
@@ -622,7 +631,8 @@ export async function openSqliteMessagingHistory(
       const candidate = (await driver.all<{ messageId: string }>(S.nextOutbox, [nowMs]))[0];
       if (!candidate) return null;
       await driver.run(S.claimOutbox, [token, nowMs + leaseMs, candidate.messageId]);
-      const claimed = (await driver.all<{ messageId: string; attempts: number }>(S.getOutboxClaim, [candidate.messageId]))[0];
+      const claimed = (await driver.all<{ messageId: string; attempts: number; expectedEpoch: string | null }>(
+        S.getOutboxClaim, [candidate.messageId]))[0];
       if (!claimed) return null;
       const row = await messageRow(claimed.messageId);
       if (!row || row.body === null || row.unsentAt !== null || row.eventId !== null) {
@@ -637,6 +647,9 @@ export async function openSqliteMessagingHistory(
         token,
         attempt: claimed.attempts,
       };
+      // A legacy row has no boundary; leaving it absent makes the server refuse
+      // the send instead of this client inventing a current epoch for it.
+      if (claimed.expectedEpoch !== null) attempt.expectedEpoch = claimed.expectedEpoch;
       return attempt;
     });
   }
@@ -1209,7 +1222,8 @@ export async function openSqliteMessagingHistory(
     return cachedMediaAllowed(state ? localState(state).projection : undefined);
   }
 
-  async function enqueueOutgoingWithMedia(message: HumanMessage, input: MediaMetadata, bytes: ArrayBuffer): Promise<void> {
+  async function enqueueOutgoingWithMedia(message: HumanMessage, input: MediaMetadata, bytes: ArrayBuffer,
+    expectedEpoch?: string): Promise<void> {
     await assertOpen();
     const outgoing = copyMediaMessage(message);
     const record = copyMediaAttachment({ ...input, state: "QUEUED", attempts: 0, lastAccessAt: now() });
@@ -1231,7 +1245,7 @@ export async function openSqliteMessagingHistory(
       } else {
         await driver.run(S.insertMessage, [outgoing.id, outgoing.conversationId, outgoing.authorId,
           outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null]);
-        await driver.run(S.enqueueOutbox, [outgoing.id]);
+        await driver.run(S.enqueueOutbox, [outgoing.id, expectedEpoch ?? null]);
         await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
       }
       await mediaParent(record);

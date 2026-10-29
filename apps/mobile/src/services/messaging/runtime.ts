@@ -417,6 +417,24 @@ export async function changeMessagingRelationship(accountId: string, conversatio
   }
 }
 
+/**
+ * Shared block/unblock intent from any surface (thread, profile, settings) runs
+ * through the live session's media fence. A pending photo upload or download can
+ * then never commit under the authority the user just revoked. The server stays
+ * authoritative; this only stops local work that is already in flight.
+ */
+export async function runMessagingAuthorityAction<T>(accountId: string | null, work: () => Promise<T>): Promise<T> {
+  const owner = current;
+  if (!accountId || !owner || desiredAccount !== accountId
+    || owner.handle.scope.accountId !== accountId || owner.generation !== generation) return work();
+  invalidateAuthority(owner);
+  try {
+    return await owner.session.fence(work);
+  } finally {
+    if (current === owner && owner.generation === generation) void refreshOwner(owner);
+  }
+}
+
 export async function fetchMessagingPreferences(accountId: string): Promise<MessagingPreferences> {
   const owner = ownerFor(accountId);
   const preferences = await owner.session.getPreferences();

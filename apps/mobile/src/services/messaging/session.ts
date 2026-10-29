@@ -52,7 +52,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
   let stateTail: Promise<unknown> = Promise.resolve();
   const assertOpen = () => { if (controller.signal.aborted) throw new Error("Messaging session closed"); };
   const mediaUnavailable = () => new Error("Photo could not sync. Try again.");
-  let mediaEpoch = 0, mediaMutations = 0, mediaPaused = false;
+  let mediaEpoch = 0, mediaMutationEpoch = 0, mediaPaused = false;
   let mediaController = new AbortController();
   let mediaTransport: ReturnType<typeof createMediaTransport> | undefined;
   let mediaFlushing: Promise<void> | null = null, mediaSyncing: Promise<void> | null = null;
@@ -84,16 +84,31 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       signal?.removeEventListener("abort", abort);
     }
   };
+  // Abort in-flight media work without pausing it: the next attempt builds a
+  // fresh transport, but any response already in flight can no longer commit.
+  const abortMediaWork = () => {
+    mediaEpoch++; mediaController.abort(); mediaTransport = undefined;
+  };
+  // A conversation that leaves CONNECTED invalidates media authority even when
+  // the change arrived from another device. Tracked per session lifetime.
+  const connectedConversations = new Set<string>();
   // Invalidate at user intent, before the network await. No late media attempt
   // may resume through an end/block/erase, even if that mutation itself fails.
   const withMediaMutation = async <T>(work: () => Promise<T>): Promise<T> => {
-    assertOpen(); mediaEpoch++; mediaPaused = true; mediaMutations++;
+    assertOpen(); mediaEpoch++; mediaMutationEpoch++; mediaPaused = true;
     mediaController.abort(); mediaTransport = undefined;
-    try { return await work(); }
-    finally { mediaMutations--; }
+    return work();
   };
   const mediaMutation = (action: ChatAction, args: Record<string, unknown>) =>
     withMediaMutation(() => call(action, args));
+  // The cached projection is the boundary the user saw when they acted. A send
+  // or accept binds to it durably, so the server can refuse intent that outlived
+  // the request/connection it was composed in.
+  const observedEpoch = async (conversationId: string): Promise<string | undefined> => {
+    const summary = (await history.listConversations())
+      .find((row) => row.conversationId === conversationId);
+    return summary?.cachedProjection?.epoch;
+  };
   const syncState = (): Promise<void> => {
     const run = async () => {
       assertOpen();
@@ -140,7 +155,8 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     return envelopes.length;
   };
   const refreshConversations = async (): Promise<ConversationProjection[]> => {
-    const epoch = mediaEpoch;
+    const mutationEpochAtStart = mediaMutationEpoch;
+    let authorityLost = false;
     const projections: ConversationProjection[] = [];
     let afterId: string | null = null;
     // Bounded per refresh; an incomplete page set is not presented as current.
@@ -155,6 +171,13 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
         }
         previous = projection.conversationId;
       }
+      // A connection that ended anywhere — own device, counterpart, or a block
+      // boundary — invalidates pending media work before any of it can commit.
+      for (const projection of batch) {
+        if (projection.mode === "CONNECTED") connectedConversations.add(projection.conversationId);
+        else if (connectedConversations.delete(projection.conversationId)) authorityLost = true;
+      }
+      if (authorityLost) abortMediaWork();
       // Validate the whole page before persisting any row, and scope-fence each
       // write so late results cannot repopulate a signed-out account's UI.
       for (const projection of batch) {
@@ -164,7 +187,10 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       }
       projections.push(...batch);
       if (batch.length < 100) {
-        if (epoch === mediaEpoch && mediaMutations === 0) mediaPaused = false;
+        // Resume media only when no user mutation overlapped this fetch; the
+        // fetched projections would otherwise describe a boundary that no longer
+        // holds. An authority abort alone still permits a fresh attempt.
+        if (mediaMutationEpoch === mutationEpochAtStart) mediaPaused = false;
         return projections;
       }
       const last = batch[batch.length - 1];
@@ -201,6 +227,9 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
             conversationId: message.conversationId, recipientId: message.recipientId,
             messageId: message.id, body: message.body,
             ...(hasMedia ? { messageType: "MEDIA" } : {}),
+            // Absent for a pre-v8 queued row: the server refuses it rather than
+            // letting this client re-bind an old send to a newer boundary.
+            ...(attempt.expectedEpoch ? { expectedEpoch: attempt.expectedEpoch } : {}),
           });
           if (accepted !== message.id) throw new Error("Invalid messaging acknowledgement");
         } catch (error) {
@@ -317,7 +346,10 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
   return {
     async start(platform: "web" | "android" | "ios") { await call("REGISTER", { platform }); },
     async request(otherId: string) { return uuid(await call("CREATE", { otherId: uuid(otherId) }) as string); },
-    async accept(conversationId: string) { await call("ACCEPT", { conversationId: uuid(conversationId) }); },
+    async accept(conversationId: string) {
+      const id = uuid(conversationId), expectedEpoch = await observedEpoch(id);
+      await call("ACCEPT", { conversationId: id, ...(expectedEpoch ? { expectedEpoch } : {}) });
+    },
     async end(conversationId: string) { await mediaMutation("END", { conversationId: uuid(conversationId) }); },
     async block(conversationId: string) { await mediaMutation("BLOCK", { conversationId: uuid(conversationId) }); },
     async setPrivateState(conversationId: string, operation: "HIDE" | "UNHIDE" | "DECLINE") {
@@ -375,14 +407,15 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       assertOpen();
       const message = copyMessage(value);
       if (message.authorId !== scope.accountId) throw new Error("Invalid messaging author");
-      await history.enqueueOutgoing(message);
+      await history.enqueueOutgoing(message, await observedEpoch(message.conversationId));
       assertOpen();
     },
     async sendMedia(value: HumanMessage, input: MediaMetadata, bytes: ArrayBuffer) {
       const context = mediaContext(), message = copyMediaMessage(value), metadata = copyMediaMetadata(input);
       if (message.authorId !== scope.accountId || metadata.direction !== "OUT" || metadata.messageId !== message.id
         || metadata.expiresAt !== null) throw mediaUnavailable();
-      await history.enqueueOutgoingWithMedia(message, metadata, bytes);
+      await history.enqueueOutgoingWithMedia(message, metadata, bytes,
+        await observedEpoch(message.conversationId));
       context.live();
     },
     async downloadMedia(conversationId: string, attachmentId: string) {
@@ -392,6 +425,12 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       if (row.expiresAt <= Date.now()) { context.live(); throw new PhotoUnavailableError(); }
       await receiveMedia(row, context);
     },
+    /**
+     * Run an authority-invalidating action that lives outside this session (the
+     * app-wide block/unblock API) under the same media fence as END/BLOCK, so no
+     * pending upload or download can commit under the pre-action authority.
+     */
+    fence: <T>(work: () => Promise<T>): Promise<T> => withMediaMutation(work),
     sync, syncState, flush, refreshConversations, flushMedia, syncMedia,
     close() { controller.abort(); mediaController.abort(); return Promise.resolve(history.close()); },
   };

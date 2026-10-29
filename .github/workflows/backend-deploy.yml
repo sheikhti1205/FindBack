@@ -35,6 +35,18 @@ on:
         description: "Deploy the cleanup-comment-media Edge Function"
         type: boolean
         default: true
+      deploy_chat_media:
+        description: "Deploy the chat-media gateway Edge Function"
+        type: boolean
+        default: true
+      deploy_cleanup_chat_media:
+        description: "Deploy the cleanup-chat-media sweeper Edge Function"
+        type: boolean
+        default: true
+      deploy_copy_chat_evidence:
+        description: "Deploy the copy-chat-evidence worker Edge Function"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -91,3 +103,27 @@ jobs:
       # NOTE: delete-account is intentionally NOT deployed by this workflow.
       # No delete-account pattern exists here or elsewhere in CI; it deploys
       # separately, owner-side, after explicit auth review.
+      - name: Deploy chat-media
+        if: inputs.deploy_chat_media
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # The gateway verifies the caller's Supabase user JWT itself and then
+          # authorizes the attachment through the database; the gateway-level
+          # JWT check would only duplicate that, and it cannot express the
+          # service-owned delivery path. Deploy only after the chat media
+          # authorization migrations are live.
+          supabase functions deploy chat-media --no-verify-jwt
+      - name: Deploy cleanup-chat-media
+        if: inputs.deploy_cleanup_chat_media
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Internal sweeper only: the canonical wrapper enforces the server
+          # secret. No anonymous or user route may sweep private media.
+          supabase functions deploy cleanup-chat-media --no-verify-jwt
+      - name: Deploy copy-chat-evidence
+        if: inputs.deploy_copy_chat_evidence
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Internal moderation-evidence worker only: the canonical wrapper
+          # enforces the server secret and claims work from the evidence queue.
+          supabase functions deploy copy-chat-evidence --no-verify-jwt
