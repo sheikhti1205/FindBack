@@ -224,15 +224,27 @@ describe.each(["sqlite", "web"] as const)("%s media with actual byte storage", (
     expect(await bytes.keys(A)).toEqual([id(202)]);
   });
 
-  it.skipIf(backend === "web")("removes media when imported backup suppression wins", async () => {
+  it.each(["deletion", "null-body", "unsend", "clear"] as const)("removes media when imported backup %s suppression wins and refuses replay", async (kind) => {
     const history = await open();
-    await receive(history, 1);
+    const fixture = await receive(history, 1);
     const snapshot = await history.exportSnapshot();
-    snapshot.deletedForMe.push({ messageId: message(1).id, conversationId: CONVERSATION, deletedAt: clock });
+    if (kind === "deletion") snapshot.deletedForMe.push({ messageId: message(1).id, conversationId: CONVERSATION, deletedAt: clock });
+    if (kind === "null-body") snapshot.messages[0]!.body = null;
+    if (kind === "unsend") snapshot.tombstones.push({ messageId: message(1).id, conversationId: CONVERSATION,
+      unsentBy: B, recipientId: A, unsentAt: clock });
+    if (kind === "clear") snapshot.clears.push({ conversationId: CONVERSATION, throughSequence: 1, clearedAt: clock });
     await history.importSnapshot(snapshot);
     expect(await history.readMedia(id(201))).toBeNull();
     expect(await bytes.totalBytes(A)).toBe(0);
     expect(await history.listMedia(CONVERSATION)).toEqual([]);
+    await history.close(); const reopened = await open();
+    await reopened.persistInbound({ ...scope, mailboxId: id(401), event: { kind: "TEXT", eventId: id(301), sequence: 1,
+      message: { ...message(1), authorId: B, recipientId: A, messageType: "MEDIA" } } });
+    const ack = vi.fn(async () => undefined);
+    await expect(reopened.persistVerifiedMediaAndAck(fixture.metadata, fixture.bytes, ack)).rejects.toThrow(/parent/);
+    expect(ack).not.toHaveBeenCalled();
+    expect((await reopened.exportSnapshot()).messages[0]!.body).toBeNull();
+    expect(await bytes.totalBytes(A)).toBe(0);
   });
 
   it("claims once through two asynchronous history handles", async () => {

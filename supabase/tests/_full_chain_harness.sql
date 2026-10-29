@@ -15,6 +15,17 @@ alter default privileges for role postgres in schema public
   grant execute on functions to anon, authenticated, service_role;
 alter default privileges for role supabase_admin in schema public
   grant execute on functions to postgres, anon, authenticated, service_role;
+-- Hosted pg_default_acl readback 2026-10-29 also grants table/sequence ALL to
+-- these roles. Without this, local gates can miss required table revokes and
+-- falsely disagree with legitimate service-role grants inherited at creation.
+alter default privileges for role postgres in schema public
+  grant all on tables to anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema public
+  grant all on tables to postgres, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on sequences to anon, authenticated, service_role;
+alter default privileges for role supabase_admin in schema public
+  grant all on sequences to postgres, anon, authenticated, service_role;
 create schema auth;
 create schema storage;
 create schema graphql;

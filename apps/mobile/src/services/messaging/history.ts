@@ -141,7 +141,7 @@ export interface PersistenceReceipt extends MessagingScope {
 export interface SnapshotConversation {
   id: string;
   lastSequence: number;
-  /** Non-null: both SQLite columns are NOT NULL, and web exports no conversations. */
+  /** Non-null display metadata; 0 means the adapter never observed a timestamp. */
   createdAt: number;
   updatedAt: number;
 }

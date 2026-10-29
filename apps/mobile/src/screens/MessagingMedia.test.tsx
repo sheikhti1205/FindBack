@@ -11,17 +11,18 @@ const m = vi.hoisted(() => {
   return { view, chat: { accountId: "account", status: "ready", revision: 1,
     conversations: [{ conversationId: "chat", peerId: "peer", cachedProjection: view }], currentProjections: { chat: view } },
     messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[],
-    prepare: vi.fn(), send: vi.fn(), read: vi.fn(), download: vi.fn(), remove: vi.fn(), recover: vi.fn(), receipt: vi.fn(), observe: vi.fn(), refresh: vi.fn(), choose: vi.fn(), import: vi.fn(), file: vi.fn() };
+    prepare: vi.fn(), send: vi.fn(), read: vi.fn(), download: vi.fn(), remove: vi.fn(), recover: vi.fn(), retry: vi.fn(), receipt: vi.fn(), observe: vi.fn(), refresh: vi.fn(), choose: vi.fn(), import: vi.fn(), file: vi.fn() };
 });
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "account" } }) }));
 vi.mock("../services/accountLabels", () => ({ fetchAccountLabels: async () => new Map() }));
 vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => m.chat }));
-vi.mock("../services/messaging/runtime", () => ({ readMessagingThreadState: async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: async () => {}, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: async () => {}, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover }));
+vi.mock("../services/messaging/runtime", () => ({ readMessagingThreadState: async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: async () => {}, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: async () => {}, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover, retryMessagingMessage: m.retry }));
 vi.mock("../services/messaging/preparePhoto", () => ({ prepareMessagingPhoto: m.prepare }));
 vi.mock("../services/media/nativeMedia", () => ({ chooseNativeImages: m.choose, importNativeImageUri: m.import, importedImageToFile: m.file }));
 beforeEach(() => { vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() }); m.view.mode = "CONNECTED"; m.view.ownBlocked = false; m.chat.revision = 1; m.messages = []; m.media = []; m.outbox = []; m.prepare.mockReset(); m.send.mockReset(); m.read.mockReset().mockResolvedValue(null); m.download.mockReset().mockResolvedValue(undefined); m.remove.mockReset().mockResolvedValue(undefined); m.recover.mockReset().mockResolvedValue(undefined); m.receipt.mockReset().mockResolvedValue({ context: "authority", readIds: [] }); m.observe.mockReset().mockResolvedValue(true); m.refresh.mockReset().mockResolvedValue(undefined);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, bottom: 200, right: 200, width: 200, height: 200, toJSON: () => ({}) });
   m.choose.mockReset(); m.import.mockReset(); m.file.mockReset();
+  m.retry.mockReset().mockResolvedValue(undefined);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function open() {
@@ -205,6 +206,31 @@ it("allows retrying a failed photo upload after the text echo already arrived", 
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(m.refresh).toHaveBeenCalledWith("account"));
   expect(m.send).not.toHaveBeenCalled();
+  expect(m.retry).not.toHaveBeenCalled();
+});
+it("retries the failed message's stable identity only after an explicit click, not a generic sync", async () => {
+  m.messages = [{ ...received("TEXT"), authorId: "account", recipientId: "peer", server: undefined }];
+  m.outbox = [{ messageId: "message", status: "FAILED", attempts: 2 }];
+  await open();
+  expect(m.retry).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(m.retry).toHaveBeenCalledWith("account", "chat", "message"));
+  expect(m.refresh).not.toHaveBeenCalled();
+  expect(m.recover).not.toHaveBeenCalled();
+  expect(screen.getByText("Caption")).toBeTruthy();
+});
+it("keeps a refused explicit retry failed and explains the failure without duplicating a send", async () => {
+  m.messages = [{ ...received("TEXT"), authorId: "account", recipientId: "peer", server: undefined }];
+  m.outbox = [{ messageId: "message", status: "FAILED", attempts: 2 }];
+  m.retry.mockRejectedValue(new Error("synthetic boundary refusal"));
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Could not retry. Try syncing again.")).toBeTruthy();
+  expect(screen.getByText("Failed —")).toBeTruthy();
+  expect(screen.getByText("Caption")).toBeTruthy();
+  expect(m.retry).toHaveBeenCalledTimes(1);
+  expect(m.send).not.toHaveBeenCalled();
+  expect(m.recover).not.toHaveBeenCalled();
 });
 it.each(["QUEUED", "FAILED"])("does not offer a remote download for an unuploaded %s photo with missing local bytes", async (state) => {
   m.messages = [{ ...received("MEDIA"), authorId: "account", recipientId: "peer", server: undefined }];

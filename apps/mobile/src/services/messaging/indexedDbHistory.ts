@@ -1,6 +1,6 @@
 import type {
   HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope,
-  OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage, MediaAttachment, MediaBytesPort,
+  OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage, MediaAttachment, MediaBytesPort, HistorySnapshot, ImportReport,
 } from "./history";
 import { MediaParentUnavailableError } from "./history";
 import { cachedMediaAllowed, copyMessage, copyMediaMessage, copyReceivedMessage, compatibleMessageType, copyMediaAttachment, sameMessage, positiveSequence, uuid } from "./validation";
@@ -12,8 +12,13 @@ import {
   type ConversationProjection, type ConversationSummary, type LocalConversationState,
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
+import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
+import { erasureMatches, exportPortable, mergePortable, type PortableConversation, type PortableErasure,
+  type PortableMessage, type PortableView } from "./indexedDbBackup";
 
-export const MESSAGING_IDB_VERSION = 5;
+// v6 adds portable suppression metadata to existing records. Fence older
+// executables that do not honor it, even though no new object store is needed.
+export const MESSAGING_IDB_VERSION = 6;
 const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle"];
 const LEASE_MS = 60_000;
 
@@ -112,10 +117,10 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     const store = tx.objectStore("conversations");
     const request = store.get(conversationId);
     request.onsuccess = guard(() => {
-      const prior = request.result as LocalConversationState | undefined;
-      if (prior) {
+      const prior = request.result as PortableConversation | undefined;
+      if (prior?.peerId) {
         if (prior.peerId !== peerId) throw new Error("Immutable conversation peer conflict");
-        store.put(change(prior));
+        store.put(change({ ...prior, peerId: prior.peerId }));
       } else {
         // Older databases have messages but no explicit index yet. Validate the
         // historical binding before caching an online relationship for that id.
@@ -124,7 +129,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           for (const message of messages.result as StoredHumanMessage[]) {
             if (conversationPeer(scope, message) !== peerId) throw new Error("Immutable conversation peer conflict");
           }
-          store.put(change({ conversationId, peerId, readThrough: 0, updatedAt: 0 }));
+          store.put(change({ ...prior, conversationId, peerId, readThrough: prior?.readThrough ?? 0, updatedAt: prior?.updatedAt ?? 0 }));
         });
       }
     });
@@ -300,7 +305,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       let remaining = 3;
       const done = guard(() => {
         if (--remaining === 0) visibleMessages(tx, guard, messages.result as StoredHumanMessage[], (visible) =>
-          result(summarizeConversations(scope, states.result as LocalConversationState[], visible, outbox.result as OutboxEntry[])));
+          result(summarizeConversations(scope, (states.result as PortableConversation[])
+            .filter((state): state is LocalConversationState => !!state.peerId), visible, outbox.result as OutboxEntry[])));
       });
       states.onsuccess = done; messages.onsuccess = done; outbox.onsuccess = done;
     });
@@ -458,21 +464,23 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           let remaining = 4;
           const complete = guard(() => {
             if (--remaining !== 0) return;
-            const existing = request.result as StoredHumanMessage | undefined;
+            const existing = request.result as PortableMessage | undefined;
             // Anti-resurrection: the mailbox receipt and the message row are
             // written in one strict transaction, so a recorded envelope with no
             // stored row means the local history was deliberately deleted. A
             // replay may acknowledge identity, never restore content or the
             // conversation entry.
             if (existingMailbox && !existing) { result(receipt); return; }
-            const tombstone = removed.result as MessageStateChange | undefined;
-            const deletion = deleted.result as MessageStateChange | undefined;
+            const tombstone = removed.result as PortableErasure | undefined;
+            const deletion = deleted.result as PortableErasure | undefined;
             for (const state of [tombstone, deletion]) {
-              if (state && (state.kind === "CLEAR_FOR_ME" || state.conversationId !== message.conversationId
-                || state.authorId !== message.authorId || state.recipientId !== message.recipientId
-                 || (!("local" in state) && state.messageSequence !== sequence))) throw new Error("Erasure message identity conflict");
+              if (state && !erasureMatches(state, message, sequence)) throw new Error("Erasure message identity conflict");
             }
-            const suppressed = !!deletion || sequence <= ((clear.result as { throughSequence: number } | undefined)?.throughSequence ?? 0);
+            if (tombstone?.recipientId == null && tombstone) {
+              tx.objectStore("unsends").put({ ...tombstone, recipientId: message.recipientId });
+            }
+            const suppressed = existing?.snapshotSuppressed || existing?.unsentAt !== undefined || !!deletion
+              || sequence <= ((clear.result as { throughSequence: number } | undefined)?.throughSequence ?? 0);
             if (existing && (existing.id !== message.id || existing.conversationId !== message.conversationId
               || existing.authorId !== message.authorId || existing.recipientId !== message.recipientId
               || !compatibleMessageType(existing.messageType, message.messageType)
@@ -481,7 +489,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
               throw new Error("Immutable message event conflict");
             }
             if (!existingEvent) events.add({ eventId, conversationId: message.conversationId, sequence, messageId: message.id } satisfies EventIdentity);
-            const stored: StoredHumanMessage = { ...message, server: { eventId, sequence },
+            const stored: PortableMessage = { ...existing, ...message, server: { eventId, sequence },
               ...((message.messageType ?? existing?.messageType) ? { messageType: message.messageType ?? existing?.messageType } : {}),
               ...((tombstone || suppressed) ? { body: "" } : {}),
               ...(tombstone ? { unsentAt: tombstone.occurredAt } : {}) };
@@ -565,20 +573,24 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             // never creates an event identity: the authoritative echo owns that
             // slot and a synthetic entry here would collide with it.
             for (const source of [deletion.result, unsend.result]) {
-              const prior = source as MessageStateChange | undefined;
-              if (prior && (prior.kind === "CLEAR_FOR_ME" || prior.conversationId !== change.conversationId
-                || prior.authorId !== change.authorId || prior.recipientId !== change.recipientId
-                 || (!("local" in prior) && prior.messageSequence !== change.messageSequence))) throw new Error("Erasure message identity conflict");
+              const prior = source as PortableErasure | undefined;
+              if (prior && !erasureMatches(prior, { id: change.messageId, ...change }, change.messageSequence)) {
+                throw new Error("Erasure message identity conflict");
+              }
+              if (prior?.kind === "UNSEND" && change.kind === "UNSEND" && prior.occurredAt !== change.occurredAt) {
+                throw new Error("Erasure message identity conflict");
+              }
             }
-            const existing = request.result as StoredHumanMessage | undefined;
+            const existing = request.result as PortableMessage | undefined;
             if (existing && (existing.conversationId !== change.conversationId || existing.authorId !== change.authorId
               || existing.recipientId !== change.recipientId
-              || (existing.server && existing.server.sequence !== change.messageSequence))) {
+              || (existing.server && existing.server.sequence !== change.messageSequence)
+              || (change.kind === "UNSEND" && existing.unsentAt !== undefined && existing.unsentAt !== change.occurredAt))) {
               throw new Error("Messaging state message identity conflict");
             }
             if (change.kind === "DELETE_FOR_ME") tx.objectStore("deletions").put(change);
             else tx.objectStore("unsends").put(change);
-            messages.put({ id: change.messageId, conversationId: change.conversationId,
+            messages.put({ ...existing, id: change.messageId, conversationId: change.conversationId,
                 authorId: change.authorId, recipientId: change.recipientId, body: "",
                 ...(existing?.messageType ? { messageType: existing.messageType } : {}),
                 ...(existing?.server ? { server: existing.server } : {}),
@@ -607,13 +619,58 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     await completion;
   }
 
-  // Loud, not silent: a backup restored into the web adapter must fail visibly
-  // rather than appear to succeed while dropping history.
-  function exportSnapshot(): Promise<never> {
-    return Promise.reject(new Error("Messaging backup is not implemented for IndexedDB yet"));
+  function snapshotTransaction<T>(mode: IDBTransactionMode,
+    work: (view: PortableView, tx: IDBTransaction, guard: (callback: () => void) => () => void) => T): Promise<T> {
+    return transaction(mode, (tx, result, guard) => {
+      const names = ["messages", "conversations", "unsends", "deletions", "clears"] as const;
+      const requests = names.map((name) => tx.objectStore(name).getAll());
+      let remaining = requests.length;
+      const complete = guard(() => {
+        if (--remaining) return;
+        const view = Object.fromEntries(names.map((name, index) => [name, requests[index]!.result])) as unknown as PortableView;
+        result(work(view, tx, guard));
+      });
+      for (const request of requests) request.onsuccess = complete;
+    });
   }
-  function importSnapshot(): Promise<never> {
-    return Promise.reject(new Error("Messaging backup is not implemented for IndexedDB yet"));
+  function exportSnapshot(): Promise<HistorySnapshot> {
+    return snapshotTransaction("readonly", exportPortable);
+  }
+  function importSnapshot(incoming: HistorySnapshot): Promise<ImportReport> {
+    // Captured/validated by the public wrapper before structuredClone can invoke getters.
+    return snapshotTransaction("readwrite", (view, tx, guard) => {
+      const merged = mergePortable(view, incoming, scope);
+      for (const state of merged.conversations) tx.objectStore("conversations").put(state);
+      for (const state of merged.unsends) tx.objectStore("unsends").put(state);
+      for (const state of merged.deletions) tx.objectStore("deletions").put(state);
+      for (const state of merged.clears) tx.objectStore("clears").put(state);
+      for (const message of merged.messages) {
+        tx.objectStore("messages").put(message);
+        if (message.snapshotSuppressed) removeMediaRows(tx, guard, message.id);
+        if (message.server || message.snapshotSuppressed) tx.objectStore("outbox").delete(message.id);
+      }
+      // Imported accepted identities reserve the same immutable slots as echoes,
+      // but never create mailbox receipts or state events/cursors.
+      for (const message of incoming.messages) {
+        const events = tx.objectStore("events"), request = events.get(message.serverEventId);
+        const atSequence = events.index("sequence").get([message.conversationId, message.serverSequence]);
+        let remaining = 2;
+        const complete = guard(() => {
+          if (--remaining) return;
+          for (const row of [request.result, atSequence.result] as Array<EventIdentity | undefined>) {
+            if (row && (row.messageId !== message.id || row.conversationId !== message.conversationId
+              || row.eventId !== message.serverEventId || row.sequence !== message.serverSequence)) {
+              throw new BackupError("backup: identity conflict");
+            }
+          }
+          events.put({ eventId: message.serverEventId, conversationId: message.conversationId,
+            sequence: message.serverSequence, messageId: message.id } satisfies EventIdentity);
+        });
+        request.onsuccess = complete; atSequence.onsuccess = complete;
+      }
+      return { conversations: incoming.conversations.length, messages: incoming.messages.length,
+        tombstones: incoming.tombstones.length, deletedForMe: incoming.deletedForMe.length, clears: incoming.clears.length };
+    });
   }
 
   function removeMediaRows(tx: IDBTransaction, guard: (callback: () => void) => () => void, messageId: string) {
@@ -647,7 +704,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         visibleMessages(tx, guard, messages.result as StoredHumanMessage[], (parents) => {
           result(work({ records: records.result.map(copyMediaAttachment), purged: purged.result === true,
             states: states.result as LocalConversationState[],
-            parents: parents.filter((parent) => parent.unsentAt === undefined) }, tx, guard));
+            parents: parents.filter((parent) => parent.unsentAt === undefined && !(parent as PortableMessage).snapshotSuppressed) }, tx, guard));
         });
       });
       records.onsuccess = complete; messages.onsuccess = complete; purged.onsuccess = complete;
@@ -992,5 +1049,9 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     persistVerifiedMediaAndAck, markMediaReady: serializedMediaReady, listMedia: serial(listMedia), readMedia: serial(readMedia),
     evictMedia: serial(evictMedia), sweepOrphanMedia: serial(sweepOrphanMedia),
     removeMediaForMessage: serial(removeMediaForMessage), clearMedia: serial(clearMedia), purgeHistory: serial(purgeHistory, true),
-    exportSnapshot: serial(exportSnapshot), importSnapshot: serial(importSnapshot) };
+    exportSnapshot: serial(exportSnapshot), importSnapshot: async (input) => {
+      const captured = normaliseSnapshot(input);
+      validateSnapshot(captured, scope.accountId);
+      return serial(importSnapshot)(captured);
+    } };
 }
