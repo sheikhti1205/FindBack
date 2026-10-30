@@ -3,6 +3,7 @@
  * injected decoder is not browser/Android durability or forensic-erasure proof. */
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IDBFactory, IDBObjectStore, IDBDatabase } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,7 +28,7 @@ describe.each(["sqlite", "web"] as const)("%s complete history purge", (backend)
   let histories: MessagingHistory[], drivers: SqliteDriver[];
   beforeEach(async () => {
     factory = new IDBFactory(); histories = []; drivers = [];
-    directory = mkdtempSync("/tmp/opencode/purge-history-"); // single-command scratch DBs
+    directory = mkdtempSync(join(tmpdir(), "purge-history-")); // single-command scratch DBs
     bytes = await openMediaBytes({ indexedDB: factory, databaseName: "purge-bytes" });
   });
   afterEach(async () => {

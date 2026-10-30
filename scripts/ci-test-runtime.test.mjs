@@ -20,3 +20,13 @@ test("CI executes the runtime regression", () => {
   assert.ok(/run: node --test[^\n]*scripts\/ci-test-runtime\.test\.mjs/.test(
     readFileSync(".github/workflows/ci.yml", "utf8")));
 });
+
+for (const file of ["mediaAdapters", "purgeHistory", "session.media"]) {
+  test(`${file} scratch databases use the platform temp directory`, () => {
+    const source = readFileSync(`apps/mobile/src/services/messaging/${file}.test.ts`, "utf8");
+    assert.ok(!source.includes('mkdtempSync("/tmp/opencode/'),
+      "a fresh CI runner has no assistant-private temp parent");
+    assert.match(source, /import \{ tmpdir \} from "node:os"/);
+    assert.match(source, /mkdtempSync\(join\(tmpdir\(\), "[a-z-]+"\)\)/);
+  });
+}

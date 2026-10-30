@@ -3,6 +3,7 @@
  * use an injected decoder; this is not browser/native decoder acceptance. */
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +41,7 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     sendError = uploadError = lostUpload = lostAck = false;
     downloads = []; uploads = []; acks = []; sends = []; fetches = 0;
     remote = new Map(); acknowledged = new Set();
-    directory = mkdtempSync("/tmp/opencode/session-media-"); // recomputable per-command databases only
+    directory = mkdtempSync(join(tmpdir(), "session-media-")); // recomputable per-command databases only
     bytes = await openMediaBytes({ indexedDB: factory, databaseName: "session-media" });
   });
   afterEach(async () => {

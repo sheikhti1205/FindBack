@@ -2,6 +2,7 @@
 /** Real byte-store composition, not native/browser durability acceptance. */
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +27,7 @@ describe.each(["sqlite", "web"] as const)("%s media with actual byte storage", (
 
   beforeEach(async () => {
     factory = new IDBFactory(); histories = []; clock = 1_700_000_000_000;
-    directory = mkdtempSync("/tmp/opencode/media-adapters-"); // disposable single-run DBs only
+    directory = mkdtempSync(join(tmpdir(), "media-adapters-")); // disposable single-run DBs only
     vi.spyOn(Date, "now").mockImplementation(() => clock);
     bytes = await openMediaBytes({ indexedDB: factory, now: () => clock,
       databaseName: `media-${backend}-${DEVICE}`, budgetBytes: 256 });
