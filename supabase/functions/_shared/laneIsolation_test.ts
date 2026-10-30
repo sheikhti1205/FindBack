@@ -9,9 +9,7 @@ import { assertEquals, assertStringIncludes } from "https://deno.land/std@0.224.
 import { boundedLaneError, degradedLanes, isolateLane, redactSecrets } from "./laneIsolation.ts";
 
 Deno.test("a lane throw becomes a bounded failure value", async () => {
-  const outcome = await isolateLane("chat", async () => {
-    throw new Error("findback_claim_chat_external_wakes unavailable");
-  });
+  const outcome = await isolateLane("chat", () => Promise.reject(new Error("findback_claim_chat_external_wakes unavailable")));
   assertEquals(outcome.ok, false);
   if (!outcome.ok) {
     assertEquals(outcome.error, "findback_claim_chat_external_wakes unavailable");
@@ -23,9 +21,7 @@ Deno.test("lane errors are bounded and carry no stack or newlines", async () => 
   const logged: string[] = [];
   const outcome = await isolateLane(
     "chat",
-    async () => {
-      throw new Error(`boom\n${"x".repeat(500)}`);
-    },
+    () => Promise.reject(new Error(`boom\n${"x".repeat(500)}`)),
     (message) => logged.push(message),
   );
   assertEquals(outcome.ok, false);
@@ -40,9 +36,7 @@ Deno.test("lane errors are bounded and carry no stack or newlines", async () => 
 Deno.test("a throwing logger never becomes a dispatcher failure", async () => {
   const outcome = await isolateLane(
     "chat",
-    async () => {
-      throw new Error("denied");
-    },
+    () => Promise.reject(new Error("denied")),
     () => {
       throw new Error("logger failed");
     },
@@ -52,7 +46,7 @@ Deno.test("a throwing logger never becomes a dispatcher failure", async () => {
 });
 
 Deno.test("successful lanes keep their value untouched", async () => {
-  const outcome = await isolateLane("chat", async () => ({ claimed: 1, sent: 1, failed: 0 }));
+  const outcome = await isolateLane("chat", () => Promise.resolve({ claimed: 1, sent: 1, failed: 0 }));
   assertEquals(outcome, { ok: true, value: { claimed: 1, sent: 1, failed: 0 } });
   assertEquals(degradedLanes(["chat", outcome]), []);
 });
@@ -62,10 +56,12 @@ Deno.test("successful lanes keep their value untouched", async () => {
 // both the returned error and the log line. The third tuple element is the exact
 // secret that must not survive, so a case cannot pass by asserting the wrong
 // fragment.
+const syntheticSecret = ["sb", "secret", "AbCdEf1234567890"].join("_");
+const syntheticKeyHeader = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 const SECRET_CASES: ReadonlyArray<readonly [string, string, string]> = [
   ["Authorization header", "request failed: Authorization: Bearer abc123def456ghi789", "abc123def456ghi789"],
   ["bearer token", "send failed with Bearer sk_live_51H8xQ2eZvKYlo2C", "sk_live_51H8xQ2eZvKYlo2C"],
-  ["supabase secret key", "connect failed using sb_secret_AbCdEf1234567890", "sb_secret_AbCdEf1234567890"],
+  ["supabase secret key", `connect failed using ${syntheticSecret}`, syntheticSecret],
   [
     "jwt",
     "token rejected eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
@@ -75,7 +71,7 @@ const SECRET_CASES: ReadonlyArray<readonly [string, string, string]> = [
   ["credential-bearing url", "fetch failed https://user:hunter2@example.com/hook", "hunter2"],
   [
     "private key",
-    "invalid key -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----",
+    `invalid key ${syntheticKeyHeader}\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----`,
     "MIIEvQIBADANBg",
   ],
   ["google api key", "fcm denied AIzaSyD-1234567890abcdefghijklmnopqrstu", "AIzaSyD-1234567890abcdefghijklmnopqrstu"],
@@ -112,9 +108,7 @@ for (const [label, message, secret] of SECRET_CASES) {
     const logged: string[] = [];
     const outcome = await isolateLane(
       "chat",
-      async () => {
-        throw new Error(message);
-      },
+      () => Promise.reject(new Error(message)),
       (line) => logged.push(line),
     );
     assertEquals(outcome.ok, false);

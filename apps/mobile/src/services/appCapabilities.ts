@@ -24,7 +24,7 @@ import packageJson from "../../package.json";
  * separate paths. Installed weights do not prove hardware speed or quality;
  * measured backend claims remain evidence-gated.
  */
-export const CAPABILITIES_VERSION = "1.9.2-truth";
+export const CAPABILITIES_VERSION = "1.9.3-beta-truth";
 
 /** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
 export const APP_VERSION: string = packageJson.version;
@@ -75,8 +75,9 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Tapping the active Home tab refreshes and scrolls to top.",
   ],
   social: [
-    "Each post supports one reaction per user (Love, Helpful, Support or Wow), 1–5 star ratings, and comments.",
-    "Community average rating and your own rating are shown separately.",
+    "Each post supports one reaction per user: Like only for new reactions; legacy reactions stay readable.",
+    "Recovery-linked ratings are available to the participants after a completed return, not to arbitrary report readers.",
+    "Private messaging between users is available: requests are text-only; image sharing requires connection. Messages are not end-to-end encrypted.",
     "Comments and reactions update live while viewing a post.",
   ],
   location: [
@@ -89,7 +90,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
   possibleMatches: [
     "Open posts show up to 3 Possible Matches: open reports of the opposite type ranked by text similarity plus category, date, and location closeness.",
     "Scores are similarity, not probability. No match is shown when nothing qualifies.",
-    "USE text embeddings are the default. On Android, an installed Needle model can be explicitly selected as the matching challenger in AI & Models for this session; it is not an automatic quality upgrade.",
+    "USE text embeddings are the default. On Android, an installed search helper (Needle) can be explicitly selected for matching in Local intelligence for this session; it is not an automatic quality upgrade.",
   ],
   notifications: [
     "The bell opens a notification inbox for reactions, comments, mentions and status changes. Opening it never marks everything read.",
@@ -97,7 +98,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Android shows a system notification for report activity when push is allowed; comment notifications can be answered directly from the notification.",
   ],
   aiConnection: [
-    "AI is optional: connect a cloud AI provider key under Settings → AI & intelligence → AI Chat → Providers (/settings/ai/connections), or explicitly install on-device models under Settings → AI & intelligence → On this device → On-device AI (/settings/ai/models) on Android.",
+    "AI Chat is optional: connect a cloud provider key under Settings → AI & models → Providers (/settings/ai/connections). Android search-helper downloads live separately under Settings → Local intelligence → Downloaded Models.",
     "OpenRouter is the default provider and a new account starts on its openrouter/free route; you can pick any model from the providers you have a key for. Keys you add — OpenRouter, Anthropic, Google, Mistral, Groq, xAI, Cohere, OpenAI, DeepSeek or a custom endpoint — stay on the device and are never sent to FindBack's servers.",
     "Billing follows your provider: FindBack does not set, know or cap your prices, and the model you choose is billed by your provider account. The app shows a cost note next to the model list.",
     "Android model downloads start only when you tap Download. You can pause and resume, and remove the model; only checksum-verified files become installed. The web build does not offer on-device downloads or inference.",
@@ -117,6 +118,8 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Raw HTML, scripts, and remote images are stripped for safety.",
   ],
   privacy: [
+    "Private message history is stored on each device with temporary server delivery and private image storage. This beta has no consumer Drive backup option.",
+    "Limited safety records are retained after account deletion: reported-content evidence for up to 90 days, and appeal, moderation and audit records. Other people's existing message copies cannot be erased by account deletion.",
     "Report photos stay on the device until you publish.",
     "AI requests leave the device only through the provider you connect with your own key. Only the chat questions you type use that path; report contents and photos are never attached automatically.",
     "On-device inference uses approved inputs on the device without a provider key. Downloading weights needs a network connection and an explicit tap. There is no photo analysis, no on-device chat and no automatic provider fallback.",
@@ -126,9 +129,8 @@ export const APP_CAPABILITIES: AppCapabilities = {
   phoneVerification:
     "Phone verification is not enabled in this build because no SMS provider is configured.",
   accountDeletion:
-    "Delete your account from Settings > Account. Typing your email confirms permanent deletion of the account, its reports and photos, and its server data.",
+    "Delete your account from Settings > Account. Typing your email confirms deletion of the account, reports and photos; limited safety records remain as described in the Privacy policy.",
   unavailable: [
-    "private messaging",
     "face recognition",
     "automatic background matching",
   ],

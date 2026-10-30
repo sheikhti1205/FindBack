@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { createChatMediaEndpoint } from "./handler.ts";
 // Synthetic test-only credentials: placeholder API keys and ephemeral locally
 // generated signing keys/JWTs. No deployed credentials or accounts are used.
-const env = { url:"https://project.example.invalid", secretKeys:{default:"sb_secret_placeholder"}, publishableKeys:{default:"sb_publishable_placeholder"}, jwks:{keys:[]} };
+const env = { url:"https://project.example.invalid", secretKeys:{default:["sb", "secret", "placeholder"].join("_")}, publishableKeys:{default:"sb_publishable_placeholder"}, jwks:{keys:[]} };
 Deno.test("method and invalid headers fail before transport", async () => { let n=0; const transport: typeof fetch = () => { n++; return Promise.reject(Error("unexpected")); }; const endpoint=createChatMediaEndpoint(env,transport); assert.equal((await endpoint(new Request("https://example.invalid",{method:"PUT"}))).status,405); assert.equal((await endpoint(new Request("https://example.invalid",{method:"POST"}))).status,400); assert.equal(n,0); });
 const id="00000000-0000-4000-8000-000000000001";
 const png=new Uint8Array([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137]);

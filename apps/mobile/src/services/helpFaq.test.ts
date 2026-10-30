@@ -112,9 +112,9 @@ describe("builtInHelp", () => {
     expect(deletion).toMatch(/type your email/i);
     expect(deletion).toMatch(/permanently removes/i);
 
-    const messaging = builtInHelp("Can I message another user privately?");
-    expect(messaging.toLowerCase()).toMatch(/private messag|direct messag/);
-    expect(messaging).toMatch(/does not have|not available|not in this build/i);
+    const unsupported = builtInHelp("Does FindBack have face recognition?");
+    expect(unsupported.toLowerCase()).toMatch(/face recognition/);
+    expect(unsupported).toMatch(/does not have|not available|not in this build/i);
   });
 
   it("refuses to invent a feature that is not in the knowledge", () => {
@@ -178,7 +178,7 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "Where is my verification code?",
     "How do I delete my account?",
     "Does FindBack have a Pets category?",
-    "Can I message another user privately?",
+    "Does FindBack have face recognition?",
     "Search for the email address of user amir",
     "Which AI model are you?",
     // The retry review's positive classes, verbatim.
@@ -189,7 +189,7 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I leave a comment?",
     "How do I delete my FindBack account?",
     "Does FindBack offer teleportation?",
-    "Can I send a direct message to another user?",
+    "Does FindBack offer face detection?",
     // The bare FAQ questions the app still owns by shape alone, so tightening
     // the topic phrases does not cost the person the answer they asked for.
     "How do I change status?",
@@ -456,13 +456,11 @@ describe("CF-070 R2 retry-4 — measured app rows are answered", () => {
     expect(classification.appHelp).toBe(false);
     expect(isAppHelpQuestion("How do I send a message to another user?")).toBe(false);
 
-    // The claim itself is unchanged where the vocabulary can read it.
-    expect(classifyHelpQuestion("Can I message another user privately?").topic).toBe(
-      "unavailable-feature",
-    );
-    expect(classifyHelpQuestion("Can I send a direct message to another user?").topic).toBe(
-      "unavailable-feature",
-    );
+    // Messaging now ships; the retired FAQ must not claim it is unavailable.
+    for (const question of ["Can I message another user privately?", "Can I send a direct message to another user?"]) {
+      expect(classifyHelpQuestion(question).topic).not.toBe("unavailable-feature");
+      expect(builtInHelp(question)).not.toMatch(/does not have private messaging/i);
+    }
   });
 });
 

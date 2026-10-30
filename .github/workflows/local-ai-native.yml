@@ -1,9 +1,9 @@
-# FindBack — local-AI native path (WS-D).
+# FindBack — retained Needle/USE native integration, not generative AI.
 #
-# Compile + JVM Kotlin unit tests + Capacitor sync check for the on-device AI
-# scope. This workflow NEVER downloads model weights: the JVM tests run
-# against fakes/stubs, and model pins are validated by local-ai-model-smoke.yml.
-# No fetch-use-model / fetch-needle-model step may be added here.
+# Compile + JVM Kotlin unit tests + Capacitor sync check for the retained helper.
+# Tests use fakes/stubs. Gradle preBuild may fetch the pinned bundled USE asset
+# when absent, and native compilation may fetch pinned Needle engine archives
+# (not Needle weights). No generative weights or implicit helper downloads.
 
 name: Local AI — native
 
@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   native:
-    name: Kotlin compile + JVM tests + Cap sync check (no model downloads)
+    name: Kotlin compile + JVM tests + Cap sync check (retained helpers)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -55,13 +55,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install pinned NDK + CMake (findback_probe native lib)
+      - name: Install pinned NDK + CMake (Needle native helper)
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - run: npm ci
       - name: Build shared package (types for mobile)
         run: npm run build -w @findback/shared
-      - name: AI manifest + promotion pre-checks (static, no downloads)
+      - name: AI manifest + promotion pre-checks (static)
         run: |
           node scripts/check-ai-manifest.mjs
           node scripts/check-ai-promotion.mjs
@@ -70,7 +70,10 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Build mobile web dist (Capacitor webDir)
-        run: npm run build -w @findback/mobile
+        run: |
+          node scripts/check-mobile-build-config.mjs --preflight
+          npm run build -w @findback/mobile
+          node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
       - name: Capacitor sync check
@@ -81,5 +84,7 @@ jobs:
           npm run cap:sync -w @findback/mobile
           test -d apps/mobile/android/app/src/main/assets/public || { echo "cap sync did not stage web assets"; exit 1; }
           git status --porcelain -- apps/mobile/android || true
-      - name: Kotlin compile + JVM unit tests (no model bytes on this path)
+      - name: Kotlin compile + JVM unit tests
         run: cd apps/mobile/android && ./gradlew :app:compileDebugSources :app:testDebugUnitTest
+      - name: Verify bundled USE pin (Gradle may acquire it; never re-download here)
+        run: node scripts/fetch-use-model.mjs --check

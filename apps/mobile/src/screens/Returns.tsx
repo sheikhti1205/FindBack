@@ -16,6 +16,7 @@ import {
   type Standing,
 } from "../services/trust";
 import { ApiError } from "../services/session";
+import "./Returns.css";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import { isMissingServerFunction } from "../utils/safetyService";
 import { friendlyError } from "../utils/friendlyErrors";
@@ -262,7 +263,7 @@ function ScopedReturns({ userId }: { userId: string }) {
           const counterpart = view.counterpartName ?? (row.externalHelper ? "someone outside FindBack" : "another member");
           const canRate = canRateReturn(row);
           return (
-            <div key={row.returnId} className="fb-settings-row" data-testid="returns-row">
+            <div key={row.returnId} className="fb-settings-row fb-return-row" data-testid="returns-row">
               <span className="fb-settings-row-copy">
                 <span className="fb-settings-row-title">{view.title ?? "A report you took part in recovering"}</span>
                 <span className="fb-settings-row-description">
@@ -315,7 +316,7 @@ function RatingButtons({
   onRate: (value: number) => void;
 }) {
   return (
-    <span className="flex items-center gap-1" role="group" aria-label={`Rate ${name}`}>
+    <span className="flex flex-wrap items-center gap-1" role="group" aria-label={`Rate ${name}`}>
       {[1, 2, 3, 4, 5].map((value) => (
         <button
           key={value}

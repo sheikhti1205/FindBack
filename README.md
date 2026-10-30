@@ -25,13 +25,11 @@ Web links to shared reports: <https://findbackapp.social>
 - Profiles with verification badges, successful returns and a reputation level
 - Ratings that come from a real recovery, not from random profile visits
 - Block, report and feedback tools
-- Sign in with email, phone verification or Google
+- Private messages between users, with message requests and still-image sharing after connection
+- Sign in with email or Google; phone verification is not enabled
 - Optional AI Chat using your own API key from the provider you choose
 
-## Coming next
-
-- **Private chat** between users
-- More changes to the interface as the app grows. Screens will move around, so this README describes what the app does, not what each screen looks like.
+This is an internal beta under validation, not a public-ready release. Screens may move as the app grows.
 
 ## Your privacy
 
@@ -42,10 +40,9 @@ The full text is in the app under Settings: Privacy Policy, Terms and Community 
 - **You choose how exact a location is.** You can pin an exact spot or an approximate one.
 - **Smart Search and match suggestions run on your phone.** What you type into Smart Search is not sent to a cloud model.
 - **AI Chat is separate and uses your own key.** Your key stays on your device. Messages you send in AI Chat go to the provider you picked, under that provider's terms, and charges depend on your account with them. FindBack does not run a server that relays them. Chat history is kept only while the app is open and is gone when you close it.
-- **You can delete your account** from Settings. That removes your account, your reports and your photos.
+- **Private messages are separate from AI Chat.** Accepted history is stored on each device, with temporary server delivery and private image storage. Messages are not end-to-end encrypted. Push notifications wake the app rather than carrying message text. There is no consumer Drive backup option in this beta.
+- **You can delete your account** from Settings. That removes your account, reports and photos. Limited safety records are retained: reported-content evidence for up to 90 days, and appeal, moderation and audit records after deletion. Deletion cannot remove another person's existing copies of messages or files.
 - **Staff tools are locked down.** Moderators and admins use the same app as everyone else. Their tools only appear for accounts that have been given a role, and the backend checks the role on every privileged action. Hiding a button is never the only protection.
-
-When private chat ships, the Privacy Policy will be updated to cover it before release.
 
 ## Safety
 
@@ -53,7 +50,7 @@ Meeting a stranger to hand over an item has real risks. Verify ownership before 
 
 ## Install
 
-Android only for now. Beta builds are attached to the GitHub Releases page.
+Android is the primary target. Only builds explicitly verified and published on the GitHub Releases page should be installed; an internal engineering checkpoint is not release approval.
 
 ## For developers
 
@@ -69,4 +66,3 @@ See [CONTRIBUTING.md](https://github.com/sheikhti1205/FindBack/blob/main/CONTRIB
 ## License
 
 See [LICENSE](https://github.com/sheikhti1205/FindBack/blob/main/LICENSE) if present.
-path: /home/sheikh/GitHub/FindBack/README.md

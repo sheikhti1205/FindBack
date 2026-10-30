@@ -14,6 +14,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { splitSql } from "../../scripts/sql-behavior.mjs";
+import { createHash } from "node:crypto";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIG = join(ROOT, "migrations");
@@ -732,18 +733,37 @@ const CLIENT_EXECUTE_ROLES = ["public", "authenticated"];
  * suffix filter used to miss are pinned too (REVIEW-M1-ACL-CLOSURE A4).
  * Any change here is a security-model change and should be deliberate.
  */
-const CLIENT_REACHABLE_DEFINERS = [
+// M4: 85 names independently verified against the real full-chain PostgreSQL
+// catalog (has_function_privilege), not copied from a partially parsed chain.
+const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "complete_social_profile",
+  "findback_ack_chat_media_delivery",
+  "findback_add_comment_client",
   "findback_add_comment_with_attachments",
+  "findback_admit_public_action",
   "findback_apply_moderation",
   "findback_audit_log",
   "findback_block_user",
   "findback_bootstrap_admin",
   "findback_bootstrap_claim_status",
   "findback_can",
+  "findback_can_read_comment",
+  "findback_can_read_post",
+  "findback_cancel_match",
+  "findback_change_post_status_client",
+  "findback_chat_exchange",
+  "findback_chat_receipt_observe",
+  "findback_chat_receipt_view",
+  "findback_confirm_match",
+  "findback_delete_comment_client",
   "findback_delete_notifications_client",
+  "findback_delete_post_client",
+  "findback_fetch_chat_media_delivery",
   "findback_get_notification_preferences_client",
+  "findback_handover_match",
   "findback_has_role",
+  "findback_is_blocked_with_me",
+  "findback_list_comments_client",
   "findback_list_notifications_client",
   "findback_list_saved_posts_client",
   "findback_mark_notifications_read_client",
@@ -753,17 +773,23 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_moderation_target",
   "findback_my_appeal_subjects",
   "findback_my_appeals",
+  "findback_my_blocks",
+  "findback_my_matches",
   "findback_my_moderation_outcomes",
   "findback_my_post_moderation",
   "findback_my_recoveries",
   "findback_my_reports",
   "findback_my_role",
   "findback_notification_count_client",
+  "findback_post_is_match_linked",
   "findback_post_limit",
+  "findback_propose_match",
   "findback_rate_return",
+  "findback_react_client",
   "findback_react_comment_client",
   "findback_register_device_token_client",
   "findback_reputation_tier",
+  "findback_reserve_chat_media",
   "findback_resolve_appeal",
   "findback_restore_notifications_client",
   "findback_return_ratings",
@@ -783,6 +809,7 @@ const CLIENT_REACHABLE_DEFINERS = [
   "findback_standing",
   "findback_submit_appeal",
   "findback_submit_feedback",
+  "findback_submit_message_report",
   "findback_submit_report",
   "findback_unblock_user",
   "findback_unregister_device_token_client",
@@ -794,7 +821,7 @@ const CLIENT_REACHABLE_DEFINERS = [
   "update_my_avatar",
   "update_my_avatar_by_key",
   "update_my_profile",
-];
+]);
 
 /** Source of the client-side constant the SQL dims bound must agree with. */
 const DIMS_MIRROR = join(
@@ -911,7 +938,7 @@ function readGrantModel(migrations) {
       events.push({ index: m.index, kind: "grant", privs: m[1], table: m[2], roles: m[3], cols: null });
     }
     for (const m of text.matchAll(
-      /grant select \(([^)]*)\) on public\.([a-z0-9_]+) to ([a-z_, ]+?)(?=[;)]|$)/g,
+      /grant select\s*\(([^)]*)\) on public\.([a-z0-9_]+) to ([a-z_, ]+?)(?=[;)]|$)/g,
     )) {
       events.push({ index: m.index, kind: "grant", privs: "select", table: m[2], roles: m[3], cols: m[1] });
     }
@@ -923,7 +950,7 @@ function readGrantModel(migrations) {
     // `revoke select (col) ...` is a narrowing, not a blanket revoke
     // (REVIEW-M1-REPAIR R3).
     for (const m of text.matchAll(
-      /revoke ([a-z, ]*?) \(([^)]*)\) on (?:table )?public\.([a-z0-9_]+) from ([a-z_, ]+?)(?=[;)]|$)/g,
+      /revoke ([a-z, ]*?)\s*\(([^)]*)\) on (?:table )?public\.([a-z0-9_]+) from ([a-z_, ]+?)(?=[;)]|$)/g,
     )) {
       events.push({ index: m.index, kind: "revoke", privs: m[1], table: m[3], roles: m[4], cols: m[2] });
     }
@@ -1027,9 +1054,71 @@ function alterFunctionRegex() {
   return new RegExp(String.raw`alter\s+function\s+${PUBLIC_FN}\s*\(`, "gi");
 }
 
-/** `GRANT|REVOKE … EXECUTE ON FUNCTION public.f(args) TO|FROM roles`. */
-function executeStatementRegex() {
-  return /(grant|revoke) ([a-z, ]*?) on function\s+(?:public|"public")\s*\.\s*"?([a-z0-9_]+)"?\s*(?:\(([^)]*)\))? (to|from) ([a-z_, ]+?)(?=[;)]|$)/gi;
+// splitSql preserves every dollar-body/literal byte. Applied DO bodies are
+// immutable: even legal spelling changes require independently reverified pins.
+const R4_DYNAMIC_ACL = {
+  "349e9c35d6e2244b23cf8b3688a8eb90dda4414f28b463f25f8a3c71a6334cee": "revoke",
+  "e64317f6fc0379320e4e076a1d053f16db5cd1a970a62f1e6ac06458ae4effbd": "grant",
+};
+// Existing dynamic policy/constraint/table-RLS DDL, not function ACLs. Pin these
+// too rather than guessing which future EXECUTE strings may affect privileges.
+const NON_FUNCTION_DYNAMIC_DDL = new Set([
+  "adbef2e70a68ff7d83bce0fa1a0a2e7c4719071bc87cc71208e98a1091f391a9",
+  "38b4bf3727b45938f18bd0da428c7ee43b8f5e362c80057509179de10de0c72e",
+  "2e365cb27d8a8d693c1d85843f5c9adf770dcc5796d8ee4b1c4a107d73956359",
+  "234acdc2ed4d5b38956d0261ceb24d13a3c3acde993964b20f162b1e545b129d",
+  "656851b61eac89e09c47d8dfa52b2440c795df1394204d5748cf62b0b2a27afd",
+  "08b965af6ce8f5108c6b1f1bf93cea753538440beb7f413e33ba9dfbc5c90eba",
+  "e7f0145b9d2a9a072798e42362595315d5dc4a1b52a4f409705d4b4be2a0ed5a",
+]);
+
+/** Top-level DDL in actual statement order; bodies/data cannot declare objects.
+ * splitSql removes inline signature comments while preserving quoted bodies.
+ * Dynamic DDL is outside this static model; disposable PostgreSQL is final truth.
+ */
+function* functionEvents(migrations) {
+  for (const { file, sql } of migrations) {
+    const reviewedR4 = new Set();
+    for (const statement of splitSql(sql)) {
+      for (const [kind, regex] of [["create", createFunctionRegex()], ["drop", dropFunctionRegex()], ["alter", alterFunctionRegex()]]) {
+        const match = regex.exec(statement);
+        if (!match || match.index !== 0) continue;
+        const name = match[1].toLowerCase();
+        const args = parenBodyAt(statement, statement.indexOf("("));
+        const key = signatureKey(name, args, kind === "create" ? "declaration" : "reference");
+        const rename = kind === "alter" && statement.match(/\brename\s+to\s+"?([a-z0-9_]+)"?\s*$/i);
+        yield { kind: rename ? "rename" : kind, key, name, statement,
+          ...(rename ? { nextName: rename[1].toLowerCase(), nextKey: signatureKey(rename[1].toLowerCase(), args, "reference") } : {}) };
+      }
+      if (/^do\b/i.test(statement) && /\bexecute\b/i.test(statement)) {
+        // Only two reviewed immutable catalog loops are modelled, not arbitrary
+        // runtime SQL. Hash BEFORE any normalization so literal case, quoted
+        // data, comments and format spelling cannot collide or skip the gate.
+        const hash = createHash("sha256").update(statement).digest("hex");
+        if (NON_FUNCTION_DYNAMIC_DDL.has(hash)) continue;
+        const revoke = R4_DYNAMIC_ACL[hash] === "revoke";
+        const grant = R4_DYNAMIC_ACL[hash] === "grant";
+        if (!revoke && !grant) throw new Error("Unmodelled dynamic function ACL; verify and extend the static model before proceeding");
+        reviewedR4.add(R4_DYNAMIC_ACL[hash]);
+        const code = flattenSql(statement);
+        yield { kind: "catalog-acl", op: revoke ? "revoke" : "grant", contains: revoke ? "chat" : null,
+          names: [...code.match(/p\.proname in \(([^)]*)\)/)[1].matchAll(/'([^']+)'/g)].map(m => m[1]),
+          roles: revoke ? ["public", "anon", "authenticated"] : ["service_role"] };
+      }
+      if (!/^(?:grant|revoke)\s/i.test(statement)) continue;
+      const acl = flattenSql(stripSqlNoise(statement)).match(/^(grant|revoke) ([a-z, ]*?) on function\s+(.+?) (?:to|from) ([a-z_, ]+)$/i);
+      if (!acl || !/execute|all/.test(acl[2])) continue;
+      for (const target of topLevelParts(acl[3])) {
+        const m = target.match(new RegExp(`^${PUBLIC_FN}\\s*(?:\\(([^)]*)\\))?$`, "i"));
+        if (!m) throw new Error(`Unmodelled function ACL target: ${target}`);
+        yield { kind: acl[1], name: m[1].toLowerCase(), argList: m[2] ?? null,
+          roles: acl[4].split(",").map(r => r.trim()) };
+      }
+    }
+    if (file === "20261029020000_chat_r4_consolidation.sql" && reviewedR4.size !== 2) {
+      throw new Error("Missing reviewed R4 dynamic function ACL; both immutable loops must be recognized");
+    }
+  }
 }
 
 /** The DDL body of a function, in the two spellings this chain can use. */
@@ -1071,49 +1160,38 @@ function functionBodyAt(tail) {
  */
 function readFunctionModel(migrations) {
   const functions = new Map();
-  for (const { sql } of migrations) {
-    const marks = [];
-    for (const m of sql.matchAll(createFunctionRegex())) {
-      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
-    }
-    for (const m of sql.matchAll(dropFunctionRegex())) {
-      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
-    }
-    // `alter function … security definer|invoker` flips a reader's security
-    // model without redefining its body, so it has to be modelled for the pin to
-    // mean anything (REVIEW-M1-ACL-CLOSURE-R2 B5).
-    for (const m of sql.matchAll(alterFunctionRegex())) {
-      marks.push({ index: m.index, kind: "alter", name: m[1].toLowerCase() });
-    }
-    for (const mark of marks.sort((a, b) => a.index - b.index)) {
-      // One identity for a function: name + argument TYPE list. Postgres overloads
-      // on the types alone (parameter names and defaults never distinguish two
-      // overloads), so keying by name let an older overload's body escape the
-      // reader walk (REVIEW-M1-ACL-CLOSURE-R2 B4).
-      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
+  for (const mark of functionEvents(migrations)) {
+      const { key } = mark;
       if (mark.kind === "drop") {
         functions.delete(key);
         continue;
       }
-      const tail = sql.slice(mark.index);
+      if (mark.kind === "rename") {
+        const current = functions.get(key);
+        if (current) {
+          functions.delete(key);
+          functions.set(mark.nextKey, { ...current, name: mark.nextName, signature: mark.nextKey });
+        }
+        continue;
+      }
       if (mark.kind === "alter") {
         const current = functions.get(key);
         if (!current) continue;
-        const end = tail.indexOf(";");
-        const statement = flattenSql(end === -1 ? tail : tail.slice(0, end + 1));
+        const statement = flattenSql(mark.statement);
         if (/security\s+definer/i.test(statement)) current.definer = true;
         else if (/security\s+invoker/i.test(statement)) current.definer = false;
         continue;
       }
-      const found = functionBodyAt(tail);
+      if (mark.kind !== "create") continue;
+      const found = functionBodyAt(mark.statement);
       if (!found) continue;
       functions.set(key, {
         name: mark.name,
         signature: key,
         body: found.body,
+        head: found.head,
         definer: /security\s+definer/i.test(flattenSql(found.head)),
       });
-    }
   }
   return functions;
 }
@@ -1150,19 +1228,10 @@ function unreadableDeclarations(migrations) {
  */
 function declaredFunctionKeys(migrations) {
   const keys = new Set();
-  for (const { sql } of migrations) {
-    const marks = [];
-    for (const m of sql.matchAll(createFunctionRegex())) {
-      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
-    }
-    for (const m of sql.matchAll(dropFunctionRegex())) {
-      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
-    }
-    for (const mark of marks.sort((a, b) => a.index - b.index)) {
-      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
-      if (mark.kind === "drop") keys.delete(key);
-      else keys.add(key);
-    }
+  for (const mark of functionEvents(migrations)) {
+    if (mark.kind === "drop") keys.delete(mark.key);
+    else if (mark.kind === "create") keys.add(mark.key);
+    else if (mark.kind === "rename" && keys.delete(mark.key)) keys.add(mark.nextKey);
   }
   return keys;
 }
@@ -1346,27 +1415,41 @@ function unqualifiedColumnRefs(statement, table, columns, scopeDepth, boundNames
  * separately: `revoke ... from authenticated` does not take away what the role
  * inherits from PUBLIC, so reachability is the OR of the two.
  */
-function readExecuteModel(migrations, functions) {
+function readExecuteModel(migrations) {
   const state = new Map();
+  const declared = new Map();
   const stateOf = (key) => {
     if (!state.has(key)) {
       state.set(key, { public: true, authenticated: false, anon: false, service_role: false });
     }
     return state.get(key);
   };
-  for (const { sql } of migrations) {
-    const text = flattenSql(stripSqlNoise(sql));
-    for (const m of text.matchAll(executeStatementRegex())) {
-      if (m[1].toLowerCase() === "grant" && !/execute|all/.test(m[2])) continue;
-      const roles = m[6].split(",").map((r) => r.trim());
-      for (const key of executeTargetKeys(m[1].toLowerCase(), m[3].toLowerCase(), m[4] ?? null, functions)) {
-        const target = stateOf(key);
-        for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
-          if (!roles.includes(role)) continue;
-          target[role] = m[1].toLowerCase() === "grant";
+  for (const event of functionEvents(migrations)) {
+      if (event.kind === "create") {
+        if (!declared.has(event.key)) stateOf(event.key);
+        declared.set(event.key, true);
+      } else if (event.kind === "drop") {
+        declared.delete(event.key); state.delete(event.key);
+      } else if (event.kind === "rename" && declared.has(event.key)) {
+        declared.delete(event.key); declared.set(event.nextKey, true);
+        const acl = stateOf(event.key);
+        state.delete(event.key); state.set(event.nextKey, acl);
+      } else if (event.kind === "catalog-acl") {
+        for (const key of declared.keys()) {
+          const name = key.slice(0, key.indexOf("("));
+          if (!event.names.includes(name) && !(event.contains && name.includes(event.contains))) continue;
+          const acl = stateOf(key);
+          for (const role of event.roles) acl[role] = event.op === "grant";
         }
       }
-    }
+      if (event.kind !== "grant" && event.kind !== "revoke") continue;
+      for (const key of executeTargetKeys(event.kind, event.name, event.argList, declared)) {
+        const target = stateOf(key);
+        for (const role of CLIENT_EXECUTE_ROLES.concat("anon", "service_role")) {
+          if (!event.roles.includes(role)) continue;
+          target[role] = event.kind === "grant";
+        }
+      }
   }
   return state;
 }
@@ -1390,10 +1473,9 @@ function readExecuteModel(migrations, functions) {
 function executeTargetKeys(op, name, argList, functions) {
   const overloads = [...functions.keys()].filter((key) => key.startsWith(`${name}(`));
   if (overloads.length === 0) return op === "revoke" ? [] : [name];
-  // No argument list at all: Postgres accepts that only for a unique name, and
-  // what the statement reaches is exactly what this walk cannot pin down — so a
-  // revoke still narrows nothing (REVIEW-M1-ACL-CLOSURE-R4 D4).
-  if (argList === null) return op === "revoke" ? [] : overloads;
+  // Postgres permits an omitted signature only when the name is unique.
+  // Never narrow any overload for an ambiguous revoke (R4 D4).
+  if (argList === null) return overloads.length === 1 ? overloads : op === "revoke" ? [] : overloads;
   const key = signatureKey(name, argList, "reference");
   if (functions.has(key)) return [key];
   return op === "grant" ? overloads : [];
@@ -1410,37 +1492,13 @@ function executeTargetKeys(op, name, argList, functions) {
  */
 function unresolvedExecuteStatements(migrations) {
   const unresolved = [];
-  // Point in time, not against the final map: the chain grants and revokes
-  // `findback_login_email(text)` and then drops it in a LATER file, which is
-  // correct SQL and must not be reported (REVIEW-M1-ACL-CLOSURE-R3 C2). File
-  // order is the chain order, so each file's declarations (raw text, where the
-  // bodies still exist) are applied before that file's statements (noise
-  // stripped, where comments cannot be mistaken for SQL).
+  // Point in time, including order WITHIN a file and renamed identities.
   const declaredNow = new Set();
-  for (const { sql } of migrations) {
-    const marks = [];
-    for (const m of sql.matchAll(createFunctionRegex())) {
-      marks.push({ index: m.index, kind: "create", name: m[1].toLowerCase() });
-    }
-    for (const m of sql.matchAll(dropFunctionRegex())) {
-      marks.push({ index: m.index, kind: "drop", name: m[1].toLowerCase() });
-    }
-    for (const mark of marks.sort((a, b) => a.index - b.index)) {
-      const key = signatureKey(mark.name, parenBodyAt(sql, sql.indexOf("(", mark.index)));
-      if (mark.kind === "create") declaredNow.add(key);
-      else declaredNow.delete(key);
-    }
-    const statements = [];
-    for (const m of flattenSql(stripSqlNoise(sql)).matchAll(executeStatementRegex())) {
-      if (m[1].toLowerCase() === "grant" && !/execute|all/.test(m[2])) continue;
-      statements.push({
-        index: m.index,
-        kind: m[1].toLowerCase(),
-        name: m[3].toLowerCase(),
-        argList: m[4] === undefined ? null : m[4],
-      });
-    }
-    for (const statement of statements.sort((a, b) => a.index - b.index)) {
+  for (const statement of functionEvents(migrations)) {
+      if (statement.kind === "create") declaredNow.add(statement.key);
+      else if (statement.kind === "drop") declaredNow.delete(statement.key);
+      else if (statement.kind === "rename" && declaredNow.delete(statement.key)) declaredNow.add(statement.nextKey);
+      if (statement.kind !== "grant" && statement.kind !== "revoke") continue;
       if (PLATFORM_FUNCTIONS_WITHOUT_A_DECLARATION.includes(statement.name)) continue;
       const overloads = [...declaredNow].filter((key) => key.startsWith(`${statement.name}(`));
       if (overloads.length === 0) {
@@ -1450,7 +1508,7 @@ function unresolvedExecuteStatements(migrations) {
         continue;
       }
       if (statement.argList === null) {
-        unresolved.push(
+        if (overloads.length !== 1) unresolved.push(
           `${statement.kind} ${statement.name}: no argument list, so the statement names every overload`,
         );
         continue;
@@ -1460,7 +1518,6 @@ function unresolvedExecuteStatements(migrations) {
           `${statement.kind} ${statement.name}(${statement.argList.trim().replace(/\s+/g, " ")}): no declared signature of that name has this argument type list`,
         );
       }
-    }
   }
   return unresolved;
 }
@@ -1695,6 +1752,127 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
   const CHAIN = () => ls().map((file) => ({ file, sql: mig(file) }));
   const GRANTS = "20261015174749_client_read_grants_invoker_paths.sql";
 
+  it("M4 accepts compact column grants without hiding an ungranted column", () => {
+    const compact = [{ file: "compact.sql", sql: `
+      create table public.uploads(id text, width integer, height integer);
+      grant select(id,width) on public.uploads to authenticated;
+      create function public.read_upload() returns integer language sql as $$ select width from public.uploads; $$;
+    ` }];
+    assert.deepEqual(findColumnGrantGaps(compact), [{ table: "uploads", missing: ["height"] }]);
+    assert.deepEqual(findReaderGrantGaps(compact), []);
+  });
+
+  it("M4 resolves parameter comments and renamed signatures in source order", () => {
+    const chain = [{ file: "rename.sql", sql: `
+      create function public.original(p_id text, -- caller text, not another type
+        p_note text default null) returns text language sql as $$ select p_id; $$;
+      revoke all on function public.original(text,text) from public;
+      alter function public.original(text,text) rename to delegate;
+      revoke all on function public.delegate(text,text) from authenticated;
+      create function public.original(p_id text) returns text language sql as $$ select p_id; $$;
+      grant execute on function public.original(text) to authenticated;
+    ` }];
+    assert.deepEqual(unresolvedExecuteStatements(chain), []);
+    assert.deepEqual([...declaredFunctionKeys(chain)].sort(), ["delegate(text,text)", "original(text)"]);
+    const functions = readFunctionModel(chain);
+    assert.deepEqual([...functions.keys()].sort(), ["delegate(text,text)", "original(text)"]);
+    assert.equal(functions.get("delegate(text,text)")?.name, "delegate");
+    assert.deepEqual([...clientReachableFunctions(functions, readExecuteModel(chain, functions))], ["original(text)"]);
+  });
+
+  it("M4 keeps renamed ACLs distinct from a newly created wrapper with the old name", () => {
+    const chain = [{ file: "wrapper.sql", sql: `
+      create function public.reader() returns integer language sql security definer as $$ select 1; $$;
+      revoke all on function public.reader() from public,authenticated;
+      alter function public.reader() rename to internal_reader;
+      create function public.reader() returns integer language sql security invoker as $$ select 2; $$;
+    ` }];
+    const functions = readFunctionModel(chain);
+    assert.deepEqual([...clientReachableFunctions(functions, readExecuteModel(chain, functions))], ["reader()"]);
+    assert.equal(functions.get("internal_reader()")?.definer, true);
+    assert.equal(functions.get("reader()")?.definer, false);
+  });
+
+  it("M4 resets EXECUTE defaults on DROP/CREATE but preserves CREATE OR REPLACE grants", () => {
+    const locked = `create function public.reader() returns integer language sql as $$ select 1; $$;
+      revoke all on function public.reader() from public,authenticated;`;
+    const replaced = [{ file: "replace.sql", sql: `${locked}
+      create or replace function public.reader() returns integer language sql as $$ select 2; $$;` }];
+    const recreated = [{ file: "recreate.sql", sql: `${locked}
+      drop function public.reader(); create function public.reader() returns integer language sql as $$ select 2; $$;` }];
+    for (const [chain, expected] of [[replaced, []], [recreated, ["reader()"]]]) {
+      const functions = readFunctionModel(chain);
+      assert.deepEqual([...clientReachableFunctions(functions, readExecuteModel(chain, functions))], expected);
+    }
+  });
+
+  it("M4 reports an EXECUTE before declaration even in the same migration", () => {
+    const chain = [{ file: "order.sql", sql: `grant execute on function public.later(text) to authenticated;
+      create function public.later(p text) returns text language sql as $$ select p; $$;` }];
+    assert.equal(unresolvedExecuteStatements(chain).length, 1);
+  });
+
+  it("M4 applies a multi-function ACL list to each exact overload", () => {
+    const chain = [{ file: "list.sql", sql: `
+      create function public.one(p text) returns text language sql as $$ select p; $$;
+      create function public.two(p text,n integer) returns text language sql as $$ select p; $$;
+      revoke all on function public.one(text),public.two(text,integer) from public,authenticated;
+      grant execute on function public.two(text,integer), public.one(text) to service_role;
+    ` }];
+    const functions = readFunctionModel(chain);
+    const execute = readExecuteModel(chain);
+    assert.deepEqual([...clientReachableFunctions(functions, execute)], []);
+    assert.equal(execute.get("one(text)")?.service_role, true);
+    assert.equal(execute.get("two(text,integer)")?.service_role, true);
+    assert.deepEqual(unresolvedExecuteStatements(chain), []);
+  });
+
+  it("M4 models only the reviewed immutable R4 dynamic ACL block and rejects mutations", () => {
+    const block = splitSql(mig("20261029020000_chat_r4_consolidation.sql"))
+      .find(s => s.includes("execute format('revoke all on function %s"));
+    assert.ok(block);
+    const prefix = `create function public.secret_chat() returns integer language sql security definer as $$ select 1; $$;
+      create function public.other() returns integer language sql as $$ select 2; $$;`;
+    const chain = [{ file: "dynamic.sql", sql: `${prefix} ${block};` }];
+    const functions = readFunctionModel(chain);
+    assert.deepEqual([...clientReachableFunctions(functions, readExecuteModel(chain))], ["other()"]);
+    assert.throws(() => readExecuteModel([{ file: "mutant.sql", sql: `${prefix} ${block.replace("'%chat%'", "'%other%'")};` }]),
+      /Unmodelled dynamic function ACL/);
+  });
+
+  it("M4 rejects meaningful literal case and dynamic ACL syntax/role mutations", () => {
+    const blocks = splitSql(mig("20261029020000_chat_r4_consolidation.sql"));
+    const revoke = blocks.find(s => s.includes("execute format('revoke all on function %s"));
+    const grant = blocks.find(s => s.includes("execute format('grant execute on function %s"));
+    assert.ok(revoke && grant);
+    for (const mutant of [
+      revoke.replace("'%chat%'", "'%CHAT%'"),
+      grant.replace("format('grant", "format ('grant").replace("to service_role", "to authenticated"),
+      grant.replace("execute format(", "execute pg_catalog.format ("),
+      "do $$ begin execute 'grant execute on ' || 'function public.reader() to authenticated'; end $$",
+    ]) {
+      assert.throws(() => readExecuteModel([{ file: "mutant.sql", sql: `${mutant};` }]),
+        /Unmodelled dynamic function ACL/, mutant);
+    }
+  });
+
+  it("M4 requires both reviewed ACL loops in the immutable R4 migration", () => {
+    const file = "20261029020000_chat_r4_consolidation.sql";
+    const blocks = splitSql(mig(file));
+    for (const verb of ["revoke all", "grant execute"]) {
+      const sql = blocks.filter(s => !s.includes(`execute format('${verb} on function %s`)).join(";\n");
+      assert.throws(() => readExecuteModel([{ file, sql }]), /Missing reviewed R4 dynamic function ACL/);
+    }
+  });
+
+  it("M4 resolves a unique bare-name revoke without narrowing ambiguous siblings", () => {
+    const chain = [{ file: "unique.sql", sql: `create function public.unique_fn() returns integer language sql as $$ select 1; $$;
+      revoke all on function public.unique_fn from public,authenticated;` }];
+    const functions = readFunctionModel(chain);
+    assert.deepEqual(unresolvedExecuteStatements(chain), []);
+    assert.deepEqual([...clientReachableFunctions(functions, readExecuteModel(chain))], []);
+  });
+
   it("every column a client-reachable reader asks for is readable", () => {
     assert.deepEqual(findReaderGrantGaps(CHAIN()), []);
   });
@@ -1703,8 +1881,9 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     // This is the finding that failed the media-only guard: two invoker readers
     // ask for comments.parent_id/depth against a grant that stops at body, and
     // both feed readers ask for reactions.user_id against a grant that never
-    // had it. Remove the migration that closed them and both come back.
-    const without = CHAIN().filter(({ file }) => file !== GRANTS);
+    // had it. Test that historical prefix: the later privacy kernel deliberately
+    // converts comments to a definer and retires its old invoker grant needs.
+    const without = CHAIN().filter(({ file }) => file < GRANTS);
     assert.deepEqual(findReaderGrantGaps(without), [
       { table: "comments", missing: ["depth", "parent_id"] },
       { table: "reactions", missing: ["user_id"] },
@@ -2052,7 +2231,7 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     assert.deepEqual(findReaderGrantGaps(chain), [{ table: "uploads", missing: ["width"] }]);
   });
 
-  it("does not narrow on a bare-name revoke either (R4 D4)", () => {
+  it("does not narrow on an ambiguous bare-name revoke either (R4 D4)", () => {
     const chain = [
       {
         file: "a.sql",
@@ -2060,7 +2239,7 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
       },
       {
         file: "b.sql",
-        sql: "create function public.findback_probe_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$;",
+        sql: "create function public.findback_probe_client(p_id text) returns void language sql security invoker as $$ select width from public.uploads where id = p_id; $$; create function public.findback_probe_client(p_id text, p_note text) returns void language sql as $$ select 1; $$;",
       },
       {
         file: "c.sql",
@@ -2957,8 +3136,7 @@ describe("typed report reference on comments (20261017052000)", () => {
 // role, and the A4 gate below would fail if the split were undone. The extension
 // runs at load time, before the gates that read the set.
 // ---------------------------------------------------------------------------
-CLIENT_REACHABLE_DEFINERS.push("findback_is_blocked_with_me", "findback_my_blocks");
-CLIENT_REACHABLE_DEFINERS.sort();
+// Block readers are pinned in the single immutable definer list above.
 
 describe("visibility kernel, blocking and the O5/D21 readers (20261017070000)", () => {
   const B1 = "20261017070000_visibility_kernel_and_blocks.sql";
@@ -3507,54 +3685,27 @@ describe("visibility kernel, blocking and the O5/D21 readers (20261017070000)", 
     );
   });
 
-  it("keeps the M2 typed-reference shape the I4a client depends on", () => {
-    // Read the LAST migration that creates or replaces the reader, not B1 by
-    // name: the client receives whatever body applies last, so a later
-    // re-creation that drops the pointer, the kind, the order or the unfiltered
-    // subquery fails here. Today that file is B1; the M2 block above pins the
-    // historical body it was sliced from.
-    const readerFile = ls()
-      .filter((name) => mig(name).includes("create or replace function public.findback_list_comments_client("))
-      .pop();
-    assert.ok(readerFile, "some migration creates the comment reader");
-    const authored = bodyLines(mig(readerFile), "findback_list_comments_client");
-    const joined = authored.join("\n");
+  it("keeps typed references and tombstones while filtering private target pointers", () => {
+    // Historical B1 stays pinned above. The effective reader now belongs to the
+    // comment privacy kernel: inaccessible report targets must NOT leak pointers.
+    const fn = readFunctionModel(ls().map(file => ({ file, sql: mig(file) })))
+      .get("findback_list_comments_client(text)");
+    assert.ok(fn, "effective comment reader is registered");
+    const joined = flattenSql(fn.body).replace(/\s/g, "");
     for (const field of [
-      "'kind', a.kind,",
-      "'display_order', a.display_order,",
-      "'report_post_id', a.report_post_id,",
+      "'kind',a.kind,",
+      "'display_order',a.display_order,",
+      "'report_post_id',a.report_post_id,",
     ]) {
       assert.ok(joined.includes(field), `the attachment projection still carries ${field}`);
     }
 
-    // No kind filter and no pointer filter: a `report` row AND a tombstone
-    // (`report_post_id is null`) both reach the client. The mapper gates on
-    // kind; if the reader filtered here, state B could never render.
-    const fromAt = authored.indexOf("from public.comment_attachments a");
-    assert.ok(fromAt >= 0, "the attachment subquery still reads the attachment table");
-    assert.equal(
-      authored[fromAt + 1],
-      "where a.comment_id = c.id",
-      "the subquery is scoped to the comment only — never filtered by kind or pointer",
-    );
-    assert.equal(
-      authored[fromAt + 2],
-      "), '[]'::jsonb) as attachments,",
-      "the aggregate stays the attachments OUT value",
-    );
-    assert.ok(
-      joined.includes("order by a.display_order asc, a.created_at asc, a.id asc"),
-      "descriptor order is still server-ordered",
-    );
-
+    assert.ok(joined.includes("orderbya.display_order,a.created_at,a.id"), "stable attachment ordering");
+    assert.ok(joined.includes("frompublic.comment_attachmentsawherea.comment_id=c.id" +
+      "and(a.kind<>'report'ora.report_post_idisnullorpublic.findback_can_read_post_for(a.report_post_id,auth.uid()::text)))"),
+      "exact scope keeps media/null tombstones and requires current-viewer visibility for report pointers");
     // The OUT declaration keeps the column the mapper reads.
-    const marker = "create or replace function public.findback_list_comments_client";
-    const declaration = norm(
-      mig(readerFile).slice(
-        mig(readerFile).indexOf(marker),
-        mig(readerFile).indexOf("as $$", mig(readerFile).indexOf(marker)),
-      ),
-    );
+    const declaration = flattenSql(fn.head);
     assert.ok(declaration.includes("attachments jsonb"), "attachments is still an OUT column");
 
     // The writer returns comment + author columns only, so a just-sent card can

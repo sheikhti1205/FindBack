@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -263,7 +263,7 @@ describe("PostDetail inline comment threads", () => {
     expect(document.getElementById(`detail-comment-${target}`)?.className).toContain("bg-surface-container/60");
   });
 
-  it("deleting a parent drops its expanded thread state", async () => {
+  it("confirmed parent deletion drops its thread and refuses stale same-ID resurrection", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const original = [
       makeComment("r1", "rootOne", "first root"),
@@ -289,8 +289,8 @@ describe("PostDetail inline comment threads", () => {
     expect(screen.queryByText("second root reply c")).toBeNull();
     // The surviving thread is untouched.
     expect(screen.getByText("first root reply a")).toBeTruthy();
-    // Re-add a same-id thread through the authorized list, never broadcast
-    // content. Its old expansion must still be forgotten.
+    // An authorized list can still be stale. Confirmed deleted IDs are never
+    // reused/restored in the screen lifetime; preserve the anti-resurrection fence.
     postsMock.fetchComments.mockResolvedValue([
       ...original.filter(c => c.id.startsWith("r1")), makeComment("r2", "rootTwo", "second root returns"),
       ...([["r2a", "u3", "returned reply a"], ["r2b", "u4", "returned reply b"], ["r2c", "u5", "returned reply c"], ["r2d", "u6", "returned reply d"]] as const)
@@ -298,11 +298,13 @@ describe("PostDetail inline comment threads", () => {
     ]);
     const invalidate = realtimeHandlers.get("comment:invalidate");
     expect(invalidate).toBeTruthy();
-    invalidate!({ postId: "p1", invalidate: true });
-    const revived = (await screen.findByText("second root returns")).closest("li") as HTMLElement;
-    expect(within(revived).getByText("returned reply a")).toBeTruthy();
-    expect(within(revived).queryByText("returned reply c")).toBeNull();
-    expect(within(revived).getByRole("button", { name: /view 2 more replies/i })).toBeTruthy();
+    const calls = postsMock.fetchComments.mock.calls.length;
+    await act(async () => { invalidate!({ postId: "p1", invalidate: true }); });
+    await waitFor(() => expect(postsMock.fetchComments.mock.calls.length).toBeGreaterThan(calls));
+    await waitFor(() => expect(document.getElementById("detail-comment-r2")).toBeNull());
+    expect(screen.queryByText("second root returns")).toBeNull();
+    expect(screen.queryByText("returned reply a")).toBeNull();
+    expect(screen.getByText("first root reply a")).toBeTruthy();
   });
 
   it("shows no view-more or hide control when a thread has exactly two replies", async () => {

@@ -23,7 +23,7 @@ export interface VersionedText {
 }
 
 export const SYSTEM_POLICY_VERSION = "policy-2026-09-25.1";
-export const KNOWLEDGE_VERSION = "kb-2026-10-26.1";
+export const KNOWLEDGE_VERSION = "kb-2026-10-30.1";
 
 /** Mirrors `MAX_PROMPT` in services/openRouter.ts (checkedPrompt). */
 export const MAX_PROMPT_CHARS = 2_400;
@@ -59,10 +59,6 @@ export const UNAVAILABLE_FEATURES: ReadonlyArray<{
   readonly label: string;
   readonly pattern: RegExp;
 }> = [
-  {
-    label: "private messaging",
-    pattern: /\b(?:private|direct)\s+messag\w*\b|\bdms?\b|\bmessage\s+(?:another|other)\s+(?:user|person)\b/i,
-  },
   { label: "face recognition", pattern: /\bface (?:recognition|detection|scan)\b/i },
   {
     label: "automatic background matching",
@@ -100,10 +96,11 @@ export const CURRENT_KNOWLEDGE_FACTS: KnowledgeFacts = Object.freeze({
   tabs: Object.freeze(["Home", "Search", "Report", "Profile"]),
   features: Object.freeze([
     "Report: Lost or Found — title, description, category, date, photo, location, YouTube link; statuses OPEN, MATCHED, RECOVERED, CLOSED",
-    "Comments, 1–5 star ratings, one reaction per user; up to 3 Possible Matches by similarity, not probability",
+    "Comments, new Like-only reactions, recovery ratings; 3 Possible Matches by similarity",
+    "Private messaging: text requests, connected images; not end-to-end encrypted",
     "Notifications for reactions, comments, mentions, status changes; mark read/unread or delete; swipe right toggles read, swipe left deletes",
     "Account deletion under Settings",
-    "Search: listing text, category, status, sort, Lost/Found; results are listings, not AI",
+    "Search: listing text, category, status, sort, Lost/Found; not AI",
   ]),
   privacy: Object.freeze([
     "photos stay on the device until publish",

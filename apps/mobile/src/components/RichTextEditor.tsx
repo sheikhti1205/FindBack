@@ -735,8 +735,10 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
       editable: !disabled,
       immediatelyRender: false,
       editorProps: {
-        attributes: {
-          "aria-label": label,
+         attributes: {
+           role: "textbox",
+           "aria-multiline": "true",
+           "aria-label": label,
            class: `tiptap min-h-[120px] max-h-[240px] rounded-m3-sm border bg-surface px-3.5 py-3 text-base focus:border-on-surface focus:outline-none overflow-y-auto overscroll-contain ${error ? "border-error" : "border-outline-variant"}`,
         },
         handlePaste: (view, event) => {

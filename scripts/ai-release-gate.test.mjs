@@ -3925,13 +3925,13 @@ describe("validateVisionTruth", () => {
     );
   });
 
-  it("fails when the vision seam is absent (text-only skeleton)", () => {
+  it("does not require a retired generative vision seam in a text-only product", () => {
     const errors = validateVisionTruth({
       offlineSource: "// text-only adapter, no vision seam",
       runtimesSource: REAL.runtimesSource,
       capabilitiesSource: REAL.capabilitiesSource,
     });
-    ok(errors.some((e) => e.includes("seam")), `expected seam complaint, got: ${errors}`);
+    deepStrictEqual(errors, []);
   });
 
   it("fails when capability copy claims ready vision without device evidence", () => {
@@ -4119,13 +4119,15 @@ describe("photo truth survives contradictory copy (review r1 counterexamples)", 
   });
 
   it("rejects a claim whose wording contains a declaration keyword", () => {
+    const knowledgeSource = REAL.knowledgeSource.replace(
+      /"Comments, new Like-only reactions[^"]*",/,
+      '"Use the label: Photo analysis fills in your report details.",',
+    );
+    ok(knowledgeSource !== REAL.knowledgeSource, "the attack must mutate a current rendered fact");
     const errors = validatePhotoAnalysisTruth({
       clientCapabilitiesSource: REAL.clientCapabilitiesSource,
       serverCapabilitiesSource: REAL.serverCapabilitiesSource,
-      knowledgeSource: REAL.knowledgeSource.replace(
-        /"Comments, 1–5 star ratings[^"]*",/,
-        '"Use the label: Photo analysis fills in your report details.",',
-      ),
+      knowledgeSource,
       faqSource: REAL.faqSource,
     });
     ok(errors.some((e) => e.includes("app knowledge facts") && e.includes("without an unconditional denial")), errors.join("\n"));
@@ -4268,12 +4270,14 @@ describe("photo truth survives the r2 attack matrix (CF-TRUTH-028 r3)", () => {
 
   it("still treats the unavailable-feature label as a name, not copy", () => {
     deepStrictEqual(validatePhotoAnalysisTruth(realPhoto), []);
+    const knowledgeSource = REAL.knowledgeSource.replace(
+      /"Comments, new Like-only reactions[^"]*",/,
+      '"label: Photo analysis fills in your report details.",',
+    );
+    ok(knowledgeSource !== REAL.knowledgeSource, "the attack must mutate a current rendered fact");
     const errors = validatePhotoAnalysisTruth({
       ...realPhoto,
-      knowledgeSource: REAL.knowledgeSource.replace(
-        /"Comments, 1–5 star ratings[^"]*",/,
-        '"label: Photo analysis fills in your report details.",',
-      ),
+      knowledgeSource,
     });
     ok(errors.length > 0, "a rendered value outside the unavailable list must still be judged");
   });
@@ -4331,12 +4335,14 @@ describe("photo truth survives the r2 attack matrix (CF-TRUTH-028 r3)", () => {
   });
 
   it("judges a name that is not the unavailable-feature label", () => {
+    const knowledgeSource = REAL.knowledgeSource.replace(
+      /"Comments, new Like-only reactions[^"]*",/,
+      '"name": "Photo analysis fills in your report details.",',
+    );
+    ok(knowledgeSource !== REAL.knowledgeSource, "the attack must mutate a current rendered fact");
     const errors = validatePhotoAnalysisTruth({
       ...realPhoto,
-      knowledgeSource: REAL.knowledgeSource.replace(
-        /"Comments, 1–5 star ratings[^"]*",/,
-        '"name": "Photo analysis fills in your report details.",',
-      ),
+      knowledgeSource,
     });
     ok(errors.some((e) => e.includes("app knowledge facts") && e.includes("without an unconditional denial")), errors.join("\n"));
   });

@@ -120,6 +120,19 @@ describe("richTextEditor converters", () => {
 });
 
 describe("RichTextEditor", () => {
+  it("exposes the description as a named multiline textbox with its editing state", () => {
+    const { rerender } = render(<RichTextEditor label="Description" value="Blue wallet" onChange={() => {}} />);
+    const input = screen.getByRole("textbox", { name: "Description" });
+    expect(input.textContent).toBe("Blue wallet");
+    expect(input.getAttribute("aria-multiline")).toBe("true");
+    expect(input.getAttribute("contenteditable")).toBe("true");
+    expect(input.getAttribute("aria-disabled")).toBe("false");
+    rerender(<RichTextEditor label="Description" value="Blue wallet" onChange={() => {}} disabled />);
+    expect(screen.getByRole("textbox", { name: "Description" })).toBe(input);
+    expect(input.getAttribute("contenteditable")).toBe("false");
+    expect(input.getAttribute("aria-disabled")).toBe("true");
+  });
+
   it("locks the same editor and formatting rail in fullscreen without trapping the close action", () => {
     const ref = createRef<Editor | null>();
     const { rerender } = render(<RichTextEditor label="Description" value="Wallet" onChange={() => {}} editorRef={ref} />);

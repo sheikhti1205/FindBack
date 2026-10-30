@@ -8,30 +8,10 @@ import { SettingsGroup, SettingsPage } from "../components/settings";
  * ONE owner for the wording. The three documents describe the same app, so
  * they live in one file and cannot drift apart.
  *
- * THE RULE FOR THIS COPY: every statement must be true of the app that ships
- * today. Where a capability is designed but not built (leaving a rating,
- * editing or deleting a single report, reporting another reader, moderation
- * tooling, chat transcripts written to disk), these documents say nothing about
- * it instead of promising it. The owner reviews this wording before release.
- *
- * WHAT THE WORDING WAS CHECKED AGAINST — the shipped surfaces, read in the
- * code before the copy was written:
- *   - report photos, avatars and comment attachments go to FindBack's own
- *     storage;
- *   - a chat message, and the conversation context needed to answer it, go to
- *     the cloud provider the reader picks; the chat transcript itself is held
- *     in the app's memory for that session and is not written to the device;
- *   - the local search and report-field helpers never leave the device;
- *   - a reader can change a report's status, delete their own comments, and
- *     delete their account with its reports and photos;
- *   - a shared report link opens for a reader who has a FindBack account;
- *   - the list of reports you save is kept on the device first, per account.
- *
- * A claim that outran the code once already: the first draft of these
- * documents promised ratings, report deletion, report editing, chat kept "in
- * protected storage", and a shared report that "anyone with the link" can
- * open. None of those shipped. `Legal.test.tsx` now refuses that class of
- * sentence, so the next change cannot quietly promise a capability again.
+ * Copy follows current report/recovery, R4 messaging and M3 retention contracts.
+ * Peer history is durable device data; optional cloud AI Chat is session memory.
+ * Safety retention is deliberate, not a promise to erase every record.
+ * Owner/legal release review remains separate from engineering verification.
  */
 
 function Paragraph({ children }: { children: ReactNode }) {
@@ -70,14 +50,15 @@ export function Terms() {
           about the item rather than about people.
         </Paragraph>
         <Paragraph>
-          You keep control of your own content: you can change a report's status at any time, and
-          you can delete your own comments.
+          You can edit or delete your own report, subject to recovery and safety restrictions,
+          change its status when allowed, and delete your own comments. Recovery-linked ratings
+          are available to the people involved in a completed return, not to every report reader.
         </Paragraph>
       </SettingsGroup>
 
       <SettingsGroup title="Optional AI features">
         <Paragraph>
-          Chat is optional and works through the cloud provider you choose in Settings. The
+          AI Chat is optional and works through the cloud provider you choose in Settings. The
           messages you send, and the conversation context needed to answer them, go to that
           provider. Search and report-field suggestions can run on this phone instead, and those
           requests never leave the device.
@@ -85,6 +66,15 @@ export function Terms() {
         <Paragraph>
           AI answers can be wrong, incomplete or out of date. Check anything important against the
           report itself.
+        </Paragraph>
+      </SettingsGroup>
+
+      <SettingsGroup title="Messages and safety">
+        <Paragraph>
+          Private messages between people are separate from AI Chat. A message request starts
+          with text; image sharing is available after connection. You can block a person or
+          report abuse. Messages are not end-to-end encrypted, and reporting content can preserve
+          a limited safety copy for authorized staff review.
         </Paragraph>
       </SettingsGroup>
 
@@ -112,11 +102,12 @@ export function PrivacyPolicy() {
     >
       <SettingsGroup title="What stays on your phone">
         <Paragraph>
-          Your settings, your appearance and the AI models you downloaded stay on your phone. The
-          items you have already loaded, and the chat conversations you have had, are held in the
-          app's memory while the app is open, separately for each account, and are gone when you
-          close it. The list of reports you save — which reports, their titles and the time you
-          saved them — is kept on this phone too, separately for each account.
+          Your settings, your appearance and the AI models you downloaded stay on your phone.
+          AI Chat conversations are held in memory while the app is open, separately for each
+          account, and are gone when you close it. Private messages between people are stored on
+          your device so accepted history can be read offline. The list of reports you save is
+          kept on this phone too, separately for each account. This beta has no consumer Drive
+          backup option; keep that in mind before clearing app data or changing phones.
         </Paragraph>
       </SettingsGroup>
 
@@ -131,6 +122,16 @@ export function PrivacyPolicy() {
         </Paragraph>
       </SettingsGroup>
 
+      <SettingsGroup title="Private messages">
+        <Paragraph>
+          FindBack uses temporary server delivery to your registered devices and private storage
+          for shared images. Delivery copies are removed as devices acknowledge them or they
+          expire; this is not a permanent server archive of your conversations. Push notifications
+          wake the app without carrying message text. Messages are not end-to-end encrypted.
+          The other person may keep copies, screenshots or saved files that FindBack cannot erase.
+        </Paragraph>
+      </SettingsGroup>
+
       <SettingsGroup title="What leaves your phone when you use AI chat">
         <Paragraph>
           Only when you write to the assistant: the message you send and the conversation context
@@ -142,30 +143,33 @@ export function PrivacyPolicy() {
       <SettingsGroup title="Who can see your reports">
         <Paragraph>
           Reports are meant to be found by other people, so other FindBack users can see your
-          report, its photos and the comments on it. A shared report link opens for anyone with a
-          FindBack account who follows it. Do not put anything private in a report, a comment or a
-          photo.
+          report, its photos and the comments on it. A shared report link requires a FindBack
+          account and access to that report. Do not put anything private in a report, a comment
+          or a photo.
         </Paragraph>
       </SettingsGroup>
 
-      <SettingsGroup title="Community ratings">
+      <SettingsGroup title="Recovery ratings">
         <Paragraph>
-          A report can show a community rating: the average score from the ratings readers left in
-          the past, and your own score if you are one of them. The app does not take new ratings.
-          Other readers see the average and how many ratings there are — never who rated.
+          After a completed recovery, the people involved can rate the return. These ratings
+          contribute to reputation; they are not open ratings on arbitrary reports. Older report
+          ratings may remain visible as historical data.
         </Paragraph>
       </SettingsGroup>
 
       <SettingsGroup title="Deleting your data">
         <Paragraph>
           You can delete your account from Settings → Account. That removes your account, your
-          reports and their photos, and your comments — and the reactions and past ratings you left.
-          You can also delete your own comments; the person who
-          published a report can delete comments on it.
+          reports and their photos, comments and reactions. You can also delete your own comments;
+          the person who published a report can delete comments on it. Deletion cannot erase
+          copies already kept by another person.
         </Paragraph>
         <Paragraph>
-          The list of reports you saved stays on this phone. It holds only which reports you saved,
-          their titles and the time you saved them.
+          Limited safety records are retained after account deletion: reported-content evidence
+          for up to 90 days, and appeal, moderation and audit records to preserve case decisions.
+          Live account links are removed where possible, but some decision identifiers and the
+          text supplied in an appeal remain. Do not include unnecessary personal information in
+          an appeal or abuse report. Private support feedback is deleted with your account.
         </Paragraph>
       </SettingsGroup>
     </SettingsPage>

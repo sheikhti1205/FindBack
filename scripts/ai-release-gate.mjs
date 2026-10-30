@@ -14,10 +14,10 @@
  *                        prohibition on conditional acquisition)
  *   4. abi-artifacts  — the Android ABI split config is missing a supported
  *                        ABI (armeabi-v7a, arm64-v8a, x86_64)
- *   5. vision-truth   — the production vision seam or its local-vision
- *                        registration is absent (text-only skeleton tree), OR
- *                        shipped capability copy claims ready vision without
- *                        device measurement
+ *   5. vision-truth   — shipped capability copy claims ready vision. Positive
+ *                        generative vision seams are retired, not requirements.
+ *                        Native retirement and photo-analysis checks below
+ *                        prevent their production revival.
  *   6. runtime-wiring — a task-spec runtime has no production adapter, a
  *                        foreign (lab) runtime is registered as routable, or
  *                        the orchestrator lets deterministic-local shadow
@@ -89,7 +89,6 @@ const REPO_ROOT = resolve(HERE, "..");
 export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/modelProfiles.ts",
   "apps/mobile/src/services/ai/providers/offline.ts",
-  "apps/mobile/src/services/ai/vision/backendSelector.ts",
   "apps/mobile/src/services/ai/genericEndpoint.ts",
   "apps/mobile/src/services/appCapabilities.ts",
   "apps/mobile/src/services/ai/uiGates.ts",
@@ -105,7 +104,6 @@ export const SHIPPED_AI_FILES = [
   "apps/mobile/src/services/ai/residencyCoordinator.ts",
   "apps/mobile/src/services/ai/applicationAi.ts",
   "apps/mobile/src/services/ai/providerRegistry.ts",
-  "apps/mobile/src/services/ai/vision/native.ts",
   "apps/mobile/src/services/ai/download/driver.ts",
   "apps/mobile/src/screens/DownloadedModels.tsx",
   "apps/mobile/android/app/src/main/java/com/findback/app/vlm/EmbeddingPlugin.kt",
@@ -197,24 +195,12 @@ function checkAbiArtifacts() {
 }
 
 /**
- * Skeleton-tree detector for the production vision path. Fails when:
- * - the offline adapter has no image-capable seam (text-only skeleton), or
- * - no local-vision production adapter is registered, or
- * - capability copy claims ready vision (no device measurement has landed).
- *
- * `vision_unsupported` remains a legitimate fail-closed error code; this
- * check asserts the seam exists, not the absence of the refusal string.
+ * Only the truthful-copy invariant survives. The shipped product deliberately
+ * has no generative vision bridge. Keeping an unused TypeScript seam alive is
+ * not release acceptance; validateRetiredNativeIntegration guards native absence.
  */
-export function validateVisionTruth({ offlineSource, runtimesSource, capabilitiesSource }) {
+export function validateVisionTruth({ capabilitiesSource }) {
   const errors = [];
-  for (const marker of ["OfflineVisionNativeBridge", "visionBridge?:", "completeOfflineVision"]) {
-    if (!offlineSource.includes(marker)) {
-      errors.push(`vision-truth: offline adapter has no production vision seam (${marker} absent)`);
-    }
-  }
-  if (!runtimesSource.includes("LOCAL_VISION_RUNTIME_ID") || !runtimesSource.includes("visionRuntime(")) {
-    errors.push("vision-truth: no local-vision production adapter registered");
-  }
   for (const pattern of VISION_CLAIM_RES) {
     if (pattern.test(capabilitiesSource)) {
       errors.push(`vision-truth: capability copy claims ready vision (${pattern})`);
@@ -265,17 +251,13 @@ export function validateRuntimeWiring({ registrySource, runtimesSource, orchestr
 }
 
 function checkVisionTruth() {
-  let offline;
-  let runtimes;
   let capabilities;
   try {
-    offline = read("apps/mobile/src/services/ai/providers/offline.ts");
-    runtimes = read("apps/mobile/src/services/ai/orchestrator/productionRuntimes.ts");
     capabilities = read("apps/mobile/src/services/appCapabilities.ts");
   } catch (error) {
     return [`vision-truth: cannot read vision source (${error.message})`];
   }
-  return validateVisionTruth({ offlineSource: offline, runtimesSource: runtimes, capabilitiesSource: capabilities });
+  return validateVisionTruth({ capabilitiesSource: capabilities });
 }
 
 /**
@@ -8024,7 +8006,7 @@ checks (any failure exits 1):
   license-bundle    lfm1.0 arms blocked on the bundle channel
   model-notices     exact source-linked license/attribution/NOTICE text and artifact digests
   abi-artifacts     ABI split config carries every supported ABI
-   vision-truth      production vision seam + registration present, copy honest
+  vision-truth      no false ready-vision claim (generative vision is retired)
    photo-analysis-truth  no copy claims the removed photo analysis; both corpora deny it
   runtime-wiring    every spec runtime has a production adapter, no lab routes
   descriptor-registry  named descriptors, approved runtimes/formats/ABIs, curated catalogue, fail-closed removal, coordinated residency, enforced ABIs, role-gated selection, raw text boundary, exhaustive interpreters, explicit default

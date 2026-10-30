@@ -25,13 +25,29 @@ const UNBUILT_CAPABILITIES: readonly { pattern: RegExp; missing: string }[] = [
   { pattern: /your rating\b/i, missing: "a rating the reader is told they can still leave" },
   { pattern: /protected storage/i, missing: "chat transcripts written to protected storage (the store is in-memory)" },
   { pattern: /anyone with the link/i, missing: "opening a shared report without an account" },
-  { pattern: /add (a photo|a detail|details|photos) to (that|your|the) report/i, missing: "editing a report" },
-  { pattern: /delete it — the app lets you|delete your report/i, missing: "deleting a single report" },
-  { pattern: /you can (remove|erase|withdraw|take down) (a|your|any) report/i, missing: "deleting a single report" },
   { pattern: /by using the app you accept/i, missing: "an acceptance the reader never saw" },
 ];
 
 describe("legal documents", () => {
+  it("distinguishes durable peer messages from ephemeral AI chat and discloses safety retention", () => {
+    const { container } = render(<MemoryRouter><PrivacyPolicy /></MemoryRouter>);
+    const copy = container.textContent ?? "";
+    expect(copy).toMatch(/private messages[^.]*stored on (?:this|your) device/i);
+    expect(copy).toMatch(/not end-to-end encrypted/i);
+    expect(copy).toMatch(/temporar(?:y|ily)[^.]*deliver/i);
+    expect(copy).toMatch(/AI Chat[^.]*memory/i);
+    expect(copy).toMatch(/90 days/);
+    expect(copy).toMatch(/retain[^.]*safety|safety[^.]*retain/i);
+    expect(copy).toMatch(/appeal[^.]*retain|retain[^.]*appeal/i);
+  });
+
+  it("describes existing report controls and recovery-linked ratings without promising arbitrary report ratings", () => {
+    const { container } = render(<MemoryRouter><Terms /><PrivacyPolicy /></MemoryRouter>);
+    const copy = container.textContent ?? "";
+    expect(copy).toMatch(/edit or delete your (?:own )?report/i);
+    expect(copy).toMatch(/recovery[^.]*rat(?:e|ing)/i);
+    expect(copy).not.toMatch(/app does not take new ratings/i);
+  });
   it("states what the reader is responsible for on a report", () => {
     renderScreen(<Terms />);
     expect(screen.getByRole("heading", { level: 1, name: "Terms of use" })).toBeTruthy();

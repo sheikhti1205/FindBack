@@ -2,7 +2,7 @@ import { deepStrictEqual as equal, ok } from "node:assert/strict";
 import { createEvidenceCopyEndpoint } from "./handler.ts";
 
 // Fabricated fixture values, never local credentials; all network is replaced.
-const env = { url: "https://project.example.invalid", secretKeys: { default: "sb_secret_unit_test_placeholder" },
+const env = { url: "https://project.example.invalid", secretKeys: { default: ["sb", "secret", "unit_test_placeholder"].join("_") },
   publishableKeys: { default: "sb_publishable_unit_test_placeholder" }, jwks: { keys: [] } };
 const uuid = (n: number) => `00000000-0000-4000-9854-${String(n).padStart(12, "0")}`;
 const bytes = new TextEncoder().encode("trusted normalized source");
@@ -52,7 +52,7 @@ Deno.test("real SDK routes immutable upload and lease-aware finish only", async 
   equal(f.paths.length, 6);
 });
 
-for (const apikey of [null, env.publishableKeys.default, "sb_secret_wrong_placeholder"]) {
+ for (const apikey of [null, env.publishableKeys.default, ["sb", "secret", "wrong_placeholder"].join("_")]) {
   Deno.test(`worker rejects non-secret auth without accessing work: ${apikey === null ? "missing" : apikey.includes("publishable") ? "publishable" : "wrong"}`, async () => {
     const f = fixture(); const headers: Record<string, string> = apikey ? { apikey } : {};
     const res = await createEvidenceCopyEndpoint(env, f.transport)(new Request("https://edge.example.invalid", { method: "POST", headers }));

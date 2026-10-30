@@ -34,6 +34,17 @@ const RETIRED_CLAIMS: Array<[RegExp, string]> = [
 ];
 
 describe("capability docs", () => {
+  it("reflects like-only reactions, recovery ratings and shipped peer messaging", () => {
+    expect(APP_CAPABILITIES.social.join(" ")).toMatch(/Like only/i);
+    expect(APP_CAPABILITIES.social.join(" ")).toMatch(/recovery/i);
+    expect(APP_CAPABILITIES.unavailable).not.toContain("private messaging");
+    for (const copy of [mobileCopy, edgeSummary]) {
+      expect(copy).not.toMatch(/Love, Helpful, Support or Wow/);
+      expect(copy).toMatch(/private messag/i);
+      expect(copy).toMatch(/not end-to-end encrypted/i);
+      expect(copy).toMatch(/safety[^.]*retain|retain[^.]*safety/i);
+    }
+  });
   it("stays in sync with the server-side mirror", () => {
     const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
     expect(match?.[1]).toBe(CAPABILITIES_VERSION);

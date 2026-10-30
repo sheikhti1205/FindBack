@@ -7,25 +7,27 @@
  * Cloud BYOK and verified Android offline installs are separate paths.
  * Static product facts do not establish device performance.
  */
-export const CAPABILITIES_VERSION = "1.9.2-truth";
+export const CAPABILITIES_VERSION = "1.9.3-beta-truth";
 
 export const CAPABILITY_SUMMARY = [
   "Tabs: Home, Search, Report, Profile.",
   "Report: choose Lost/Found, fill title, Markdown description, category, event date (today or earlier); optional photo (uploads only on Publish), optional approximate (~100 m) or exact location, optional YouTube link.",
   "Statuses: OPEN, MATCHED, RECOVERED, CLOSED. Owners change status on the post page.",
   "Search: Home type switch + debounced search; Search tab adds category/status/sort. Feed auto-pages; pull-to-refresh at top; active Home tap refreshes.",
-  "Social: one reaction per user (Love, Helpful, Support or Wow), 1-5 star personal rating separate from community average, live comments/reactions.",
+  "Social: one reaction per user, Like only for new reactions; legacy reactions remain readable. Recovery-linked ratings are available to participants after a completed return, not arbitrary report readers. Live comments/reactions remain.",
+  "Private messaging between users is available: requests are text-only; image sharing requires connection. Messages are not end-to-end encrypted. Accepted history is stored on each device with temporary server delivery and private image storage. No consumer Drive backup option ships in this beta.",
+  "Limited safety records are retained after account deletion: reported-content evidence for up to 90 days, and appeal, moderation and audit records. Deletion cannot erase another person's existing message copies.",
   "Location input accepts place text, decimal lat,lng, Google Maps link, or geo: URI. One-time device location only, never background tracking. Open in Maps supported.",
   "Possible Matches: up to 3 open opposite-type reports ranked by text similarity + category/date/location; similarity is not probability; empty when nothing qualifies.",
-  "USE text embeddings are the default. Android AI & Models lets the user explicitly select installed Needle as the matching challenger for this session, not an automatic quality upgrade.",
+  "USE text embeddings are the default. Android Local intelligence lets the user explicitly select the installed search helper (Needle) for matching this session, not an automatic quality upgrade.",
   "Notifications: a bell opens an inbox for reactions, comments, mentions and status changes. Opening it never marks everything read; each row can be marked read/unread and deleted (short undo); swipe right toggles read, swipe left deletes, with button equivalents. Android can show a system notification for report activity, with direct reply on comment notifications.",
   "AI is optional: the user connects their own provider key under Settings → AI & intelligence → AI Chat → Providers (/settings/ai/connections). OpenRouter is the default provider and a new account starts on its openrouter/free route; the model the user picks is billed by their provider account, and FindBack does not set, know or cap provider prices. Keys stay on the device; none are stored on FindBack's servers.",
   "Photo analysis is not available: there is no Analyze photo action, no on-device photo model, and no photo is sent to an AI provider. Report photos upload only when a report is published.",
-  "Android AI & Models offers one explicit download: the search helper (Needle), which also provides text embeddings when the user selects it for matching. Semantic text matching otherwise uses a model included with the app and is not a separate download. Users can pause, resume or remove the helper download; only checksum-verified files become installed. There is no on-device chat or photo model. The web build does not offer on-device downloads or inference.",
+  "Android Local intelligence → Downloaded Models offers one explicit download: the search helper (Needle), which also provides text embeddings when the user selects it for matching. Semantic text matching otherwise uses a model included with the app and is not a separate download. Users can pause, resume or remove the helper download; only checksum-verified files become installed. There is no on-device chat or photo model. The web build does not offer on-device downloads or inference.",
   "Help: chat answers come from the connected AI provider; Chat is cloud-only and never answers with FindBack's own built-in text. With no connected provider, Chat asks the user to connect one. On Android, the local search helper (Needle) runs in the background for structured item-detail extraction and matching; it is a specialized task, never a chat choice.",
   "Markdown supported in descriptions and Help answers; raw HTML/scripts/remote images stripped.",
   "Email verification uses a real one-time code. Phone verification is NOT enabled (no SMS provider).",
-  "Not available: private messaging, face recognition, automatic background matching.",
+  "Not available: face recognition, automatic background matching.",
   "On-device inference uses approved inputs on the device without a provider key. Weights need a network connection and an explicit download tap. There is no photo analysis, no on-device chat and no automatic provider fallback. No CPU/GPU benchmark controls exist.",
 ].join("\n");
 

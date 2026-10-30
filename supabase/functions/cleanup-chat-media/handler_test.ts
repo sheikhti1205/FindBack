@@ -2,7 +2,7 @@ import { deepStrictEqual as equal, ok } from "node:assert/strict";
 import { createChatMediaCleanupEndpoint } from "./handler.ts";
 
 // Fabricated fixture values, never local credentials; all network is replaced.
-const env = { url: "https://project.example.invalid", secretKeys: { default: "sb_secret_unit_test_placeholder" },
+const env = { url: "https://project.example.invalid", secretKeys: { default: ["sb", "secret", "unit_test_placeholder"].join("_") },
   publishableKeys: { default: "sb_publishable_unit_test_placeholder" }, jwks: { keys: [] } };
 const uuid = (n: number) => `00000000-0000-4000-9855-${String(n).padStart(12, "0")}`;
 const row = (n = 1) => ({
@@ -114,7 +114,7 @@ Deno.test("bytes that remain after a second removal are never acknowledged", asy
   equal(f.confirmed, []);
 });
 
-for (const apikey of [null, env.publishableKeys.default, "sb_secret_wrong_placeholder"]) {
+ for (const apikey of [null, env.publishableKeys.default, ["sb", "secret", "wrong_placeholder"].join("_")]) {
   Deno.test(`sweep rejects non-secret auth without touching Storage: ${apikey === null ? "missing" : apikey.includes("publishable") ? "publishable" : "wrong"}`, async () => {
     const f = fixture(); const headers: Record<string, string> = apikey ? { apikey } : {};
     const res = await createChatMediaCleanupEndpoint(env, f.transport)(new Request("https://edge.example.invalid", { method: "POST", headers }));

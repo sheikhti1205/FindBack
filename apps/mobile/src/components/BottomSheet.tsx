@@ -204,7 +204,7 @@ function BottomSheetDialog({
             <h2 id={titleId} className="min-w-0 break-words text-lg font-semibold">
               {title}
             </h2>
-            {description ? (
+            {description && !contentScrollable ? (
               <p
                 id={descriptionId}
                 className="mt-0.5 min-w-0 break-words text-sm text-on-surface-variant"
@@ -235,6 +235,14 @@ function BottomSheetDialog({
           style={{ overflowY: contentScrollable ? "auto" : "hidden" }}
           className="min-h-0 flex-1 px-4 pb-4"
         >
+          {description && contentScrollable ? (
+            <p
+              id={descriptionId}
+              className="mb-3 min-w-0 break-words text-sm text-on-surface-variant"
+            >
+              {description}
+            </p>
+          ) : null}
           {children}
         </div>
       </motion.div>

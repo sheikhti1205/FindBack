@@ -1,4 +1,4 @@
-# FindBack — local-AI model smoke (WS-D).
+# FindBack — retained search-helper / semantic-matching model smoke.
 #
 # Pinned-checksum smoke for the on-device model scope:
 #   * fetch-use-model --check (pinned USE bytes + SHA-256)
@@ -8,8 +8,9 @@
 #   * APK audit: no .litertlm/.gguf bytes except the USE allowlist entry
 #     (assets/models/use/universal_sentence_encoder.tflite)
 #
-# This is the ONLY local-AI workflow that downloads weights (the pinned USE
-# asset); local-ai-native.yml must stay download-free.
+# This workflow explicitly downloads the pinned USE asset. The native workflow's
+# Gradle preBuild can also acquire that same pinned bundle asset when absent.
+# Neither workflow downloads Needle weights or any retired generative model.
 
 name: Local AI — model smoke
 
@@ -62,7 +63,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Install pinned NDK + CMake (findback_probe native lib)
+      - name: Install pinned NDK + CMake (Needle native helper)
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - run: npm ci
@@ -85,7 +86,10 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Build mobile web dist (Capacitor webDir)
-        run: npm run build -w @findback/mobile
+        run: |
+          node scripts/check-mobile-build-config.mjs --preflight
+          npm run build -w @findback/mobile
+          node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
       - name: Capacitor sync

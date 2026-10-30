@@ -60,6 +60,20 @@ describe("BottomSheet", () => {
     expect(screen.getByTestId("bottom-sheet-content").style.overflowY).toBe("auto");
   });
 
+  it("keeps long explanatory copy in the same scroll region as its actions", () => {
+    render(
+      <BottomSheet open onClose={vi.fn()} title="Remove helper?" description="A long explanation" height="medium">
+        <button>Remove helper</button>
+      </BottomSheet>,
+    );
+    const content = screen.getByTestId("bottom-sheet-content");
+    expect(content.contains(screen.getByText("A long explanation"))).toBe(true);
+    expect(content.contains(screen.getByRole("button", { name: "Remove helper" }))).toBe(true);
+    expect(content.contains(screen.getByRole("heading", { name: "Remove helper?" }))).toBe(false);
+    expect(content.contains(screen.getByRole("button", { name: "Close" }))).toBe(false);
+    expect(screen.getByRole("dialog").getAttribute("aria-describedby")).toBe(screen.getByText("A long explanation").id);
+  });
+
   it("pins header content above a non-scrolling content region when requested", () => {
     render(
       <BottomSheet open onClose={vi.fn()} title="Details" header={<input aria-label="Search" />} contentScrollable={false}>
