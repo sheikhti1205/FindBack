@@ -247,6 +247,15 @@ describe("validateHeadBinding", () => {
 });
 
 describe("findUnallowlistedDebt", () => {
+  it("tracks only the explicit owner-device calibration reminder, not other debt in that file", () => {
+    const files = {
+      "apps/mobile/src/services/matchingEvaluation.ts":
+        '"Until that exists, the ranking policy and the device-calibration TODO stay open."\n// TODO: implement another feature',
+    };
+    deepStrictEqual(findUnallowlistedDebt(files), [
+      "apps/mobile/src/services/matchingEvaluation.ts:2: unallowlisted TODO work marker",
+    ]);
+  });
   it("flags TODO/FIXME markers unless they are allowlisted by file + text", () => {
     const files = {
       "apps/mobile/src/services/similarity.ts": " * TODO(DEVICE-CALIBRATION): calibrate",

@@ -416,7 +416,16 @@ describe("SearchScreen URL filters", () => {
       await screen.findByRole("heading", { name: "Local search helper" });
 
       // A second Smart Search clears the note while it works.
+      // The heading mounts before lifecycle effects settle. Wait for the
+      // transfer's actual progress and the completed first request, not just
+      // the title, before starting the next request under batched worker load.
+      await screen.findByRole("progressbar", { name: "Local search helper download progress" });
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: "Not now" })).toBeNull();
+        expect((screen.getByRole("button", { name: "Smart search" }) as HTMLButtonElement).disabled).toBe(false);
+      });
       fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+      await waitFor(() => expect(call).toBe(2));
       await waitFor(() => expect(screen.queryByTestId("smart-search-note-row")).toBeNull());
       // The offer is still there, with its transfer line.
       expect(screen.getByTestId("smart-search-offer-row")).toBeTruthy();

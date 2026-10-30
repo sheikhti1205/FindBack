@@ -33,6 +33,15 @@ vi.mock("../services/realtime", () => ({
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: authState.user }) }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, applyMatchesEngineToRuntime: () => true }));
+// Owner rendering also loads match activity. Keep that adjacent service hermetic;
+// a fake useAuth user is not a real SDK session and must never reach its RPC owner.
+vi.mock("../services/matches", () => ({
+  listMyMatches: vi.fn().mockResolvedValue([]),
+  proposeMatch: vi.fn(),
+  confirmMatch: vi.fn(),
+  cancelMatch: vi.fn(),
+  handoverMatch: vi.fn(),
+}));
 
 import { PostDetail } from "./PostDetail";
 import { DEFAULT_APPEARANCE, saveAppearance } from "../appearance";
@@ -221,15 +230,22 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(manage.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("refuses a status change on an already-recovered report without a write", async () => {
+  it("disables status changes on an already-recovered report without a write", async () => {
     authState.user = { id: "u2", username: "owner" };
     postsMock.fetchPost.mockResolvedValue({ ...basePost, status: "RECOVERED" });
     renderDetail();
     const picker = await screen.findByRole("radiogroup", { name: /post status/i });
+    // Recovery is terminal: the canonical control is disabled before a click,
+    // rather than promising a click-triggered error from an inactive control.
+    const statuses = within(picker).getAllByRole("radio");
+    expect(statuses).toHaveLength(2);
+    expect(picker.getAttribute("aria-disabled")).toBe("true");
+    for (const status of statuses) {
+      expect(status.getAttribute("aria-disabled")).toBe("true");
+      expect(status.getAttribute("tabindex")).toBe("-1");
+    }
     fireEvent.click(within(picker).getByRole("radio", { name: /^open/i }));
-    await waitFor(() =>
-      expect(screen.getByRole("alert").textContent).toMatch(/already recorded as recovered/i),
-    );
+    fireEvent.keyDown(picker, { key: "ArrowRight" });
     expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
   });
 

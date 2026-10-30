@@ -69,6 +69,9 @@ const SEVERITIES = Object.freeze(["P0", "P1", "P2", "P3", "OK"]);
 /** Tracked work markers that are deliberate and have a ledger owner. */
 export const DEBT_ALLOWLIST = Object.freeze([
   { file: "apps/mobile/src/services/similarity.ts", contains: "TODO(DEVICE-CALIBRATION)", owner: "FBA-013" },
+  // Same owner-device calibration boundary, stated in the evaluation report;
+  // not an unfinished runtime implementation or a waiver of final acceptance.
+  { file: "apps/mobile/src/services/matchingEvaluation.ts", contains: "the ranking policy and the device-calibration TODO stay open.", owner: "FBA-013" },
 ]);
 
 /**
