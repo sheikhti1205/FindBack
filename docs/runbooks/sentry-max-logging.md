@@ -120,3 +120,23 @@ To dial back (no code change needed for traces):
   (covers `sentry.test.ts`, `sentryInert.test.ts`, `sentryAiUi.test.ts`,
   `release.test.ts`).
 - `npm run scan:secrets` — clean (no DSN/secret literals added).
+
+## Known external crash triage: FINDBACK_CAPACITOR-3
+
+Sentry issue `FINDBACK_CAPACITOR-3` is an emulator/platform crash, not a
+FindBack application crash:
+
+- Fatal signal is `SIGILL` in `WebViewGoogle.apk` native Chromium frames
+  (triggered via ART/JNI), with no FindBack frames on stack.
+- Repro happens on preview Android 17 `sdk_gphone16k_x86_64` while app lifecycle
+  transitions to background after Google sign-in attempts report unavailable.
+- On x86_64 Chromium this maps to deliberate `ud2` crash traps
+  (`CHECK`/`IMMEDIATE_CRASH`) inside the system WebView.
+
+Owner action for this issue:
+
+1. Leave FindBack app code and Sentry native signal capture unchanged.
+2. Update Android System WebView on the emulator (or use a stable API image).
+3. Resolve the Sentry issue so it automatically reopens on recurrence.
+4. Escalate only if the same signature reproduces on physical production
+   devices, with WebView version evidence attached.
