@@ -63,7 +63,7 @@ select pg_temp.m3_check((select moderation_visibility='REMOVED' from public.item
 select pg_temp.m3_check((select audit_id=current_setting('m3b.new_noaction') from public.moderation_case_decisions where target_id='m3-boundary-4'),'new NO_ACTION attribution preserved');
 select pg_temp.m3_check(not exists(select 1 from public.admin_audit_log where new_state->>'appeal_id' in (current_setting('m3b.deleted_appeal'),current_setting('m3b.drift_appeal'),current_setting('m3b.noaction_appeal'))),'no fabricated state-change audit on no-op grants');
 -- A no-op grant must not tell the appellant their appeal changed anything. The
--- inbox copy is the only consumer-visible claim, so it is asserted, not assumed.
+-- Inbox and durable appeal history must agree about actual change.
 select pg_temp.m3_check((select count(*)=3 from public.notifications
  where user_id='00000000-0000-4000-9400-000000000003' and type='MODERATION'
   and preview='Your appeal was reviewed. No further change was applied.'),
@@ -73,7 +73,23 @@ select pg_temp.m3_check(not exists(select 1 from public.notifications
  'no-op grant never claims the appeal was granted');
 select pg_temp.m3_check((select count(*)=3 from public.admin_audit_log
  where action='APPEAL_RESOLVED' and new_state->>'reversal_applied'='false'),
- 'resolution audit records that no reversal applied');
+  'resolution audit records that no reversal applied');
+set local role authenticated;
+select pg_temp.m3_check((public.findback_staff_appeal(current_setting('m3b.deleted_appeal'))->>'change_applied')::boolean=false,
+ 'staff detail distinguishes granted no-op from actual reversal');
+select pg_temp.m3_check((select count(*)=3 from jsonb_array_elements(public.findback_staff_appeals('RESOLVED')->'items') row
+ where row->>'id' in(current_setting('m3b.deleted_appeal'),current_setting('m3b.drift_appeal'),current_setting('m3b.noaction_appeal'))
+ and row->'change_applied'='false'::jsonb), 'staff history retains no-op outcome');
+select set_config('request.jwt.claim.sub','00000000-0000-4000-9400-000000000003',true);
+select pg_temp.m3_check((select count(*)=3 from jsonb_array_elements(public.findback_my_appeals()->'items') row
+ where row->'change_applied'='false'::jsonb and row->>'decision'='GRANTED'),
+ 'consumer receipts distinguish all three no-op grants');
+select set_config('request.jwt.claim.sub','00000000-0000-4000-9400-000000000004',true);
+select pg_temp.m3_check((select count(*)=1 from jsonb_array_elements(public.findback_my_appeals()->'items') row
+ where row->>'id'=current_setting('m3b.appeal') and row->'change_applied'='true'::jsonb),
+ 'consumer receipt records real reversal without disclosing audit text');
+select set_config('request.jwt.claim.sub','00000000-0000-4000-9400-000000000002',true);
+reset role;
 delete from public.user_role_capabilities where user_id='00000000-0000-4000-9400-000000000002';
 set local role authenticated;
 do $$ begin

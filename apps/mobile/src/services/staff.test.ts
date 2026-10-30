@@ -13,6 +13,18 @@ it("keeps resolved consumer decision and strips all private staff fields", async
   rpc.mockResolvedValue({ data: { items: [{ ...receipt, status: "RESOLVED", decision: "GRANTED", resolved_at: time, reviewer_note: "private", resolved_by: "staff" }], next_cursor: null }, error: null });
   expect((await listMyAppeals()).items).toEqual([{ id: "appeal-1", subjectKind: "SANCTION", subjectId: "sanction-1", status: "RESOLVED", decision: "GRANTED", submittedAt: time, resolvedAt: time }]);
 });
+it.each([true, false])("preserves actual reversal %s without copying resolution audit text", async changeApplied => {
+  rpc.mockResolvedValue({ data: { items: [{ ...receipt, status: "RESOLVED", decision: "GRANTED", resolved_at: time,
+    change_applied: changeApplied, reviewer_note: "private", audit: { reason: "private" } }], next_cursor: null }, error: null });
+  const row = (await listMyAppeals()).items[0];
+  expect(row?.changeApplied).toBe(changeApplied);
+  expect(row).not.toHaveProperty("reviewer_note"); expect(row).not.toHaveProperty("audit");
+});
+it.each(["false", 1, {}])("rejects malformed reversal flag %s rather than coercing truthiness", async changeApplied => {
+  rpc.mockResolvedValue({ data: { items: [{ ...receipt, status: "RESOLVED", decision: "GRANTED", resolved_at: time,
+    change_applied: changeApplied }], next_cursor: null }, error: null });
+  expect((await listMyAppeals()).items).toEqual([]);
+});
 it.each([null, "REVERSED", "granted"])("never invents a resolved result from %s", async (decision) => {
   rpc.mockResolvedValue({ data: { items: [{ ...receipt, status: "RESOLVED", decision, resolved_at: time }], next_cursor: { submitted_at: time, id: "raw-last" } }, error: null });
   expect(await listMyAppeals()).toEqual({ items: [], nextCursor: { submittedAt: time, id: "raw-last" } });

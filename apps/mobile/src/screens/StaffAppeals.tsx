@@ -81,7 +81,7 @@ function AppealDetail({ id }: { id: string }) {
     {!row && !fault && <p role="status" className="fb-safety-copy">Loading appeal…</p>}
     {row && <>
       <SettingsGroup title={appealSubjectLabel(row)}>
-        <div className="fb-safety-copy"><StatusPill tone={row.decision === "GRANTED" ? "success" : "neutral"}>{appealOutcome(row)}</StatusPill>
+        <div className="fb-safety-copy"><StatusPill tone={row.decision === "GRANTED" && row.changeApplied !== false ? "success" : "neutral"}>{appealOutcome(row)}</StatusPill>
           <p className="fb-admin-note">Sent {formatSafetyDate(row.submittedAt)}{row.resolvedAt && ` · Resolved ${formatSafetyDate(row.resolvedAt)}`}</p>
           {row.expiresAt && row.status !== "RESOLVED" && <p className="fb-admin-note">Review by {formatSafetyDate(row.expiresAt)}</p>}
         </div>

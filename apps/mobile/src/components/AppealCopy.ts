@@ -7,6 +7,7 @@ export function appealSubjectLabel(subject: Pick<AppealReceipt, "subjectKind">):
   return subject.subjectKind === "SANCTION" ? "Account decision" : "Content decision";
 }
 export function appealOutcome(receipt: AppealReceipt): string {
+  if (receipt.status === "RESOLVED" && receipt.decision === "GRANTED" && receipt.changeApplied === false) return "Reviewed — no change";
   if (receipt.status === "RESOLVED") return { GRANTED: "Granted", DENIED: "Denied", EXPIRED: "Expired" }[receipt.decision!] ?? "Resolved";
   return receipt.status === "UNDER_REVIEW" ? "Being reviewed" : "Waiting for review";
 }

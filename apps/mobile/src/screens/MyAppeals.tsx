@@ -51,7 +51,7 @@ function ScopedAppeals() {
       <ol className="fb-admin-list">{mine.items?.map(receipt => <li key={receipt.id} className="fb-admin-log-row">
         <p className="fb-admin-log-headline">{appealSubjectLabel(receipt)}</p>
         <p className="fb-admin-log-detail">Sent {formatSafetyDate(receipt.submittedAt)}{receipt.resolvedAt && ` · Resolved ${formatSafetyDate(receipt.resolvedAt)}`}</p>
-        <StatusPill tone={receipt.decision === "GRANTED" ? "success" : "neutral"}>{appealOutcome(receipt)}</StatusPill>
+        <StatusPill tone={receipt.decision === "GRANTED" && receipt.changeApplied !== false ? "success" : "neutral"}>{appealOutcome(receipt)}</StatusPill>
       </li>)}</ol>
       {mine.cursor && <button className="fb-safety-read-action" disabled={mine.loading} onClick={() => void mine.more()}>More appeals</button>}
     </SettingsGroup>

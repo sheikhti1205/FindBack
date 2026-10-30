@@ -212,6 +212,8 @@ export interface AppealReceipt {
   resolvedAt: string | null;
   /** Present only on a resolved receipt; unknown outcomes are never invented. */
   decision?: AppealDecision;
+  /** Only known for a resolved grant; never inferred from the decision alone. */
+  changeApplied?: boolean;
 }
 export interface StaffAppealDetail extends AppealReceipt {
   message: string;
@@ -679,8 +681,11 @@ function parseAppealReceipt(row: Record<string, unknown>): AppealReceipt | null 
   if (row.status === "RESOLVED" ? !appealTime(row.resolved_at) : row.resolved_at !== null) return null;
   if (row.status === "RESOLVED" && row.decision !== "GRANTED" && row.decision !== "DENIED" && row.decision !== "EXPIRED") return null;
   if (row.status !== "RESOLVED" && row.decision != null) return null;
+  if (row.change_applied != null && (typeof row.change_applied !== "boolean" ||
+    row.status !== "RESOLVED" || row.decision !== "GRANTED")) return null;
   return { id: row.id, subjectKind: row.subject_kind, subjectId: row.subject_id, status: row.status,
     submittedAt: row.submitted_at, resolvedAt: row.resolved_at as string | null,
+    ...(typeof row.change_applied === "boolean" ? { changeApplied: row.change_applied } : {}),
     ...(row.status === "RESOLVED" ? { decision: row.decision as AppealDecision } : {}) };
 }
 

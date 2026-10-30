@@ -61,6 +61,18 @@ it.each(["GRANTED", "DENIED", "EXPIRED"])("consumer receipt shows plain durable 
   expect(await screen.findByText({ GRANTED: "Granted", DENIED: "Denied", EXPIRED: "Expired" }[decision]!)).toBeTruthy();
   expect(screen.queryByText("private note")).toBeNull();
 });
+it.each(["/settings/privacy/appeals", "/settings/moderation/appeals", "/settings/moderation/appeals/appeal-1"])("%s does not describe a no-op grant as a reversal", async path => {
+  const resolved = { ...receipt, status: "RESOLVED", decision: "GRANTED", resolvedAt: time, changeApplied: false };
+  f.mine.mockResolvedValue(page([resolved])); f.queue.mockResolvedValue(page([resolved]));
+  f.detail.mockResolvedValue({ ...detail, ...resolved }); render(tree(path));
+  expect(await screen.findByText(/^Reviewed — no change(?: ·.*)?$/)).toBeTruthy();
+  expect(screen.queryByText("Granted")).toBeNull();
+});
+it("a real reversal remains granted", async () => {
+  f.mine.mockResolvedValue(page([{ ...receipt, status: "RESOLVED", decision: "GRANTED", resolvedAt: time, changeApplied: true }]));
+  render(tree()); expect(await screen.findByText("Granted")).toBeTruthy();
+  expect(screen.queryByText("Reviewed — no change")).toBeNull();
+});
 it("preserves raw continuation even when a page contains no rendered receipts", async () => {
   const cursor = { submittedAt: time, id: "raw-last" };
   f.mine.mockResolvedValueOnce(page([], cursor)).mockResolvedValueOnce(page([receipt])); render(tree());
