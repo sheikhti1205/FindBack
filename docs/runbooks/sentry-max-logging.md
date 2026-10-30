@@ -123,20 +123,58 @@ To dial back (no code change needed for traces):
 
 ## Known external crash triage: FINDBACK_CAPACITOR-3
 
-Sentry issue `FINDBACK_CAPACITOR-3` is an emulator/platform crash, not a
-FindBack application crash:
+Sentry issue `FINDBACK_CAPACITOR-3` records one local-debug Android 17 preview
+simulator crash. The observed stack suggests a WebView/platform failure, but
+does not establish that application involvement is impossible:
 
 - Fatal signal is `SIGILL` in `WebViewGoogle.apk` native Chromium frames
   (triggered via ART/JNI), with no FindBack frames on stack.
-- Repro happens on preview Android 17 `sdk_gphone16k_x86_64` while app lifecycle
+- The recorded occurrence is on preview Android 17 `sdk_gphone16k_x86_64` while app lifecycle
   transitions to background after Google sign-in attempts report unavailable.
-- On x86_64 Chromium this maps to deliberate `ud2` crash traps
-  (`CHECK`/`IMMEDIATE_CRASH`) inside the system WebView.
+- Chromium can use deliberate `ud2` crash traps (`CHECK`/`IMMEDIATE_CRASH`)
+  on x86_64. This event summary alone does not prove the exact trap or root cause.
 
 Owner action for this issue:
 
-1. Leave FindBack app code and Sentry native signal capture unchanged.
+1. Do not change app behavior or suppress native signal capture solely from this
+   single platform-only stack. No FindBack frames is not an app-exoneration proof.
 2. Update Android System WebView on the emulator (or use a stable API image).
-3. Resolve the Sentry issue so it automatically reopens on recurrence.
-4. Escalate only if the same signature reproduces on physical production
-   devices, with WebView version evidence attached.
+3. The issue was already resolved at the October 30 readback; monitor recurrence.
+4. Reinvestigate recurrence on stable emulator images or physical devices, or
+   stronger app-specific evidence. Retain Android/WebView versions, build/source
+   identity and reproduction steps. Do not require a production-device crash
+   before investigating new evidence.
+
+## Browser and cloud-Chat tracing
+
+The existing `initMonitoring` owner initializes `@sentry/capacitor` with React and
+`browserTracingIntegration`; this is not an Angular application. The project is
+`canvas-of-nomads/findback_capacitor`. `SENTRY_ORG` is an organization slug, not the
+old dashboard hostname. Web workflow 41081737531 verified sourcemap upload,
+stripping and deployment after correcting that non-secret Actions variable.
+
+Cloud Chat's existing `ChatController.send` opens a metadata-only `gen_ai.chat`
+span for the coordinated stream, ending on completion, failure, cancellation or
+supersession. It records provider/model, status, duration and valid provider-reported
+token counts when available. Counts are not estimated; retries discard old-attempt
+usage. This is a chat invocation, not a fabricated autonomous agent/tool loop.
+
+Turns in the same controller/account/chat share a random opaque
+`gen_ai.conversation.id`; different accounts, chats and controller lifetimes do not.
+Grouping is session-local, not a persistent cross-restart conversation archive.
+No account/chat IDs, prompts, responses, titles, instructions, tool payloads,
+photos or credentials are exported. Conversations therefore have no captured
+transcripts or content-derived titles. Requested model metadata does not prove
+which underlying model an automatic provider route ultimately used.
+
+The static trace lifecycle keeps the fail-closed transaction sanitizer before
+any SDK GenAI envelope extraction. Only validated SDK protocol IDs and narrowly
+allowlisted AI metadata survive. Private SDK scope objects are not wire data and
+are excluded. Replay remains disabled. Local-only inference is not instrumented
+by this cloud-Chat seam. Monitoring failures never block or retry provider calls.
+
+Verification must include the real running application's browser ingestion plus
+Sentry readback. A synthetic provider exercising the actual controller can verify
+the metadata path, but is not real BYOK/provider, authenticated-client or physical
+device acceptance. The focused tests also use the real React SDK with an in-memory
+transport to catch events silently discarded by privacy hooks.

@@ -46,6 +46,7 @@ import {
   recompactForModelSwitch,
 } from "./compaction";
 import { ChatStore, HistoryDisabledError } from "./chatStore";
+import { beginCloudChatSpan } from "../monitoring/sentry";
 import {
   resolveAssistantIntent,
   type ResolvedAssistantIntent,
@@ -675,6 +676,16 @@ export class ChatController {
     let stopReason: "complete" | "cancelled" | "error" = "complete";
     let lastErrorMessage = "";
     let lastErrorCode = "";
+    let inputTokens: number | undefined;
+    let outputTokens: number | undefined;
+    const monitoring = beginCloudChatSpan({
+      owner: this,
+      accountId: effective.selection.accountId,
+      chatId,
+      provider: effective.selection.provider,
+      modelId: effective.selection.modelId,
+      signal: linked.signal,
+    });
     try {
       for await (const event of coordinate(built.request, { adapter: effective.adapter })) {
         // Stale turn or abort: ignore everything late, including text that
@@ -689,6 +700,8 @@ export class ChatController {
         if (event.attempt > activeAttempt) {
           activeAttempt = event.attempt;
           answer = "";
+          inputTokens = undefined;
+          outputTokens = undefined;
           this.update({
             phase: "sending",
             partialText: "",
@@ -707,6 +720,9 @@ export class ChatController {
             provider: effective.selection.provider,
             modelId: effective.selection.modelId,
           });
+        } else if (event.kind === "usage") {
+          if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
+          if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
         } else if (event.kind === "error") {
           lastErrorMessage = event.message;
           lastErrorCode = event.code;
@@ -717,10 +733,13 @@ export class ChatController {
         }
       }
     } catch (error) {
+      stopReason = "error";
       if (generation !== this.generation) throw new ControllerError("cancelled", "Superseded by a newer send.");
       const message = error instanceof Error ? error.message : "Send failed.";
       this.update({ phase: "failed", partialText: "", lastError: sanitizeControllerError(message, [text]) });
       throw error;
+    } finally {
+      monitoring.finish(linked.signal.aborted || generation !== this.generation ? "cancelled" : stopReason, { inputTokens, outputTokens });
     }
 
     if (generation !== this.generation) {

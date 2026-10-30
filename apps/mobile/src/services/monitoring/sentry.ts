@@ -246,13 +246,14 @@ const UNSAFE_PATTERNS: RegExp[] = [
   // Broader than SECRET_PATTERNS: catch email that might survive redaction
   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
   // Broader: catch query/fragment in URL-like fields (any ? or # in a value that looks like a URL)
-  /https?:\/\/[^?#\s]*[?#]/,
+  /https?:\/\/[^?#\s"\\]*[?#]/,
   // Broader: catch high-entropy hex tokens (32+ chars)
   /\b[0-9a-f]{32,}\b/,
   // Broader: catch high-entropy base64-ish tokens (43+ chars)
   /\b[A-Za-z0-9_-]{43,}\b/,
   // Broader: catch credential-in-URL pattern (://user:pass@)
-  /:\/\/[^:]+:[^@]+@/,
+  // Do not join a URL in one JSON value to ':'/'@' in separate fields.
+  /:\/\/[^:\s"\\]+:[^@\s"\\]+@/,
 ];
 
 /**
@@ -268,6 +269,72 @@ function containsUnsafeValue(serialized: string): boolean {
     if (pattern.test(serialized)) return true;
   }
   return false;
+}
+
+const CLOUD_PROVIDERS = new Set(["openrouter", "openai", "anthropic", "google", "deepseek", "mistral", "groq", "xai", "cohere", "generic"]);
+const OPAQUE_AI_CONVERSATION = /^fbai-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function safeModelId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9/_.:-]{0,99}$/.test(value)
+    && redactText(value) === value && !containsUnsafeValue(value);
+}
+
+function validTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** Only metadata may cross the AI span boundary, including future SDK fields. */
+function sanitizeSpanData(data: Record<string, unknown>): Record<string, unknown> {
+  const clean = scrubBreadcrumbData(data);
+  for (const [key, value] of Object.entries(data)) {
+    if (!key.startsWith("gen_ai.")) continue;
+    clean[key] = WITHHELD;
+    if (key === "gen_ai.operation.name" && value === "chat") clean[key] = value;
+    if (key === "gen_ai.provider.name" && typeof value === "string" && CLOUD_PROVIDERS.has(value)) clean[key] = value;
+    if (key === "gen_ai.request.model" && safeModelId(value)) clean[key] = value;
+    if (key === "gen_ai.conversation.id" && typeof value === "string" && OPAQUE_AI_CONVERSATION.test(value)) clean[key] = value;
+    if (key === "gen_ai.response.streaming" && typeof value === "boolean") clean[key] = value;
+    if ((key === "gen_ai.usage.input_tokens" || key === "gen_ai.usage.output_tokens") && validTokenCount(value)) clean[key] = value;
+  }
+  return clean;
+}
+
+/** Exempt only SDK protocol ID slots, never arbitrary token-shaped values. */
+function protectProtocolIds(event: Record<string, unknown>): () => void {
+  const saved: { path: string[]; value: string }[] = [];
+  const take = (record: Record<string, unknown>, path: string[], key: string, width: number) => {
+    const value = record[key];
+    if (typeof value === "string" && new RegExp(`^[0-9a-f]{${width}}$`).test(value)) {
+      saved.push({ path: [...path, key], value });
+      record[key] = "[sdk-id]";
+    }
+  };
+  take(event, [], "event_id", 32);
+  const metadata = event["sdkProcessingMetadata"];
+  const sampling = isRecord(metadata) ? metadata["dynamicSamplingContext"] : undefined;
+  if (isRecord(sampling)) take(sampling, ["sdkProcessingMetadata", "dynamicSamplingContext"], "trace_id", 32);
+  const contexts = event["contexts"];
+  const trace = isRecord(contexts) ? contexts["trace"] : undefined;
+  if (isRecord(trace)) {
+    take(trace, ["contexts", "trace"], "trace_id", 32);
+    take(trace, ["contexts", "trace"], "span_id", 16);
+    take(trace, ["contexts", "trace"], "parent_span_id", 16);
+  }
+  if (Array.isArray(event["spans"])) {
+    event["spans"].forEach((span, index) => {
+      if (!isRecord(span)) return;
+      take(span, ["spans", String(index)], "trace_id", 32);
+      take(span, ["spans", String(index)], "span_id", 16);
+      take(span, ["spans", String(index)], "parent_span_id", 16);
+    });
+  }
+  return () => {
+    for (const { path, value } of saved) {
+      let record: Record<string, unknown> = event;
+      for (const key of path.slice(0, -1)) record = record[key] as Record<string, unknown>;
+      record[path[path.length - 1]!] = value;
+    }
+  };
 }
 
 /** Scrub one stack frame: strip query/fragment from paths, redact strings. */
@@ -313,7 +380,29 @@ export function sanitizeSentryEvent(
 ): Record<string, unknown> | null {
   try {
     if (!isRecord(event)) return null;
-    const clean = deepCloneJson(event);
+    // SDK-only scopes include cyclic client/span objects. They are not wire
+    // event data. Do not JSON-clone them or forward their private scope state.
+    const { sdkProcessingMetadata, ...wireEvent } = event;
+    const clean = deepCloneJson(wireEvent);
+    if (isRecord(sdkProcessingMetadata)) {
+      const metadata: Record<string, unknown> = {};
+      if (typeof sdkProcessingMetadata["hasGenAiSpans"] === "boolean") metadata["hasGenAiSpans"] = sdkProcessingMetadata["hasGenAiSpans"];
+      const count = sdkProcessingMetadata["spanCountBeforeProcessing"];
+      if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) metadata["spanCountBeforeProcessing"] = count;
+      const sampling = sdkProcessingMetadata["dynamicSamplingContext"];
+      if (isRecord(sampling) && typeof sampling["trace_id"] === "string" && /^[0-9a-f]{32}$/.test(sampling["trace_id"])) {
+        // Only protocol sampling fields. No user/scope/transaction content.
+        const safeSampling: Record<string, unknown> = { trace_id: sampling["trace_id"] };
+        for (const key of ["sample_rand", "sample_rate"]) {
+          const value = sampling[key];
+          if (typeof value === "string" && /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(value)) safeSampling[key] = value;
+        }
+        if (sampling["sampled"] === "true" || sampling["sampled"] === "false") safeSampling["sampled"] = sampling["sampled"];
+        metadata["dynamicSamplingContext"] = safeSampling;
+      }
+      clean["sdkProcessingMetadata"] = metadata;
+    }
+    const restoreProtocolIds = protectProtocolIds(clean);
     if (typeof clean["message"] === "string") {
       clean["message"] = redactText(clean["message"]);
     }
@@ -384,6 +473,7 @@ export function sanitizeSentryEvent(
         if (typeof span["description"] === "string") {
           span["description"] = redactText(stripQueryAndFragment(span["description"]));
         }
+        if (isRecord(span["data"])) span["data"] = sanitizeSpanData(span["data"]);
         const data = span["data"];
         if (isRecord(data)) {
           for (const [key, value] of Object.entries(data)) {
@@ -427,7 +517,13 @@ export function sanitizeSentryEvent(
       }
     }
     if (isRecord(clean["contexts"])) {
+      const trace = clean["contexts"]["trace"];
+      const traceData = isRecord(trace) && isRecord(trace["data"]) ? sanitizeSpanData(trace["data"]) : undefined;
       clean["contexts"] = scrubValue(clean["contexts"]);
+      const scrubbedContexts = clean["contexts"];
+      if (traceData && isRecord(scrubbedContexts) && isRecord(scrubbedContexts["trace"])) {
+        scrubbedContexts["trace"]["data"] = traceData;
+      }
     }
     if (isRecord(clean["extra"])) {
       clean["extra"] = scrubBreadcrumbData(clean["extra"]);
@@ -441,6 +537,7 @@ export function sanitizeSentryEvent(
       clean["breadcrumbs"] = kept;
     }
     if (containsUnsafeValue(JSON.stringify(clean))) return null;
+    restoreProtocolIds();
     return clean;
   } catch {
     return null;
@@ -562,6 +659,71 @@ function readEnv(key: string): string | undefined {
 
 let started = false;
 let cachedDsn: string | null = null;
+let monitoringSdk: typeof import("@sentry/capacitor") | null = null;
+const aiConversations = new WeakMap<object, Map<string, Map<string, string>>>();
+
+type ChatSpanOutcome = "complete" | "cancelled" | "error";
+type ChatSpanUsage = { inputTokens?: number; outputTokens?: number };
+const NO_CHAT_SPAN = { finish: (_outcome: ChatSpanOutcome): void => {} };
+
+/**
+ * Metadata-only cloud Chat span. Never accepts messages, credentials or errors.
+ * Group IDs are random, session-local and account/owner-fenced; no raw chat or
+ * account ID is exported or persisted. Monitoring can never delay/fail a send.
+ */
+export function beginCloudChatSpan(options: {
+  owner: object;
+  accountId: string;
+  chatId: string;
+  provider: string;
+  modelId: string;
+  signal: AbortSignal;
+}): { finish(outcome: ChatSpanOutcome, usage?: ChatSpanUsage): void } {
+  if (!monitoringSdk || !CLOUD_PROVIDERS.has(options.provider) || !safeModelId(options.modelId) || options.signal.aborted) return NO_CHAT_SPAN;
+  try {
+    let accounts = aiConversations.get(options.owner);
+    if (!accounts) { accounts = new Map(); aiConversations.set(options.owner, accounts); }
+    let chats = accounts.get(options.accountId);
+    if (!chats) { chats = new Map(); accounts.set(options.accountId, chats); }
+    let conversationId = chats.get(options.chatId);
+    if (!conversationId) {
+      conversationId = `fbai-${crypto.randomUUID()}`;
+      chats.set(options.chatId, conversationId);
+    }
+    const span = monitoringSdk.startInactiveSpan({
+      name: `chat ${options.modelId}`,
+      op: "gen_ai.chat",
+      forceTransaction: true,
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.provider.name": options.provider,
+        "gen_ai.request.model": options.modelId,
+        "gen_ai.conversation.id": conversationId,
+        "gen_ai.response.streaming": true,
+      },
+    });
+    let ended = false;
+    const onAbort = () => finish("cancelled");
+    const finish = (outcome: ChatSpanOutcome, usage?: ChatSpanUsage) => {
+      if (ended) return;
+      ended = true;
+      options.signal.removeEventListener("abort", onAbort);
+      try {
+        if (outcome === "complete") {
+          if (validTokenCount(usage?.inputTokens)) span.setAttribute("gen_ai.usage.input_tokens", usage.inputTokens);
+          if (validTokenCount(usage?.outputTokens)) span.setAttribute("gen_ai.usage.output_tokens", usage.outputTokens);
+        }
+        span.setStatus(outcome === "complete" ? { code: 1 } : { code: 2, message: outcome === "cancelled" ? "cancelled" : "internal_error" });
+      } catch { /* Monitoring never breaks the send. */ }
+      try { span.end(); } catch { /* Monitoring never breaks the send. */ }
+    };
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    if (options.signal.aborted) finish("cancelled");
+    return { finish };
+  } catch {
+    return NO_CHAT_SPAN;
+  }
+}
 
 function getBackendHost(): string | undefined {
   const url = readEnv("VITE_SUPABASE_URL");
@@ -614,6 +776,10 @@ export function initMonitoring(): void {
           dist: resolveSentryDist(readEnv("VITE_SENTRY_DIST")) ?? undefined,
           tracesSampleRate,
           tracePropagationTargets,
+          integrations: [Sentry.browserTracingIntegration()],
+          // Keep the fail-closed transaction hook in the path before any AI
+          // spans are extracted into envelope items. No direct span streaming.
+          traceLifecycle: "static",
           // Maximum logging: Sentry Logs on. Every log passes through
           // beforeSendLog -> sanitizeSentryLog (same fail-closed scrubbing
           // as events/breadcrumbs), so this does not weaken the posture.
@@ -642,6 +808,7 @@ export function initMonitoring(): void {
         },
         SentryReact.init,
       );
+      monitoringSdk = Sentry;
     } catch {
       cachedDsn = null;
     }
