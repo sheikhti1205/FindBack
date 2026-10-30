@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import com.findback.app.push.PushChannels
+import org.maplibre.android.MapLibre
 
 /**
  * Tracks whether any FindBack activity is currently started.
@@ -18,6 +19,8 @@ class FindbackApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        MapLibre.getInstance(this)
+        mapLibreInitialized = true
         // Create the category channels up front so Android Settings shows them
         // before the first push arrives.
         PushChannels.ensureCreated(this)
@@ -47,6 +50,10 @@ class FindbackApp : Application() {
         /** True while at least one activity is started; false when backgrounded. */
         @Volatile
         var foreground: Boolean = false
+            private set
+
+        @Volatile
+        var mapLibreInitialized: Boolean = false
             private set
     }
 }

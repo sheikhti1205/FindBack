@@ -25,7 +25,6 @@ import com.findback.app.R
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
-import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -117,7 +116,6 @@ class FindbackMapActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        MapLibre.getInstance(this)
         setContentView(R.layout.activity_findback_map)
 
         isPicker = intent.getStringExtra(EXTRA_MODE) != MODE_VIEWER
