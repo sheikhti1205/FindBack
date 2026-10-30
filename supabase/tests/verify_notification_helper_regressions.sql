@@ -51,17 +51,20 @@ select 'self reactions never notify' as probe
 where not exists (select 1 from public.notifications where post_id = 'dedupe-self');
 
 -- Six-argument legacy callers still work. Only STATUS and MODERATION permit
--- NULL actors; moderation receipts must not identify the moderator.
+-- NULL actors; moderation receipts must not identify the moderator. M3 outcomes
+-- are separate events, not one lifetime row per null-actor target. Producers
+-- own retry idempotency (e.g. appeal_notifications' unique outcome key).
 do $$
 begin
   perform public.findback_insert_notification('00000000-0000-4000-8000-00000000d201', null, 'MODERATION', 'dedupe-system', null, 'Outcome');
-  perform public.findback_insert_notification('00000000-0000-4000-8000-00000000d201', null, 'MODERATION', 'dedupe-system', null, 'Duplicate');
+  perform public.findback_insert_notification('00000000-0000-4000-8000-00000000d201', null, 'MODERATION', 'dedupe-system', null, 'Later outcome');
   perform public.findback_insert_notification('00000000-0000-4000-8000-00000000d201', null, 'STATUS', 'dedupe-system', null, 'Status');
   perform public.findback_insert_notification('00000000-0000-4000-8000-00000000d201', null, 'LIKE', 'dedupe-system', null, 'Forbidden actor');
 end;
 $$;
-select 'system types retain NULL actors and existing dedupe' as probe
-where (select count(*) from public.notifications where post_id = 'dedupe-system') = 2
-  and (select count(*) from public.notifications where post_id = 'dedupe-system' and type = 'MODERATION' and actor_id is null) = 1
+select 'system events retain NULL actors without collapsing later outcomes' as probe
+where (select count(*) from public.notifications where post_id = 'dedupe-system') = 3
+  and (select count(*) from public.notifications where post_id = 'dedupe-system' and type = 'MODERATION' and actor_id is null) = 2
+  and (select count(distinct preview) from public.notifications where post_id = 'dedupe-system' and type = 'MODERATION') = 2
   and (select count(*) from public.notifications where post_id = 'dedupe-system' and type = 'STATUS' and actor_id is null) = 1;
 rollback;

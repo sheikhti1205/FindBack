@@ -181,7 +181,7 @@ public class MessagingSqliteStatementTest {
         assertArrayEquals(new Object[] {null, 0L, -1L, 2.5, 1_700_000_000_000L, ""}, arguments(values));
     }
 
-    @Test public void nativeArgumentsRejectUnsafeIntegerEvenWhenJsonParsesAsDouble() {
+    @Test public void nativeArgumentsRejectUnsafeIntegerEvenWhenJsonParsesAsDouble() throws Exception {
         JSArray values = new JSArray();
         values.put(9_007_199_254_740_992.0);
         Throwable failure = assertThrows(Throwable.class, () -> arguments(values));

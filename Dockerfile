@@ -45,6 +45,7 @@ ENV VITE_SENTRY_TRACES_SAMPLE_RATE=${VITE_SENTRY_TRACES_SAMPLE_RATE}
 ENV VITE_SENTRY_RELEASE=${VITE_SENTRY_RELEASE}
 ENV VITE_SENTRY_DIST=${VITE_SENTRY_DIST}
 COPY docs/specs/model-library/catalogue.v1.json docs/specs/model-library/catalogue.v1.json
+COPY docs/evidence/model-license-packet.json docs/evidence/model-license-packet.json
 RUN npm run build -w @findback/shared \
  && npm run build -w @findback/api \
  && npm run build -w @findback/mobile

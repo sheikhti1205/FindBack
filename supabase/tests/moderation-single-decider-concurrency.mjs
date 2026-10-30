@@ -155,7 +155,7 @@ try {
   await a.query("begin");
   await asUser(a, reporter,
     "select public.findback_submit_report('POST', $1, 'HARASSMENT', 'First')", [postOne]);
-  const pidA = await a.query("select pg_backend_pid() as pid");
+  await a.query("select pg_backend_pid() as pid");
 
   await asUser(a, moderatorA,
     "select public.findback_apply_moderation('POST', $1, 'HIDE', 'HARASSMENT', 'A decides', null, null)", [postOne]);

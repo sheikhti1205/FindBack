@@ -169,10 +169,12 @@ test("signeddev gate fails closed on a stale or tampered association", () => {
 
 test("checkSigneddevConfig reports every failing check, not just the first", () => {
   const dir = mkdtempSync(join(tmpdir(), "findback-signeddev-multi-"));
+  const previous = Object.fromEntries(Object.keys(baseEnv).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, baseEnv);
   try {
     writeStagedAssets(dir);
     const base = checkSigneddevConfig({ assetsRoot: dir });
-    assert.equal(typeof base.ok, "boolean");
+    assert.equal(base.ok, true, "the synthetic baseline must pass without a local .env");
     assert.ok(Array.isArray(base.errors));
     for (const error of base.errors) assert.equal(typeof error, "string");
 
@@ -215,8 +217,8 @@ test("checkSigneddevConfig reports every failing check, not just the first", () 
       soloFailures.push(...added);
     }
 
-    // All three at once: the aggregate must still name every single failure —
-    // not just the first — on top of whatever the ambient env already reports.
+    // All three at once: the aggregate must still name every single failure,
+    // not just the first. A missing ambient value must not replace a variant.
     const all = withBadGoogleId(() =>
       checkSigneddevConfig({
         assetsRoot: dir,
@@ -233,6 +235,10 @@ test("checkSigneddevConfig reports every failing check, not just the first", () 
     }
     assert.ok(all.errors.length >= base.errors.length + variants.length);
   } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });
