@@ -194,6 +194,10 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
     iconTone: "privacy",
   },
   {
+    id: "appeals", title: "Your appeals", keywords: "appeal decision warning restriction review outcome moderation",
+    group: "Privacy", route: "/settings/privacy/appeals", description: "Privacy · Safety", icon: Scale, iconTone: "privacy",
+  },
+  {
     id: "feedback",
     title: "Send feedback",
     keywords: "feedback bug suggestion usability other support",

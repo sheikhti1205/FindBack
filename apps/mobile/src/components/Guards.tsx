@@ -27,6 +27,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
  * the reader returns to Settings instead of seeing a half-loaded console.
  */
 export function RequireAdmin({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return <Navigate to="/settings" replace />;
+  // The account boundary destroys both cached permission and privileged children
+  // before the new account's first render, as in RequireCapability.
+  return <ScopedAdmin key={user.id}>{children}</ScopedAdmin>;
+}
+
+function ScopedAdmin({ children }: { children: ReactNode }) {
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {

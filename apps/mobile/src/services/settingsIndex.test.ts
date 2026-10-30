@@ -29,6 +29,7 @@ describe("settingsIndex", () => {
         "/settings/media",
         "/settings/notifications",
         "/settings/privacy",
+        "/settings/privacy/appeals",
         "/settings/privacy/blocked",
         "/settings/privacy/reports",
         "/settings/returns",

@@ -31,9 +31,9 @@
   min-height: 3.5rem;
   margin-inline: -20px;
   padding: 0.5rem 20px;
-  background: color-mix(in srgb, var(--fb-surface) 88%, transparent);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  /* Scrolled text must not compete with the escape/title chrome, especially
+     at large text. Keep the canonical surface opaque in every theme. */
+  background: var(--fb-surface);
   border-bottom: 1px solid var(--fb-outline-variant);
 }
 .fb-settings-sticky > button {

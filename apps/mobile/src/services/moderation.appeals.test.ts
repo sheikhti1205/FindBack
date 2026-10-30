@@ -28,7 +28,7 @@ describe("durable appeal receipts", () => {
   it("does not invent states or erase the distinction between open and resolved", async () => {
     rpc.mockResolvedValue(page([
       receipt, { ...receipt, id: "review", status: "UNDER_REVIEW" },
-      { ...receipt, id: "done", subject_kind: "SANCTION", status: "RESOLVED", resolved_at: "2026-10-23T12:00:00.000Z" },
+      { ...receipt, id: "done", subject_kind: "SANCTION", status: "RESOLVED", decision: "DENIED", resolved_at: "2026-10-23T12:00:00.000Z" },
       { ...receipt, status: "GRANTED" }, { ...receipt, subject_kind: "OTHER" },
       { ...receipt, id: " " }, { ...receipt, status: "RESOLVED" },
       { ...receipt, resolved_at: "2026-10-23T12:00:00.000Z" }, null,

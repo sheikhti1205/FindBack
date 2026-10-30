@@ -202,6 +202,7 @@ export interface AppealResult {
 }
 
 export type AppealStatus = "SUBMITTED" | "UNDER_REVIEW" | "RESOLVED";
+export type AppealDecision = "GRANTED" | "DENIED" | "EXPIRED";
 export interface AppealReceipt {
   id: string;
   subjectKind: AppealSubjectKind;
@@ -209,6 +210,20 @@ export interface AppealReceipt {
   status: AppealStatus;
   submittedAt: string;
   resolvedAt: string | null;
+  /** Present only on a resolved receipt; unknown outcomes are never invented. */
+  decision?: AppealDecision;
+}
+export interface StaffAppealDetail extends AppealReceipt {
+  message: string;
+  reviewerNote: string | null;
+  expiresAt: string | null;
+  appellantUserId: string | null;
+  originalAction: {
+    id: string; targetType: ReportTargetType; targetId: string; action: ModerationAction;
+    reason: string; createdAt: string; previousVisibility: ModerationVisibility | null;
+    nextVisibility: ModerationVisibility | null; sanctionKind: SanctionKind | null; sanctionEndsAt: string | null;
+  } | null;
+  evidence: { id: string; reason: ReportReason; capturedAt: string; expiresAt: string; snapshot: Record<string, unknown> | null }[];
 }
 export interface AppealSubject {
   subjectKind: AppealSubjectKind;
@@ -265,6 +280,7 @@ function moderationError(message: string, code?: string): ApiError {
     if (message === "REPORT_LIMIT_REACHED") return new ApiError(message, 429, message);
     if (message === "APPEAL_ALREADY_OPEN") return new ApiError(message, 409, message);
     if (message === "MODERATION_DECISION_FINAL") return new ApiError(message, 409, message);
+    if (message === "APPEAL_ALREADY_RESOLVED" || message === "APPEAL_EXPIRED") return new ApiError(message, 409, message);
   }
   return new ApiError(message, 500, code);
 }
@@ -597,10 +613,8 @@ export async function fetchMyPostModeration(): Promise<MyPostModeration[]> {
  * decision against a row of theirs. Every failure is the same neutral
  * "unavailable", and a second open appeal answers APPEAL_ALREADY_OPEN (409).
  *
- * The affordance is not shown in the UI yet: CF-080 owns the appeals queue and
- * the resolver, and an appeal that cannot be resolved is a broken promise.
- * This function exists so the promise is one screen away, not one migration
- * away.
+ * The same-app appeal surfaces use this canonical owner-checked submission;
+ * resolution is separately authorized by appeals_review on the server.
  */
 export async function submitAppeal(
   subjectKind: AppealSubjectKind,
@@ -659,6 +673,24 @@ function appealPageLimit(limit = 50): number {
   return Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.floor(limit))) : 50;
 }
 
+function parseAppealReceipt(row: Record<string, unknown>): AppealReceipt | null {
+  if (!exactText(row.id) || !isAppealKind(row.subject_kind) || !exactText(row.subject_id) || !appealTime(row.submitted_at)) return null;
+  if (row.status !== "SUBMITTED" && row.status !== "UNDER_REVIEW" && row.status !== "RESOLVED") return null;
+  if (row.status === "RESOLVED" ? !appealTime(row.resolved_at) : row.resolved_at !== null) return null;
+  if (row.status === "RESOLVED" && row.decision !== "GRANTED" && row.decision !== "DENIED" && row.decision !== "EXPIRED") return null;
+  if (row.status !== "RESOLVED" && row.decision != null) return null;
+  return { id: row.id, subjectKind: row.subject_kind, subjectId: row.subject_id, status: row.status,
+    submittedAt: row.submitted_at, resolvedAt: row.resolved_at as string | null,
+    ...(row.status === "RESOLVED" ? { decision: row.decision as AppealDecision } : {}) };
+}
+
+function parseAppealPage(data: unknown): AppealPage<AppealReceipt, AppealReceiptCursor> {
+  const { items, cursor } = appealEnvelope(data);
+  if (cursor && (!appealTime(cursor.submitted_at) || !exactText(cursor.id))) throw appealPayloadError();
+  return { nextCursor: cursor ? { submittedAt: cursor.submitted_at as string, id: cursor.id as string } : null,
+    items: items.flatMap(row => { const receipt = parseAppealReceipt(row); return receipt ? [receipt] : []; }) };
+}
+
 /** Durable history, independent of live target availability. No local cache. */
 export async function listMyAppeals(options: { limit?: number; before?: AppealReceiptCursor } = {}): Promise<AppealPage<AppealReceipt, AppealReceiptCursor>> {
   const before = options.before;
@@ -671,21 +703,59 @@ export async function listMyAppeals(options: { limit?: number; before?: AppealRe
     p_before_id: before?.id ?? null,
   });
   if (error) throw moderationError(error.message, error.code);
-  const { items, cursor } = appealEnvelope(data);
-  let nextCursor: AppealReceiptCursor | null = null;
-  if (cursor) {
-    if (!appealTime(cursor.submitted_at) || !exactText(cursor.id)) throw appealPayloadError();
-    nextCursor = { submittedAt: cursor.submitted_at, id: cursor.id };
+  return parseAppealPage(data);
+}
+
+/** Same-app staff queue; capability is rechecked by SQL on every request. */
+export async function listStaffAppeals(options: { status?: AppealStatus; limit?: number; before?: AppealReceiptCursor } = {}): Promise<AppealPage<AppealReceipt, AppealReceiptCursor>> {
+  if (options.before && (!appealTime(options.before.submittedAt) || !exactText(options.before.id))) throw new ApiError("Choose a valid appeal page.", 400, "INVALID_CURSOR");
+  if (options.status && !["SUBMITTED", "UNDER_REVIEW", "RESOLVED"].includes(options.status)) throw new ApiError("Choose an appeal status.", 400, "INVALID_STATUS");
+  const { data, error } = await getSupabase().rpc("findback_staff_appeals", {
+    p_status: options.status ?? null, p_limit: appealPageLimit(options.limit ?? 25),
+    p_before_submitted_at: options.before?.submittedAt ?? null, p_before_id: options.before?.id ?? null,
+  });
+  if (error) throw moderationError(error.message, error.code);
+  return parseAppealPage(data);
+}
+
+export async function fetchStaffAppeal(id: string): Promise<StaffAppealDetail> {
+  if (!exactText(id)) throw new ApiError("Choose an appeal.", 400, "MISSING_SUBJECT");
+  const { data, error } = await getSupabase().rpc("findback_staff_appeal", { p_appeal_id: id });
+  if (error) throw moderationError(error.message, error.code);
+  const row = asRecord(data);
+  const receipt = row && parseAppealReceipt(row);
+  if (!row || !receipt || receipt.id !== id || typeof row.message !== "string" || row.message.length > 2000
+    || (row.reviewer_note !== null && (typeof row.reviewer_note !== "string" || row.reviewer_note.length > 2000))
+    || (row.expires_at !== null && !appealTime(row.expires_at))
+    || (row.appellant_user_id !== null && !exactText(row.appellant_user_id))
+    || !Array.isArray(row.evidence) || row.evidence.length > 10) throw appealPayloadError();
+  let originalAction: StaffAppealDetail["originalAction"] = null;
+  if (row.original_action !== null) {
+    const action = asRecord(row.original_action);
+    if (!action || !exactText(action.id) || !isTargetType(action.target_type) || !exactText(action.target_id)
+      || !isAction(action.action) || !exactText(action.reason) || !appealTime(action.created_at)) throw appealPayloadError();
+    originalAction = { id: action.id, targetType: action.target_type, targetId: action.target_id, action: action.action,
+      reason: action.reason, createdAt: action.created_at,
+      previousVisibility: isVisibility(action.previous_visibility) ? action.previous_visibility : null,
+      nextVisibility: isVisibility(action.next_visibility) ? action.next_visibility : null,
+      sanctionKind: (Object.values(ACTION_SANCTION_KINDS) as unknown[]).includes(action.sanction_kind) ? action.sanction_kind as SanctionKind : null,
+      sanctionEndsAt: text(action.sanction_ends_at) };
   }
-  return {
-    nextCursor,
-    items: items.flatMap((row): AppealReceipt[] => {
-      if (!exactText(row.id) || !isAppealKind(row.subject_kind) || !exactText(row.subject_id) || !appealTime(row.submitted_at)) return [];
-      if (row.status !== "SUBMITTED" && row.status !== "UNDER_REVIEW" && row.status !== "RESOLVED") return [];
-      if (row.status === "RESOLVED" ? !appealTime(row.resolved_at) : row.resolved_at !== null) return [];
-      return [{ id: row.id, subjectKind: row.subject_kind, subjectId: row.subject_id, status: row.status, submittedAt: row.submitted_at, resolvedAt: row.resolved_at as string | null }];
-    }),
-  };
+  const evidence = row.evidence.map(value => {
+    const item = asRecord(value);
+    if (!item || !exactText(item.id) || !isReason(item.reason) || !appealTime(item.captured_at) || !appealTime(item.expires_at)
+      || (item.snapshot !== null && !asRecord(item.snapshot))) throw appealPayloadError();
+    return { id: item.id, reason: item.reason, capturedAt: item.captured_at, expiresAt: item.expires_at, snapshot: asRecord(item.snapshot) };
+  });
+  return { ...receipt, message: row.message, reviewerNote: row.reviewer_note as string | null,
+    expiresAt: row.expires_at as string | null, appellantUserId: row.appellant_user_id as string | null, originalAction, evidence };
+}
+
+export async function resolveAppeal(id: string, decision: Exclude<AppealDecision, "EXPIRED">, reason: string): Promise<void> {
+  const note = reason.trim();
+  if (!exactText(id) || (decision !== "GRANTED" && decision !== "DENIED") || !note || note.length > 2000) throw new ApiError("Choose an appeal and write a review reason.", 400, "INVALID_REVIEW");
+  const { error } = await getSupabase().rpc("findback_resolve_appeal", { p_appeal_id: id, p_decision: decision, p_reviewer_note: note });
+  if (error) throw moderationError(error.message, error.code);
 }
 
 /** Discovery is not authorization; submitAppeal rechecks the referenced owner. */

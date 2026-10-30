@@ -87,11 +87,12 @@ where jsonb_array_length(public.findback_my_appeal_subjects()->'items') = 3
   and exists(select 1 from jsonb_array_elements(public.findback_my_appeal_subjects()->'items') x where x->>'subject_id'='ar-blank');
 
 -- Receipts do NOT depend on current discovery eligibility; seed history with
--- tied timestamps and closed rows, without pretending a resolver already exists.
+-- tied timestamps and closed rows. M3 requires a real durable result on every
+-- RESOLVED row; these are explicitly manufactured DENIED receipts, not live data.
 reset role;
-insert into public.appeals (id,appellant_user_id,subject_kind,subject_id,sanction_id,message,status,submitted_at,resolved_at,reviewer_note,resolved_by)
+insert into public.appeals (id,appellant_user_id,subject_kind,subject_id,sanction_id,message,status,submitted_at,resolved_at,reviewer_note,resolved_by,decision)
 select 'ar-receipt-'||lpad(n::text,3,'0'),'00000000-0000-4000-9000-000000000004','SANCTION','ar-blank','ar-blank',
-       'Private original body','RESOLVED','2026-10-22T00:00:00.000Z','2026-10-23T00:00:00.000Z','Private staff note','private-moderator'
+       'Private original body','RESOLVED','2026-10-22T00:00:00.000Z','2026-10-23T00:00:00.000Z','Private staff note','private-moderator','DENIED'
 from generate_series(1,105) n;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9000-000000000004',true);
@@ -104,6 +105,7 @@ do $$ declare p1 jsonb; p2 jsonb; c jsonb; begin
      or p1->'items'->99->>'id'<>'ar-receipt-006'
      or p2->'items'->0->>'id'<>'ar-receipt-005' then raise exception 'AR9 receipt tuple pagination failed'; end if;
   if p1::text like '%Private%' or p1::text like '%private-moderator%' then raise exception 'AR9 private fields leaked'; end if;
+  if exists(select 1 from jsonb_array_elements(p1->'items') r where r->>'decision'<>'DENIED') then raise exception 'AR9 durable result missing'; end if;
 end $$;
 
 do $$ begin

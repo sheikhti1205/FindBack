@@ -952,10 +952,21 @@ and 1 = (
    where target_type = 'USER' and target_id = '00000000-0000-4000-8000-00000000e009' and action = 'BAN'
 );
 
-select 'B17 PUBLISH restored the atom and did not double-notify' as probe
+-- M3 outcomes are per action, not lifetime-deduplicated. HIDE, BAN and
+-- PUBLISH each notify once; the dismissal still notified nobody (B14).
+select 'B17 PUBLISH restored the atom and each action notified exactly once' as probe
 where (select moderation_visibility from public.item_posts where id = 'p-report-hide') = 'PUBLISHED'
-  and 2 = (select count(*) from public.notifications where type = 'MODERATION')
-  and 2 = (select count(*) from public.notifications where type = 'MODERATION' and actor_id is null);
+  and 3 = (select count(*) from public.notifications where type = 'MODERATION')
+  and 3 = (select count(*) from public.notifications where type = 'MODERATION' and actor_id is null)
+  and 1 = (select count(*) from public.notifications where type = 'MODERATION'
+    and user_id = '00000000-0000-4000-8000-00000000e001'
+    and preview = public.findback_moderation_outcome_copy('HIDE', 'HARASSMENT'))
+  and 1 = (select count(*) from public.notifications where type = 'MODERATION'
+    and user_id = '00000000-0000-4000-8000-00000000e001'
+    and preview = public.findback_moderation_outcome_copy('PUBLISH', 'HARASSMENT'))
+  and 1 = (select count(*) from public.notifications where type = 'MODERATION'
+    and user_id = '00000000-0000-4000-8000-00000000e009'
+    and preview = public.findback_moderation_outcome_copy('BAN', 'SCAM_OR_MISLEADING'));
 
 -- B18. The consumer state readers, per caller.
 set local role authenticated;

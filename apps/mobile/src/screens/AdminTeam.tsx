@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ApiError } from "../services/session";
+import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import { History, UserPlus } from "lucide-react";
 import {
   fetchMyRole,
@@ -32,6 +34,9 @@ import "../components/AdminConsole.css";
  * this account is an admin.
  */
 export function AdminTeam() {
+  const alive = useSafetyLifetime();
+  const accessLost = useRef(false);
+  const pendingWrite = useRef(false);
   const [myRole, setMyRole] = useState<MyRole | null>(null);
   const [people, setPeople] = useState<RoleAssignment[] | null>(null);
   const [invites, setInvites] = useState<RoleInvitation[] | null>(null);
@@ -47,11 +52,17 @@ export function AdminTeam() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  function loseAccess() {
+    accessLost.current = true;
+    setMyRole(null); setPeople(null); setInvites(null); setEditing(null);
+    setConfirming(null); setSavedNote(null);
+  }
+
   useEffect(() => {
     let cancelled = false;
     void fetchMyRole()
       .then((role) => {
-        if (!cancelled) setMyRole(role);
+        if (!cancelled && !accessLost.current) setMyRole(role);
       })
       .catch(() => {
         // An unreadable role means the console offers nothing: the server
@@ -68,6 +79,10 @@ export function AdminTeam() {
     void Promise.allSettled([listRoleAssignments(), listRoleInvitations()]).then(
       ([peopleResult, invitesResult]) => {
         if (cancelled) return;
+        const denied = [peopleResult, invitesResult].some(result => result.status === "rejected" && result.reason instanceof ApiError && (result.reason.status === 401 || result.reason.status === 403));
+        if (denied) {
+          loseAccess(); setListError("Only an admin can see the team list."); setLoading(false); return;
+        }
         if (peopleResult.status === "fulfilled") setPeople(peopleResult.value);
         if (invitesResult.status === "fulfilled") setInvites(invitesResult.value);
         const failure =
@@ -94,28 +109,39 @@ export function AdminTeam() {
   );
 
   async function refresh() {
+    // A completed write may outlive its route/account. Never issue readback
+    // with whichever principal happens to own the client after that boundary.
+    if (!alive.current || accessLost.current) return;
     const [peopleResult, invitesResult] = await Promise.allSettled([
       listRoleAssignments(),
       listRoleInvitations(),
     ]);
+    if (!alive.current || accessLost.current) return;
+    const denied = [peopleResult, invitesResult].some(result => result.status === "rejected" && result.reason instanceof ApiError && (result.reason.status === 401 || result.reason.status === 403));
+    if (denied) { loseAccess(); setListError("Only an admin can see the team list."); return; }
     if (peopleResult.status === "fulfilled") setPeople(peopleResult.value);
     if (invitesResult.status === "fulfilled") setInvites(invitesResult.value);
   }
 
   async function remove(email: string) {
-    if (busy) return;
+    if (pendingWrite.current || accessLost.current) return;
+    pendingWrite.current = true;
     setBusy(true);
     setActionError(null);
     try {
       await revokeRole(email);
+      if (!alive.current) return;
       setConfirming(null);
       await refresh();
     } catch (err) {
+      if (!alive.current) return;
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) loseAccess();
       setActionError(
         adminErrorMessage(err, "Only an admin may take a role away."),
       );
     } finally {
-      setBusy(false);
+      pendingWrite.current = false;
+      if (alive.current) setBusy(false);
     }
   }
 
@@ -219,11 +245,15 @@ export function AdminTeam() {
             initialCapabilities={editing.capabilities}
             onCancel={() => setEditing(null)}
             onSaved={() => {
+              if (!alive.current || accessLost.current) return;
               // The editor unmounts here, so the confirmation belongs to the
               // page it returns to, not to a component that is gone.
               setSavedNote(`Saved. ${editing.label} has the permissions shown here now.`);
               setEditing(null);
               void refresh();
+            }}
+            onAccessDenied={() => {
+              loseAccess(); setActionError("Only an admin may change what a person may do.");
             }}
           />
         </SettingsGroup>

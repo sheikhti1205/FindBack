@@ -333,6 +333,16 @@ describe("Settings home", () => {
  * Team administration is ADMIN-only; review access is a separate capability.
  */
 describe("the staff console entry", () => {
+  it.each(["appeals_review", "feedback_read"])("offers only the permitted %s destination", async capability => {
+    mockFetchMyRole.mockResolvedValue({ role: "MODERATOR", isAdmin: false, capabilities: [capability] });
+    renderSettings();
+    const allowed = capability === "appeals_review" ? "Review appeals" : "Review feedback";
+    const refused = capability === "appeals_review" ? "Review feedback" : "Review appeals";
+    const link = await screen.findByRole("link", { name: allowed });
+    expect(link.getAttribute("href")).toBe(`/settings/moderation/${capability === "appeals_review" ? "appeals" : "feedback"}`);
+    expect(screen.queryByRole("link", { name: refused })).toBeNull();
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+  });
   it("drops previous staff entries immediately when the signed-in account changes", async () => {
     let resolveOld!: (value: unknown) => void;
     const admin = { role: "ADMIN", isAdmin: true, capabilities: [] };

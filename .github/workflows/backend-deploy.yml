@@ -47,6 +47,10 @@ on:
         description: "Deploy the copy-chat-evidence worker Edge Function"
         type: boolean
         default: true
+      deploy_trust_maintenance:
+        description: "Deploy the appeal expiry and report-evidence maintenance worker (M3 migrations required)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -127,3 +131,9 @@ jobs:
           # Internal moderation-evidence worker only: the canonical wrapper
           # enforces the server secret and claims work from the evidence queue.
           supabase functions deploy copy-chat-evidence --no-verify-jwt
+      - name: Deploy trust-maintenance
+        if: inputs.deploy_trust_maintenance
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Internal secret-auth worker; only after accepted M3 migration rollout.
+          supabase functions deploy trust-maintenance --no-verify-jwt

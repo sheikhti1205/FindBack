@@ -314,6 +314,12 @@ export function Settings() {
               />
             </SettingsGroup>
           )}
+          {(staffRole?.isAdmin || staffRole?.capabilities.includes("appeals_review") || staffRole?.capabilities.includes("feedback_read")) && (
+            <SettingsGroup title="Staff reviews">
+              {(staffRole?.isAdmin || staffRole?.capabilities.includes("appeals_review")) && <SettingsRow title="Review appeals" icon={Scale} iconTone="privacy" route="/settings/moderation/appeals" />}
+              {(staffRole?.isAdmin || staffRole?.capabilities.includes("feedback_read")) && <SettingsRow title="Review feedback" icon={MessageSquare} iconTone="help" route="/settings/moderation/feedback" />}
+            </SettingsGroup>
+          )}
           <SettingsGroup title="More">
             <SettingsRow
               title="Send feedback"

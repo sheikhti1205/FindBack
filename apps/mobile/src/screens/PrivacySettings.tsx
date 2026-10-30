@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Eye, Flag, MapPin, MessagesSquare, Sparkles, UserRoundX } from "lucide-react";
+import { Activity, Eye, Flag, MapPin, MessagesSquare, Scale, Sparkles, UserRoundX } from "lucide-react";
 import {
   PreferenceSwitchRow,
   SettingsGroup,
@@ -91,6 +91,7 @@ export function PrivacySettings() {
           iconTone="privacy"
           route="/settings/privacy/reports"
         />
+        <SettingsRow title="Your appeals" description="Ask us to review a decision and track its outcome." icon={Scale} iconTone="privacy" route="/settings/privacy/appeals" />
       </SettingsGroup>
       <SettingsGroup
         title="Location"

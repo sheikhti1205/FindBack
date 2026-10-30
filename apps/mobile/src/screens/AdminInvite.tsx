@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ApiError } from "../services/session";
+import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import {
   grantRole,
   listRoleAssignments,
@@ -27,6 +29,10 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * server did.
  */
 export function AdminInvite() {
+  const lifetime = useSafetyLifetime();
+  const pendingWrite = useRef(false);
+  const accessLostRef = useRef(false);
+  const [accessLost, setAccessLost] = useState(false);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AdminRole>("MODERATOR");
   const [capabilities, setCapabilities] = useState<string[]>([]);
@@ -38,16 +44,25 @@ export function AdminInvite() {
   const [replaceAcknowledged, setReplaceAcknowledged] = useState(false);
   const [membershipUnknown, setMembershipUnknown] = useState(false);
 
+  function loseAccess() {
+    accessLostRef.current = true;
+    setAccessLost(true); setEmail(""); setCapabilities([]); setMembers(null);
+    setReplaceAcknowledged(false); setMembershipUnknown(false); setOutcome(null);
+  }
+
   // Who already holds a role. A failed read is not fatal: the address is then
   // treated as new, and the server stays the authority on what it did.
   useEffect(() => {
     let alive = true;
     void listRoleAssignments()
       .then((rows) => {
-        if (alive) setMembers(rows);
+        if (alive && !accessLostRef.current) setMembers(rows);
       })
-      .catch(() => {
-        if (!alive) return;
+      .catch((err) => {
+        if (!alive || accessLostRef.current) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          loseAccess(); setError(adminErrorMessage(err, "Only an admin may give someone a role.")); return;
+        }
         // The list could not be read: the address might already hold a role,
         // so the admin is asked to acknowledge a replacement rather than the
         // screen pretending the address is new.
@@ -80,6 +95,7 @@ export function AdminInvite() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (pendingWrite.current || accessLost) return;
     const address = email.trim().toLowerCase();
     if (!EMAIL_PATTERN.test(address)) {
       setFieldError("Enter a valid email address.");
@@ -91,6 +107,7 @@ export function AdminInvite() {
     }
     setFieldError(null);
     setSubmitting(true);
+    pendingWrite.current = true;
     setError(null);
     setOutcome(null);
     try {
@@ -101,15 +118,21 @@ export function AdminInvite() {
         role,
         role === "ADMIN" ? [] : capabilities,
       );
+      if (!lifetime.current) return;
       setOutcome(granted);
       setEmail("");
       setCapabilities([]);
       setReplaceAcknowledged(false);
     } catch (err) {
+      if (!lifetime.current) return;
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        loseAccess();
+      }
       setOutcome(null);
       setError(adminErrorMessage(err, "Only an admin may give someone a role."));
     } finally {
-      setSubmitting(false);
+      pendingWrite.current = false;
+      if (lifetime.current) setSubmitting(false);
     }
   }
 
@@ -135,7 +158,7 @@ export function AdminInvite() {
             spellCheck={false}
             placeholder="name@example.com"
             value={email}
-            disabled={submitting}
+            disabled={submitting || accessLost}
             onChange={(event) => {
               setEmail(event.target.value);
               // A tick belongs to one address; the next person must not
@@ -155,7 +178,7 @@ export function AdminInvite() {
                 description="Handles reports and content, within the permissions you choose."
                 checked={role === "MODERATOR"}
                 onChange={() => setRole("MODERATOR")}
-                disabled={submitting}
+                disabled={submitting || accessLost}
               />
               <PreferenceRadioRow
                 name="admin-invite-role"
@@ -164,7 +187,7 @@ export function AdminInvite() {
                 description="Can do everything, including managing roles."
                 checked={role === "ADMIN"}
                 onChange={() => setRole("ADMIN")}
-                disabled={submitting}
+                disabled={submitting || accessLost}
               />
             </div>
           </fieldset>
@@ -174,7 +197,7 @@ export function AdminInvite() {
               onToggle={toggle}
               legend="What this person may do"
               description="Tick only what they need. You can change it at any time."
-              disabled={submitting}
+              disabled={submitting || accessLost}
             />
           ) : (
             <p className="fb-admin-note fb-admin-held">
@@ -186,12 +209,12 @@ export function AdminInvite() {
             <AdminReplaceWarning
               target={existing}
               acknowledged={replaceAcknowledged}
-              disabled={submitting}
+              disabled={submitting || accessLost}
               onAcknowledged={setReplaceAcknowledged}
             />
           )}
           <div className="fb-admin-actions">
-            <Button type="submit" loading={submitting} disabled={blocked}>
+            <Button type="submit" loading={submitting} disabled={blocked || accessLost}>
               Give access
             </Button>
           </div>

@@ -6,6 +6,9 @@
 #      candidate is acked only after absence is verified, so nothing is lost.
 #   2. `copy-chat-evidence` copies a reported photo into the separate private
 #      evidence bucket before the ordinary attachment expires.
+#   3. `trust-maintenance` expires up to100 stale appeals and erases up to100
+#      expired report evidence snapshots per run. M3 uses this same scheduler,
+#      not a second cron service or a consumer-triggered sweep.
 #
 # Both functions are internal-only: `auth: "secret"` means the caller must
 # present the project's `default` secret key in the `apikey` header (the SDK
@@ -75,5 +78,13 @@ jobs:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
           curl -sS --fail-with-body -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/copy-chat-evidence" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
+            --retry 2 --retry-all-errors --max-time 90
+      - name: Expire appeals and retained report evidence
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          curl -sS --fail-with-body -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/trust-maintenance" \
             -H "apikey: ${SUPABASE_SECRET_KEY}" \
             --retry 2 --retry-all-errors --max-time 90

@@ -1,4 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { ApiError } from "../services/session";
+import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import { Button } from "./Button";
 import {
   MODERATOR_CAPABILITIES,
@@ -94,6 +96,8 @@ export interface AdminCapabilityMatrixProps {
   onCancel: () => void;
   /** Called after the server accepted the new set. */
   onSaved?: (capabilities: string[]) => void;
+  /** Purge the owning team's private state after a server authorization refusal. */
+  onAccessDenied?: () => void;
 }
 
 function sameSet(left: readonly string[], right: readonly string[]): boolean {
@@ -109,7 +113,11 @@ export function AdminCapabilityMatrix({
   initialCapabilities,
   onCancel,
   onSaved,
+  onAccessDenied,
 }: AdminCapabilityMatrixProps) {
+  const alive = useSafetyLifetime();
+  const pending = useRef(false);
+  const [accessLost, setAccessLost] = useState(false);
   const [selected, setSelected] = useState<string[]>(() => [...initialCapabilities]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,19 +152,26 @@ export function AdminCapabilityMatrix({
   }
 
   async function save() {
-    if (saving || !dirty) return;
+    if (pending.current || accessLost || !dirty) return;
+    pending.current = true;
     setSaving(true);
     setError(null);
     try {
       await setRoleCapabilities(email, selected);
+      if (!alive.current) return;
       setSavedSet([...selected]);
       onSaved?.(selected);
     } catch (err) {
+      if (!alive.current) return;
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setSelected([]); setSavedSet(null); setAccessLost(true); onAccessDenied?.();
+      }
       setError(
         adminErrorMessage(err, "Only an admin may change what a person may do."),
       );
     } finally {
-      setSaving(false);
+      pending.current = false;
+      if (alive.current) setSaving(false);
     }
   }
 
@@ -170,7 +185,7 @@ export function AdminCapabilityMatrix({
         onToggle={toggle}
         legend="What this person may do"
         description="Tick only what they need. You can change it at any time."
-        disabled={saving}
+        disabled={saving || accessLost}
       />
       <p className="fb-admin-note fb-admin-held">
         These stay with the admin and are never given to a moderator:{" "}
@@ -185,7 +200,7 @@ export function AdminCapabilityMatrix({
         <p className="fb-admin-note">No changes yet.</p>
       ) : null}
       <div className="fb-admin-actions">
-        <Button onClick={() => void save()} loading={saving} disabled={!dirty}>
+        <Button onClick={() => void save()} loading={saving} disabled={!dirty || accessLost}>
           Save permissions
         </Button>
         <Button variant="text" disabled={saving} onClick={onCancel}>

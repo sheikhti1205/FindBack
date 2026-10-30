@@ -51,6 +51,9 @@ import { AdminBootstrap } from "./screens/AdminBootstrap";
 import { BlockedUsers } from "./screens/BlockedUsers";
 import { SafetyReports } from "./screens/SafetyReports";
 import { FeedbackForm } from "./screens/FeedbackForm";
+import { MyAppeals } from "./screens/MyAppeals";
+import { StaffAppeals, StaffAppeal } from "./screens/StaffAppeals";
+import { StaffFeedback, StaffFeedbackDetail } from "./screens/StaffFeedback";
 import { Returns } from "./screens/Returns";
 import { ModerationQueue } from "./screens/ModerationQueue";
 import { RequireCapability } from "./components/RequireCapability";
@@ -223,9 +226,14 @@ function AppRouteTree() {
               <Route path="/settings/privacy/messages" element={<MessagingPrivacy />} />
               <Route path="/settings/privacy/blocked" element={<BlockedUsers />} />
               <Route path="/settings/privacy/reports" element={<SafetyReports />} />
+              <Route path="/settings/privacy/appeals" element={<MyAppeals />} />
               <Route path="/settings/feedback" element={<FeedbackForm />} />
               <Route path="/settings/returns" element={<Returns />} />
               <Route path="/settings/moderation/queue" element={<RequireCapability capability="reports_review"><ModerationQueue /></RequireCapability>} />
+              <Route path="/settings/moderation/appeals" element={<StaffAppeals />} />
+              <Route path="/settings/moderation/appeals/:appealId" element={<StaffAppeal />} />
+              <Route path="/settings/moderation/feedback" element={<StaffFeedback />} />
+              <Route path="/settings/moderation/feedback/:feedbackId" element={<StaffFeedbackDetail />} />
               <Route path="/settings/ai" element={<AiSettings />} />
               <Route path="/settings/ai/connections" element={<AiConnection />} />
               <Route path="/settings/ai/chat-models" element={<CloudModels />} />

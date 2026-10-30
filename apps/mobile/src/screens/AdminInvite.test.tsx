@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -49,6 +49,23 @@ function typeEmail(address: string) {
 }
 
 describe("adding someone by email", () => {
+  it("a denied membership read cannot be bypassed by acknowledging an unknown replacement", async () => {
+    mockListRoleAssignments.mockRejectedValueOnce(new ApiError("revoked", 403, "42501"));
+    renderInvite();typeEmail("private@example.com");
+    await act(async () => { await Promise.resolve(); });
+    const acknowledgement = screen.queryByLabelText(/replace their current role and permissions/i);
+    if (acknowledgement) fireEvent.click(acknowledgement);
+    expect(screen.getByRole("button", { name: /give access/i })).toHaveProperty("disabled", true);
+    expect(screen.queryByDisplayValue("private@example.com")).toBeNull();
+    expect(screen.getByRole("alert")).toBeTruthy();
+  });
+  it("a denied role write discards the private draft and disables further grants", async () => {
+    mockGrantRole.mockRejectedValueOnce(new ApiError("revoked", 403, "42501"));
+    renderInvite();typeEmail("private@example.com");
+    fireEvent.click(screen.getByRole("button", { name: /give access/i }));await screen.findByRole("alert");
+    expect(screen.queryByDisplayValue("private@example.com")).toBeNull();
+    expect(screen.getByRole("button", { name: /give access/i })).toHaveProperty("disabled", true);
+  });
   it("says so when the role landed on an existing account", async () => {
     renderInvite();
     typeEmail("sam@example.com");

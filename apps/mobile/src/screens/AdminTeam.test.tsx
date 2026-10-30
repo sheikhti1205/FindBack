@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -76,6 +76,44 @@ function renderTeam() {
 }
 
 describe("the team", () => {
+  it("a late removal never starts privileged readback after the account-scoped team unmounts", async () => {
+    let finish!: () => void;
+    mockRevokeRole.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    const view = render(<MemoryRouter><AdminTeam /></MemoryRouter>);
+    fireEvent.click((await screen.findAllByRole("button", { name: /^remove role$/i }))[0]!);
+    fireEvent.click(screen.getByRole("button", { name: /yes, remove role/i }));
+    view.unmount();
+    await act(async () => { finish(); });
+    expect(mockListRoleAssignments).toHaveBeenCalledTimes(1);
+    expect(mockListRoleInvitations).toHaveBeenCalledTimes(1);
+  });
+  it("a denied removal purges private membership data and all mutation affordances", async () => {
+    mockRevokeRole.mockRejectedValueOnce(new ApiError("revoked", 403, "42501"));
+    renderTeam();
+    fireEvent.click((await screen.findAllByRole("button", { name: /^remove role$/i }))[0]!);
+    fireEvent.click(screen.getByRole("button", { name: /yes, remove role/i }));
+    await screen.findByRole("alert");
+    expect(screen.queryByText("sam@example.com")).toBeNull();
+    expect(screen.queryByRole("button", { name: /change permissions/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /add a moderator/i })).toBeNull();
+  });
+  it("a denied capability save purges the parent team and editor", async () => {
+    mockSetRoleCapabilities.mockRejectedValueOnce(new ApiError("revoked", 403, "42501"));
+    renderTeam();
+    fireEvent.click(await screen.findByRole("button", { name: /change permissions/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Warn members" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save permissions" }));
+    await screen.findByRole("alert");
+    expect(screen.queryByText("sam@example.com")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Warn members" })).toBeNull();
+  });
+  it("a denied membership read discards a separately successful private invitation list", async () => {
+    mockListRoleAssignments.mockRejectedValueOnce(new ApiError("revoked", 403, "42501"));
+    mockListRoleInvitations.mockResolvedValueOnce([{ id: "inv-private", email: "private@example.com", role: "MODERATOR", capabilities: [], invitedAt: "2026-10-22T00:00:00Z", acceptedAt: null, revokedAt: null }]);
+    renderTeam();await screen.findByRole("alert");
+    expect(screen.queryByText("private@example.com")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel invitation" })).toBeNull();
+  });
   it("lists the people who hold a role with their permissions in words", async () => {
     renderTeam();
     expect(await screen.findByText("sam@example.com")).toBeTruthy();

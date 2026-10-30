@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -82,6 +82,17 @@ describe("the permission checklist", () => {
 });
 
 describe("the permission editor", () => {
+  it("does not publish a saved callback after its account-scoped editor unmounts", async () => {
+    let finish!: () => void;
+    mockSetRoleCapabilities.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+    const onSaved = vi.fn();
+    const view = render(<AdminCapabilityMatrix email="sam@example.com" personLabel="Sam" initialCapabilities={[]} onCancel={() => {}} onSaved={onSaved} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Warn members" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save permissions" }));
+    view.unmount();
+    await act(async () => { finish(); });
+    expect(onSaved).not.toHaveBeenCalled();
+  });
   it("keeps Save disabled until something actually changes", () => {
     renderMatrix();
     const save = screen.getByRole("button", { name: /save permissions/i });
