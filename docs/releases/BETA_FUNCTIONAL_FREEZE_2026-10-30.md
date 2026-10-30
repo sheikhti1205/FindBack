@@ -11,7 +11,9 @@ device acceptance, a signed release, or a stable 1.0 claim.**
 - Parent integrated product: `8df396baa93019223353434531fb91010df2caf3`.
 - Accepted five-path patch SHA256:
   `3ab95fdc402e6feb7b0c6e597db54ffee4f3079d1121c64a6e1aef642548ae50`.
-- Root/mobile package declaration: `2.0.0-beta.1`; shared/API: `0.1.0`.
+- Root/mobile package declaration: `2.0.0-beta.1`; shared/API: `0.1.0`. (That label was
+  corrected to the derived `0.11.0-beta.2` in the reconstructed version line; see
+  [VERSION_HISTORY](../history/VERSION_HISTORY.md).)
   These are observed declarations, not the evidence-derived pre-1.0 identity
   still to be reconstructed in M6.
 
