@@ -34,12 +34,13 @@ export function YouTubeEmbed({ url }: { url: string }) {
   }, [videoId]);
 
   if (!videoId) return null;
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   if (failed) {
     return (
       <div className="flex flex-col items-center gap-2 rounded-m3-md border border-outline-variant p-4 text-sm text-on-surface-variant">
         <span>Embedded playback is blocked here.</span>
         <a
-          href={url}
+          href={watchUrl}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1.5 font-medium text-on-surface"
@@ -93,7 +94,7 @@ export function YouTubeEmbed({ url }: { url: string }) {
         </AnimatePresence>
       </div>
       <a
-        href={url}
+        href={watchUrl}
         target="_blank"
         rel="noreferrer"
         className="flex items-center gap-2 px-3 py-2 text-xs text-on-surface-variant"

@@ -18,12 +18,26 @@ export function normalizePhone(input: string): string | null {
   return `+880${match[2]!.slice(1)}`;
 }
 
-/** Extract a video id from common YouTube URL shapes, or null. */
+/** Extract an exact video ID only from supported HTTPS YouTube origins. */
 export function extractYouTubeId(url: string): string | null {
-  if (!url) return null;
-  const m =
-    /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/.exec(
-      url,
-    );
-  return m ? m[1]! : null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) return null;
+    let id: string | null;
+    if (parsed.origin === "https://youtu.be") {
+      id = /^\/([A-Za-z0-9_-]{11})\/?$/.exec(parsed.pathname)?.[1] ?? null;
+    } else if (parsed.origin === "https://youtube.com" || parsed.origin === "https://www.youtube.com") {
+      if (parsed.pathname === "/watch") {
+        const ids = parsed.searchParams.getAll("v");
+        id = ids.length === 1 ? ids[0]! : null;
+      } else {
+        id = /^\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})\/?$/.exec(parsed.pathname)?.[1] ?? null;
+      }
+    } else {
+      return null;
+    }
+    return id !== null && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
 }

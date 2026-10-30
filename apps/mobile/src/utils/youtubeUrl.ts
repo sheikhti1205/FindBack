@@ -1,7 +1,7 @@
 /**
  * URL acceptance for report writes, aligned with the deployed SQL helper in
- * 20260919000000_validation_alignment.sql. Extraction is NOT validation: the
- * shared best-effort extractor also recognizes YouTube-shaped text in a path.
+ * 20260919000000_validation_alignment.sql. This server-aligned write policy is
+ * separate from the strict HTTPS/origin validation used when rendering embeds.
  * Keep the server's supported watch?v= ordering; do not accept a reordered URL
  * here only to have the unchanged server refuse it after submission.
  */

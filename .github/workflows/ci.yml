@@ -8,6 +8,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# All current jobs need checkout only; unspecified token scopes are disabled.
+permissions:
+  contents: read
+
 jobs:
   conventions:
     name: Commit messages & version sync

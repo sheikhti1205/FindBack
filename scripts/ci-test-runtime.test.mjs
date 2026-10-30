@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { load } from "js-yaml";
+
+test("CI defaults to read-only contents with no unnecessary job token grants", () => {
+  const workflow = load(readFileSync(".github/workflows/ci.yml", "utf8"));
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    const permissions = job.permissions ?? workflow.permissions;
+    assert.equal(typeof permissions, "object", `${name} must not use read-all or write-all`);
+    for (const [scope, access] of Object.entries(permissions)) {
+      assert.ok(access === "none" || (scope === "contents" && access === "read"),
+        `${name} does not need ${scope}: ${access}`);
+    }
+  }
+});
 
 // Native Web Locks (including pending-query and abort semantics) arrived in
 // Node 24.5. Do not replace the real messaging lock tests with a mutex mock.
