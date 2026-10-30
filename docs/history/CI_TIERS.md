@@ -1,95 +1,46 @@
-# FindBack CI Tiers — Fast vs Heavy
+# CI tiers
 
-## Overview
+FindBack runs different amounts of work depending on what triggered the pipeline. This
+page describes what actually runs today, not an aspirational target.
 
-FindBack uses a two-tier CI strategy to balance developer feedback speed with comprehensive validation.
+## On every push to `main` and every pull request
 
-## Fast CI (runs on every push/PR)
+`.github/workflows/ci.yml`:
 
-**Target:** < 2 minutes
-**Trigger:** Every push to main, every PR
+- commit-message and version-sync conventions (full history, no dependencies);
+- shared build, typecheck, lint, secret scan, dependency CVE baseline and audit;
+- completion-ledger integrity gate and keyless map-provider gate;
+- API tests and the full mobile test suite;
+- release-infra, config, native-policy and cross-environment script tests;
+- SQL behaviour suites against real PostgreSQL (migration chain, candidate readers,
+  roles/capabilities, phone verification and related guards);
+- the configured mobile web build. This last step runs on `main` pushes and manual
+  dispatches only, so pull-request feedback stays fast.
 
-### Steps
-1. **Lint** — ESLint on changed files only
-2. **Typecheck** — TypeScript compilation (`tsc --noEmit`)
-3. **Unit tests** — Vitest on changed test files only (`--changed`)
-4. **Migration syntax check** — SQL lint on changed migration files
-5. **Schema version check** — Verify BACKEND_SCHEMA_VERSION matches latest migration
+The local AI workflows (`local-ai-native`, `local-ai-model-smoke`) run only when their
+paths change. They verify the retained Needle/USE integration, pinned model digests and
+the AI release gate; they do not download generative weights.
 
-### Commands
-```bash
-# Fast lint
-npx eslint --max-warnings 0 $(git diff --name-only HEAD~1 -- '*.ts' '*.tsx')
+## On a `v*` tag
 
-# Fast typecheck
-npx tsc --noEmit -p apps/mobile/tsconfig.json
+`.github/workflows/release.yml` builds and signs per-ABI APKs, the universal APK and the
+AAB, scans every artifact, writes checksums and `release-manifest.json`, and publishes a
+GitHub Release. The release type is derived from the tag: a prerelease suffix publishes
+as a pre-release, a plain tag publishes as a normal release. Versions are asserted from
+`package.json`, never bumped by the workflow.
 
-# Fast tests (changed files only)
-npx vitest run --changed --maxWorkers=2
+`workflow_dispatch` on the same workflow is a signed-candidate dry path: it runs the
+full gate and build but never creates a Release.
 
-# Migration syntax check
-for f in $(git diff --name-only HEAD~1 -- 'supabase/migrations/*.sql'); do
-  node scripts/check-migration-syntax.mjs "$f"
-done
+## Manual only
 
-# Schema version check
-node scripts/check-schema-version.mjs
-```
+- `backend-deploy.yml` pushes pending migrations and deploys Edge Functions. It never
+  runs on push or on a tag, because backend mutation must be explicit and verified
+  afterwards.
+- `web.yml` deploys the production web build on `main` pushes and manual dispatch.
 
-## Heavy CI (runs on release tags / manual trigger)
+## External gates that are never CI
 
-**Target:** < 30 minutes
-**Trigger:** Release tags (v*), manual workflow dispatch
-
-### Steps
-1. **Full test suite** — All unit + integration tests
-2. **Migration verification** — Apply all migrations to fresh DB, verify
-3. **Build verification** — Web build + APK build (with URL/publishable key precheck)
-4. **Screenshot capture** — Rendered screenshots at representative widths
-5. **Link validation** — Check all links in docs and README
-6. **Security scan** — Dependabot, Snyk, or similar
-7. **Performance audit** — Lighthouse CI
-
-### Commands
-```bash
-# Full test suite
-npx vitest run --maxWorkers=2
-
-# Migration verification
-node scripts/verify-migrations.mjs
-
-# Build verification (requires VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY)
-node scripts/check-release-config.mjs
-npm run build -w apps/mobile
-npm run apk -w apps/mobile
-
-# Link validation
-node scripts/check-links.mjs
-
-# Screenshot capture
-node scripts/capture-screenshots.mjs
-```
-
-## Resource Discipline
-
-All heavy commands must run through `~/.config/opencode/bin/heavy-run` with machine-wide lock. At most one heavy command at a time. Vitest pools capped at 3 workers.
-
-## CI Configuration Files
-
-- `.github/workflows/ci-fast.yml` — Fast tier (every push/PR)
-- `.github/workflows/ci-heavy.yml` — Heavy tier (release tags/manual)
-
-## Migration from Current State
-
-Current CI runs a single tier. To adopt fast-vs-heavy:
-1. Split existing workflow into two files
-2. Move full test suite to heavy tier
-3. Add changed-file detection to fast tier
-4. Add build verification to heavy tier
-5. Add link validation to heavy tier
-
-## Status
-
-- **Fast tier:** Concept documented, not yet implemented as separate workflow
-- **Heavy tier:** Concept documented, not yet implemented as separate workflow
-- **Implementation:** Requires CI configuration changes (blocked by GitHub Actions access)
+Camera capture, push delivery, TalkBack, IME behaviour, real two-device chat and phone
+photo import need real hardware. They are tracked as external gates and are never
+reported as passing from a host test or a web build.

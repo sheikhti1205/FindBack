@@ -98,7 +98,10 @@ jobs:
         # wiring, the comment-media cleanup scheduler, the cross-lane Sentry
         # release proof, and the capability matrix invariants (X8/X18).
         run: node --test scripts/check-auth-config.test.mjs scripts/cross-environment-matrix.test.mjs scripts/cross-environment-closure.test.mjs scripts/check-klipy-config.test.mjs scripts/check-cleanup-scheduler.test.mjs scripts/sentry-cross-lane-proof.test.mjs
-      - name: Build mobile web shell
+      - name: Build mobile web shell (main pushes and manual runs only)
+        # Heavy step: keep it off pull requests so PR feedback stays fast, while
+        # every main push still proves the configured build and bundle URL/key.
+        if: github.event_name != 'pull_request'
         run: npm run build -w @findback/mobile
         env:
           CI: true

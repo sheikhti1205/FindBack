@@ -2,7 +2,7 @@
   "name": "findback",
   "private": true,
   "version": "0.11.0-beta.2",
-  "description": "FindBack — minimal lost & found reporting/recovery Android app (course project).",
+  "description": "FindBack — a local-first lost-and-found network for reporting, matching and recovering lost items.",
   "workspaces": [
     "apps/mobile",
     "services/api",

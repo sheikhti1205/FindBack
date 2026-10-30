@@ -1,5 +1,9 @@
 # FindBack
 
+**Status: internal beta (pre-public).** Not a public release; builds are only
+installable from a verified GitHub release, and an engineering checkpoint is not
+release approval.
+
 Lost something? Found something? Post it, and let people nearby help you get it back to its owner.
 
 FindBack is an Android app for reporting lost and found items. A report works like a normal post: photos, a short description, a date and a spot on the map. Other people can comment, share it, or tell you they've seen the item. The app also suggests lost and found reports that look like each other, so you don't have to scroll through everything.
@@ -52,17 +56,38 @@ Meeting a stranger to hand over an item has real risks. Verify ownership before 
 
 Android is the primary target. Only builds explicitly verified and published on the GitHub Releases page should be installed; an internal engineering checkpoint is not release approval.
 
+## Project status
+
+FindBack is a working internal beta. The consumer flows are implemented and covered by
+automated checks, but real two-account, multi-device, staff-session and phone-photo
+acceptance is still outstanding. See [ROADMAP.md](ROADMAP.md) for direction and
+[docs/history/](docs/history/) for how the version line is derived.
+
 ## For developers
 
-- Setup, stack, repo layout and checks: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
-- Architecture and data flow: [`docs/erd/`](docs/erd/)
-- Version history: [`docs/history/`](docs/history/) (or `VERSION_HISTORY.md`)
-- Course/evaluation evidence: [`docs/`](docs/) (requirements matrix, demo checklist, acceptance report)
+- Setup, stack, layout and checks: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+- Architecture and data flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Data model: [docs/erd/](docs/erd/)
+- Version history: [docs/history/VERSION_HISTORY.md](docs/history/VERSION_HISTORY.md)
+- Freeze record: [docs/releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md](docs/releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md)
+- Course-era material (provenance only): [docs/course/](docs/course/)
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://github.com/sheikhti1205/FindBack/blob/main/CONTRIBUTING.md) if present, or open an issue.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security problems go to
+[SECURITY.md](SECURITY.md), never a public issue.
 
 ## License
 
-See [LICENSE](https://github.com/sheikhti1205/FindBack/blob/main/LICENSE) if present.
+FindBack is **source-available, not OSI open source**. It is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md); commercial use needs a separate
+written license ([COMMERCIAL.md](COMMERCIAL.md)). The FindBack name and branding are
+reserved ([BRANDING.md](BRANDING.md)); third-party components keep their own licenses
+([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
+
+## Project origin
+
+FindBack started in 2026 as a university course project and grew into a real
+lost-and-found product. Course-era requirements, plans and evaluation material are
+kept under [docs/course/](docs/course/) for provenance; they are not the current
+product specification and they are not acceptance evidence.
