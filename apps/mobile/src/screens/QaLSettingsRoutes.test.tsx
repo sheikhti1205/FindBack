@@ -17,6 +17,7 @@ const auth = vi.hoisted(() => ({
 const aiCreds = vi.hoisted(() => ({
   get: vi.fn(async () => null as string | null),
   hasSaved: vi.fn(async () => false),
+  hasCredential: vi.fn(async () => false),
 }));
 vi.mock("../auth", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -43,7 +44,7 @@ vi.mock("@capacitor/app", () => ({
 vi.mock("./Onboarding", () => ({ Onboarding: () => <p>Onboarding screen</p>, ONBOARDING_PAGES: [] }));
 vi.mock("../services/aiCredentials", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/aiCredentials")>();
-  return { ...actual, aiCredentials: aiCreds };
+  return { ...actual, aiCredentials: { ...aiCreds, credentialHandle: actual.aiCredentials.credentialHandle } };
 });
 vi.mock("../services/notificationPreferences", () => ({
   fetchNotificationPreferences: async () => ({ pushEnabled: true }),
@@ -127,6 +128,16 @@ describe("QA L: every settings backTo lands on a mounted route", () => {
     expect(screen.queryByText("Loading FindBack…")).toBeNull();
   });
 });
+
+it.each(["/settings/ai/connections", "/ai-connection"])(
+  "provider route %s finishes loading the key form rather than an error page", async (route) => {
+    renderAt(route);
+    expect(await screen.findByRole("heading", { level: 1, name: "Providers" })).not.toBeNull();
+    expect(await screen.findByText("No key saved")).not.toBeNull();
+    expect(screen.getByLabelText("OpenRouter API key")).not.toBeNull();
+    expect(screen.queryByText("Checking saved key…")).toBeNull();
+  },
+);
 
 describe("QA L: the legal documents are reachable and say what they are", () => {
   it.each([

@@ -5,7 +5,12 @@ dist
 uploads
 data
 *.md
-apps/mobile/android
+# The web preflight verifies native/web map defaults against this one source.
+# Keep all other Android sources, keys, native weights and outputs excluded.
+apps/mobile/android/*
+!apps/mobile/android/app/
+apps/mobile/android/app/*
+!apps/mobile/android/app/build.gradle
 apps/mobile/dist
 services/api/dist
 packages/shared/dist

@@ -109,7 +109,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # Full messaging tests use native Web Locks (added in Node 24.5).
+          node-version: 24
           cache: npm
       - uses: actions/setup-java@v6
         with:

@@ -6,7 +6,9 @@ in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements
 
-- Node.js 22 and npm
+- Node.js 24.5+ and npm for development and the full test suite. Messaging tests
+  use native `navigator.locks` / `node:worker_threads.locks`; Node 22 remains the
+  API/container build baseline but cannot run those lock-dependent tests.
 - A Supabase project (or the local Supabase CLI stack) for anything that touches the
   backend
 - For Android builds: JDK 21, Android SDK with the pinned NDK, and a signed release
