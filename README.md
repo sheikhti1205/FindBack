@@ -1,5 +1,7 @@
 # FindBack
 
+[![CI](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml/badge.svg)](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml)
+
 **Status: internal beta (pre-public).** Not a public release; builds are only
 installable from a verified GitHub release, and an engineering checkpoint is not
 release approval.
@@ -9,6 +11,18 @@ Lost something? Found something? Post it, and let people nearby help you get it 
 FindBack is an Android app for reporting lost and found items. A report works like a normal post: photos, a short description, a date and a spot on the map. Other people can comment, share it, or tell you they've seen the item. The app also suggests lost and found reports that look like each other, so you don't have to scroll through everything.
 
 Web links to shared reports: <https://findbackapp.social>
+
+## Screenshots
+
+Browser captures with synthetic reports, shown in light and true-black themes.
+These illustrate the interface, not native-device or real-account acceptance.
+
+<p>
+  <img src="docs/screenshots/search-light.png" width="240" alt="Search and filter results for sample lost and found items in the light theme" />
+  <img src="docs/screenshots/search-black.png" width="293" alt="The same sample lost and found search results in the true-black theme" />
+</p>
+
+Capture dimensions and checksums: [screenshot manifest](docs/screenshots/manifest.json).
 
 ## How it works
 

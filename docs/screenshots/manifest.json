@@ -1,0 +1,20 @@
+{
+  "capturedAt": "2026-10-30T07:32:20Z",
+  "scope": "browser fixtures with synthetic reports; not native-device or real-account acceptance",
+  "rendererVerifiedAtSource": "066e40b88f3eb3ccafa506201190dce14e02ca98",
+  "productionSourceFilesVerified": 454,
+  "images": [
+    {
+      "file": "search-light.png",
+      "width": 320,
+      "height": 844,
+      "sha256": "f0448b02018dda41b9266e1c0ff5f2ff8205a5d6b97477e3d518cfe7f67e1262"
+    },
+    {
+      "file": "search-black.png",
+      "width": 390,
+      "height": 844,
+      "sha256": "8ba386fd96006eda15aa7fc25fab538b8def38dbe87025161089ebb69e0df2f0"
+    }
+  ]
+}
