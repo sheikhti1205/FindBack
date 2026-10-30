@@ -2,8 +2,10 @@ package com.findback.app.map
 
 import android.app.Activity
 import android.content.Intent
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import com.findback.app.BuildConfig
+import com.findback.app.FindbackApp
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_ALLOW_CURRENT_LOCATION
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_LABEL
 import com.findback.app.map.FindbackMapActivity.Companion.EXTRA_LATITUDE
@@ -35,6 +37,8 @@ import com.getcapacitor.annotation.CapacitorPlugin
 class FindbackMapPlugin : Plugin() {
 
     companion object {
+        private const val TAG = "FindbackMapPlugin"
+
         /** Must match `mapLibreVersion` in variables.gradle (release-gated). */
         const val RENDERER_VERSION = "13.6.1"
     }
@@ -166,6 +170,9 @@ class FindbackMapPlugin : Plugin() {
         val theme = call.getString("theme", "light")
         val styleUrl = MapValidation.validateStyleUrl(BuildConfig.MAP_STYLE_URL)
         val context = context
+        if (!FindbackApp.mapLibreInitialized) {
+            Log.w(TAG, "MapLibre was not initialized at application startup before renderSnapshot.")
+        }
         try {
             MapSnapshotService.render(
                 context,

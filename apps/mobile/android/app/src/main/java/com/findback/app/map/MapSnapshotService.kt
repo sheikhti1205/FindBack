@@ -127,50 +127,55 @@ object MapSnapshotService {
             // both post to the same main queue in order, so a congested main
             // thread cannot burn the timeout before start() runs.
             main.postDelayed(timeout, SNAPSHOT_TIMEOUT_MS)
-            val options = MapSnapshotter.Options(width, height)
-                .withStyle(effectiveStyle)
-                .withCameraPosition(
-                    CameraPosition.Builder()
-                        .target(LatLng(latitude, longitude))
-                        .zoom(MapValidation.clampZoom(zoom))
-                        .build(),
-                )
-                .withPixelRatio(ratio)
-            val current = MapSnapshotter(appContext, options)
-            snapshotter = current
-            current.start(
-                { snapshot ->
-                    Thread {
-                        try {
-                            val bitmap = snapshot.bitmap
-                            drawPin(bitmap)
-                            FileOutputStream(file).use { out ->
-                                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                                    throw SnapshotFailedException("The map preview could not be saved.")
+            try {
+                val options = MapSnapshotter.Options(width, height)
+                    .withStyle(effectiveStyle)
+                    .withCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(latitude, longitude))
+                            .zoom(MapValidation.clampZoom(zoom))
+                            .build(),
+                    )
+                    .withPixelRatio(ratio)
+                val current = MapSnapshotter(appContext, options)
+                snapshotter = current
+                current.start(
+                    { snapshot ->
+                        Thread {
+                            try {
+                                val bitmap = snapshot.bitmap
+                                drawPin(bitmap)
+                                FileOutputStream(file).use { out ->
+                                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                                        throw SnapshotFailedException("The map preview could not be saved.")
+                                    }
+                                }
+                                evictOldest(dir, MapValidation.MAX_SNAPSHOT_CACHE_BYTES)
+                                val done = SnapshotResult(file, width, height, key)
+                                main.post {
+                                    main.removeCallbacks(timeout)
+                                    settle(Result.success(done))
+                                }
+                            } catch (e: Exception) {
+                                file.delete()
+                                main.post {
+                                    main.removeCallbacks(timeout)
+                                    settle(Result.failure(SnapshotFailedException("The map preview failed.")))
                                 }
                             }
-                            evictOldest(dir, MapValidation.MAX_SNAPSHOT_CACHE_BYTES)
-                            val done = SnapshotResult(file, width, height, key)
-                            main.post {
-                                main.removeCallbacks(timeout)
-                                settle(Result.success(done))
-                            }
-                        } catch (e: Exception) {
-                            file.delete()
-                            main.post {
-                                main.removeCallbacks(timeout)
-                                settle(Result.failure(SnapshotFailedException("The map preview failed.")))
-                            }
+                        }.start()
+                    },
+                    {
+                        main.post {
+                            main.removeCallbacks(timeout)
+                            settle(Result.failure(SnapshotFailedException("The map preview failed.")))
                         }
-                    }.start()
-                },
-                {
-                    main.post {
-                        main.removeCallbacks(timeout)
-                        settle(Result.failure(SnapshotFailedException("The map preview failed.")))
-                    }
-                },
-            )
+                    },
+                )
+            } catch (e: Exception) {
+                main.removeCallbacks(timeout)
+                settle(Result.failure(SnapshotFailedException("The map preview failed.")))
+            }
         }
 
         if (Looper.myLooper() == Looper.getMainLooper()) {
