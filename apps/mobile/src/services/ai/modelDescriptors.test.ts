@@ -42,10 +42,9 @@ describe("modelDescriptors", () => {
 
   it("retains Qwen's historical byte identity without promoting its former roles or acquisition", () => {
     const descriptor = productionModelRegistry().requireDescriptor(QWEN_TEXT_MODEL_ID);
-    const profile = profileFor(QWEN_TEXT_MODEL_ID);
-    expect(profile).toBeDefined();
-    expect(QWEN_TEXT_DESCRIPTOR.revision).toBe(profile!.revision);
-    expect(QWEN_TEXT_DESCRIPTOR.sha256).toBe(profile!.modelSha256);
+    expect(profileFor(QWEN_TEXT_MODEL_ID)).toBeUndefined();
+    expect(QWEN_TEXT_DESCRIPTOR.revision).toBe("a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76");
+    expect(QWEN_TEXT_DESCRIPTOR.sha256).toBe("03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856");
     expect(QWEN_TEXT_DESCRIPTOR.format).toBe("litertlm");
     expect(QWEN_TEXT_DESCRIPTOR.maturity).toBe("production");
     expect(tierOf(QWEN_TEXT_DESCRIPTOR)).toBe("recommended");
@@ -75,13 +74,21 @@ describe("modelDescriptors", () => {
   });
 
   it("resolves the vision model from explicit policy, never catalogue order", () => {
-    const reordered = createModelRegistry([SMOL_VISION_DESCRIPTOR, NEEDLE_DESCRIPTOR], {
-      defaultVisionModelId: SMOL_VISION_DESCRIPTOR.modelId,
+    const synthetic = { ...SMOL_VISION_DESCRIPTOR, modelId: "test-vision", cleanupOnly: false };
+    const reordered = createModelRegistry([synthetic, NEEDLE_DESCRIPTOR], {
+      defaultVisionModelId: synthetic.modelId,
     });
-    expect(reordered.visionDescriptor()?.modelId).toBe(SMOL_VISION_DESCRIPTOR.modelId);
+    expect(reordered.visionDescriptor()?.modelId).toBe("test-vision");
     expect(reordered.descriptorFor(NEEDLE_MODEL_ID)?.runtimeId).toBe("needle-cact");
     expect(reordered.descriptorFor("nope")).toBeUndefined();
     expect(() => reordered.requireDescriptor("nope")).toThrow(/unknown on-device model/i);
+  });
+
+  it("never routes a cleanup identity even when explicitly configured as the vision default", () => {
+    const registry = createModelRegistry([SMOL_VISION_DESCRIPTOR], {
+      defaultVisionModelId: SMOL_VISION_DESCRIPTOR.modelId,
+    });
+    expect(registry.visionDescriptor()).toBeUndefined();
   });
 
   it("names no vision default unless the registry configures one", () => {

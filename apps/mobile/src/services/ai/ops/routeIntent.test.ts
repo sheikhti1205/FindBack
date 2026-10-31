@@ -3,7 +3,7 @@ import { routeIntent } from "./routeIntent";
 import { getTaskSpec } from "../orchestrator/taskRegistry";
 import { mustProfile, stubGenerate } from "./testSupport";
 
-const PROFILE = "qwen3-0.6b-dynamic-int4";
+const PROFILE = "test-thought-envelope";
 
 describe("route-intent op", () => {
   it("routes a search intent to OPEN_SEARCH", async () => {

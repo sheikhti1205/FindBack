@@ -4,7 +4,7 @@ import { getTaskSpec } from "../orchestrator/taskRegistry";
 import type { GenerateFn } from "../types";
 import { mustProfile, stubGenerate } from "./testSupport";
 
-const PROFILE = "qwen3-0.6b-dynamic-int4";
+const PROFILE = "test-thought-envelope";
 
 describe("classify-category op", () => {
   it("classifies item text into the category vocabulary", async () => {

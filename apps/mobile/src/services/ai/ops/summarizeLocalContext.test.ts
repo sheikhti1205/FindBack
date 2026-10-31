@@ -3,7 +3,7 @@ import { summarizeLocalContext, type SummarizeLocalContextInput } from "./summar
 import { REFUSAL_TEXT } from "../testing/FakeAiProvider";
 import { mustProfile, stubGenerate } from "./testSupport";
 
-const PROFILE = "qwen3-0.6b-dynamic-int4";
+const PROFILE = "test-thought-envelope";
 
 describe("summarize-local-context op", () => {
   it("summarizes notes as short prose", async () => {

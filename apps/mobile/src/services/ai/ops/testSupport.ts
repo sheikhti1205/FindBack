@@ -6,6 +6,12 @@ import { FakeAiProvider } from "../testing/FakeAiProvider";
 import type { GenerateFn } from "../types";
 
 export function mustProfile(id: string): ModelProfile {
+  if (id === "test-thought-envelope" || id === "test-plain") {
+    const base = profileFor("needle3-cact-l20")!;
+    return { ...base, id, corpusLabel: "Synthetic normalization fixture", runtime: "cloud", format: "remote",
+      ...(id === "test-thought-envelope" ? { thoughtEnvelope: { openMarker: "[thought]", closeMarker: "[/thought]" }, structuredOutputStrategy: "thought-envelope-then-prose" } : {}),
+    };
+  }
   const profile = profileFor(id);
   if (profile === undefined) throw new Error(`missing profile: ${id}`);
   return profile;

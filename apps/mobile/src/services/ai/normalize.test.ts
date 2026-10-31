@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { profileFor, type ModelProfile } from "./modelProfiles";
+import { mustProfile } from "./ops/testSupport";
 import {
   checkNonEmptyOrRefusal,
   detectRefusal,
@@ -15,14 +15,8 @@ import {
 } from "./normalize";
 import { REFUSAL_TEXT } from "./testing/FakeAiProvider";
 
-function mustProfile(id: string): ModelProfile {
-  const profile = profileFor(id);
-  if (profile === undefined) throw new Error(`missing profile: ${id}`);
-  return profile;
-}
-
-const QWEN = "qwen3-0.6b-dynamic-int4";
-const SMOL_TEXT = "smolvlm2-500m-text";
+const QWEN = "test-thought-envelope";
+const SMOL_TEXT = "test-plain";
 
 const THOUGHT_PLUS_JSON =
   "[thought] The user wants to search, so the intent is SEARCH. [/thought]\n\n" +
@@ -80,8 +74,8 @@ describe("R1 de-fence: one object only, then strict validation", () => {
   });
 });
 
-describe("R2 Qwen thought-strip is profile-specific", () => {
-  it("strips thought+answer on Qwen and processes the answer", () => {
+describe("R2 reasoning-envelope stripping is profile-specific", () => {
+  it("strips declared reasoning before processing the answer", () => {
     const stripped = stripThoughtEnvelope(THOUGHT_PLUS_JSON, mustProfile(QWEN));
     expect(stripped).toEqual({ ok: true, value: '{"intent":"SEARCH"}' });
     const full = normalizeJsonOp(THOUGHT_PLUS_JSON, mustProfile(QWEN), validateIntentPayload);

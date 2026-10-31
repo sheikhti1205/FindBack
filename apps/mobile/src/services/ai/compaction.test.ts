@@ -400,12 +400,9 @@ describe("model-assisted summarization obeys paid consent and privacy (CTX-10)",
 });
 
 describe("invisible long-chat compaction via summarize-local-context", () => {
-  const TEXT_PROFILE = "qwen3-0.6b-dynamic-int4";
   async function profile() {
-    const { profileFor } = await import("./modelProfiles");
-    const found = profileFor(TEXT_PROFILE);
-    if (found === undefined) throw new Error("missing profile");
-    return found;
+    const { mustProfile } = await import("./ops/testSupport");
+    return mustProfile("test-thought-envelope");
   }
 
   it("never checkpoints a degree-notation coordinate from the model", async () => {

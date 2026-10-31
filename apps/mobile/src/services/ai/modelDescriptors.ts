@@ -177,7 +177,8 @@ function profilePin(modelId: string): { revision: string; sha256: string } {
 
 const NEEDLE_PIN = profilePin(NEEDLE_MODEL_ID);
 export const SMOL_VISION_MODEL_ID = "smolvlm2-500M-vision";
-const SMOL_PIN = profilePin(SMOL_VISION_MODEL_ID);
+// Historical cleanup pins are not executable model profiles.
+const SMOL_PIN = { revision: "dad030b6e56756201d670cfb4d042736a2ce3a5c", sha256: "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0" };
 
 /** Cleanup identity only: the retired photo runtime serves no product role. */
 const NO_TASK_ROLES: readonly AiTaskId[] = [];
@@ -185,12 +186,9 @@ const NO_TASK_ROLES: readonly AiTaskId[] = [];
  * Audit closure: Needle's advertised roles are exactly what its native
  * path genuinely satisfies today — the record_item tool-constrained
  * structured path (slot extraction with strict validators) and the
- * embedding path (validated vectors). Prose tasks (answer-help,
- * summarize-local-context) and intent tasks (classify-intent,
- * route-intent) have explicit interpreters and fail closed on the model
- * path, but the tool schema is report-shaped and free prose is unproven
- * on device — so they are NOT advertised until device evidence proves
- * them. Roles expand with evidence, never with hope.
+ * embedding path (validated vectors). Each structured task has its own
+ * tool schema. Intent tasks are deterministic-only with this descriptor;
+ * local prose and photo-generation tasks are retired.
  */
 const NEEDLE_TEXT_ROLES: readonly AiTaskId[] = [
   "extract-report-fields",
@@ -225,7 +223,7 @@ export const NEEDLE_DESCRIPTOR: ModelDescriptor = {
   downloadable: true,
 };
 
-export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
+export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = cleanupOnlyDescriptor({
   modelId: SMOL_VISION_MODEL_ID,
   displayName: "SmolVLM2 · image description",
   consumerTitle: "Photo analysis",
@@ -248,25 +246,15 @@ export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
   // no device evidence, so it stays unlisted (fail-closed) until measured.
   abis: ["arm64-v8a"],
   downloadable: true,
-};
+});
 
-/**
- * Qwen3 0.6B dynamic INT4 — first-class on-device assistant text.
- * Pins are REUSED from the lab profile (profilePin), never duplicated:
- * revision a3c5d805 + sha 03e7da1e live in modelProfiles.ts. Bytes
- * (344,671,744) and the upstream repo/file come from the lab lane records
- * (docs/runbooks/native-model-run.md, benchmark/labCatalog.ts). The URL
- * follows the same Hugging Face resolve scheme as the SmolVLM2 descriptor.
- * Chat qualification (answer-help) derives from the same authority as
- * routing; see QWEN_TASK_ROLES for why the lab profile's extraction roles
- * are deliberately NOT advertised in production.
- */
+/** Historical identity only, so upgrades can still remove previously installed files. */
 export const QWEN_TEXT_MODEL_ID = "qwen3-0.6b-dynamic-int4";
-const QWEN_PIN = profilePin(QWEN_TEXT_MODEL_ID);
+const QWEN_PIN = { revision: "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76", sha256: "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856" };
 /** Cleanup identity only: the retired text runtime serves no product role. */
 const QWEN_TASK_ROLES: readonly AiTaskId[] = NO_TASK_ROLES;
 
-export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
+export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = cleanupOnlyDescriptor({
   modelId: QWEN_TEXT_MODEL_ID,
   displayName: "Qwen3 · on-device assistant text",
   consumerTitle: "On-device assistant",
@@ -289,7 +277,7 @@ export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
   abis: ["arm64-v8a"],
   downloadable: true,
   upstreamRepo: "litert-community/Qwen3-0.6B",
-};
+});
 
 /**
  * The retired generative descriptors survive ONLY as exact upgrade-cleanup

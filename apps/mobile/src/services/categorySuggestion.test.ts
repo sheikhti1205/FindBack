@@ -10,7 +10,7 @@ import {
 } from "./categorySuggestion";
 import { DROPPED_CATEGORY_NOTE } from "./reportSuggestionNotes";
 
-const PROFILE = mustProfile("qwen3-0.6b-dynamic-int4");
+const PROFILE = mustProfile("test-thought-envelope");
 
 describe("resolveCategorySuggestion (pure resolver)", () => {
   it("passes a released canonical straight through (photo path)", () => {

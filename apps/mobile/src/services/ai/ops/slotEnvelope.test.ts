@@ -10,7 +10,7 @@ import { extractReportFields } from "./extractReportFields";
 import { extractSearchFilters } from "./extractSearchFilters";
 import { mustProfile, stubGenerate } from "./testSupport";
 
-const QWEN = "qwen3-0.6b-dynamic-int4";
+const QWEN = "test-thought-envelope";
 
 describe("canonical slot envelope", () => {
   it("extract-search-filters accepts the local {fields} envelope like flat cloud output", async () => {

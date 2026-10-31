@@ -11,7 +11,7 @@ describe("extract-report-fields op", () => {
           '"dateText":"yesterday","locationNote":"central market"}',
       ),
       "I lost my black umbrella yesterday near the central market.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -25,7 +25,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       stubGenerate('{"title":"Wallet","description":"Brown leather wallet"}'),
       "I lost my wallet.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -39,7 +39,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       stubGenerate('{"title":"Keys","locationNote":"12.3456, 65.4321"}'),
       "Lost keys.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R5_COORDINATES_NOT_ACCEPTED");
@@ -49,7 +49,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       stubGenerate("{objectName: black umbrella, colors: [}"),
       "Lost umbrella.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.errorClass).toBe("INVALID_OUTPUT");
@@ -60,7 +60,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       stubGenerate(`{"title":"Umbrella","description":"${userMessage}"}`),
       userMessage,
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
@@ -76,7 +76,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       failing,
       "Lost keys.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     // This op promises `AiResult`: an engine failure must come back as a result
     // the screen renders, never as a rejection the caller has to remember to
@@ -96,7 +96,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       aborting,
       "Lost keys.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result).toEqual({
       ok: false,
@@ -108,7 +108,7 @@ describe("extract-report-fields op", () => {
     const result = await extractReportFields(
       stubGenerate(JSON.stringify({ title: "Umbrella", description: REPORT_SLOTS_INSTRUCTION })),
       "I lost my black umbrella yesterday near the central market.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");

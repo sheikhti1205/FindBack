@@ -7,7 +7,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate('{"query":"red backpack","dateRangeText":"last week"}'),
       "Search for any red backpack reported in the last week.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -20,7 +20,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate("{}"),
       "Search for stuff.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -33,7 +33,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate('{"query":"keys","status":"open"}'),
       "Show open key reports.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.fields.status).toBe("open");
@@ -43,7 +43,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate('{"query":"black wallet","postType":"LOST","place":"Gulshan"}'),
       "Show the black wallet lost in Gulshan.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -64,7 +64,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate(JSON.stringify({ query: userMessage })),
       userMessage,
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");
@@ -75,7 +75,7 @@ describe("extract-search-filters op", () => {
     const result = await extractSearchFilters(
       stubGenerate(JSON.stringify({ query: instructionRun })),
       "Search for any red backpack reported in the last week.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.diagnostic).toContain("R6_CONTEXT_ECHO");

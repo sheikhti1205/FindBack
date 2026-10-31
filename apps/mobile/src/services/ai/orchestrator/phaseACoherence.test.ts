@@ -91,7 +91,7 @@ describe("Phase A: task validity owns route success", () => {
   });
 
   it("Needle-shaped output provably fails the real search normalization (Help-workaround pair)", () => {
-    const profile = profileFor("qwen3-0.6b-dynamic-int4")!;
+    const profile = profileFor("needle3-cact-l20")!;
     const needleOutput = JSON.stringify({ fields: { title: "red umbrella" } });
     const parsed = normalizeJsonOp(needleOutput, profile, (value, ctx) =>
       validateSearchFilters(value, ctx),

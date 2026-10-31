@@ -11,7 +11,7 @@ import {
   toValidatedPatch,
 } from "./nlFilters";
 
-const PROFILE = "qwen3-0.6b-dynamic-int4";
+const PROFILE = "test-thought-envelope";
 const NOW = new Date("2026-09-25T12:00:00.000Z");
 
 describe("resolveNlCategory", () => {

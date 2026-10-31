@@ -28,7 +28,7 @@ import type { LocalIntelligenceService } from "../services/ai/localIntelligenceV
 import type { OfflineModelStatus } from "../services/ai/offlineModelManager";
 
 /** The profile the op tests use: the real validator chain, a fake model. */
-const PROFILE = "qwen3-0.6b-dynamic-int4";
+const PROFILE = "test-thought-envelope";
 
 // The results list watches for its pagination sentinel. jsdom has no
 // IntersectionObserver, so the boundary is faked here — the list's own

@@ -8,7 +8,7 @@ import {
 } from "./reportFieldSuggestions";
 import { DROPPED_CATEGORY_NOTE } from "./reportSuggestionNotes";
 
-const PROFILE = mustProfile("qwen3-0.6b-dynamic-int4");
+const PROFILE = mustProfile("test-thought-envelope");
 const MESSAGE = "I lost my black umbrella yesterday near the central market.";
 
 describe("buildReportFieldSuggestions (pure map)", () => {

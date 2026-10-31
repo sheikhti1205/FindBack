@@ -98,7 +98,7 @@ describe("ops ASK_USER paths flow through the copy layer", () => {
     const result = await extractReportFields(
       stubGenerate('{"title":"Wallet","description":"Brown leather wallet"}'),
       "I lost my wallet.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -111,7 +111,7 @@ describe("ops ASK_USER paths flow through the copy layer", () => {
     const result = await extractSearchFilters(
       stubGenerate("{}"),
       "Search for stuff.",
-      mustProfile("qwen3-0.6b-dynamic-int4"),
+      mustProfile("test-thought-envelope"),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
