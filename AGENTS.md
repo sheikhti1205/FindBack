@@ -22,6 +22,16 @@
 
 ## Active programme — owner order 2026-10-29
 
+- **M7-P is the active milestone (owner order 2026-10-30/31).** Product Coherence,
+  Repository Simplification & Adaptive UI. Canonical spec:
+  `FindBack-internal/01_ACTIVE/beta-closure-2026-10-29/M7-P/` (packet + GOAL +
+  PREFLIGHT). Execute P0–P10 linearly. The packet supersedes the earlier product
+  REVIEW HOLD for M7-P scope only. Real browser/account, physical-device/native,
+  Sentry and owner phone-photo matching-corpus acceptance stay deferred and
+  unpassed. No per-screen review loops: one integrated P9 audit plus one material
+  repair verification. Backend additions are limited to safe public people search,
+  chat mute, report-linked message context and connected-only static location.
+
 - `FB-BETA-CLOSE-2026-10-29` replaces the old consumer-final, AI/motion and standalone chat execution queues. Canonical private entry: `FindBack-internal/01_ACTIVE/beta-closure-2026-10-29/GOAL.md`; start with `FindBack-internal/00_CONTROL/START_HERE.md`.
 - One active writer/coordinator on main. Read-only workers may support bounded research/audits; no independent writers or child fan-out.
 - Execute M0–M7 in order. Do not advance with unresolved current-milestone source/live/docs parity. Historical evidence remains reference, not a competing task queue or acceptance claim.
