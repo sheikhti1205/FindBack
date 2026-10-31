@@ -13,7 +13,7 @@ import {
   Heart,
 } from "lucide-react";
 import { Link } from "react-router";
-import { PhotoLightbox } from "./PhotoLightbox";
+import { MediaViewer } from "./MediaViewer";
 import { OwnerReportMenu, useOwnerReportActions } from "./OwnerReportActions";
 import { OwnerStatusSwipe } from "./OwnerStatusSwipe";
 import { formatEventDate, timeAgo } from "../utils/dates";
@@ -109,7 +109,7 @@ function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
  * status differ.
  *
  * The content links to the detail page while the photo opens the canonical
- * PhotoLightbox (media and link are siblings, never nested). The row's own
+ * MediaViewer (media and link are siblings, never nested). The row's own
  * controls live in the overflow menu beside the card
  * (`OwnerReportMenu`): status, edit, share and delete. The menu is a SIBLING
  * of the content link, never inside it — a button nested in a link is
@@ -124,12 +124,12 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   const excerpt = stripMarkdown(post.description);
   const actions = useOwnerReportActions();
   const swipe = nextOwnerStatus(post);
-  // Canonical PhotoLightbox for the hero thumb (multi-image: full gallery at
+  // Canonical MediaViewer for the hero thumb (multi-image: full gallery at
   // the tapped index with prev/next). The media button is a SIBLING of the
   // content detail link, never inside it — a button nested in a link is
   // invalid DOM (see PostCard home-feed). All testids/classes are unchanged.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
   const lastIndex = lightboxPhotos.length - 1;
 
   const card = (
@@ -249,32 +249,11 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
         <OwnerReportMenu post={post} />
       </div>
       {lightboxIndex !== null && lightboxPhotos.length > 0 && (
-        <PhotoLightbox
-          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+        <MediaViewer
           index={Math.min(lightboxIndex, lastIndex)}
-          total={lightboxPhotos.length}
-          photos={lightboxPhotos}
-          title={post.title}
-          onSelect={(index) => setLightboxIndex(index)}
+          items={lightboxPhotos}
+          onIndexChange={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}
-          onPrev={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null
-                      ? current
-                      : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
-          onNext={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null ? current : (current + 1) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
         />
       )}
     </article>

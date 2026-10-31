@@ -3,7 +3,6 @@ import { motion } from "framer-motion";
 import { motionDurations, motionEasings, pressFeedback } from "./uiMotion";
 import { ReportPhotoCarousel } from "./ReportPhotoCarousel";
 import type { ReportMediaPhoto } from "./ReportPhotoCarousel";
-import type { PhotoLightboxOriginRect } from "./PhotoLightbox";
 
 export type { ReportMediaPhoto };
 
@@ -15,8 +14,8 @@ export interface ReportMediaPickerProps {
   onMove: (id: string, direction: "earlier" | "later") => void;
   /** Move one photo to the front, which is what makes it the cover. */
   onMakeCover: (id: string) => void;
-  /** `origin` is the tapped slide's viewport rect (shared-element start). */
-  onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
+  /** Inspect the selected photo without changing the draft order. */
+  onPreview: (id: string) => void;
   disabled?: boolean;
   /**
    * §8: maximum height for one carousel slide, in px. The report composer sets it
@@ -118,8 +117,8 @@ export function ReportMediaPicker({
   );
 
   const handlePreview = useCallback(
-    (id: string, origin?: PhotoLightboxOriginRect) => {
-      if (!disabled) onPreview(id, origin);
+    (id: string) => {
+      if (!disabled) onPreview(id);
     },
     [disabled, onPreview]
   );

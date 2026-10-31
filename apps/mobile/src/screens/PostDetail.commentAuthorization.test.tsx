@@ -57,6 +57,20 @@ it("a moderation invalidation conceals unverified media and keeps the reply targ
   expect(screen.queryByRole("button", { name: /cancel reply/i })).toBeNull();
 });
 
+it("a concealed comment gallery closes and cannot reopen itself when authorization returns", async () => {
+  const row = comment("c1", "Original comment\n![photo](https://fixture.supabase.co/storage/v1/object/public/findback-comment-media/author/photo.jpg)");
+  posts.fetchComments.mockResolvedValueOnce([row]);
+  render(tree());
+  fireEvent.click(await screen.findByRole("button", { name: "Open attached photo 1" }));
+  await screen.findByRole("dialog", { name: "Photo viewer" });
+  const pending = deferred<ReturnType<typeof comment>[]>(); posts.fetchComments.mockReturnValueOnce(pending.promise);
+  emit("comment:invalidate", "p1", "MODERATION");
+  expect(screen.queryByRole("dialog", { name: "Photo viewer" })).toBeNull();
+  await act(async () => pending.resolve([row]));
+  await screen.findByText("Original comment");
+  expect(screen.queryByRole("dialog", { name: "Photo viewer" })).toBeNull();
+});
+
 it("an INSERT or reaction invalidation is a quiet refetch that keeps the visible conversation", async () => {
   render(tree()); await screen.findByText("Original comment");
   fireEvent.click(screen.getByRole("button", { name: "Reply to helper" }));

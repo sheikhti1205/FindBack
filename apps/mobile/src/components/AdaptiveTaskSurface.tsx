@@ -33,7 +33,9 @@ function DialogSurface({ open, onClose, title, description, children, footer, bu
           aria-busy={busy || undefined} className="fb-surface-dialog">
           <header className="fb-surface-header">
             <Heading slot="title" className="fb-surface-title">{title}</Heading>
-            {!confirmation && <Button aria-label="Close" isDisabled={busy} onPress={onClose} className="fb-icon-control">
+            {/* Explicit child focus avoids useDialog's delayed dialog refocus
+                racing nested-viewer restoration when a task is opened quickly. */}
+            {!confirmation && <Button autoFocus aria-label="Close" isDisabled={busy} onPress={onClose} className="fb-icon-control">
               <X size={20} aria-hidden="true" />
             </Button>}
           </header>

@@ -22,8 +22,7 @@ import { ACCEPTED_STILL_FORMATS_LABEL, ACCEPTED_STILL_MIME_TYPES, isAcceptedStil
 import { ReportDatePicker } from "../components/ReportDatePicker";
 import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
-import { PhotoLightbox } from "../components/PhotoLightbox";
-import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
+import { MediaViewer } from "../components/MediaViewer";
 import { fadeVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { createHashRegistry, formatBatchNotice, processReportBatch } from "../services/media/reportBatch";
 import { computeSha256Hex } from "../services/media/dedupe";
@@ -339,8 +338,6 @@ function ReportForm() {
   const restorePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const [editorResetKey, setEditorResetKey] = useState(0);
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null);
-  /** Viewport rect of the tile that opened the lightbox (FLIP origin). */
-  const [previewOrigin, setPreviewOrigin] = useState<PhotoLightboxOriginRect | null>(null);
   const hashRegistryRef = useRef(createHashRegistry());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Serializes overlapping picker work (R-073): a second action queues behind
@@ -1497,18 +1494,8 @@ function ReportForm() {
     }
   }
 
-  // Always-mounted lightbox helpers: current photo/index plus wrap-around
-  // stepping for the prev/next controls and arrow keys. Stepping re-centers
-  // (no shared-element rect for the next tile) while the first open grows
-  // out of the tapped thumbnail.
+  // The viewer uses the draft's photo identities; navigation never mutates order.
   const previewIndex = previewPhotoId ? photos.findIndex((p) => p.id === previewPhotoId) : -1;
-  const previewPhoto = previewIndex >= 0 ? photos[previewIndex]! : null;
-  function stepPreview(delta: number): void {
-    if (photos.length === 0 || previewIndex < 0) return;
-    const next = (previewIndex + delta + photos.length) % photos.length;
-    setPreviewOrigin(null);
-    setPreviewPhotoId(photos[next]!.id);
-  }
 
   // One crossfading slot for the batch pipeline: queued -> processing ->
   // ready/failed, keyed by kind so progress numbers tick in place and only a
@@ -1629,10 +1616,7 @@ function ReportForm() {
           onRemove={removePhoto}
           onMove={movePhotoById}
           onMakeCover={makeCoverPhoto}
-          onPreview={(id, origin) => {
-            setPreviewOrigin(origin ?? null);
-            setPreviewPhotoId(id);
-          }}
+          onPreview={setPreviewPhotoId}
           // §8: with the keyboard up the photos keep ~40% of the viable area;
           // omitted otherwise, so the carousel's own bound applies.
           photoMaxHeightPx={composing ? photoBudgetPx : undefined}
@@ -1933,13 +1917,10 @@ function ReportForm() {
       )}
 
 
-      <PhotoLightbox
-        photo={previewPhoto}
-        index={previewIndex >= 0 ? previewIndex : undefined}
-        total={photos.length}
-        originRect={previewOrigin}
-        onPrev={photos.length > 1 ? () => stepPreview(-1) : undefined}
-        onNext={photos.length > 1 ? () => stepPreview(1) : undefined}
+      <MediaViewer
+        items={photos.map((photo, i) => ({ id: photo.id, src: photo.previewUrl, alt: `Selected photo ${i + 1}` }))}
+        index={previewIndex >= 0 ? previewIndex : null}
+        onIndexChange={(index) => setPreviewPhotoId(photos[index]?.id ?? null)}
         onClose={() => setPreviewPhotoId(null)}
       />
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@capacitor/core", () => ({
@@ -104,6 +104,22 @@ describe("ReportEditor", () => {
     render(<ReportEditor values={values()} onChange={onChange} />);
     fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "A new title" } });
     expect(onChange).toHaveBeenCalledWith({ title: "A new title" });
+  });
+
+  it("inspects existing photos without changing the edit values or their order", async () => {
+    const onChange = vi.fn();
+    const photos = [post.attachments[0]!, { ...post.attachments[0]!, id: "a2", fileUrl: "https://example.test/back.jpg" }];
+    render(<ReportEditor values={values()} onChange={onChange} photos={photos} />);
+    fireEvent.click(screen.getByRole("button", { name: /photo 2 of 2/i }));
+    await screen.findByRole("dialog", { name: "Photo viewer" });
+    expect(screen.getByText("Photo 2 of 2")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Next photo" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Previous photo" }));
+    await screen.findByText("Photo 1 of 2");
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Photo viewer" })).toBeNull());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(photos.map((photo) => photo.id)).toEqual(["a1", "a2"]);
   });
 
   it("knows when the values differ from the baseline", () => {

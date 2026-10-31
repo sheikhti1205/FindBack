@@ -7,7 +7,6 @@ import {
   sharedMediaLayoutId,
 } from "../PostCardContent";
 import { usePagerTap, useSnapPager } from "../photoPager";
-import type { PhotoLightboxOriginRect } from "../PhotoLightbox";
 
 export interface DetailHeroImage {
   fileUrl: string;
@@ -17,7 +16,7 @@ interface DetailHeroGalleryProps {
   postId: string;
   title: string;
   images: DetailHeroImage[];
-  onOpenLightbox?: (index: number, origin: PhotoLightboxOriginRect | null) => void;
+  onOpenLightbox?: (index: number) => void;
 }
 
 /**
@@ -36,15 +35,10 @@ export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: Det
   const { pressStart, isTap } = usePagerTap();
   const mediaId = sharedMediaLayoutId(postId);
 
-  // Capture the tapped frame's rect so the lightbox can FLIP out of it.
   // A press that travelled is a page gesture, never an open.
   function openAt(index: number, e: MouseEvent<HTMLButtonElement>) {
     if (!isTap(e)) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    onOpenLightbox?.(
-      index,
-      rect.width > 0 ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null,
-    );
+    onOpenLightbox?.(index);
   }
   if (images.length === 0) return null;
 

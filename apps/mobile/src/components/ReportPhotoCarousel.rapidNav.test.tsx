@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PhotoLightboxOriginRect } from "./PhotoLightbox";
 import { ReportPhotoCarousel, type ReportMediaPhoto } from "./ReportPhotoCarousel";
 
 /**
@@ -29,7 +28,7 @@ function mount(photos: readonly ReportMediaPhoto[] = PHOTOS) {
     onRemove: vi.fn<(id: string) => void>(),
     onMove: vi.fn<(id: string, direction: "earlier" | "later") => void>(),
     onMakeCover: vi.fn<(id: string) => void>(),
-    onPreview: vi.fn<(id: string, origin?: PhotoLightboxOriginRect) => void>(),
+    onPreview: vi.fn<(id: string) => void>(),
   };
   const view = render(
     <ReportPhotoCarousel

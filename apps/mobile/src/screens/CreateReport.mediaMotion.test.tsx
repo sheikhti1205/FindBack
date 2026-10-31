@@ -136,16 +136,17 @@ describe("CreateReport media motion", () => {
     await addWebPhoto("two.jpg", 2);
 
     fireEvent.click(screen.getByRole("button", { name: /view photo 1 of 2 full size/i }));
-    const dialog = await screen.findByRole("dialog", { name: "Photo 1 of 2" }, { timeout: 3000 });
+    const dialog = await screen.findByRole("dialog", { name: "Photo viewer" }, { timeout: 3000 });
+    expect(screen.getByText("Photo 1 of 2")).toBeTruthy();
 
-    // Parent wires wrap-around navigation into the lightbox controls.
+    // The canonical engine owns finite navigation, not the draft's ordering.
     fireEvent.click(screen.getByRole("button", { name: /next photo/i }));
-    await screen.findByRole("dialog", { name: "Photo 2 of 2" }, { timeout: 3000 });
+    await screen.findByText("Photo 2 of 2");
     fireEvent.click(screen.getByRole("button", { name: /previous photo/i }));
-    await screen.findByRole("dialog", { name: "Photo 1 of 2" }, { timeout: 3000 });
+    await screen.findByText("Photo 1 of 2");
 
     expect(dialog).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /close photo preview/i }));
+    fireEvent.click(screen.getByRole("button", { name: /close photo viewer/i }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 3000 });
   }, 15000);
 

@@ -545,18 +545,18 @@ describe("home-feed media polish (edge-to-edge cover for loaded photos)", () => 
 });
 
 describe("home-feed content-first interactions", () => {
-  it("opens the canonical PhotoLightbox at the current carousel index on an image tap", () => {
+  it("opens the canonical MediaViewer at the current carousel index on an image tap", () => {
     renderHomeFeed(imagePost(4));
     const track = screen.getByTestId("feed-media-track");
     Object.defineProperty(track, "clientWidth", { configurable: true, value: 300 });
     track.scrollLeft = 2 * 300;
     fireEvent.scroll(track);
     fireEvent.click(screen.getAllByTestId("feed-slide")[2]!);
-    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
+    expect(screen.getByTestId("media-viewer")).toBeTruthy();
     // Starts on the third photo, not the first.
     expect(screen.getByText("Photo 3 of 4")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "View photo 3" }).getAttribute("aria-pressed"),
+      screen.getByRole("button", { name: "3 of 4" }).getAttribute("aria-current"),
     ).toBe("true");
   });
 
@@ -569,7 +569,7 @@ describe("home-feed content-first interactions", () => {
     const slide = screen.getAllByTestId("feed-slide")[1]!;
     fireEvent.mouseDown(slide, { clientX: 260, clientY: 30 });
     fireEvent.click(slide, { clientX: 30, clientY: 34 });
-    expect(screen.queryByTestId("photo-lightbox")).toBeNull();
+    expect(screen.queryByTestId("media-viewer")).toBeNull();
   });
 
   it("shows See more only when the description is actually truncated, and it navigates to detail", async () => {

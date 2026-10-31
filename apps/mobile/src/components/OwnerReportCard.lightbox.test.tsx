@@ -47,21 +47,22 @@ function imageAttachments(count: number) {
 afterEach(cleanup);
 
 describe("OwnerReportCard lightbox (W7)", () => {
-  it("opens the canonical PhotoLightbox at the tapped hero photo with prev/next", async () => {
+  it("opens the canonical MediaViewer at the tapped hero photo with finite navigation", async () => {
     render(
       <MemoryRouter>
         <OwnerReportCard post={post({ attachments: imageAttachments(3) } as Partial<PostItem>)} />
       </MemoryRouter>,
     );
     fireEvent.click(await screen.findByRole("button", { name: /open photo 1 of 3/i }));
-    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
+    expect(screen.getByTestId("media-viewer")).toBeTruthy();
     expect(screen.getByText("Photo 1 of 3")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Previous photo" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: /next photo/i }));
-    expect(screen.getByText("Photo 2 of 3")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Photo 2 of 3")).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: /previous photo/i }));
     expect(screen.getByText("Photo 1 of 3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /close photo preview/i }));
-    await waitFor(() => expect(screen.queryByTestId("photo-lightbox")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /close photo viewer/i }));
+    await waitFor(() => expect(screen.queryByTestId("media-viewer")).toBeNull());
   });
 
   it("keeps alt text, the broken-image fallback, and the content detail link", () => {
@@ -86,6 +87,6 @@ describe("OwnerReportCard lightbox (W7)", () => {
     );
     expect(screen.getByTestId("owner-report-no-photo")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /open photo/i })).toBeNull();
-    expect(screen.queryByTestId("photo-lightbox")).toBeNull();
+    expect(screen.queryByTestId("media-viewer")).toBeNull();
   });
 });

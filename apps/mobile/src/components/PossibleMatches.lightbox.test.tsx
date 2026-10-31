@@ -13,7 +13,7 @@ const post = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrell
 afterEach(cleanup);
 
 describe("PossibleMatches lightbox (W7)", () => {
-  it("opens the canonical PhotoLightbox straight in on a match photo tap", async () => {
+  it("opens the canonical MediaViewer straight in on a match photo tap", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
       { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null, photoUrl: "https://example.com/umbrella.jpg" }, score: 0.8, reasons: [] },
     ] });
@@ -21,10 +21,10 @@ describe("PossibleMatches lightbox (W7)", () => {
 
     const photoButton = await screen.findByRole("button", { name: /open photo for black umbrella/i });
     fireEvent.click(photoButton);
-    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
+    expect(screen.getByTestId("media-viewer")).toBeTruthy();
     expect(screen.getByRole("dialog")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /close photo preview/i }));
-    await waitFor(() => expect(screen.queryByTestId("photo-lightbox")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /close photo viewer/i }));
+    await waitFor(() => expect(screen.queryByTestId("media-viewer")).toBeNull());
   });
 
   it("keeps alt text, the broken-image fallback, and title navigation intact", async () => {
@@ -37,7 +37,7 @@ describe("PossibleMatches lightbox (W7)", () => {
     expect(image.getAttribute("src")).toBe("https://example.com/umbrella.jpg");
     fireEvent.error(image);
     expect(screen.getByText("Photo unavailable")).toBeTruthy();
-    expect(screen.queryByTestId("photo-lightbox")).toBeNull();
+    expect(screen.queryByTestId("media-viewer")).toBeNull();
     expect(screen.getByRole("link").getAttribute("href")).toBe("/posts/found-1");
   });
 });

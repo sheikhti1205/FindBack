@@ -18,8 +18,7 @@ import {
   sharedTitleLayoutId,
 } from "../components/PostCardContent";
 import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
-import type { PhotoLightboxOriginRect } from "../components/PhotoLightbox";
-import { PhotoLightbox } from "../components/PhotoLightbox";
+import { MediaViewer } from "../components/MediaViewer";
 import { MarkdownView } from "../components/MarkdownView";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { ReportReferenceCard } from "../components/ReportReferenceCard";
@@ -215,7 +214,8 @@ export function PostDetail() {
   // Briefly highlights the jump target of an @reply-to tap (same pattern as
   // the linked-comment highlight below — focus ring, no navigation).
   const [flashComment, setFlashComment] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<{ index: number; origin: PhotoLightboxOriginRect | null } | null>(null);
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const [commentPhoto, setCommentPhoto] = useState<{ id: string; photoId: string; blocked: boolean } | null>(null);
 
   // Sequence tokens for latest-request-wins mutation sequencing
   const reactionSeq = useRef(0);
@@ -265,7 +265,7 @@ export function PostDetail() {
     setComments([]); setReplyTo(null); setCommentSummaries({}); setCommentPending({});
     setCommentsLoading(true); setCommentsError(null);
     setMyReaction(null); setMyRating(null); setPostCountsOverride(null);
-    setLightbox(null); setPost(null); setLoading(true); postPresentRef.current = false;
+    setLightbox(null); setCommentPhoto(null); setPost(null); setLoading(true); postPresentRef.current = false;
     return () => { ++loadGen.current; ++commentsSeq.current; ++socialSeq.current; };
   }, [id, user?.id]);
 
@@ -377,7 +377,7 @@ export function PostDetail() {
       // another account's ordinary activity (a like, a new comment) must never
       // destroy the user's draft context. loadComments re-points it to the
       // refetched row and clears it only when that row is genuinely gone.
-      setComments([]); commentsRef.current = []; setCommentSummaries({}); setCommentsLoading(true);
+      setComments([]); setCommentPhoto(null); commentsRef.current = []; setCommentSummaries({}); setCommentsLoading(true);
     }
     setCommentsError(null);
     return loadComments(loadGen.current, seq);
@@ -792,7 +792,7 @@ export function PostDetail() {
   }
 
   const images = post.attachments.filter((a) => a.mimeType.startsWith("image/"));
-  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
 
   // Owner status control is disabled while any mutation is active
   const ownerControlsDisabled = reactionPending || statusPending || current.status === "MATCHED" || current.status === "RECOVERED";
@@ -811,6 +811,11 @@ export function PostDetail() {
   // @reply-to jump target. parentId/depth semantics are untouched.
   const commentsById = new Map<string, CommentItem>();
   for (const c of comments) commentsById.set(c.id, c);
+  const photoComment = commentPhoto ? commentsById.get(commentPhoto.id) : undefined;
+  const commentPhotos = photoComment && !!photoComment.blockedAuthor === commentPhoto?.blocked
+    ? parseCommentBody(photoComment.body).media.flatMap((item, i) => item.kind === "photo"
+      ? [{ id: `${photoComment.id}:${i}`, src: item.url, alt: `Attached photo ${i + 1}` }] : []) : [];
+  const commentPhotoIndex = commentPhotos.findIndex((item) => item.id === commentPhoto?.photoId);
   const childrenByParent = new Map<string, CommentItem[]>();
   const commentRoots: CommentItem[] = [];
   for (const c of comments) {
@@ -977,12 +982,16 @@ export function PostDetail() {
                       className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
                     />
                   ) : (
+                    <button type="button" aria-label={`Open attached photo ${i + 1}`}
+                      className="block rounded-m3-sm focus-visible:outline-2 focus-visible:outline-primary"
+                      onClick={() => setCommentPhoto({ id: c.id, photoId: `${c.id}:${i}`, blocked: !!c.blockedAuthor })}>
                     <img
                       src={m.url}
                       alt={`Attached photo ${i + 1} via ${sourceLabel}`}
                       loading="lazy"
                       className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
                     />
+                    </button>
                   )}
                   {provenance && (
                     <figcaption
@@ -1119,7 +1128,7 @@ export function PostDetail() {
           postId={post.id}
           title={post.title}
           images={images}
-          onOpenLightbox={(index, origin) => setLightbox({ index, origin })}
+          onOpenLightbox={setLightbox}
         />
 
         {/* The compact flat action row (owner reference): like + count, comment
@@ -1474,32 +1483,15 @@ export function PostDetail() {
       />
 
       {/* Full-image inspection: contain fit, swipe + arrows + keyboard. */}
-      {lightbox && lightboxPhotos.length > 0 && (
-        <PhotoLightbox
-          photo={lightboxPhotos[Math.min(lightbox.index, lightboxPhotos.length - 1)]!}
-          index={Math.min(lightbox.index, lightboxPhotos.length - 1)}
-          total={lightboxPhotos.length}
-          photos={lightboxPhotos}
-          title={post.title}
-          onSelect={(index) => setLightbox({ index, origin: null })}
-          originRect={lightbox.origin}
+      <MediaViewer items={commentPhotos} index={commentPhotoIndex >= 0 ? commentPhotoIndex : null}
+        onIndexChange={(index) => { if (commentPhoto && commentPhotos[index]) setCommentPhoto({ ...commentPhoto, photoId: commentPhotos[index].id }); }}
+        onClose={() => setCommentPhoto(null)} />
+      {lightbox !== null && lightboxPhotos.length > 0 && (
+        <MediaViewer
+          index={Math.min(lightbox, lightboxPhotos.length - 1)}
+          items={lightboxPhotos}
+          onIndexChange={setLightbox}
           onClose={() => setLightbox(null)}
-          onPrev={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightbox((lb) =>
-                    lb ? { index: (lb.index - 1 + lightboxPhotos.length) % lightboxPhotos.length, origin: null } : lb,
-                  )
-              : undefined
-          }
-          onNext={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightbox((lb) =>
-                    lb ? { index: (lb.index + 1) % lightboxPhotos.length, origin: null } : lb,
-                  )
-              : undefined
-          }
         />
       )}
 

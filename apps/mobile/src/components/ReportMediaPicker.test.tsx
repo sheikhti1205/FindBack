@@ -218,7 +218,7 @@ describe("ReportMediaPicker", () => {
     render(<ReportMediaPicker {...props} />);
 
     tap(slideButtons()[1]!);
-    expect(props.onPreview).toHaveBeenCalledWith("p2", { x: 0, y: 0, width: 0, height: 0 });
+    expect(props.onPreview).toHaveBeenCalledWith("p2");
   });
 
   it("keyboard activation opens the preview even after a gesture left a press behind", () => {
@@ -233,7 +233,7 @@ describe("ReportMediaPicker", () => {
     fireEvent.touchStart(slideButtons()[1]!, { touches: [{ clientX: 260, clientY: 40 }] });
     fireEvent.click(slideButtons()[1]!, { clientX: 0, clientY: 0, detail: 0 });
 
-    expect(props.onPreview).toHaveBeenCalledWith("p2", { x: 0, y: 0, width: 0, height: 0 });
+    expect(props.onPreview).toHaveBeenCalledWith("p2");
   });
 
   it("names the cover in the first slide's accessible name", () => {

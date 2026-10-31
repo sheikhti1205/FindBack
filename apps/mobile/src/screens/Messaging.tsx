@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, Bell, ChevronDown, Ellipsis, ImagePlus, RefreshCw, Send } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
@@ -7,7 +7,7 @@ import { UserAvatar } from "../components/UserAvatar";
 import { BottomSheet } from "../components/BottomSheet";
 import { BlockControl } from "../components/BlockControl";
 import { ReportSheet } from "../components/ReportSheet";
-import { PhotoLightbox } from "../components/PhotoLightbox";
+import { MediaViewer, type MediaViewerItem } from "../components/MediaViewer";
 import { announce } from "../components/LiveRegion";
 import { fetchAccountLabels } from "../services/accountLabels";
 import { useMessaging } from "../services/messaging/useMessaging";
@@ -70,9 +70,10 @@ function RetrySync({ accountId }: { accountId: string }) {
   </>;
 }
 
-function ChatPhoto({ accountId, conversationId, attachment, onOpen }: {
+function ChatPhoto({ accountId, conversationId, attachment, onOpen, onReady }: {
   accountId: string; conversationId: string; attachment: MediaAttachment;
   onOpen: (id: string, bytes: ArrayBuffer, mime: string) => void;
+  onReady: (id: string, content: { bytes: ArrayBuffer; mime: string } | null) => void;
 }) {
   const [content, setContent] = useState<{ url: string; bytes: ArrayBuffer } | null>(null);
   const [state, setState] = useState<"loading" | "missing" | "failed" | "unavailable">("loading");
@@ -84,6 +85,7 @@ function ChatPhoto({ accountId, conversationId, attachment, onOpen }: {
   useEffect(() => {
     let cancelled = false, url: string | null = null;
     setContent(null); setLoaded(false);
+    onReady(attachment.id, null);
     if (attachment.state === "EVICTED") { setState(attachment.expiresAt !== null && attachment.expiresAt <= Date.now() ? "unavailable" : "missing"); return; }
     setState("loading");
     void readMessagingMedia(accountId, attachment.id).then((bytes) => {
@@ -92,9 +94,10 @@ function ChatPhoto({ accountId, conversationId, attachment, onOpen }: {
       const copy = bytes.slice(0);
       url = URL.createObjectURL(new Blob([copy], { type: attachment.mime }));
       setContent({ url, bytes: copy });
+      onReady(attachment.id, { bytes: copy, mime: attachment.mime });
     }).catch(() => { if (!cancelled) setState("failed"); });
-    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
-  }, [accountId, attachment.id, attachment.mime, attachment.state, attachment.expiresAt, version]);
+    return () => { cancelled = true; onReady(attachment.id, null); if (url) URL.revokeObjectURL(url); };
+  }, [accountId, attachment.id, attachment.mime, attachment.state, attachment.expiresAt, version, onReady]);
   async function download() {
     setState("loading");
     try { await downloadMessagingMedia(accountId, conversationId, attachment.id); setVersion((v) => v + 1); }
@@ -102,7 +105,7 @@ function ChatPhoto({ accountId, conversationId, attachment, onOpen }: {
   }
   return <div className="fb-chat-photo" style={{ aspectRatio: `${attachment.width} / ${attachment.height}` }}>
     {content ? <button type="button" aria-label="View photo" onClick={() => onOpen(attachment.messageId, content.bytes, attachment.mime)}>
-      <img src={content.url} alt="" onLoad={() => setLoaded(true)} onError={() => { setContent(null); setState("failed"); }}
+      <img src={content.url} alt="" onLoad={() => setLoaded(true)} onError={() => { onReady(attachment.id, null); setContent(null); setState("failed"); }}
         data-receipt-message={loaded && attachment.state === "READY" ? attachment.messageId : undefined} />
     </button> : <div role="status">{state === "loading" ? "Photo loading…" : state === "failed" ? "Could not load photo." : "Photo unavailable"}
       {canDownload && (state === "missing" || state === "failed") && <button type="button" onClick={() => void download()}>Download again</button>}
@@ -195,7 +198,11 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [photo, setPhoto] = useState<{ source: File; prepared?: PreparedMessagingPhoto; error?: boolean } | null>(null);
   const [photoPreparing, setPhotoPreparing] = useState(false);
   const [draftUrl, setDraftUrl] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<{ id: string; previewUrl: string } | null>(null);
+  const [viewer, setViewer] = useState<{ id: string; items: MediaViewerItem[] } | null>(null);
+  const readyPhotos = useRef(new Map<string, { bytes: ArrayBuffer; mime: string }>());
+  const rememberPhoto = useCallback((id: string, content: { bytes: ArrayBuffer; mime: string } | null) => {
+    if (content) readyPhotos.current.set(id, content); else readyPhotos.current.delete(id);
+  }, []);
   const viewerUrls = useRef(new Set<string>());
   const photoController = useRef<AbortController | null>(null);
   const admission = useRef<{ metadata: MediaMetadata; caption: string } | null>(null);
@@ -228,22 +235,33 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       setPhoto((previous) => previous && !previous.prepared ? { ...previous, error: true } : previous);
     }
   }, [photoAllowed]);
-  const activeViewer = viewer && photoAllowed
-    && messages.some((message) => message.id === viewer.id && message.unsentAt === undefined) ? viewer : null;
+  const viewerItems = photoAllowed ? viewer?.items.filter((item) => messages.some((message) => message.id === item.id && message.unsentAt === undefined)
+    && media.some((attachment) => attachment.messageId === item.id)) ?? [] : [];
+  const activeViewer = viewer && viewerItems.some((item) => item.id === viewer.id) ? viewer : null;
   useLayoutEffect(() => {
-    if (viewer && !activeViewer) {
-      if (viewerUrls.current.delete(viewer.previewUrl)) URL.revokeObjectURL(viewer.previewUrl);
-      setViewer(null);
+    if (viewer) {
+      const retained = new Set(activeViewer ? viewerItems.map((item) => item.src) : []);
+      for (const url of viewerUrls.current) if (!retained.has(url)) { URL.revokeObjectURL(url); viewerUrls.current.delete(url); }
+      if (!activeViewer) setViewer(null);
     }
-  }, [viewer, activeViewer]);
+  }, [viewer, activeViewer, viewerItems]);
   function openPhoto(id: string, bytes: ArrayBuffer, mime: string) {
-    const previewUrl = URL.createObjectURL(new Blob([bytes.slice(0)], { type: mime }));
-    viewerUrls.current.add(previewUrl); setViewer({ id, previewUrl });
+    if (!photoAllowed) return;
+    const items = messages.filter((message) => message.unsentAt === undefined).flatMap((message) => {
+      const attachment = media.find((item) => item.messageId === message.id);
+      const content = attachment ? readyPhotos.current.get(attachment.id) : undefined;
+      const available = content ?? (message.id === id ? { bytes, mime } : undefined);
+      if (!attachment || !available) return [];
+      const src = URL.createObjectURL(new Blob([available.bytes.slice(0)], { type: available.mime }));
+      viewerUrls.current.add(src);
+      return [{ id: message.id, src, width: attachment.width, height: attachment.height, alt: "Conversation photo" }];
+    });
+    setViewer({ id, items });
   }
   function closePhoto() {
-    if (!viewer) return;
-    const url = viewer.previewUrl; setViewer(null);
-    window.setTimeout(() => { if (viewerUrls.current.delete(url)) URL.revokeObjectURL(url); }, 350);
+    setViewer(null);
+    for (const url of viewerUrls.current) URL.revokeObjectURL(url);
+    viewerUrls.current.clear();
   }
   async function preparePhoto(source: File) {
     photoController.current?.abort();
@@ -494,7 +512,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             <div data-receipt-message={message.messageType === "TEXT" && message.body && message.unsentAt === undefined ? message.id : undefined} className={own ? "fb-chat-message fb-chat-message-own" : "fb-chat-message"}>
             <span className="sr-only">{own ? "You: " : `${name ? `@${name}` : "Member"}: `}</span>
             {message.unsentAt !== undefined ? <p>Message unsent</p> : <>
-            {message.messageType === "MEDIA" && attachment && view?.mode === "CONNECTED" && !view.ownBlocked && <ChatPhoto key={attachment.id} accountId={accountId} conversationId={conversationId} attachment={attachment} onOpen={openPhoto} />}
+            {message.messageType === "MEDIA" && attachment && photoAllowed && <ChatPhoto key={attachment.id} accountId={accountId} conversationId={conversationId} attachment={attachment} onOpen={openPhoto} onReady={rememberPhoto} />}
             {message.body ? <p dir="auto">{message.body}</p> : !attachment && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
             {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
               && message.unsentAt === undefined && receipt?.projections === chat.currentProjections && receipt.readIds.has(message.id) ? "Read" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
@@ -544,7 +562,8 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
         rows={1} maxLength={100000} disabled={busy || !!admission.current} placeholder="Message" />
       <button type="submit" className="fb-chat-icon" aria-label="Send message" disabled={busy || (photo ? !photoAllowed || !photo.prepared : !draft.trim())}><Send size={21} aria-hidden="true" /></button>
     </form>}
-    <PhotoLightbox photo={activeViewer} onClose={closePhoto} />
+    <MediaViewer items={viewerItems} index={activeViewer ? viewerItems.findIndex((item) => item.id === activeViewer.id) : null}
+      onIndexChange={(index) => { if (viewer && viewerItems[index]) setViewer({ ...viewer, id: viewerItems[index].id }); }} onClose={closePhoto} />
     <BottomSheet open={sheet !== null} onClose={() => setSheet(null)} title={sheet === "end" ? "End connection?"
       : sheet === "delete" ? "Delete for me?" : sheet === "unsend" ? "Unsend message?"
         : sheet === "clear" ? "Clear chat for me?" : sheet === "review" ? "Review message" : sheet === "message" ? "Message options" : "Conversation options"} height="medium">

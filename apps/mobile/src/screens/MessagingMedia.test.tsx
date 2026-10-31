@@ -83,7 +83,7 @@ it("shows and opens the correlated local photo with an accessible label", async 
   await waitFor(() => expect(screen.getByRole("button", { name: /view photo/i })).toBeTruthy());
   expect(m.read).toHaveBeenCalledWith("account", "photo");
   fireEvent.click(screen.getByRole("button", { name: /view photo/i }));
-  await waitFor(() => expect(screen.getByRole("dialog", { name: /full size photo/i })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Photo viewer" })).toBeTruthy());
   expect(screen.getByText("caption")).toBeTruthy();
 });
 it("offers Download again when a photo is evicted", async () => {
@@ -241,10 +241,10 @@ it("closes an open photo when an unsend arrives in the same thread", async () =>
   m.messages = [received("MEDIA")]; m.read.mockResolvedValue(new Uint8Array([1]).buffer);
   m.media = [{ id: "photo", messageId: "message", direction: "IN", state: "READY", width: 2, height: 1, mime: "image/jpeg" }];
   const rendered = await open(); fireEvent.click(await screen.findByRole("button", { name: "View photo" }));
-  expect(screen.getByRole("dialog", { name: "Full size photo" })).toBeTruthy();
+   expect(screen.getByRole("dialog", { name: "Photo viewer" })).toBeTruthy();
   m.messages = [{ ...received("MEDIA"), body: "", unsentAt: 1 }]; m.chat.revision++;
   rendered.rerender(thread());
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Full size photo" })).toBeNull());
+   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Photo viewer" })).toBeNull());
 });
 it("can retry preparation after relationship loss aborted a draft", async () => {
   let resolve!: (value: unknown) => void; m.prepare.mockReturnValue(new Promise((done) => { resolve = done; }));
@@ -283,8 +283,9 @@ it("retains an independent viewer copy when the local thumbnail is evicted and r
   m.media = [{ id: "photo", messageId: "message", direction: "IN", state: "READY", width: 2, height: 1, mime: "image/jpeg", expiresAt: Date.now() + 100000 }];
   const rendered = await open(); fireEvent.click(await screen.findByRole("button", { name: "View photo" }));
   m.media = [{ ...(m.media[0] as object), state: "EVICTED" }]; m.chat.revision++; rendered.rerender(thread());
-  await screen.findByRole("button", { name: "Download again" });
-  expect(screen.getByRole("dialog", { name: "Full size photo" })).toBeTruthy();
+  // The engine correctly makes the background transcript inert while open.
+  await screen.findByText("Download again");
+  expect(screen.getByRole("dialog", { name: "Photo viewer" })).toBeTruthy();
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:owned-1");
   expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:owned-2");
   rendered.unmount(); expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:owned-2");
@@ -299,4 +300,45 @@ it("makes permanent-unavailable downloads opaque while a transient failure stays
   await waitFor(() => expect(screen.queryByRole("button", { name: "Download again" })).toBeNull());
   expect(screen.getByText("Photo unavailable")).toBeTruthy();
   expect(screen.queryByText(/synthetic network/)).toBeNull();
+});
+
+it("opens the available conversation sequence and removes access immediately on relationship loss", async () => {
+  let sequence = 0; vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:gallery-${++sequence}`);
+  m.messages = [
+    { ...received("MEDIA"), id: "first" },
+    { ...received("MEDIA"), id: "unsent", unsentAt: 1 },
+    { ...received("MEDIA"), id: "second" },
+    { ...received("MEDIA"), id: "missing" },
+  ];
+  m.media = ["first", "unsent", "second", "missing"].map((messageId) => ({ id: `photo-${messageId}`, messageId, direction: "IN", state: "READY", width: 2, height: 1, mime: "image/jpeg" }));
+  m.read.mockImplementation(async (_account, id) => id === "photo-missing" ? null : new ArrayBuffer(1));
+  const rendered = await open();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "View photo" })).toHaveLength(2));
+  fireEvent.click(screen.getAllByRole("button", { name: "View photo" })[1]!);
+  expect(await screen.findByText("Photo 2 of 2")).toBeTruthy();
+  expect(m.read).not.toHaveBeenCalledWith("account", "photo-unsent");
+  fireEvent.click(screen.getByRole("button", { name: "Previous photo" }));
+  await screen.findByText("Photo 1 of 2");
+  m.view.mode = "REQUEST"; rendered.rerender(thread());
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("button", { name: "View photo" })).toBeNull();
+  expect(m.download).not.toHaveBeenCalled();
+});
+
+it("removes an unsent noncurrent photo from the open gallery and revokes its independent URL", async () => {
+  let sequence = 0; vi.mocked(URL.createObjectURL).mockImplementation(() => `blob:unsend-${++sequence}`);
+  m.messages = [{ ...received("MEDIA"), id: "first" }, { ...received("MEDIA"), id: "second" }];
+  m.media = ["first", "second"].map((messageId) => ({ id: `photo-${messageId}`, messageId, direction: "IN", state: "READY", width: 2, height: 1, mime: "image/jpeg" }));
+  m.read.mockResolvedValue(new ArrayBuffer(1));
+  const rendered = await open();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "View photo" })).toHaveLength(2));
+  fireEvent.click(screen.getAllByRole("button", { name: "View photo" })[1]!);
+  await screen.findByText("Photo 2 of 2");
+  m.messages = [{ ...received("MEDIA"), id: "first", unsentAt: 1 }, { ...received("MEDIA"), id: "second" }];
+  m.chat.revision++; rendered.rerender(thread());
+  await screen.findByText("Photo 1 of 1");
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:unsend-3");
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:unsend-4");
+  fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:unsend-4"));
 });

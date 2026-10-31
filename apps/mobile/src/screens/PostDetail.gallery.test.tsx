@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -156,8 +156,35 @@ describe("PostDetail photo gallery (G17)", () => {
     renderDetail();
     await screen.findByRole("img", { name: /photo 1 of 2/i });
     fireEvent.click(screen.getByRole("button", { name: /open photo 1 of 2 fullscreen/i }));
-    expect(await screen.findByTestId("photo-lightbox")).toBeTruthy();
-    expect(screen.getByRole("dialog", { name: "Photo 1 of 2" })).toBeTruthy();
+    expect(await screen.findByTestId("media-viewer")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Photo viewer" })).toBeTruthy();
+  });
+
+  it("opens only the tapped comment's photos, not the report or another reply", async () => {
+    const url = (name: string) => `https://example.supabase.co/storage/v1/object/public/findback-comment-media/owner/${name}.jpg`;
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, attachments: [attachment("report", 1)] });
+    postsMock.fetchComments.mockResolvedValue([
+      { id: "c1", postId: "p1", parentId: null, author: { id: "u3", username: "river" }, body: `Photo clues\n![front](${url("front")})\n![back](${url("back")})`, createdAt: "2026-09-01T00:00:00Z" },
+      { id: "c2", postId: "p1", parentId: "c1", author: { id: "u4", username: "lee" }, body: `![other](${url("other")})`, createdAt: "2026-09-02T00:00:00Z" },
+    ]);
+    renderDetail();
+    const gallery = await screen.findByTestId("comment-media-c1");
+    fireEvent.click(within(gallery).getByRole("button", { name: "Open attached photo 2" }));
+    const viewer = await screen.findByRole("dialog", { name: "Photo viewer" });
+    expect(within(viewer).getByText("Photo 2 of 2")).toBeTruthy();
+    expect(viewer.querySelector('img[src*="other.jpg"]')).toBeNull();
+    expect(viewer.querySelector('img[src*="report.jpg"]')).toBeNull();
+  });
+
+  it("keeps attachment identity with duplicate photo URLs and excludes video from inspection", async () => {
+    const base = "https://example.supabase.co/storage/v1/object/public/findback-comment-media/owner/";
+    postsMock.fetchPost.mockResolvedValue(basePost);
+    postsMock.fetchComments.mockResolvedValue([{ id: "duplicate", postId: "p1", parentId: null, author: { id: "u3", username: "river" },
+      body: `![photo](${base}same.jpg)\n[video](${base}clip.mp4)\n![photo](${base}same.jpg)`, createdAt: "2026-09-01T00:00:00Z" }]);
+    renderDetail();
+    fireEvent.click(await screen.findByRole("button", { name: "Open attached photo 3" }));
+    expect(await screen.findByText("Photo 2 of 2")).toBeTruthy();
+    expect(screen.getByRole("dialog").querySelector("video")).toBeNull();
   });
 
   it("a single photo renders a cover hero without nav controls", async () => {

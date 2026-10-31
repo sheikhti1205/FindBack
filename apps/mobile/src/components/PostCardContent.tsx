@@ -12,7 +12,7 @@ import { PostActionRow } from "./PostActionRow";
 import { ReportShareButton } from "./ReportShareButton";
 import { SavePostButton } from "./SavePostButton";
 import { StatusChip } from "./StatusChip";
-import { PhotoLightbox } from "./PhotoLightbox";
+import { MediaViewer } from "./MediaViewer";
 import { FeedMediaCarousel } from "./FeedMediaCarousel";
 import {
   fadeVariants,
@@ -398,7 +398,7 @@ function useTruncatedDescription(text: string) {
  * vertical space for one word; it now rides in the meta line.
  *
  * Navigation contract: the media region is a SIBLING of the detail link, never
- * inside it — tapping a photo opens the canonical PhotoLightbox at that index,
+ * inside it — tapping a photo opens the canonical MediaViewer at that index,
  * a horizontal swipe only changes the visible photo, and neither can navigate
  * the post. The detail `Link` wraps only the text (title/description/metadata),
  * so tapping the text opens Post Detail. "See more" is part of that link, so it
@@ -409,7 +409,7 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
   const excerpt = stripMarkdown(post.description);
   const { ref: descriptionRef, truncated } = useTruncatedDescription(excerpt);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
   const lastIndex = lightboxPhotos.length - 1;
   // Detail destination mirrors PostList (`/posts/${post.id}`) — the single
   // route both shells navigate to.
@@ -501,30 +501,11 @@ function HomeFeedContent({ post, enableSharedMedia = false }: { post: PostItem; 
         </div>
       </div>
       {lightboxIndex !== null && lightboxPhotos.length > 0 && (
-        <PhotoLightbox
-          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+        <MediaViewer
           index={Math.min(lightboxIndex, lastIndex)}
-          total={lightboxPhotos.length}
-          photos={lightboxPhotos}
-          title={post.title}
-          onSelect={(index) => setLightboxIndex(index)}
+          items={lightboxPhotos}
+          onIndexChange={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}
-          onPrev={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
-          onNext={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null ? current : (current + 1) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
         />
       )}
     </div>
@@ -565,7 +546,7 @@ export function masonryCardMetrics(post: PostItem): MasonryCardMetrics {
  *
  * Navigation follows the same contract as the Home feed card: the media is a
  * SIBLING of the detail link (its own tap target opening the canonical
- * PhotoLightbox), so a tap on the photo can never navigate the report.
+ * MediaViewer), so a tap on the photo can never navigate the report.
  *
  * Rows published before dimensions existed start at the placeholder ratio and
  * correct themselves when the photo decodes; the grid re-packs from the
@@ -581,7 +562,7 @@ function MasonryContent({ post, enableSharedMedia = false }: { post: PostItem; e
   const first = images[0];
   const extra = metrics.imageCount - 1;
   const sharedId = enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined;
-  const lightboxPhotos = images.map((a) => ({ id: a.id, previewUrl: a.fileUrl }));
+  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
   const lastIndex = lightboxPhotos.length - 1;
   return (
     <div data-testid="masonry-content" className="flex min-w-0 flex-col">
@@ -660,30 +641,11 @@ function MasonryContent({ post, enableSharedMedia = false }: { post: PostItem; e
         <CountRow post={post} compact />
       </div>
       {lightboxIndex !== null && lightboxPhotos.length > 0 && (
-        <PhotoLightbox
-          photo={lightboxPhotos[Math.min(lightboxIndex, lastIndex)]!}
+        <MediaViewer
           index={Math.min(lightboxIndex, lastIndex)}
-          total={lightboxPhotos.length}
-          photos={lightboxPhotos}
-          title={post.title}
-          onSelect={(index) => setLightboxIndex(index)}
+          items={lightboxPhotos}
+          onIndexChange={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}
-          onPrev={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
-          onNext={
-            lightboxPhotos.length > 1
-              ? () =>
-                  setLightboxIndex((current) =>
-                    current === null ? current : (current + 1) % lightboxPhotos.length,
-                  )
-              : undefined
-          }
         />
       )}
     </div>

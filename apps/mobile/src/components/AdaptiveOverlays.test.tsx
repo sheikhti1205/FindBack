@@ -10,6 +10,12 @@ import { resetModalLayers } from "../hooks/modalLayers";
 
 afterEach(() => { cleanup(); resetBackInterceptors(); resetModalLayers(); });
 
+it("starts a task on its safe close action rather than scheduling dialog refocus over nested tools", async () => {
+  render(<AdaptiveTaskSurface open onClose={() => {}} title="Edit report"><input aria-label="Report title" /></AdaptiveTaskSurface>);
+  const dialog = await screen.findByRole("dialog", { name: "Edit report" });
+  await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" })));
+});
+
 it("bounds a task to the visual viewport when the IME overlays the layout viewport", () => {
   const previous = window.visualViewport;
   const viewport = new EventTarget();

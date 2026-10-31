@@ -163,7 +163,7 @@ describe("OwnerReportCard (My Reports owner-feed layout)", () => {
     const photoButton = screen.getByRole("button", { name: /open photo/i });
     expect(link.contains(photoButton)).toBe(false);
     fireEvent.click(photoButton);
-    expect(screen.getByTestId("photo-lightbox")).toBeTruthy();
+    expect(screen.getByTestId("media-viewer")).toBeTruthy();
   });
 
   it("exposes NO destructive status controls on the scrolling card", () => {

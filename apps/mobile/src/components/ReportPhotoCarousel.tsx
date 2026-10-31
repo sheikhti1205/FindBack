@@ -4,7 +4,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
 import { usePagerTap, useSnapPager } from "./photoPager";
 import { motionDurations, motionEasings } from "./uiMotion";
-import type { PhotoLightboxOriginRect } from "./PhotoLightbox";
 
 /**
  * Narrow structural view of a selected report photo; `PickedPhoto` satisfies it.
@@ -23,8 +22,7 @@ export interface ReportPhotoCarouselProps {
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "earlier" | "later") => void;
   onMakeCover: (id: string) => void;
-  /** `origin` is the tapped slide's viewport rect (lightbox shared element). */
-  onPreview: (id: string, origin?: PhotoLightboxOriginRect) => void;
+  onPreview: (id: string) => void;
   disabled: boolean;
   /**
    * §8: with the on-screen keyboard up the composer narrows the box so a photo
@@ -60,7 +58,7 @@ const slideTransition = { duration: motionDurations.fast, ease: motionEasings.ou
  * One large swipeable slide per photo on the shared continuous-paging track
  * (`useSnapPager`/`usePagerTap`) — the same gesture mechanics as the canonical
  * feed carousel, WITHOUT its fixed 4:3 crop. Swiping only changes the visible
- * photo; a tap opens the canonical `PhotoLightbox` at that photo's index. The
+ * photo; a tap opens the canonical `MediaViewer` at that photo's index. The
  * action row below the track always acts on the ACTIVE photo ("Make cover",
  * "Move left", "Move right", "Remove"), which is the non-drag reorder path and
  * the screen-reader path — no tiny permanent arrows.
@@ -107,15 +105,10 @@ export function ReportPhotoCarousel({
     goTo(anchored);
   }, [photos, goTo]);
 
-  const originOf = (element: HTMLElement): PhotoLightboxOriginRect => {
-    const rect = element.getBoundingClientRect();
-    return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-  };
-
   const onSlideClick = (id: string, index: number, event: MouseEvent<HTMLButtonElement>) => {
     // A swipe pages and must never open the viewer; only a real tap opens it.
     if (!isTap(event)) return;
-    onPreview(id, originOf(event.currentTarget));
+    onPreview(id);
     void index;
   };
 

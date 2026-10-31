@@ -9,7 +9,7 @@ import { CategoryField } from "./CategoryField";
 import { RichTextEditor } from "./RichTextEditor";
 import { ReportDatePicker } from "./ReportDatePicker";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
-import { PhotoLightbox } from "./PhotoLightbox";
+import { MediaViewer } from "./MediaViewer";
 import { YouTubeEmbed } from "./YouTubeEmbed";
 import { ImageOff } from "lucide-react";
 
@@ -188,7 +188,7 @@ function ReadOnlyPhotos({ photos, title }: { photos: readonly Attachment[]; titl
   const images = photos.filter((photo) => photo.mimeType.startsWith("image/"));
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   if (images.length === 0) return null;
-  const lightboxPhotos = images.map((photo) => ({ id: photo.id, previewUrl: photo.fileUrl }));
+  const lightboxPhotos = images.map((photo, i) => ({ id: photo.id, src: photo.fileUrl, width: photo.width, height: photo.height, alt: `Photo ${i + 1} for ${title}`, title }));
   return (
     <section className="flex flex-col gap-2" data-testid="report-editor-photos">
       <div className="flex flex-wrap gap-2">
@@ -212,28 +212,11 @@ function ReadOnlyPhotos({ photos, title }: { photos: readonly Attachment[]; titl
         </span>
       </p>
       {openIndex !== null && (
-        <PhotoLightbox
-          photo={lightboxPhotos[Math.min(openIndex, lightboxPhotos.length - 1)]!}
+        <MediaViewer
           index={Math.min(openIndex, lightboxPhotos.length - 1)}
-          total={lightboxPhotos.length}
-          photos={lightboxPhotos}
-          title={title}
-          onSelect={setOpenIndex}
+          items={lightboxPhotos}
+          onIndexChange={setOpenIndex}
           onClose={() => setOpenIndex(null)}
-          onPrev={
-            lightboxPhotos.length > 1
-              ? () => setOpenIndex((current) =>
-                  current === null ? current : (current - 1 + lightboxPhotos.length) % lightboxPhotos.length,
-                )
-              : undefined
-          }
-          onNext={
-            lightboxPhotos.length > 1
-              ? () => setOpenIndex((current) =>
-                  current === null ? current : (current + 1) % lightboxPhotos.length,
-                )
-              : undefined
-          }
         />
       )}
     </section>

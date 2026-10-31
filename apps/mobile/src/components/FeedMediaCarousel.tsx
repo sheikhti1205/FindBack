@@ -19,7 +19,7 @@ interface FeedMediaCarouselProps {
    * shared element is disabled (stray cards must never duplicate a layoutId).
    */
   sharedMediaId?: string;
-  /** Open the canonical PhotoLightbox at the tapped image's index. */
+  /** Open the canonical MediaViewer at the tapped image's index. */
   onOpenImage: (index: number) => void;
 }
 
@@ -34,7 +34,7 @@ const imageFade = { duration: motionDurations.fast, ease: motionEasings.inOut } 
  * Home-feed media carousel: a full/wide 4:3 viewport with native horizontal
  * scroll-snap for one-finger swiping. Dots live INSIDE the media area, are
  * omitted for a single image, and collapse to a compact window when there are
- * many. Tapping a photo opens the canonical PhotoLightbox at that photo's
+ * many. Tapping a photo opens the canonical MediaViewer at that photo's
  * index; a swipe only changes the visible photo and can never navigate the
  * post because the media region is a sibling of the detail link, never inside
  * it. The active index lives here and survives ordinary parent rerenders.

@@ -5,7 +5,7 @@ import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
 import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
-import { PhotoLightbox } from "./PhotoLightbox";
+import { MediaViewer } from "./MediaViewer";
 import { loadAiPreferences } from "../services/ai/aiPreferences";
 import { applyMatchesEngineToRuntime, findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
@@ -56,7 +56,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
   const [result, setResult] = useState<PossibleMatchesResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
-  // Canonical PhotoLightbox for match thumbs (single photo each: straight
+  // Canonical MediaViewer for match thumbs (single photo each: straight
   // in). The thumb button is a SIBLING of the detail link, never inside it —
   // a button nested in a link is invalid DOM (see PostCard home-feed).
   const [lightboxId, setLightboxId] = useState<string | null>(null);
@@ -257,9 +257,9 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
         </p>
       )}
       {lightboxMatch?.post.photoUrl && (
-        <PhotoLightbox
-          photo={{ id: lightboxMatch.post.id, previewUrl: lightboxMatch.post.photoUrl }}
-          title={lightboxMatch.post.title}
+        <MediaViewer
+          items={[{ id: lightboxMatch.post.id, src: lightboxMatch.post.photoUrl, alt: `Photo for ${lightboxMatch.post.title}`, title: lightboxMatch.post.title }]}
+          index={0}
           onClose={() => setLightboxId(null)}
         />
       )}
