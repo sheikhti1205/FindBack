@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import type { PostType } from "@findback/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeTopBar } from "./HomeTopBar";
+import { TopUtilities } from "../components/TopUtilities";
 import { PostList } from "../components/PostList";
 import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useContentWidth, useViewportWidth } from "../components/responsive";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
@@ -502,6 +503,7 @@ export function Home() {
       >
         <div className={`${canvasClass} px-4`}>
         <HomeTopBar
+          utilities={<TopUtilities showSearch={false} />}
           expanded={searchActive}
           compact={brandCompact}
           query={query}

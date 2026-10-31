@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, ClipboardList, Home, Plus, UserRound } from "lucide-react";
+import { ClipboardList, Home, MessageCircle, Plus, Settings } from "lucide-react";
+import { Focusable, Tooltip, TooltipTrigger } from "react-aria-components";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
 import { READABLE_COLUMN_CLASS, WIDE_CANVAS_CLASS } from "./responsive";
@@ -9,10 +10,7 @@ import { useNavLayout } from "./navLayout";
 import type { NavLayout } from "../appearance";
 import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
-import { fetchUnreadCount } from "../services/notifications";
-import { INBOX_CHANGED_EVENT } from "../services/notificationSignals";
-import { onRealtime } from "../services/realtime";
-import { PUSH_RECEIVED_EVENT } from "../services/pushNotifications";
+import { TopUtilities } from "./TopUtilities";
 import {
   fadeUpVariants,
   fadeVariants,
@@ -29,11 +27,11 @@ const MotionLink = motion.create(Link);
 const NAV = [
   { to: "/", label: "Home", icon: Home },
   { to: "/my", label: "My Reports", icon: ClipboardList },
-  { to: "/profile", label: "Profile", icon: UserRound },
-  { to: "/notifications", label: "Notifications", icon: Bell },
+  { to: "/chats", label: "Chats", icon: MessageCircle },
+  { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-const HIDE_NAV = ["/help", "/posts/", "/ai-connection", "/connections/"];
+const HIDE_NAV = ["/help", "/posts/", "/ai-connection", "/connections/", "/chats/"];
 
 /**
  * Surfaces designed for a wide canvas (packet `09` §1/§2/§21).
@@ -44,7 +42,7 @@ const HIDE_NAV = ["/help", "/posts/", "/ai-connection", "/connections/"];
  * joins this set when it has actually been laid out for wide viewports — no
  * screen ever gets a wide layout nobody designed.
  */
-const WIDE_CANVAS = ["/", "/search"];
+const WIDE_CANVAS = ["/", "/search", "/chats", "/connections"];
 
 /** The document never scrolls: routes own the bounded viewport scroller. */
 export function Shell() {
@@ -52,7 +50,7 @@ export function Shell() {
   const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
   const wideCanvas = WIDE_CANVAS.includes(pathname);
   const ownsInternalScroll =
-    pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections");
+    pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections") || pathname.startsWith("/chats");
   // Owner ruling 4(e): the stored preference only becomes a side rail at the
   // compact breakpoint and up. The rail is an in-flow sibling of the content,
   // so it takes layout space and never covers what the reader is reading.
@@ -116,7 +114,10 @@ export function Shell() {
             ownsInternalScroll ? "overflow-hidden" : "overflow-y-auto"
           }`}
         >
-          <RouteTransition />
+          <div className="flex h-full min-h-0 flex-col">
+            {showNav && pathname !== "/" && <div className="fb-utility-bar"><TopUtilities /></div>}
+            <div className="min-h-0 flex-1"><RouteTransition /></div>
+          </div>
         </main>
         <AnimatePresence key={`fb-bottom-boundary-${navLayout}`} initial={false}>
           {showNav && !rail && <PrimaryNav key="fb-bottom-nav" layout="bottom" />}
@@ -130,20 +131,16 @@ export function Shell() {
 /**
  * The one primary navigation, rendered as a bottom bar or a side rail.
  *
- * Both layouts share this destination list, the route targets, the active
- * treatment, the unread badge and the create action, so the two cannot drift.
- * `layout` picks only the wrapper and how labels are shown. `liveBadge` and
- * `activePath` exist for the visual fixture, which renders production nav
- * without auth or a live inbox; both default to the real shell behaviour.
+ * Both layouts share destinations, selection and create action. Notifications
+ * belong to TopUtilities, never this list. `activePath` allows a deterministic
+ * visual fixture; normal navigation is router-owned.
  */
 export function PrimaryNav({
   layout = "bottom",
-  liveBadge = true,
   activePath,
   layoutScope = "shell",
 }: {
   layout?: NavLayout;
-  liveBadge?: boolean;
   activePath?: string;
   /**
    * Identity for the selected-pill `layoutId`. Framer treats one `layoutId` as
@@ -158,10 +155,6 @@ export function PrimaryNav({
   const { pathname } = useLocation();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  // Badge only: count of unread notifications on the bell. Decorative
-  // (aria-hidden) so the link's accessible name stays "Notifications".
-  // Motion/refresh behavior is owned elsewhere; this never animates.
-  const [unread, setUnread] = useState<number | null>(null);
 
   useEffect(() => {
     const update = () => {
@@ -180,51 +173,13 @@ export function PrimaryNav({
     };
   }, []);
 
-  useEffect(() => {
-    if (!liveBadge) return;
-    let cancelled = false;
-    const pull = () => {
-      fetchUnreadCount().then(
-        (count) => {
-          if (!cancelled) setUnread(count);
-        },
-        () => {
-          if (!cancelled) setUnread(null);
-        },
-      );
-    };
-    void pull();
-    const onFocus = () => void pull();
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") void pull();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-    // Private inbox signal: refetch the badge immediately on a new notification.
-    const offInbox = onRealtime("notification:added", () => void pull());
-    // A foregrounded push is a second signal (realtime can be disconnected).
-    const onPush = () => void pull();
-    window.addEventListener(PUSH_RECEIVED_EVENT, onPush);
-    // Local read/unread/delete/restore on the inbox screen: keep the badge live.
-    const onInboxChanged = () => void pull();
-    window.addEventListener(INBOX_CHANGED_EVENT, onInboxChanged);
-    return () => {
-      cancelled = true;
-      offInbox();
-      window.removeEventListener(PUSH_RECEIVED_EVENT, onPush);
-      window.removeEventListener(INBOX_CHANGED_EVENT, onInboxChanged);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [liveBadge]);
-
   const rail = layout === "rail";
   // The bottom bar sits where the keyboard appears, so it yields that space.
   // The rail is a column beside the content: the keyboard cannot cover it, and
   // hiding it would widen <main> by 6.5rem and pull it back, so it stays.
   if (fullscreen || (keyboardOpen && !rail)) return null;
 
-  const selectedPath = activePath ?? (pathname === "/search" ? "/" : pathname);
+  const selectedPath = activePath ?? (pathname === "/search" ? "/" : pathname === "/connections" ? "/chats" : pathname);
 
   const createAction = (
     <Link to="/report" aria-label="Create report" className="fb-nav-create bg-primary text-on-primary">
@@ -234,7 +189,7 @@ export function PrimaryNav({
 
   const items = NAV.map(({ to, label, icon: Icon }) => {
     const selected = selectedPath === to;
-    return (
+    const link = (
       <MotionLink
         key={to}
         to={to}
@@ -267,19 +222,10 @@ export function PrimaryNav({
           className="fb-nav-icon"
           aria-hidden="true"
         />
-        {to === "/notifications" && unread !== null && unread > 0 && (
-          <span
-            aria-hidden="true"
-            data-testid="notifications-unread-badge"
-            className="absolute right-1 top-1 z-[2] flex min-h-[20px] min-w-[20px] items-center justify-center rounded-full bg-error px-1 text-[11px] font-semibold text-on-error"
-          >
-            {unread > 99 ? "99+" : unread}
-          </span>
-        )}
         {rail ? (
-          // A vertical list has room for every name; no label animation is
-          // needed, and a name must never depend on selection to be readable.
-          <span className="fb-nav-label">{label}</span>
+          // Compact icon rail: accessible name always present; React Aria
+          // exposes the same name visually on hover AND keyboard focus.
+          <span className="fb-nav-label sr-only">{label}</span>
         ) : (
           <AnimatePresence initial={false}>
             {selected && (
@@ -297,6 +243,9 @@ export function PrimaryNav({
         )}
       </MotionLink>
     );
+    return <TooltipTrigger key={to} delay={350}>
+      <Focusable>{link}</Focusable><Tooltip placement={rail ? "right" : "top"} className="fb-nav-tooltip">{label}</Tooltip>
+    </TooltipTrigger>;
   });
 
   if (rail) {

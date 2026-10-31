@@ -49,6 +49,7 @@ export function HomeTopBar({
   onBrandTap,
   inputRef,
   filterButton,
+  utilities,
 }: {
   expanded: boolean;
   /**
@@ -79,6 +80,7 @@ export function HomeTopBar({
   inputRef: RefObject<HTMLInputElement | null>;
   /** The advanced-filter trigger; stays mounted in both states so it never moves. */
   filterButton: ReactNode;
+  utilities?: ReactNode;
 }) {
   // Closing unmounts the control that held focus, so focus is handed back to the
   // affordance that opened it instead of being dropped on <body> (WCAG 2.4.3).
@@ -232,6 +234,7 @@ export function HomeTopBar({
           10px toward the edge to align the trailing icon's optical edge with
           the brand tile instead of reading inset-left / padded-right. */}
       <div className="fb-home-search-actions -mr-2.5 flex shrink-0 items-center">
+        {utilities}
         {filterButton}
         {/* `popLayout` is load-bearing: the trigger and the field share one flex
             slot. Without it the outgoing trigger keeps its 48px in flow for the

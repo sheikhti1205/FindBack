@@ -32,7 +32,7 @@ export const NAV_VARIANTS: FixtureVariant[] = ["normal", "large-text", "dark", "
  * because a multi-word label in the bar's selected slot is clipped at 320 px
  * (a pre-existing bar limit this wave does not change).
  */
-const railActivePath = "/notifications";
+const railActivePath = "/chats";
 
 function LiveNavigationDemo({ variant }: { variant: FixtureVariant }) {
   const wideViewport = useWideViewport();
@@ -53,11 +53,11 @@ function LiveNavigationDemo({ variant }: { variant: FixtureVariant }) {
     >
       <TabTapProvider>
         <div className={`flex min-h-[220px] w-full ${rail ? "flex-row" : "flex-col"}`}>
-          {rail && <PrimaryNav layout="rail" liveBadge={false} activePath={rail ? railActivePath : "/"} layoutScope={variant} />}
+          {rail && <PrimaryNav layout="rail" activePath={rail ? railActivePath : "/"} layoutScope={variant} />}
           <p className="min-h-[96px] flex-1 p-4 text-sm text-on-surface-variant">
             Route content (placeholder)
           </p>
-          {!rail && <PrimaryNav layout="bottom" liveBadge={false} activePath={rail ? railActivePath : "/"} layoutScope={variant} />}
+          {!rail && <PrimaryNav layout="bottom" activePath={rail ? railActivePath : "/"} layoutScope={variant} />}
         </div>
       </TabTapProvider>
     </div>

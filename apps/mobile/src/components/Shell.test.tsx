@@ -23,6 +23,8 @@ function renderShell(entry = "/") {
         <Route index element={<p>Home screen</p>} />
         <Route path="/search" element={<p>Search screen</p>} />
         <Route path="/my" element={<p>My Reports screen</p>} />
+        <Route path="/chats" element={<p>Chats screen</p>} />
+        <Route path="/settings" element={<p>Settings screen</p>} />
         <Route path="/profile" element={<p>Profile screen</p>} />
         <Route path="/notifications" element={<p>Notifications screen</p>} />
         <Route path="/report" element={<p>Report screen</p>} />
@@ -37,7 +39,7 @@ describe("Shell floating primary navigation", () => {
     renderShell();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).getAllByRole("link").map((t) => t.getAttribute("href"))).toEqual([
-      "/", "/my", "/profile", "/notifications", "/report",
+      "/", "/my", "/chats", "/settings", "/report",
     ]);
     expect(within(nav).getByRole("link", { name: "Create report" })).toBeTruthy();
     expect(screen.queryByTestId("assistant-entry")).toBeNull();
@@ -46,7 +48,7 @@ describe("Shell floating primary navigation", () => {
 
   it.each([
     ["/", "Home"], ["/search", "Home"], ["/my", "My Reports"],
-    ["/profile", "Profile"], ["/notifications", "Notifications"],
+    ["/chats", "Chats"], ["/settings", "Settings"],
   ])("selects only %s's destination with a visible label", (path, label) => {
     renderShell(path);
     const nav = screen.getByRole("navigation", { name: "Primary" });
@@ -58,8 +60,8 @@ describe("Shell floating primary navigation", () => {
 
   it("tracks URL after navigation and Back rather than a stale local selection", () => {
     renderShell("/my");
-    fireEvent.click(screen.getByRole("link", { name: "Notifications" }));
-    expect(screen.getByRole("link", { name: "Notifications" }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(screen.getByRole("link", { name: "Chats" }));
+    expect(screen.getByRole("link", { name: "Chats" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("link", { name: "My Reports" }).getAttribute("aria-current")).toBe("page");
   });
@@ -76,7 +78,7 @@ describe("Shell floating primary navigation", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav.className).not.toContain("translate-y-full");
     expect(within(nav).getAllByRole("link").map((link) => link.getAttribute("aria-label") ?? link.textContent)).toEqual([
-      "Home", "My Reports", "Profile", "Notifications", "Create report",
+      "Home", "My Reports", "Chats", "Settings", "Create report",
     ]);
   });
 
@@ -84,9 +86,9 @@ describe("Shell floating primary navigation", () => {
     const previous = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
     try {
-      renderShell("/notifications");
+      renderShell("/chats");
       expect(within(screen.getByRole("navigation", { name: "Primary" })).getAllByRole("link")).toHaveLength(5);
-      expect(screen.getByRole("link", { name: "Notifications" }).textContent).toBe("Notifications");
+      expect(screen.getByRole("link", { name: "Chats" }).textContent).toBe("Chats");
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: previous });
     }
@@ -410,7 +412,7 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     renderShell("/");
     const before = within(screen.getByRole("navigation", { name: "Primary" })).getByRole(
       "link",
-      { name: "Notifications" },
+      { name: "Chats" },
     );
     before.focus();
     expect(document.activeElement).toBe(before);
@@ -418,12 +420,12 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     act(() => setWide(false));
     const after = within(screen.getByRole("navigation", { name: "Primary" })).getByRole(
       "link",
-      { name: "Notifications" },
+      { name: "Chats" },
     );
     // The old node unmounted; focus must not be left on <body>.
     expect(after).not.toBe(before);
     expect(document.activeElement).toBe(after);
-    expect((document.activeElement as HTMLElement).getAttribute("href")).toBe("/notifications");
+    expect((document.activeElement as HTMLElement).getAttribute("href")).toBe("/chats");
   });
 
   it("keeps the rail's destinations, order, targets, names and active treatment", () => {
@@ -434,11 +436,11 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     const links = within(nav).getAllByRole("link");
     // Top-to-bottom DOM order is also the visual and keyboard order.
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/report", "/", "/my", "/profile", "/notifications",
+      "/report", "/", "/my", "/chats", "/settings",
     ]);
     expect(
       links.map((link) => link.getAttribute("aria-label") ?? link.textContent?.trim()),
-    ).toEqual(["Create report", "Home", "My Reports", "Profile", "Notifications"]);
+    ).toEqual(["Create report", "Home", "My Reports", "Chats", "Settings"]);
     expect(
       links
         .filter((link) => link.getAttribute("aria-current") === "page")
@@ -512,7 +514,7 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     );
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(nav.getAttribute("data-layout")).toBe("rail");
-    for (const label of ["Home", "My Reports", "Profile", "Notifications"]) {
+    for (const label of ["Home", "My Reports", "Chats", "Settings"]) {
       expect(within(nav).getByText(label)).toBeTruthy();
     }
   });
@@ -522,9 +524,8 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     // runs the real cascade: a later rule that overrode the width, the column
     // direction or the flex basis would change these values. (In the app,
     // Vite loads the same file; jsdom does not import CSS on its own.)
-    const css = readFileSync("src/components/Shell.nav.css", "utf8");
     const style = document.createElement("style");
-    style.textContent = css;
+    style.textContent = readFileSync("src/components/Shell.nav.css", "utf8");
     document.head.appendChild(style);
     try {
       setWidth(800);
@@ -536,12 +537,12 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
       expect(rail.flexDirection).toBe("column");
       expect(rail.flexGrow).toBe("0");
       expect(rail.flexShrink).toBe("0");
-      expect(rail.width).toBe("104px"); // 6.5rem at the default 16px root
+      expect(rail.width).toBe("72px");
       expect(rail.position).toBe("static");
       const item = getComputedStyle(
         within(nav).getByRole("link", { name: "My Reports" }),
       );
-      expect(item.minHeight).toBe("56px");
+      expect(item.minHeight).toBe("48px");
       expect(item.flexDirection).toBe("column");
     } finally {
       style.remove();

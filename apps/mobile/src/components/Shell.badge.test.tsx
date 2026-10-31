@@ -11,10 +11,10 @@ import { Shell } from "./Shell";
 
 function renderShell() {
   return render(
-    <MemoryRouter initialEntries={["/"]}>
+    <MemoryRouter initialEntries={["/my"]}>
       <Routes>
         <Route element={<Shell />}>
-          <Route index element={<p>Home screen</p>} />
+          <Route path="/my" element={<p>My Reports screen</p>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -35,7 +35,8 @@ describe("Shell notifications badge", () => {
     expect(badge.textContent).toBe("3");
     expect(badge.getAttribute("aria-hidden")).toBe("true");
     const nav = screen.getByRole("navigation", { name: "Primary" });
-    expect(within(nav).getByRole("link", { name: "Notifications" })).toBeTruthy();
+    expect(within(nav).queryByRole("link", { name: "Notifications" })).toBeNull();
+    expect(within(screen.getByRole("navigation", { name: "App utilities" })).getByRole("link", { name: "Notifications" })).toBeTruthy();
   });
 
   it("caps a large count and hides the badge at zero or on failure", async () => {

@@ -205,6 +205,8 @@ function AppRouteTree() {
               <Route path="/profile/edit" element={<ProfileEdit />} />
               <Route path="/u/:username" element={<PublicProfile />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route path="/chats" element={<Connections />} />
+              <Route path="/chats/:conversationId" element={<MessagingThread />} />
               <Route path="/connections" element={<Connections />} />
               <Route path="/connections/:conversationId" element={<MessagingThread />} />
               <Route path="/about" element={<About />} />

@@ -7,6 +7,7 @@ import { DetailFixtures } from "./sections/DetailFixtures";
 import { FeedLayoutFixtures } from "./sections/FeedLayoutFixtures";
 import { HomeFixtures } from "./sections/HomeFixtures";
 import { NavigationFixtures } from "./sections/NavigationFixtures";
+import { FoundationFixtures } from "./sections/FoundationFixtures";
 import { SocialFixtures } from "./sections/SocialFixtures";
 import { SystemFixtures } from "./sections/SystemFixtures";
 
@@ -15,6 +16,7 @@ const SECTION_LINKS = [
   { id: "feed-layouts", label: "Feed layouts" },
   { id: "home-chrome", label: "Home chrome" },
   { id: "navigation", label: "Navigation" },
+  { id: "adaptive-foundation", label: "Adaptive foundation" },
   { id: "detail", label: "Post detail" },
   { id: "create", label: "Create report" },
   { id: "comments", label: "Comments & composer" },
@@ -84,6 +86,7 @@ export function FixtureRoute() {
       </div>
       <div>
         <NavigationFixtures />
+        <FoundationFixtures />
       </div>
       <div>
         <DetailFixtures />

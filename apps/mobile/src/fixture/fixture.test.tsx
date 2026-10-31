@@ -475,7 +475,7 @@ describe("navigation preflight renders the production nav", () => {
       const nav = within(demo).getByRole("navigation", { name: "Primary" });
       expect(nav.getAttribute("data-layout")).toBe("bottom");
       expect(within(nav).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
-        "/", "/my", "/profile", "/notifications", "/report",
+        "/", "/my", "/chats", "/settings", "/report",
       ]);
     }
   });
@@ -488,7 +488,7 @@ describe("navigation preflight renders the production nav", () => {
     const selected = within(demo)
       .getAllByRole("link")
       .filter((link) => link.getAttribute("aria-current") === "page");
-    expect(selected.map((link) => link.textContent?.trim())).toEqual(["Notifications"]);
+    expect(selected.map((link) => link.textContent?.trim())).toEqual(["Chats"]);
   });
 
   it("resolves the stored rail to the bar in the small-width frame", () => {

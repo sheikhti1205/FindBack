@@ -63,7 +63,7 @@ describe("Shell accent consumers", () => {
 
   it("keeps the unread badge on the semantic error color", async () => {
     unreadMock.mockResolvedValue(3);
-    renderShell();
+    renderShell("/my");
     const badge = await screen.findByTestId("notifications-unread-badge");
     expect(badge.className).toContain("bg-error");
     expect(badge.className).not.toContain("bg-primary");

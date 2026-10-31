@@ -1,0 +1,78 @@
+/* One overlay language. Portals set z-index from shared React depth; legacy
+   layers are below 70. Children always stack above their owning task surface. */
+.fb-icon-control, .fb-surface-button, .fb-quick-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; min-width: 44px; flex-shrink: 0; border-radius: 12px;
+  color: var(--fb-on-surface); cursor: pointer;
+}
+.fb-icon-control:hover, .fb-icon-control[data-hovered], .fb-surface-button:not(.fb-confirm-danger):not(.fb-confirm-primary):hover { background: var(--fb-surface-container); }
+.fb-icon-control:disabled, .fb-surface-button[data-disabled] { opacity: .45; cursor: default; }
+.fb-icon-control:focus-visible, .fb-icon-control[data-focus-visible], .fb-surface-button[data-focus-visible], .fb-quick-trigger[data-focus-visible] {
+  outline: 2px solid var(--fb-focus); outline-offset: 2px;
+}
+.fb-popover {
+  width: max-content; max-width: calc(100vw - 16px); max-height: var(--available-height);
+  overflow: auto; color: var(--fb-on-surface); background: var(--fb-surface);
+  border: 1px solid var(--fb-outline-variant); border-radius: 16px; box-shadow: var(--shadow-md);
+}
+.fb-action-menu { width: 15rem; max-width: calc(100vw - 20px); padding: 4px; }
+.fb-menu-item {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 8px 12px;
+  border-radius: 10px; font-size: .875rem; line-height: 1.4; cursor: pointer;
+}
+.fb-menu-item > span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.fb-menu-item > svg { flex: none; }
+.fb-menu-item[data-focused] { outline: 2px solid var(--fb-focus); outline-offset: -2px; background: var(--fb-surface-container); }
+.fb-menu-item[data-disabled] { opacity: .45; cursor: default; }
+.fb-menu-danger { color: var(--fb-error); }
+.fb-menu-separator { height: 1px; margin: 4px 8px; background: var(--fb-outline-variant); }
+.fb-modal-backdrop {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--scrim); padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+.fb-modal-panel { width: 100%; min-width: 0; max-height: 100%; border-radius: 20px; background: var(--fb-surface); color: var(--fb-on-surface); box-shadow: var(--shadow-md); }
+.fb-task-panel { max-width: 44rem; }
+.fb-confirm-panel { max-width: 26rem; }
+.fb-surface-dialog { display: flex; flex-direction: column; min-height: 0; max-height: inherit; outline: none; }
+.fb-surface-dialog:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; border-radius: inherit; }
+.fb-surface-header { display: flex; align-items: center; flex: none; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--fb-outline-variant); }
+.fb-surface-title { min-width: 0; flex: 1; font-size: 1.0625rem; font-weight: 600; overflow-wrap: anywhere; }
+.fb-surface-body { min-height: 0; overflow: auto; padding: 16px; overscroll-behavior: contain; }
+.fb-surface-description { color: var(--fb-on-surface-variant); font-size: .875rem; margin-bottom: 12px; overflow-wrap: anywhere; }
+.fb-surface-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex: none; padding: 12px 16px; border-top: 1px solid var(--fb-outline-variant); }
+.fb-surface-button { padding: 8px 16px; font-size: .875rem; font-weight: 600; }
+.fb-confirm-danger { background: var(--fb-error); color: var(--fb-on-error); }
+.fb-confirm-primary { background: var(--fb-primary); color: var(--fb-on-primary); }
+.fb-confirm-danger:hover, .fb-confirm-primary:hover { filter: brightness(.95); }
+.fb-quick-trigger { gap: 8px; min-width: 0; text-align: start; }
+.fb-quick-popover { width: 20rem; }
+.fb-quick-dialog { padding: 16px; outline: none; }
+.fb-top-utilities { display: flex; align-items: center; gap: 2px; flex: none; }
+.fb-utility-bar { display: flex; justify-content: flex-end; flex: none; padding: 0 12px; background: var(--fb-surface); border-bottom: 1px solid var(--fb-outline-variant); }
+.fb-notification-badge { position: absolute; top: 0; right: 0; display: flex; align-items: center; justify-content: center; min-width: 18px; min-height: 18px; padding-inline: 4px; border-radius: 999px; font-size: .6875rem; font-weight: 600; background: var(--fb-error); color: var(--fb-on-error); }
+.fb-identity-header { display: flex; align-items: center; gap: 12px; }
+.fb-identity-name, .fb-identity-handle { overflow-wrap: anywhere; }
+.fb-identity-handle, .fb-identity-relationship { color: var(--fb-on-surface-variant); font-size: .875rem; }
+.fb-identity-relationship { margin-block: 12px; }
+.fb-identity-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; }
+.fb-split-view { min-height: 0; min-width: 0; height: 100%; }
+.fb-split-wide { display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
+.fb-split-list, .fb-split-detail { height: 100%; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
+.fb-split-wide .fb-split-list { border-inline-end: 1px solid var(--fb-outline-variant); }
+.fb-split-list:focus-visible, .fb-split-detail:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; }
+.fb-composer-shell { min-width: 0; width: 100%; border: 1px solid var(--fb-outline-variant); background: var(--fb-surface); border-radius: 20px; }
+.fb-composer-shell:focus-within { border-color: var(--fb-focus); }
+.fb-composer-row { display: flex; align-items: flex-end; gap: 4px; padding: 4px; }
+.fb-composer-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 208px; resize: none; padding: 10px 8px; font: inherit; line-height: 1.5; color: inherit; background: transparent; }
+.fb-composer-row textarea:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; border-radius: 12px; }
+.fb-composer-send { color: var(--fb-primary); }
+.fb-composer-actions { display: flex; flex-wrap: wrap; flex: none; }
+.fb-composer-context, .fb-composer-attachments { min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--fb-outline-variant); overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .fb-modal-backdrop:has(.fb-task-panel) { padding: 0; }
+  .fb-task-panel { height: 100%; max-height: 100%; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .fb-task-panel .fb-surface-dialog { height: 100%; }
+  .fb-task-panel .fb-surface-body { flex: 1; }
+}
+/* No spatial entrance travel: effective reduced motion has no hidden animation
+   path. Feedback is local background/focus state, not springing whole panels. */
