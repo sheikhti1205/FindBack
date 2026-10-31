@@ -6,12 +6,17 @@
 // cause, and the cause list is what the assertions below enumerate: an `ok:false`
 // route under every assistant preference, a THROWN route under every preference,
 // a thrown route with no signal, a session switch mid-flight, and a cancel that
-// races a local failure. The legacy cloud transport (which the guided Help
-// assistant still uses) is pinned separately: its on-device-only refusal, its
-// account-bound refusal, and the path where it does reach the network.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// races a local failure. Separate cloud Chat account/key fencing is covered
+// by aiCredentials, chatController and account-switch tests, not this boundary.
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { updateAiPreferences } from "./ai/aiPreferences";
-import { generateCloudForAccount, liveGenerateFor } from "./liveNarrowTasks";
+import { liveGenerateFor } from "./liveNarrowTasks";
+import * as narrowTaskTransport from "./liveNarrowTasks";
+
+it("does not export a network transport from the local tools boundary", () => {
+  expect("generateCloud" in narrowTaskTransport).toBe(false);
+  expect("generateCloudForAccount" in narrowTaskTransport).toBe(false);
+});
 
 const state = vi.hoisted(() => ({
   account: "transport-a" as string | null,
@@ -138,42 +143,3 @@ it.each(["automatic", "cloud-only", "on-device-only"] as const)(
     expect(state.keys).not.toHaveBeenCalled();
   },
 );
-
-// The guided Help assistant still uses the legacy cloud transport, so its
-// account-scoped guard must stay live and preference-conditional. These run
-// against the real OpenRouter client (only `fetch` is stubbed).
-describe("legacy cloud transport guard (guided Help assistant)", () => {
-  it("refuses before any HTTP or credential read while the account is on-device-only", async () => {
-    updateAiPreferences("transport-a", { assistantMode: "on-device-only" });
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
-    await expect(generateCloudForAccount("transport-a", "guided prompt", undefined)).rejects.toThrow(
-      "On-device only: cloud is disabled.",
-    );
-    expect(fetch).not.toHaveBeenCalled();
-    expect(state.keys).not.toHaveBeenCalled();
-  });
-
-  it("refuses before any HTTP or credential read when the session's account changed", async () => {
-    updateAiPreferences("transport-a", { assistantMode: "automatic" });
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
-    // The send was composed for transport-a; the session is now transport-b.
-    // A send must never be retargeted to whoever happens to be signed in.
-    state.account = "transport-b";
-    await expect(generateCloudForAccount("transport-a", "guided prompt", undefined)).rejects.toThrow(
-      "AI account changed or is not authenticated.",
-    );
-    expect(fetch).not.toHaveBeenCalled();
-    expect(state.keys).not.toHaveBeenCalled();
-  });
-
-  it("still reaches the network transport when the preference allows cloud", async () => {
-    updateAiPreferences("transport-a", { assistantMode: "automatic" });
-    const fetch = vi.fn().mockRejectedValue(new Error("network"));
-    vi.stubGlobal("fetch", fetch);
-    await expect(generateCloudForAccount("transport-a", "guided prompt", undefined)).rejects.toThrow();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(state.keys).toHaveBeenCalledWith("transport-a", "openrouter");
-  });
-});

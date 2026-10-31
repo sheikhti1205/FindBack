@@ -26,7 +26,6 @@ vi.mock("./supabaseClient", () => ({
 import { updateAiPreferences } from "./ai/aiPreferences";
 
 import {
-  generateCloud,
   generateForCategoryLive,
   generateForFieldsLive,
   generateLocalFirst,
@@ -230,16 +229,6 @@ describe("liveGenerateFor (on-device only)", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(state.route).not.toHaveBeenCalled();
     expect(state.text).not.toHaveBeenCalled();
-  });
-});
-
-describe("generateCloud", () => {
-  it("sends the prompt through the OpenRouter text transport", async () => {
-    state.text.mockResolvedValue("cloud answer");
-    await expect(
-      generateCloud("hello", { maxOutputTokens: 8, temperature: 0 }),
-    ).resolves.toBe("cloud answer");
-    expect(state.text).toHaveBeenCalledWith("hello", { signal: undefined });
   });
 });
 

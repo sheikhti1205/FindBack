@@ -17,20 +17,11 @@
  *   AbortError always propagates (never swallowed).
  * - `liveGenerateFor(taskId)` is the composer the consumer features use. It is
  *   local-only, so a local failure surfaces to the caller unchanged.
- * - The legacy cloud transports (`generateCloud`, `generateCloudForAccount`)
- *   sit outside the narrow-task path and survive only as long as the legacy
- *   guided Help assistant does: the cloud-only consumer Chat screen does not
- *   import them, and `generateCloud` has no production consumer at all — only
- *   this module's own tests import it. Both go with the legacy assistant
- *   cleanup; nothing in the narrow-task path calls either.
+ * Cloud AI Chat has its own provider, vault and account-fenced request owner.
+ * This module exposes no cloud transport or credential read.
  */
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
 import { describeOfflineReadiness } from "./ai/modelReadiness";
-import { createOpenRouterClient } from "./openRouter";
-import { aiCredentials } from "./aiCredentials";
-import { getSupabase } from "./supabaseClient";
-// Still used by the legacy cloud transport's on-device-only privacy guard.
-import { loadSeededAiPreferences } from "./ai/aiPreferences";
 import { profileFor } from "./ai/modelProfiles";
 import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 import type { AiTaskId, GenerateFn } from "./ai/types";
@@ -85,38 +76,6 @@ export async function generateLocalFirst(
   }
   const value = (result as { value?: unknown }).value;
   return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-/** Cloud text transport. Missing keys surface honestly (MISSING_KEY). */
-export const generateCloud: GenerateFn = async (prompt, genOpts) => {
-  const signal = (genOpts as unknown as { signal?: AbortSignal } | undefined)?.signal;
-  const account = await authenticatedAccount();
-  return generateCloudForAccount(account, prompt, signal);
-};
-
-async function authenticatedAccount(): Promise<string | null> {
-  const { data, error } = await getSupabase().auth.getSession();
-  if (error) throw error;
-  return data.session?.user.id ?? null;
-}
-
-/** Capture the owning account before asynchronous local work; never retarget a send. */
-export async function generateCloudForAccount(account: string | null, prompt: string, signal?: AbortSignal): Promise<string> {
-  const assertCloudAllowed = async () => {
-    if (signal?.aborted) throw abortError();
-    const currentAccount = await authenticatedAccount();
-    if (signal?.aborted) throw abortError();
-    if (!account || currentAccount !== account) throw new Error("AI account changed or is not authenticated.");
-    if (loadSeededAiPreferences(account).assistantMode === "on-device-only") throw new Error("On-device only: cloud is disabled.");
-  };
-  await assertCloudAllowed();
-  if (!account) throw new Error("AI account is not authenticated.");
-  return createOpenRouterClient(async () => {
-    await assertCloudAllowed();
-    const key = await aiCredentials.get(account, "openrouter");
-    await assertCloudAllowed();
-    return key;
-  }).text(prompt, { signal });
 }
 
 /**

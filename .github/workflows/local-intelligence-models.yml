@@ -78,9 +78,13 @@ jobs:
           src/services/ai/modelProfiles.test.ts src/services/ai/modelDescriptors.test.ts
           src/services/ai/download/bundle.test.ts src/services/ai/download/installer.test.ts
           src/services/ai/download/journal.test.ts
+          src/services/ai/download/retiredImports.test.ts
           src/services/ai/needle/native.test.ts src/services/ai/needle/embedder.test.ts
           src/services/ai/orchestrator/route.test.ts src/services/ai/orchestrator/actionGate.test.ts
-          src/services/ai/localOnly.test.ts src/services/liveNarrowTasks.transport.test.ts
+          src/services/ai/localOnly.test.ts src/services/liveNarrowTasks.test.ts
+          src/services/liveNarrowTasks.transport.test.ts
+          src/services/ai/aiPreferences.test.ts src/services/ai/aiPreferences.legacyKey.test.ts
+          src/services/ai/cloudModelPreferences.test.ts
           src/services/possibleMatches.test.ts src/services/aiCredentials.test.ts
           src/services/ai/providerRegistry.test.ts src/services/ai/genericEndpoint.test.ts
           src/services/ai/chatController.test.ts src/services/ai/chatStore.test.ts

@@ -1,13 +1,13 @@
 /**
  * Lane A: single account-scoped AI preference source of truth.
  *
- * Settings OWNS these four fields; every other surface borrows them:
+ * Legacy stored fields retained for upgrade compatibility:
  * - `assistantMode`: legacy persisted transport preference, not an active local assistant.
  * - `preferredAssistantModel`: cloud model id, or null for Automatic (the
  *   safe `openrouter/free` free-only default — never a paid row).
  * - `photoEngine`: legacy persisted preference, not an active photo tool.
  * - `matchesEngine`: `use` by default; `needle` only when installed and
- *   verified (see `isNeedleSelectable`).
+ *   verified by the application model lifecycle before use.
  *
  * Persistence is per account via `localStorage` (JSON, one key per
  * account): switching accounts never inherits another account's choices.
@@ -20,13 +20,10 @@
  * the retired local assistant UI must not be imported to read old choices.
  */
 
-import { DEFAULT_MODEL_ID } from "./modelPolicy";
-import type { NeedleEvidence } from "./uiGates";
-
-/** Which transports the assistant may use for this account. */
+/** Legacy serialized transport value; never an executable routing policy. */
 export type AssistantModePreference = "automatic" | "on-device-only" | "cloud-only";
 
-/** Which engine answers photo questions for this account. */
+/** Legacy serialized photo preference; no active photo engine consumes it. */
 export type PhotoEnginePreference = "automatic" | "on-device-only" | "cloud-only";
 
 /** Which engine powers structured matches for this account. */
@@ -47,12 +44,6 @@ export const AI_PREFERENCES_DEFAULTS: AiPreferences = {
   photoEngine: "automatic",
   matchesEngine: "use",
 } as const;
-
-/**
- * Null `preferredAssistantModel` resolves here: the frozen free-only route.
- * Paid rows are never a fallback — they need explicit per-model consent.
- */
-export const ASSISTANT_FALLBACK_MODEL_ID = DEFAULT_MODEL_ID;
 
 export function aiPreferencesKey(accountId: string): string {
   const trimmed = (accountId ?? "").trim();
@@ -107,24 +98,6 @@ export function legacyAssistantModeToPreference(mode: unknown): AssistantModePre
 }
 
 /**
- * Reverse map: preference vocabulary back onto the legacy assistant-mode
- * vocabulary that the retired local assistant gate used to switch on.
- * `on-device-only` maps to `offline-only` (fail closed: cloud sends stay
- * blocked); `automatic`/`cloud-only` map to `auto`/`cloud-only`.
- *
- * The consumer Chat surface is cloud-only and no longer reads a mode; the
- * mapping survives only for the legacy local-assistant paths that still
- * consult the store.
- */
-export function preferenceToAssistantMode(
-  mode: AssistantModePreference,
-): "auto" | "offline-only" | "cloud-only" {
-  if (mode === "cloud-only") return "cloud-only";
-  if (mode === "on-device-only") return "offline-only";
-  return "auto";
-}
-
-/**
  * Original migration-source key. No production writer: the seeded read below
  * adopts it once into the account preference store without importing UI.
  */
@@ -154,18 +127,6 @@ export function loadSeededAiPreferences(accountId: string): AiPreferences {
   } catch {
     return current;
   }
-}
-
-/**
- * The mode value the retired local-assistant gate switched on: the seeded
- * authoritative preference mapped back onto the gate vocabulary. Safe by
- * construction — unknown/corrupt storage reads as `auto` (local-first
- * default), cloud-only consent semantics unchanged.
- */
-export function loadEffectiveAssistantMode(
-  accountId: string,
-): "auto" | "offline-only" | "cloud-only" {
-  return preferenceToAssistantMode(loadSeededAiPreferences(accountId).assistantMode);
 }
 
 /** Read this account's preferences; unknown/corrupt storage yields safe defaults. */
@@ -200,68 +161,4 @@ export function updateAiPreferences(
 /** Clear this account's preferences back to the safe defaults. */
 export function resetAiPreferences(accountId: string): AiPreferences {
   return saveAiPreferences(accountId, { ...AI_PREFERENCES_DEFAULTS });
-}
-
-/**
- * The photo engine a send must actually honor for this account: the
- * assistant mode is authoritative, so `on-device-only` forbids the photo
- * cloud fallback and `cloud-only` skips local inference. Under `automatic`
- * the account's own `photoEngine` choice applies (local-first with consented
- * fallback). Keeps UI consent copy and the real transport in agreement.
- */
-export function effectivePhotoEngine(accountId: string): PhotoEnginePreference {
-  const prefs = loadSeededAiPreferences(accountId);
-  if (prefs.assistantMode === "on-device-only") return "on-device-only";
-  if (prefs.assistantMode === "cloud-only") return "cloud-only";
-  return prefs.photoEngine;
-}
-
-/**
- * Resolve the effective Assistant model id: the persisted choice, or null
- * (Automatic) → the safe free-only route. Help reads this for its
- * session-only override seed; Settings writes the underlying choice.
- */
-export function resolvePreferredModelId(prefs: AiPreferences): string {
-  const id = prefs.preferredAssistantModel;
-  return id !== null && id.trim() !== "" ? id : ASSISTANT_FALLBACK_MODEL_ID;
-}
-
-/**
- * True only when Needle output was really measured, correctness-passing,
- * and fresh. Settings enables the `needle` matches-engine option only then;
- * anything less keeps the safe `use` default.
- */
-export function isNeedleSelectable(evidence: NeedleEvidence | null | undefined): boolean {
-  return (
-    evidence !== null &&
-    evidence !== undefined &&
-    evidence.measured === true &&
-    evidence.correctnessPass === true &&
-    evidence.fresh === true
-  );
-}
-
-export type AssistantModelBinding = {
-  /** The persisted default for this account (null = Automatic). */
-  readonly selectedId: string | null;
-  /** Persist a permitted model choice for this account. Never crosses accounts. */
-  readonly onSelectModel: (modelId: string) => void;
-};
-
-/**
- * Settings-owned AiConnection binding: `selectedId` reads this account's
- * persisted Assistant default and `onSelectModel` writes it. Wire both
- * straight into AiConnection's `selectedId` / `onSelectModel` props — the
- * consent/entitlement gates inside AiConnection still decide whether a tap
- * reaches this writer, so paid-model consent + price-fingerprint rules are
- * preserved.
- */
-export function createAssistantModelBinding(accountId: string): AssistantModelBinding {
-  return {
-    selectedId: loadSeededAiPreferences(accountId).preferredAssistantModel,
-    onSelectModel: (modelId: string) => {
-      if (!isModelId(modelId)) return;
-      updateAiPreferences(accountId, { preferredAssistantModel: modelId });
-    },
-  };
 }
