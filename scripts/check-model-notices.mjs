@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { readSupplyCandidates } from "./read-model-supply.mjs";
-import { PINNED_BASELINE_MODELS } from "./fetch-model-notices.mjs";
+
+// A legal snapshot, not an executable model catalogue. Historical notices stay
+// byte-identical; only the retained optional tool needs an acquisition identity.
+export const RETAINED_MODEL_NOTICE_IDENTITY = Object.freeze({
+  modelId: "needle3-cact-l20", upstreamRepo: "Cactus-Compute/needle3",
+  revision: "c7c415a3d1b3d929014bc6e866d51ebb971f7089",
+  fileName: "needle3.cact", bytes: 35335380,
+  sha256: "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
+});
 
 /** Text digests, citation references and all exact artifact identities fail closed. */
 export function validateModelNotices(packet, candidates) {
@@ -30,8 +37,8 @@ export function validateModelNotices(packet, candidates) {
 
 export function checkModelNoticesFile() {
   try {
-    return validateModelNotices(JSON.parse(readFileSync(new URL("../docs/evidence/model-license-packet.json", import.meta.url), "utf8")), [...PINNED_BASELINE_MODELS, ...readSupplyCandidates()]);
-  } catch { return ["missing or malformed model notice packet/catalogue"]; }
+    return validateModelNotices(JSON.parse(readFileSync(new URL("../docs/history/model-lab/evidence/model-license-packet.json", import.meta.url), "utf8")), [RETAINED_MODEL_NOTICE_IDENTITY]);
+  } catch { return ["missing or malformed historical legal snapshot"]; }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

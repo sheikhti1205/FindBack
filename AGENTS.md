@@ -50,7 +50,7 @@
 - UI creation/refactor: `findback-ui-quality`
 - Gestures, animation, refresh, sticky/floating controls: `findback-mobile-interactions`
 - Image/video import, upload, AI photo analysis: `findback-media-pipeline`
-- On-device model/runtime work: `findback-ai-runtime`
+- Smart Search, extraction, embeddings and local model lifecycle: `findback-local-intelligence`
 - Physical/device acceptance: `findback-device-audit`
 - Bounded independent milestone audit, when used: `findback-adversarial-review` (not a per-slice completion dependency)
 

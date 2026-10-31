@@ -8,6 +8,7 @@ import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  AUDIT_REGISTER,
   checkCompletionGate,
   collectShippedSources,
   collectTestSources,
@@ -62,7 +63,7 @@ const stubPaths = { exists: () => true, commitExists: () => true, root: REPO_ROO
 const fakeRegister = (states) =>
   FINDINGS_MANIFEST.map((id) => `| ${id} | P0 | ${states[id] ?? "DONE — test"} | evidence | criterion |`).join("\n");
 const stubDocs = (states) => ({
-  read: (p) => (p === "docs/COMPLETION_AUDIT.md" ? fakeRegister(states) : "no predictions here"),
+  read: (p) => (p === AUDIT_REGISTER ? fakeRegister(states) : "no predictions here"),
 });
 const stubGitClean = (head = "a".repeat(40)) => (cmd, _args) => {
   if (cmd === "rev-parse") return `${head}\n`;
@@ -192,7 +193,7 @@ describe("docs consistency", () => {
 
   it("fails when a current doc still predicts the ledger as upcoming", () => {
     const errors = validateDocsConsistency(fullLedger(), {
-      read: (p) => (p === "docs/COMPLETION_AUDIT.md" ? fakeRegister({}) : "Main owns the upcoming `completion-ledger.json`."),
+      read: (p) => (p === AUDIT_REGISTER ? fakeRegister({}) : "Main owns the upcoming `completion-ledger.json`."),
     });
     ok(errors.some((e) => /upcoming/.test(e)), errors.join("; "));
   });

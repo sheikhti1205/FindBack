@@ -96,6 +96,9 @@ export const CURRENT_DOCS = Object.freeze([
   "docs/FINAL_ACCEPTANCE_REPORT.md",
   "docs/DEMO_CHECKLIST.md",
 ]);
+// The old FBA ledger remains checked against its unchanged historical register.
+// Neither that ledger nor its archived gates certify the active M7-P milestone.
+export const AUDIT_REGISTER = "docs/history/model-lab/COMPLETION_AUDIT.md";
 const STALE_LEDGER_PREDICTIONS = Object.freeze([
   "upcoming `completion-ledger.json`",
   "upcoming completion ledger",
@@ -206,7 +209,8 @@ const HEX_REF = /(?<![0-9a-z])[0-9a-f]{7,40}(?![0-9a-z])/g;
 /**
  * Every evidence string must cite ≥1 verifiable reference (existing repo
  * path, existing commit, CI run id, or manual:<runbook> with a matching
- * docs/runbooks/ file), and no cited repo path may dangle.
+ * active or archived runbook), and no cited repo path may dangle. A reference
+ * to an archived manual verifies existence only, not current acceptance.
  */
 export function validateEvidenceRefs(ledger, { exists = existsSync, commitExists, root = REPO_ROOT } = {}) {
   const errors = [];
@@ -252,15 +256,15 @@ export function validateEvidenceRefs(ledger, { exists = existsSync, commitExists
     for (const m of evidence.matchAll(MANUAL_REF)) {
       const id = m[1];
       let matched = false;
-      try {
-        matched = readdirSync(resolve(root, "docs/runbooks")).some((name) => name.startsWith(id));
-      } catch {
-        matched = false;
+      for (const dir of ["docs/runbooks", "docs/history/model-lab/runbooks"]) {
+        try {
+          if (readdirSync(resolve(root, dir)).some((name) => name.startsWith(id))) matched = true;
+        } catch { /* A missing directory contributes no evidence. */ }
       }
       if (matched) {
         cited += 1;
       } else {
-        errors.push(`${tag}: evidence cites manual:${id} with no matching docs/runbooks/ file`);
+        errors.push(`${tag}: evidence cites manual:${id} with no matching docs/runbooks/ or archived runbook file`);
       }
     }
     if (cited === 0) errors.push(`${tag}: evidence cites no verifiable reference (repo path, commit, run id, or manual:<runbook>)`);
@@ -289,9 +293,9 @@ export function validateDocsConsistency(ledger, { read = (p) => readFileSync(res
   const errors = [];
   let register;
   try {
-    register = read("docs/COMPLETION_AUDIT.md");
+    register = read(AUDIT_REGISTER);
   } catch {
-    return ["docs/COMPLETION_AUDIT.md is missing (register must track every finding)"];
+    return [`${AUDIT_REGISTER} is missing (register must track every finding)`];
   }
   const states = parseAuditStates(register);
   for (const item of ledger?.items ?? []) {

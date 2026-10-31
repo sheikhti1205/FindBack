@@ -5,7 +5,7 @@
 # when absent, and native compilation may fetch pinned Needle engine archives
 # (not Needle weights). No generative weights or implicit helper downloads.
 
-name: Local AI — native
+name: Local intelligence — native
 
 on:
   push:
@@ -15,18 +15,16 @@ on:
       - "apps/mobile/src/services/appCapabilities.ts"
       - "apps/mobile/android/**"
       - "apps/mobile/capacitor.config.*"
-      - "scripts/check-ai-*.mjs"
-      - "scripts/ai-release-gate.mjs"
-      - ".github/workflows/local-ai-native.yml"
+      - "scripts/check-native-retirement*.mjs"
+      - ".github/workflows/local-intelligence-native.yml"
   pull_request:
     paths:
       - "apps/mobile/src/services/ai/**"
       - "apps/mobile/src/services/appCapabilities.ts"
       - "apps/mobile/android/**"
       - "apps/mobile/capacitor.config.*"
-      - "scripts/check-ai-*.mjs"
-      - "scripts/ai-release-gate.mjs"
-      - ".github/workflows/local-ai-native.yml"
+      - "scripts/check-native-retirement*.mjs"
+      - ".github/workflows/local-intelligence-native.yml"
   workflow_dispatch:
 
 permissions:
@@ -49,7 +47,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - uses: actions/setup-java@v6
         with:
@@ -61,10 +59,10 @@ jobs:
       - run: npm ci
       - name: Build shared package (types for mobile)
         run: npm run build -w @findback/shared
-      - name: AI manifest + promotion pre-checks (static)
+      - name: Retained native source ownership (not device acceptance)
         run: |
-          node scripts/check-ai-manifest.mjs
-          node scripts/check-ai-promotion.mjs
+          node scripts/check-native-retirement.mjs
+          node --test --test-concurrency=1 scripts/check-native-retirement.test.mjs scripts/native-package-policy.test.mjs
       - name: Restore Firebase Android client configuration
         run: node scripts/materialize-google-services.mjs
         env:
@@ -85,6 +83,6 @@ jobs:
           test -d apps/mobile/android/app/src/main/assets/public || { echo "cap sync did not stage web assets"; exit 1; }
           git status --porcelain -- apps/mobile/android || true
       - name: Kotlin compile + JVM unit tests
-        run: cd apps/mobile/android && ./gradlew :app:compileDebugSources :app:testDebugUnitTest
+        run: cd apps/mobile/android && ./gradlew :app:compileDebugSources :app:testDebugUnitTest --max-workers=2
       - name: Verify bundled USE pin (Gradle may acquire it; never re-download here)
         run: node scripts/fetch-use-model.mjs --check

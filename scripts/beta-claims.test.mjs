@@ -39,9 +39,13 @@ test("capability mirrors and grounded knowledge no longer deny shipped messaging
 
 test("retired lab workflow is not an executable CI queue; useful model/native checks remain", () => {
   assert.equal(existsSync(resolve(root, ".github/workflows/local-ai-lab.yml")), false);
-  const smoke = read(".github/workflows/local-ai-model-smoke.yml");
-  for (const invariant of ["fetch-use-model.mjs --check", "fetch-needle-model.mjs --check", "scan:apk -- --strict", "ai-release-gate.mjs", "check-mobile-build-config.mjs --assets"]) assert.ok(smoke.includes(invariant), invariant);
-  const native = read(".github/workflows/local-ai-native.yml");
+  for (const file of ["local-ai-model-smoke.yml", "local-ai-native.yml"]) {
+    assert.equal(existsSync(resolve(root, ".github/workflows", file)), false);
+  }
+  const smoke = read(".github/workflows/local-intelligence-models.yml");
+  for (const invariant of ["fetch-use-model.mjs --check", "fetch-needle-model.mjs --check", "scan:apk -- --strict", "check-native-retirement.mjs", "src/services/ai/applicationAi.test.ts", "src/services/ai/retiredModelCleanup.test.ts", "check-mobile-build-config.mjs --assets"]) assert.ok(smoke.includes(invariant), invariant);
+  assert.doesNotMatch(smoke, /ai-release-gate|check-ai-promotion|check-ai-manifest/);
+  const native = read(".github/workflows/local-intelligence-native.yml");
   assert.match(native, /:app:compileDebugSources :app:testDebugUnitTest/);
   assert.match(native, /check-mobile-build-config\.mjs --assets/);
   assert.ok(nativeModelCommandsAreCheckOnly(native), "native explicit model commands are USE checks only, not downloads");
@@ -50,7 +54,7 @@ test("retired lab workflow is not an executable CI queue; useful model/native ch
 });
 
 test("retained native workflows invoke the supported config preflight before building", () => {
-  for (const path of [".github/workflows/local-ai-native.yml", ".github/workflows/local-ai-model-smoke.yml"]) {
+  for (const path of [".github/workflows/local-intelligence-native.yml", ".github/workflows/local-intelligence-models.yml"]) {
     const source = read(path);
     const build = source.indexOf("npm run build -w @findback/mobile");
     assert.ok(build > 0, path);

@@ -387,13 +387,12 @@ export function rankTextMatches(
 }
 
 /**
- * WS6 benchmark metric hooks: binary-relevance ranking metrics over id lists.
- * Pure functions shared with the bench harness (tools/bench/score.mjs mirrors
- * this math in dependency-free JS; the TS module below owns the contract).
+ * Binary-relevance ranking metrics over id lists. Production matching and the
+ * focused matching-quality/regression runners share this implementation.
  *
  * `rankedIds` is the system's ranked candidate ids (best first);
  * `relevantIds` is the golden relevant set. Empty `relevantIds` scores 0
- * (corpus validation requires non-empty relevant sets; see goldenCorpus.ts).
+ * (matching-quality dataset validation requires non-empty relevant sets).
  */
 
 /** Rank (0-based) of the first ranked id in `relevant`, or -1 when absent. */

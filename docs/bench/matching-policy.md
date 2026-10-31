@@ -64,13 +64,15 @@ device. Do not substitute hand-authored vectors or desktop resource figures.
 ## Reproduce without building
 
 ```sh
-node tools/bench/runBench.mjs --corpus tools/bench/corpus.v1.json --out docs/bench/corpus-v1-comparison.json --app-sha b472a24
 node --experimental-strip-types tools/bench/run-matching-regression.mjs docs/bench/matching-regression-v1.json
 npm run test -w apps/mobile -- src/services/similarity.test.ts src/services/similarity.metrics.test.ts
 ```
 
 Node's type stripping runs the real TS module without compiling an app or
-emitting build output. Reports are checked into this evidence directory only.
+emitting build output. The former synthetic stub/fake comparison runner was
+removed; its historical report is archived, not native matching proof. For new
+host measurements use `tools/bench/run-matching-quality.mjs` as documented in
+`tools/bench/MATCHING-QUALITY.md`.
 
 ## E3 explanation evaluation
 

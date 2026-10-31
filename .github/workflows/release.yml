@@ -161,7 +161,7 @@ jobs:
         # The native VLM/probe build pins NDK 29.0.13113456 + CMake 3.31.6
         # (variables.gradle). A clean runner has no NDK and no accepted
         # licenses, so Gradle's auto-install fails closed without this. Keep
-        # byte-identical to ci.yml / local-ai-native.yml.
+        # byte-identical to ci.yml / local-intelligence-native.yml.
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug

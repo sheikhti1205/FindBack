@@ -106,9 +106,9 @@ node scripts/device-harness/write-manifest.mjs --dir <evidence-dir>  # re-run af
 `com.findback.app`), and `HARNESS_OUT` (default `/tmp/findback-device-harness`)
 override defaults. `captures.sh` stubs print the manual matrix steps, run the
 automatable captures, and point at `NOTES.md` — fill those tables on device
-day. AI figures (Smol load/inference, Needle extraction, cloud TTFT) go to
-the performance template; LFM/llama.cpp stay lab-only per
-`docs/runbooks/native-model-run.md`.
+day. Record retained Needle extraction, USE matching and cloud Chat timings
+separately. Retired model-lab device instructions are historical only, under
+`docs/history/model-lab/runbooks/`; they are not an active execution queue.
 
 ## 6. After device day
 

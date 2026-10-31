@@ -10,7 +10,7 @@ permission:
   skill:
     findback-adversarial-review: allow
     findback-media-pipeline: allow
-    findback-ai-runtime: allow
+    findback-local-intelligence: allow
 ---
 
 Load `findback-adversarial-review` and whichever domain skill applies. Review actual production paths and tests. Invent counterexamples. Never modify product files. Return PASS/PARTIAL/FAIL with evidence.

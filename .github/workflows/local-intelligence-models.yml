@@ -3,8 +3,7 @@
 # Pinned-checksum smoke for the on-device model scope:
 #   * fetch-use-model --check (pinned USE bytes + SHA-256)
 #   * needle disabled-check (Needle fetch stays opt-in; no needle bytes land)
-#   * manifest pin validation via scripts/check-ai-manifest.mjs
-#   * full AI release gate via scripts/ai-release-gate.mjs
+#   * retained lifecycle, extraction, matching and separate cloud Chat tests
 #   * APK audit: no .litertlm/.gguf bytes except the USE allowlist entry
 #     (assets/models/use/universal_sentence_encoder.tflite)
 #
@@ -12,7 +11,7 @@
 # Gradle preBuild can also acquire that same pinned bundle asset when absent.
 # Neither workflow downloads Needle weights or any retired generative model.
 
-name: Local AI — model smoke
+name: Local intelligence — model smoke
 
 on:
   push:
@@ -22,20 +21,20 @@ on:
       - "apps/mobile/src/services/appCapabilities.ts"
       - "apps/mobile/android/**"
       - "scripts/fetch-*-model.mjs"
-      - "scripts/check-ai-*.mjs"
-      - "scripts/ai-release-gate.mjs"
+      - "scripts/check-native-retirement*.mjs"
+      - "scripts/check-model-notices*.mjs"
       - "scripts/scan-apk.mjs"
-      - ".github/workflows/local-ai-model-smoke.yml"
+      - ".github/workflows/local-intelligence-models.yml"
   pull_request:
     paths:
       - "apps/mobile/src/services/ai/**"
       - "apps/mobile/src/services/appCapabilities.ts"
       - "apps/mobile/android/**"
       - "scripts/fetch-*-model.mjs"
-      - "scripts/check-ai-*.mjs"
-      - "scripts/ai-release-gate.mjs"
+      - "scripts/check-native-retirement*.mjs"
+      - "scripts/check-model-notices*.mjs"
       - "scripts/scan-apk.mjs"
-      - ".github/workflows/local-ai-model-smoke.yml"
+      - ".github/workflows/local-intelligence-models.yml"
   workflow_dispatch:
 
 permissions:
@@ -57,7 +56,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - uses: actions/setup-java@v6
         with:
@@ -67,10 +66,26 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - run: npm ci
-      - name: AI manifest pin validation
-        run: node scripts/check-ai-manifest.mjs
-      - name: AI promotion policy check
-        run: node scripts/check-ai-promotion.mjs
+      - name: Retained source ownership and legal snapshot integrity
+        run: |
+          node scripts/check-native-retirement.mjs
+          node scripts/check-model-notices.mjs
+          node --test --test-concurrency=1 scripts/check-native-retirement.test.mjs scripts/native-package-policy.test.mjs scripts/check-model-notices.test.mjs scripts/beta-claims.test.mjs
+      - name: Local tools and separate cloud Chat behavioral regressions
+        run: >-
+          npx vitest run --root apps/mobile --maxWorkers=2
+          src/services/ai/applicationAi.test.ts src/services/ai/retiredModelCleanup.test.ts
+          src/services/ai/modelProfiles.test.ts src/services/ai/modelDescriptors.test.ts
+          src/services/ai/download/bundle.test.ts src/services/ai/download/installer.test.ts
+          src/services/ai/download/journal.test.ts
+          src/services/ai/needle/native.test.ts src/services/ai/needle/embedder.test.ts
+          src/services/ai/orchestrator/route.test.ts src/services/ai/orchestrator/actionGate.test.ts
+          src/services/ai/localOnly.test.ts src/services/liveNarrowTasks.transport.test.ts
+          src/services/possibleMatches.test.ts src/services/aiCredentials.test.ts
+          src/services/ai/providerRegistry.test.ts src/services/ai/genericEndpoint.test.ts
+          src/services/ai/chatController.test.ts src/services/ai/chatStore.test.ts
+          src/services/ai/compaction.test.ts src/auth.accountSwitch.test.tsx
+          src/screens/CreateReport.aiSuggest.test.tsx src/screens/SearchScreen.test.tsx
       - name: Fetch pinned USE asset (sole weight download on this path)
         run: node scripts/fetch-use-model.mjs
       - name: Pinned checksum smoke (verify, do not re-download)
@@ -95,7 +110,7 @@ jobs:
       - name: Capacitor sync
         run: npm run cap:sync -w @findback/mobile
       - name: Android JVM tests + debug APK
-        run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
+        run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug --max-workers=2
       - name: Strict APK scan (USE allowlist, no retired JNI, per-ABI embedding JNI)
         run: npm run scan:apk -- --strict
       - name: Model-byte audit (no .litertlm/.gguf except the USE allowlist)
@@ -103,10 +118,7 @@ jobs:
           APK=apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
           ALLOW="assets/models/use/universal_sentence_encoder.tflite"
           LIST="$(unzip -Z1 "$APK")"
-          echo "$LIST" | grep -iE '\.litertlm$' && { echo "forbidden .litertlm bytes in APK"; exit 1; } || true
-          echo "$LIST" | grep -iE '\.gguf$' && { echo "forbidden .gguf bytes in APK"; exit 1; } || true
-          echo "$LIST" | grep -iE '\.tflite$' | grep -v -x "$ALLOW" && { echo "non-allowlist .tflite bytes in APK"; exit 1; } || true
+          if echo "$LIST" | grep -iE '\.(litertlm|gguf)$'; then echo "forbidden model bytes in APK"; exit 1; fi
+          if echo "$LIST" | grep -iE '\.tflite$' | grep -v -x "$ALLOW"; then echo "non-allowlist .tflite bytes in APK"; exit 1; fi
           echo "$LIST" | grep -x "$ALLOW" || { echo "USE allowlist asset missing from APK"; exit 1; }
           echo "model-byte audit OK: only the USE allowlist entry ships"
-      - name: Full AI release gate
-        run: node scripts/ai-release-gate.mjs

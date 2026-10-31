@@ -3,7 +3,18 @@
 Every reused/adapted external file or substantial snippet must be recorded here with
 license + attribution. Policy: MIT/Apache-2.0/BSD/ISC only, preserve notices.
 
-## On-device AI dependencies (bundled via Gradle / npm — no weight files committed)
+## Historical dependency inventory — verified 2026-09-22
+
+The tables below preserve the original attribution and measurements, not a
+current dependency or download catalogue. The local generative engines and
+their acquisition paths have since been retired. Current retained local owners
+are Needle and USE/MediaPipe; cloud AI Chat is separate. Exact legal text,
+including retired artifacts, remains in
+`docs/history/model-lab/evidence/model-license-packet.json`. Current package
+ownership is checked by `scripts/check-native-retirement.mjs` and the strict APK
+scanner; those source checks are not device acceptance.
+
+### Former on-device AI dependencies (Gradle / npm)
 
 | Component | Version | Revision / Source | Size (approx.) | License | SHA-256 (artifact) |
 |---|---|---|---|---|---|
