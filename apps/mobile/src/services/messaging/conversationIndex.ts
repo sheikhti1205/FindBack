@@ -16,6 +16,8 @@ export interface ConversationProjection {
   ownHidden: boolean;
   ownDeclined: boolean;
   ownBlocked: boolean;
+  /** Viewer-private preference. Absent only in pre-mute cached projections. */
+  ownMuted?: boolean;
   /** Monotonic revision of this viewer's authorized projection, not pair activity. */
   revision: number;
 }
@@ -74,9 +76,10 @@ export function copyConversationProjection(input: ConversationProjection): Conve
     throw new Error("Invalid conversation projection");
   }
   const epoch = typeof rawEpoch === "string" ? rawEpoch : null;
+  if (input.ownMuted !== undefined && typeof input.ownMuted !== "boolean") throw new Error("Invalid conversation mute preference");
   return { conversationId, peerId, mode: input.mode, request: input.request, requestEpoch,
     ownHidden: input.ownHidden, ownDeclined: input.ownDeclined, ownBlocked: input.ownBlocked, revision,
-    ...(epoch ? { epoch } : {}) };
+    ...(epoch ? { epoch } : {}), ...(input.ownMuted !== undefined ? { ownMuted: input.ownMuted } : {}) };
 }
 
 /** Both durable adapters use the same local-only inbox semantics. Pending

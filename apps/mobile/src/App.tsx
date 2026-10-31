@@ -72,7 +72,7 @@ import { SharedReport } from "./screens/SharedReport";
 import { FixtureRoute } from "./fixture/FixtureRoute";
 import { useAuth } from "./auth";
 import { SavedReportsProvider } from "./hooks/useSavedReports";
-import { Connections, MessagingThread } from "./screens/Messaging";
+import { Connections, LegacyChatsRedirect, MessagingThread } from "./screens/Messaging";
 import { MessagingPrivacy } from "./screens/MessagingPrivacy";
 import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
 import { postBackgroundLocation, PostNavigationProvider } from "./components/PostNavigation";
@@ -213,10 +213,11 @@ function AppRouteTree() {
               <Route path="/profile/edit" element={<ProfileEdit />} />
               <Route path="/u/:username" element={<PublicProfile />} />
               <Route path="/notifications" element={<Notifications />} />
-              <Route path="/chats" element={<Connections />} />
-              <Route path="/chats/:conversationId" element={<MessagingThread />} />
-              <Route path="/connections" element={<Connections />} />
-              <Route path="/connections/:conversationId" element={<MessagingThread />} />
+              <Route path="/chats" element={<Connections />}>
+                <Route path=":conversationId" element={<MessagingThread />} />
+              </Route>
+              <Route path="/connections" element={<LegacyChatsRedirect />} />
+              <Route path="/connections/:conversationId" element={<LegacyChatsRedirect />} />
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />

@@ -1,5 +1,5 @@
 /** Shared validation for human messaging storage adapters. */
-import type { HumanMessage, MediaAttachment, MessageType } from "./history";
+import type { HumanMessage, MediaAttachment, MessageType, StaticLocation } from "./history";
 import type { ConversationProjection } from "./conversationIndex";
 import { copyMediaMetadata, MEDIA_STATES, type MediaMime, type MediaState } from "./media";
 
@@ -32,14 +32,39 @@ export interface CopyMessageOptions {
 
 export function copyMessage(value: HumanMessage, options: CopyMessageOptions = {}): HumanMessage {
   const message = copyReceivedMessage(value, options);
-  if (message.messageType === "MEDIA") throw new Error("Invalid messaging type");
+  if (message.messageType !== undefined && message.messageType !== "TEXT") throw new Error("Invalid messaging type");
+  if (message.contextReportId || message.location) throw new Error("Invalid messaging context");
   return { ...message, messageType: "TEXT" };
+}
+
+/** Outgoing admission: the captured payload decides the classification, so an
+ * adapter never recasts a location or a report-linked text into plain text. */
+export function copyOutgoingMessage(value: HumanMessage): HumanMessage {
+  return value?.messageType === "LOCATION" ? copyLocationMessage(value)
+    : value?.contextReportId ? copyContextMessage(value) : copyMessage(value);
+}
+
+/** Report-linked first contact/message: TEXT plus the live report reference. */
+export function copyContextMessage(value: HumanMessage): HumanMessage {
+  if (value?.messageType !== undefined && value.messageType !== "TEXT") throw new Error("Invalid messaging type");
+  const message = copyReceivedMessage({ ...value, messageType: "TEXT" });
+  if (!message.contextReportId || message.location) throw new Error("Invalid messaging context");
+  return message;
+}
+
+/** One-time static location: its own type, no caption required. */
+export function copyLocationMessage(value: HumanMessage): HumanMessage {
+  if (value?.messageType !== undefined && value.messageType !== "LOCATION") throw new Error("Invalid messaging type");
+  const message = copyReceivedMessage({ ...value, messageType: "LOCATION" });
+  if (message.contextReportId || !message.location) throw new Error("Invalid messaging context");
+  if (message.body !== "" && !message.body.trim()) throw new Error("Invalid messaging text");
+  return message;
 }
 
 /** Authorized mailbox/history data: missing legacy classification stays unknown. */
 export function copyReceivedMessage(value: HumanMessage, options: CopyMessageOptions = { allowEmptyBody: true }): HumanMessage {
   const messageType = value?.messageType;
-  if (messageType !== undefined && messageType !== "TEXT" && messageType !== "MEDIA") {
+  if (messageType !== undefined && messageType !== "TEXT" && messageType !== "MEDIA" && messageType !== "LOCATION") {
     throw new Error("Invalid messaging type");
   }
   if (!value || typeof value.body !== "string" || value.body.length > MAX_BODY_UNITS
@@ -50,13 +75,32 @@ export function copyReceivedMessage(value: HumanMessage, options: CopyMessageOpt
   // A NUL byte makes SQLite's length()/text handling disagree with JS, so it is
   // rejected at the shared boundary instead of failing later inside the adapter.
   if (value.body.includes("\u0000")) throw new Error("Invalid messaging text");
+  const contextReportId = value.contextReportId === undefined ? undefined : uuid(value.contextReportId);
+  if (contextReportId !== undefined && messageType !== "TEXT") throw new Error("Invalid messaging context");
+  const location = value.location === undefined ? undefined : copyStaticLocation(value.location);
+  if (location !== undefined && messageType !== "LOCATION") throw new Error("Invalid messaging context");
+  if (messageType === "LOCATION" && location === undefined) throw new Error("Invalid messaging context");
   const message = {
     id: uuid(value.id), conversationId: uuid(value.conversationId),
     authorId: uuid(value.authorId), recipientId: uuid(value.recipientId), body: value.body,
     ...(messageType ? { messageType } : {}),
+    ...(contextReportId ? { contextReportId } : {}),
+    ...(location ? { location } : {}),
   };
   if (message.authorId === message.recipientId) throw new Error("Invalid messaging participants");
   return message;
+}
+
+/** Bounded one-time share. The server restates these bounds; this is the local
+ * admission rule so no adapter stores an unusable coordinate. */
+export function copyStaticLocation(value: StaticLocation): StaticLocation {
+  const lat = value?.lat, lng = value?.lng, accuracy = value?.accuracy;
+  if (typeof lat !== "number" || !Number.isFinite(lat) || lat < -90 || lat > 90) throw new Error("Invalid location");
+  if (typeof lng !== "number" || !Number.isFinite(lng) || lng < -180 || lng > 180) throw new Error("Invalid location");
+  if (accuracy !== null && (typeof accuracy !== "number" || !Number.isFinite(accuracy) || accuracy <= 0 || accuracy > 100_000)) {
+    throw new Error("Invalid location");
+  }
+  return { lat, lng, accuracy };
 }
 
 /**
@@ -73,7 +117,23 @@ export function copyMediaMessage(value: HumanMessage): HumanMessage {
 
 export function sameMessage(a: HumanMessage, b: HumanMessage): boolean {
   return a.id === b.id && a.conversationId === b.conversationId && a.authorId === b.authorId
-    && a.recipientId === b.recipientId && a.body === b.body && compatibleMessageType(a.messageType, b.messageType);
+    && a.recipientId === b.recipientId && a.body === b.body && compatibleMessageType(a.messageType, b.messageType)
+    && sameMessagePayload(a, b);
+}
+
+export function sameMessagePayload(a: { contextReportId?: string | null; location?: StaticLocation | null },
+  b: { contextReportId?: string | null; location?: StaticLocation | null }): boolean {
+  return (a.contextReportId ?? null) === (b.contextReportId ?? null)
+    && (a.location?.lat ?? null) === (b.location?.lat ?? null)
+    && (a.location?.lng ?? null) === (b.location?.lng ?? null)
+    && (a.location?.accuracy ?? null) === (b.location?.accuracy ?? null);
+}
+
+/** Payload is content, not identity metadata: erase it with the body. */
+export function eraseMessageContent<T extends HumanMessage>(message: T): T {
+  const copy = { ...message, body: "" };
+  delete copy.contextReportId; delete copy.location;
+  return copy;
 }
 
 /** Unknown legacy state may gain authority; two known contradictory types cannot merge. */

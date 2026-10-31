@@ -39,8 +39,14 @@
  * epoch must survive a restart with the queued intent rather than be re-read at
  * flush time. Purely additive: an existing outbox gains the column and every
  * queued row keeps its lease, attempts and status.
+ *
+ * v9: `messages` admits the `LOCATION` classification and the two bounded
+ * capabilities behind it — a live report reference on a TEXT message and one
+ * static coordinate set on a LOCATION message. SQLite cannot alter a CHECK in
+ * place, so this is the same proven table rebuild as v5; existing rows keep
+ * their classification and gain NULL payload columns.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 8;
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 9;
 
 /**
  * The v5 `messages` body CHECK, recognised in `sqlite_master`.
@@ -53,6 +59,14 @@ export const MESSAGING_SQLITE_SCHEMA_VERSION = 8;
  * is proven exact and nothing is dropped until it is.
  */
 export const MESSAGES_V5_BODY_CHECK = "length(body) <= 100000";
+
+/**
+ * The v9 `messages` classification CHECK, recognised in `sqlite_master` for the
+ * same reason as the v5 marker: absence triggers the rebuild, so a formatting
+ * change in a future build can never leave a stamped file that rejects
+ * `LOCATION`.
+ */
+export const MESSAGES_V9_TYPE_CHECK = "'TEXT','MEDIA','LOCATION'";
 
 export const MESSAGING_SQLITE_PRAGMAS = [
   "pragma journal_mode = wal",
@@ -100,7 +114,13 @@ export const MESSAGING_SQLITE_SCHEMA = [
     author_id text not null,
     recipient_id text not null,
     body text,
-    message_type text check (message_type in ('TEXT','MEDIA')),
+    message_type text check (message_type in ('TEXT','MEDIA','LOCATION')),
+    -- v9: bounded capabilities. The report id is a live reference, never a
+    -- snapshot; the coordinates exist only on an explicit LOCATION message.
+    context_report_id text,
+    location_lat real,
+    location_lng real,
+    location_accuracy_m real,
     server_event_id text,
     server_sequence integer,
     created_at integer not null,
@@ -109,6 +129,11 @@ export const MESSAGING_SQLITE_SCHEMA = [
     -- v5: an image-only message carries no caption, so the empty string is a
     -- valid body. Anything longer than the storage bound is still refused.
     check (body is null or length(body) <= 100000),
+    check (context_report_id is null or message_type = 'TEXT'),
+    check ((location_lat is null and location_lng is null and location_accuracy_m is null)
+      or (message_type = 'LOCATION' and location_lat is not null and location_lng is not null and location_lat between -90 and 90
+        and location_lng between -180 and 180
+        and (location_accuracy_m is null or (location_accuracy_m > 0 and location_accuracy_m <= 100000)))),
     check ((server_event_id is null) = (server_sequence is null)),
     unique (conversation_id, server_sequence)
   )`,
@@ -201,6 +226,8 @@ export const MESSAGING_SQLITE_SCHEMA = [
 
 const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
   m.author_id as authorId, m.recipient_id as recipientId, m.body as body, m.message_type as messageType,
+  m.context_report_id as contextReportId, m.location_lat as locationLat, m.location_lng as locationLng,
+  m.location_accuracy_m as locationAccuracy,
   m.server_event_id as eventId, m.server_sequence as sequence, m.unsent_at as unsentAt`;
 
 const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as direction,
@@ -227,8 +254,10 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   getStateCursor: `select event_id as eventId, sequence from messaging_state_events order by sequence desc limit 1`,
   getStateEvent: `select sequence, change_json as changeJson from messaging_state_events where event_id = ?`,
   insertStateEvent: `insert into messaging_state_events(event_id,sequence,change_json) values(?,?,?)`,
-  erasePersonalMessage: `update messages set body=null where id=?`,
-  erasePersonalConversation: `update messages set body=null where conversation_id=? and server_sequence<=?`,
+  erasePersonalMessage: `update messages set body=null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null where id=?`,
+  erasePersonalConversation: `update messages set body=null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null where conversation_id=? and server_sequence<=?`,
   getMetaRows: `select key, value from messaging_meta
     where key in ('account_id', 'device_id', 'schema_version')`,
   setMetaIfAbsent: `insert or ignore into messaging_meta (key, value) values (?, ?)`,
@@ -277,8 +306,9 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   getMessageByEvent: `select ${MESSAGE_COLUMNS} from messages m
     where m.server_event_id = ?`,
   insertMessage: `insert into messages
-    (id, conversation_id, author_id, recipient_id, body, created_at, message_type)
-    values (?, ?, ?, ?, ?, ?, ?)`,
+    (id, conversation_id, author_id, recipient_id, body, created_at, message_type,
+      context_report_id, location_lat, location_lng, location_accuracy_m)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   insertTombstonedMessage: `insert into messages
     (id, conversation_id, author_id, recipient_id, body, created_at, unsent_at, message_type)
     values (?, ?, ?, ?, null, ?, ?, ?)`,
@@ -289,7 +319,8 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   bindMessageType: `update messages set message_type=? where id=? and message_type is null`,
   setMessageServer: `update messages set server_event_id = ?, server_sequence = ?
     where id = ? and server_event_id is null`,
-  clearMessageBody: `update messages set body = null, unsent_at = coalesce(unsent_at, ?)
+  clearMessageBody: `update messages set body = null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null, unsent_at = coalesce(unsent_at, ?)
     where id = ?`,
   getMailboxEvent: `select event_id as eventId, message_id as messageId, sequence
     from mailbox_seen where mailbox_id = ?`,
@@ -410,6 +441,54 @@ export const MESSAGING_SQLITE_STATEMENTS = {
   /** Foreign keys are off during the rebuild, so integrity is proven afterwards. */
   foreignKeyCheck: `pragma foreign_key_check`,
 
+  // ---- v8 -> v9: messages admits LOCATION and the bounded payload columns ----
+  // Same documented rebuild as v5, because SQLite cannot alter a CHECK in place.
+  createMessagesV9: `create table messages_v9 (
+    id text primary key,
+    conversation_id text not null references conversations(id) on delete cascade,
+    author_id text not null,
+    recipient_id text not null,
+    body text,
+    message_type text check (message_type in ('TEXT','MEDIA','LOCATION')),
+    context_report_id text,
+    location_lat real,
+    location_lng real,
+    location_accuracy_m real,
+    server_event_id text,
+    server_sequence integer,
+    created_at integer not null,
+    unsent_at integer,
+    check (author_id <> recipient_id),
+    check (body is null or length(body) <= 100000),
+    check (context_report_id is null or message_type = 'TEXT'),
+    check ((location_lat is null and location_lng is null and location_accuracy_m is null)
+      or (message_type = 'LOCATION' and location_lat is not null and location_lng is not null and location_lat between -90 and 90
+        and location_lng between -180 and 180
+        and (location_accuracy_m is null or (location_accuracy_m > 0 and location_accuracy_m <= 100000)))),
+    check ((server_event_id is null) = (server_sequence is null)),
+    unique (conversation_id, server_sequence)
+  )`,
+  // Existing rows keep their classification and gain NULL payload columns; a
+  // legacy row is never inferred to be TEXT.
+  copyMessagesV9: `insert into messages_v9
+    (id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at)
+    select id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at from messages`,
+  missingMessagesV9: `select count(*) as n from (
+    select id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at from messages
+    except
+    select id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at from messages_v9)`,
+  extraMessagesV9: `select count(*) as n from (
+    select id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at from messages_v9
+    except
+    select id, conversation_id, author_id, recipient_id, body, message_type, server_event_id,
+      server_sequence, created_at, unsent_at from messages)`,
+  renameMessagesV9: `alter table messages_v9 rename to messages`,
+
   // ---- portable history snapshot (backup/restore) ----
   // Only accepted messages are portable: a pending send is device-local work,
   // not history, and must never be re-sent by a restore.
@@ -439,8 +518,9 @@ export const MESSAGING_SQLITE_STATEMENTS = {
     where conversation_id = ? and server_sequence = ?`,
   insertSnapshotMessage: `insert into messages
     (id, conversation_id, author_id, recipient_id, body, created_at,
-      server_event_id, server_sequence, unsent_at, message_type)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      server_event_id, server_sequence, unsent_at, message_type,
+      context_report_id, location_lat, location_lng, location_accuracy_m)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   updateSnapshotMessage: `update messages set body = ?, unsent_at = ?, created_at = ?
     where id = ?`,
   /** Union by message id, with a commutative tie-break on both metadata columns. */
@@ -452,15 +532,19 @@ export const MESSAGING_SQLITE_STATEMENTS = {
     where conversation_id = ?`,
   // Anti-resurrection backstop, run inside the import transaction: no path may
   // leave a body visible behind a tombstone, a personal deletion or a clear.
-  suppressTombstonedBodies: `update messages set body = null
-    where body is not null and id in (select message_id from tombstones)`,
-  suppressDeletedBodies: `update messages set body = null
-    where body is not null and id in (select message_id from deleted_for_me)`,
+  suppressTombstonedBodies: `update messages set body = null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null
+    where id in (select message_id from tombstones)`,
+  suppressDeletedBodies: `update messages set body = null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null
+    where id in (select message_id from deleted_for_me)`,
   /** An unsent message is never readable, whether or not its tombstone travelled. */
-  suppressUnsentBodies: `update messages set body = null
-    where body is not null and unsent_at is not null`,
-  suppressClearedBodies: `update messages set body = null
-    where body is not null and server_sequence is not null
+  suppressUnsentBodies: `update messages set body = null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null
+    where body is null or unsent_at is not null`,
+  suppressClearedBodies: `update messages set body = null, context_report_id=null,
+    location_lat=null, location_lng=null, location_accuracy_m=null
+    where server_sequence is not null
       and exists (select 1 from conversation_cleared c
         where c.conversation_id = messages.conversation_id
           and messages.server_sequence <= c.through_sequence)`,

@@ -67,7 +67,7 @@ function MessagingPrivacySession({ accountId }: { accountId: string }) {
     {error && <div><p role="alert" className="text-sm text-error">{error}</p>
       <button type="button" className="min-h-[44px] px-2 underline" disabled={busy} onClick={() => { setSaved(false); setAttempt((value) => value + 1); }}>Reload settings</button></div>}
     <SettingsGroup>
-      <SettingsRow title="Connections" route="/connections" />
+      <SettingsRow title="Chats" route="/chats" />
       <SettingsRow title="Blocked accounts" route="/settings/privacy/blocked" />
       <SettingsRow title="Privacy policy" route="/settings/privacy-policy" />
     </SettingsGroup>

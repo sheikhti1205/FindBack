@@ -10,11 +10,11 @@ import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { ComposerShell } from "./ComposerShell";
 import { UserAvatar } from "./UserAvatar";
 
-/** Account/peer key invalidates drafts and async continuations synchronously. */
+/** Account/peer/report key invalidates drafts and async continuations synchronously. */
 export function PeerIdentityActions({ person }: { person: PublicIdentity }) {
   const { user } = useAuth();
   if (!user || user.id === person.id) return null;
-  return <PeerActionsSession key={JSON.stringify([user.id, person.id])} accountId={user.id} person={person} />;
+  return <PeerActionsSession key={JSON.stringify([user.id, person.id, person.contextReportId])} accountId={user.id} person={person} />;
 }
 
 function PeerActionsSession({ accountId, person }: { accountId: string; person: PublicIdentity }) {
@@ -32,6 +32,9 @@ function PeerActionsSession({ accountId, person }: { accountId: string; person: 
   const projection = Object.values(chat.currentProjections ?? {}).find(row => row.peerId === person.id);
   const available = chat.accountId === accountId && chat.status === "ready" && chat.currentProjections !== null;
   const name = person.displayName?.trim() || person.username;
+  // Report-linked contact keeps its subject visible in the action label and in
+  // the first message, so the recipient is never asked to guess why.
+  const reportId = person.contextReportId;
 
   async function sendRequest() {
     if (!available || sending.current || checkConversation || !body.trim() || body.length > MAX_BODY_UNITS) return;
@@ -45,7 +48,7 @@ function PeerActionsSession({ accountId, person }: { accountId: string; person: 
       }
       conversationId = await requestMessagingConversation(accountId, person.id);
       if (!alive.current) return;
-      await sendMessagingText(accountId, conversationId, person.id, body.trim());
+      await sendMessagingText(accountId, conversationId, person.id, body.trim(), reportId);
       if (alive.current) navigate(`/chats/${encodeURIComponent(conversationId)}`);
     } catch {
       if (!alive.current) return;
@@ -66,14 +69,17 @@ function PeerActionsSession({ accountId, person }: { accountId: string; person: 
     {available && projection && <>
       <p className="fb-identity-relationship">{projection.mode === "CONNECTED" ? "Connected"
         : projection.request === "OUTGOING" ? "Request sent" : "Message request"}</p>
-      <Link className="fb-surface-button" to={`/chats/${encodeURIComponent(projection.conversationId)}`}>
-        {projection.mode === "CONNECTED" ? "Message" : "View request"}
+      <Link className="fb-surface-button" to={`/chats/${encodeURIComponent(projection.conversationId)}${reportId ? `?report=${encodeURIComponent(reportId)}` : ""}`}>
+        {projection.mode === "CONNECTED" ? reportId ? "Message about this report" : "Message" : "View request"}
       </Link>
     </>}
     {(!projection || !available) && <button type="button" className="fb-surface-button" disabled={!available}
-      onClick={() => setOpen(true)}>Connect</button>}
-    <AdaptiveTaskSurface open={open} onClose={() => setOpen(false)} busy={busy} title={`Connect with ${name}`}
-      description="Introduce yourself with a message. Photos and location are available after you connect.">
+      onClick={() => setOpen(true)}>{reportId ? "Connect about this report" : "Connect"}</button>}
+    <AdaptiveTaskSurface open={open} onClose={() => setOpen(false)} busy={busy}
+      title={reportId ? `Message ${name} about this report` : `Connect with ${name}`}
+      description={reportId
+        ? "Your message will show which report you’re asking about. Photos and location are available after you connect."
+        : "Introduce yourself with a message. Photos and location are available after you connect."}>
       <div className="fb-identity-header mb-4">
         <UserAvatar username={name} avatarUrl={person.avatarUrl} size={40} />
         <div className="min-w-0"><p className="fb-identity-name font-semibold">{name}</p><p className="fb-identity-handle">@{person.username}</p></div>

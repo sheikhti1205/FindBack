@@ -48,11 +48,77 @@ describe("portable history backup envelope", () => {
     const history = { exportSnapshot: async () => ({ ...legacy,
       messages: [{ ...legacy.messages[0]!, messageType: "MEDIA" as const }] }) } as MessagingHistory;
     const current = await createBackup(history, { accountId: ACCOUNT, deviceId: DEVICE }, 99);
-    expect(current.version).toBe(2);
+    expect(current.version).toBe(3);
     expect((await decodeBackup(encodeBackup(current))).snapshot.messages[0]?.messageType).toBe("MEDIA");
     const forged = { ...current, snapshot: { ...current.snapshot,
       messages: [{ ...current.snapshot.messages[0]!, messageType: "TEXT" as const }] } };
     await expect(decodeBackup(forged)).rejects.toMatchObject({ code: "backup: digest mismatch" });
+  });
+
+  it("carries the bounded v3 payload and refuses a payload on the wrong type", async () => {
+    const snapshot: HistorySnapshot = { ...emptySnapshot(), messages: [
+      { id: MESSAGE, conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT, body: "Is this yours?",
+        messageType: "TEXT", contextReportId: "00000000-0000-4000-8000-00000000000b", location: null,
+        serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0 },
+      { id: "00000000-0000-4000-8000-00000000000c", conversationId: CONVERSATION, authorId: PEER,
+        recipientId: ACCOUNT, body: "", messageType: "LOCATION", contextReportId: null,
+        location: { lat: 23.8103, lng: 90.4125, accuracy: 25 },
+        serverEventId: "00000000-0000-4000-8000-00000000000d", serverSequence: 2, unsentAt: null, createdAt: 0 },
+    ] };
+    const raw = await sealed(snapshot as HistorySnapshot, { version: 3 });
+    const decoded = await decodeBackup(raw);
+    expect(decoded.snapshot.messages[0]?.contextReportId).toBe("00000000-0000-4000-8000-00000000000b");
+    expect(decoded.snapshot.messages[1]?.location).toEqual({ lat: 23.8103, lng: 90.4125, accuracy: 25 });
+
+    // A report reference is TEXT-only and a coordinate set is LOCATION-only.
+    const wrongReport = { ...snapshot, messages: [{ ...snapshot.messages[0]!, messageType: "MEDIA" as const }] };
+    await expect(decodeBackup(await sealed(wrongReport as HistorySnapshot, { version: 3 })))
+      .rejects.toMatchObject({ code: "backup: invalid snapshot" });
+    const wrongLocation = { ...snapshot, messages: [{ ...snapshot.messages[1]!, messageType: "TEXT" as const, body: "x" }] };
+    await expect(decodeBackup(await sealed(wrongLocation as HistorySnapshot, { version: 3 })))
+      .rejects.toMatchObject({ code: "backup: invalid snapshot" });
+  });
+
+  it.each([1, 2])("rejects later payload fields in a correctly sealed v%s envelope", async version => {
+    const base = { id: MESSAGE, conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT,
+      body: "Is this yours?", serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0,
+      ...(version === 2 ? { messageType: "TEXT" as const } : {}) };
+    for (const later of [{ contextReportId: "00000000-0000-4000-8000-00000000000b" },
+      { location: { lat: 23.81, lng: 90.413, accuracy: null } },
+      { contextReportId: null, location: null }]) {
+      const snapshot = { ...emptySnapshot(), messages: [{ ...base, ...later }] };
+      await expect(decodeBackup(await sealed(snapshot, { version })))
+        .rejects.toMatchObject({ code: "backup: invalid snapshot" });
+    }
+  });
+
+  it("rejects a v3-only LOCATION classification in v2, even when its body is suppressed", async () => {
+    const snapshot: HistorySnapshot = { ...emptySnapshot(), messages: [{ id: MESSAGE,
+      conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT, body: null,
+      serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0, messageType: "LOCATION" }] };
+    await expect(decodeBackup(await sealed(snapshot, { version: 2 })))
+      .rejects.toMatchObject({ code: "backup: invalid snapshot" });
+  });
+
+  it.each([null, "TEXT", "MEDIA"] as const)("retains valid v2 classification %s without changing its sealed digest", async messageType => {
+    const snapshot: HistorySnapshot = { ...emptySnapshot(), messages: [{ id: MESSAGE,
+      conversationId: CONVERSATION, authorId: PEER, recipientId: ACCOUNT, body: "Caption",
+      serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0, messageType }] };
+    const raw = await sealed(snapshot, { version: 2 });
+    expect(await decodeBackup(raw)).toEqual(raw);
+  });
+
+  it("never invokes or retains caller-owned nested location accessors", () => {
+    let reads = 0;
+    const location = Object.defineProperties({}, {
+      lat: { enumerable: true, get: () => { reads++; return 23; } },
+      lng: { enumerable: true, value: 90 }, accuracy: { enumerable: true, value: 25 },
+    });
+    const snapshot = { ...emptySnapshot(), messages: [{ id: MESSAGE, conversationId: CONVERSATION,
+      authorId: PEER, recipientId: ACCOUNT, body: "", messageType: "LOCATION", contextReportId: null,
+      location, serverEventId: EVENT, serverSequence: 1, unsentAt: null, createdAt: 0 }] };
+    expect(() => validateSnapshot(snapshot, ACCOUNT)).toThrow("backup: invalid snapshot");
+    expect(reads).toBe(0);
   });
 
   it("sorts object keys recursively without changing array order", () => {
@@ -65,7 +131,7 @@ describe("portable history backup envelope", () => {
       [null, "backup: not an object"],
       [{}, "backup: unsupported format"],
       [{ format: "other" }, "backup: unsupported format"],
-      [{ format: "findback.chat.backup", version: 3 }, "backup: unsupported version"],
+      [{ format: "findback.chat.backup", version: 4 }, "backup: unsupported version"],
       [{ format: "findback.chat.backup", version: 0 }, "backup: unsupported version"],
     ] as const) {
       await expect(decodeBackup(raw)).rejects.toMatchObject({ code });

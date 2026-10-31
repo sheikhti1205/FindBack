@@ -3,7 +3,7 @@ import type {
   OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage, MediaAttachment, MediaBytesPort, HistorySnapshot, ImportReport,
 } from "./history";
 import { MediaParentUnavailableError } from "./history";
-import { cachedMediaAllowed, copyMessage, copyMediaMessage, copyReceivedMessage, compatibleMessageType, copyMediaAttachment, sameMessage, positiveSequence, uuid } from "./validation";
+import { cachedMediaAllowed, copyOutgoingMessage, copyMediaMessage, copyReceivedMessage, compatibleMessageType, copyMediaAttachment, sameMessage, eraseMessageContent, positiveSequence, uuid } from "./validation";
 import { isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt } from "./media";
 import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
 import { withHistoryLock } from "./historyLock";
@@ -218,7 +218,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
 
   async function enqueueOutgoing(input: HumanMessage, expectedEpoch?: string): Promise<void> {
     assertOpen();
-    const message = copyMessage(input);
+    const message = copyOutgoingMessage(input);
     if (message.authorId !== scope.accountId) throw new Error("Outgoing messaging scope mismatch");
     await transaction<void>("readwrite", (tx, result, guard) => {
       const messages = tx.objectStore("messages");
@@ -491,7 +491,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             if (!existingEvent) events.add({ eventId, conversationId: message.conversationId, sequence, messageId: message.id } satisfies EventIdentity);
             const stored: PortableMessage = { ...existing, ...message, server: { eventId, sequence },
               ...((message.messageType ?? existing?.messageType) ? { messageType: message.messageType ?? existing?.messageType } : {}),
-              ...((tombstone || suppressed) ? { body: "" } : {}),
+              ...((tombstone || suppressed) ? { body: "", contextReportId: undefined, location: undefined } : {}),
               ...(tombstone ? { unsentAt: tombstone.occurredAt } : {}) };
             if (tombstone || suppressed) removeMediaRows(tx, guard, message.id);
             if (!existing) messages.add(stored);
@@ -543,7 +543,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             if (!entry) return;
             const message = entry.value as StoredHumanMessage;
             if (message.server && message.server.sequence <= change.throughSequence) {
-              entry.update({ ...message, body: "" });
+              entry.update(eraseMessageContent(message));
               removeMediaRows(tx, guard, message.id);
             }
             entry.continue();
@@ -590,7 +590,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
             }
             if (change.kind === "DELETE_FOR_ME") tx.objectStore("deletions").put(change);
             else tx.objectStore("unsends").put(change);
-            messages.put({ ...existing, id: change.messageId, conversationId: change.conversationId,
+            messages.put({ ...(existing ? eraseMessageContent(existing) : {}), id: change.messageId, conversationId: change.conversationId,
                 authorId: change.authorId, recipientId: change.recipientId, body: "",
                 ...(existing?.messageType ? { messageType: existing.messageType } : {}),
                 ...(existing?.server ? { server: existing.server } : {}),
@@ -722,7 +722,9 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     const parent = view.parents.find((row) => row.id === metadata.messageId);
     if (!parent) throw new MediaParentUnavailableError(metadata.messageId);
     if (parent.authorId !== scope.accountId && parent.recipientId !== scope.accountId) throw new Error("Media participant scope mismatch");
-    if (parent.messageType === "TEXT") throw new Error("Media parent classification conflict");
+    if (parent.messageType !== undefined && parent.messageType !== null && parent.messageType !== "MEDIA") {
+      throw new Error("Media parent classification conflict");
+    }
     if (metadata.direction !== (parent.authorId === scope.accountId ? "OUT" : "IN")) throw new Error("Media direction scope mismatch");
     return parent;
   }

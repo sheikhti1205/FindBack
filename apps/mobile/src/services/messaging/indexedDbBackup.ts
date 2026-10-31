@@ -2,7 +2,7 @@
 import { BackupError } from "./backup";
 import { conversationPeer, type LocalConversationState } from "./conversationIndex";
 import type { HistorySnapshot, MessagingScope, SnapshotConversation, StoredHumanMessage } from "./history";
-import { compatibleMessageType } from "./validation";
+import { compatibleMessageType, sameMessagePayload } from "./validation";
 
 export interface PortableMessage extends StoredHumanMessage {
   snapshotCreatedAt?: number;
@@ -57,9 +57,12 @@ export function exportPortable(view: PortableView): HistorySnapshot {
     prior.lastSequence = Math.max(prior.lastSequence, server.sequence);
     conversations.set(row.conversationId, prior);
     const unsentAt = row.unsentAt ?? unsends.get(row.id)?.occurredAt ?? null;
+    const suppressed = row.snapshotSuppressed || unsentAt !== null || deleted.has(row.id)
+      || server.sequence <= (clears.get(row.conversationId) ?? 0);
     return { id: row.id, conversationId: row.conversationId, authorId: row.authorId, recipientId: row.recipientId,
-      body: row.snapshotSuppressed || unsentAt !== null || deleted.has(row.id)
-        || server.sequence <= (clears.get(row.conversationId) ?? 0) ? null : row.body,
+      body: suppressed ? null : row.body,
+      contextReportId: suppressed ? null : row.contextReportId ?? null,
+      location: suppressed ? null : row.location ? { ...row.location } : null,
       messageType: row.messageType ?? null, serverEventId: server.eventId, serverSequence: server.sequence,
       unsentAt, createdAt: row.snapshotCreatedAt ?? 0 };
   }).sort((a, b) => a.conversationId.localeCompare(b.conversationId) || a.serverSequence - b.serverSequence || a.id.localeCompare(b.id));
@@ -137,12 +140,14 @@ export function mergePortable(view: PortableView, incoming: HistorySnapshot, sco
     if (prior && (prior.conversationId !== row.conversationId || prior.authorId !== row.authorId || prior.recipientId !== row.recipientId
       || !compatibleMessageType(prior.messageType, row.messageType)
       || (prior.server && (prior.server.eventId !== row.serverEventId || prior.server.sequence !== row.serverSequence))
-      || (!priorSuppressed && row.body !== null && prior.body !== row.body)
+      || (!priorSuppressed && row.body !== null && (prior.body !== row.body || !sameMessagePayload(prior, row)))
       || (prior.unsentAt !== undefined && row.unsentAt !== null && prior.unsentAt !== row.unsentAt))) conflict();
     const knownTime = prior?.snapshotCreatedAt ?? 0, time = row.createdAt ?? 0;
     const unsentAt = prior?.unsentAt ?? row.unsentAt ?? tombstone?.occurredAt;
     messages.set(row.id, { ...prior, id: row.id, conversationId: row.conversationId, authorId: row.authorId, recipientId: row.recipientId,
       body: row.body ?? "", server: { eventId: row.serverEventId, sequence: row.serverSequence },
+      ...(row.contextReportId ? { contextReportId: row.contextReportId } : {}),
+      ...(row.location ? { location: { ...row.location } } : {}),
       ...((row.messageType ?? prior?.messageType) ? { messageType: row.messageType ?? prior?.messageType } : {}),
       ...(unsentAt !== undefined ? { unsentAt } : {}), ...(row.body === null ? { snapshotSuppressed: true as const } : {}),
       snapshotCreatedAt: knownTime === 0 ? time : time === 0 ? knownTime : Math.min(knownTime, time) });
@@ -159,6 +164,7 @@ export function mergePortable(view: PortableView, incoming: HistorySnapshot, sco
     if (row.snapshotSuppressed || row.unsentAt !== undefined || deletion
       || (row.server && row.server.sequence <= (clears.get(row.conversationId)?.throughSequence ?? 0))) {
       row.body = ""; row.snapshotSuppressed = true;
+      delete row.contextReportId; delete row.location;
     }
   }
   return { messages: [...messages.values()], conversations: [...conversations.values()],

@@ -10,6 +10,13 @@ import { resetModalLayers } from "../hooks/modalLayers";
 
 afterEach(() => { cleanup(); resetBackInterceptors(); resetModalLayers(); });
 
+it("keeps Cancel available when confirmation authority disappears without an operation in flight", () => {
+  render(<ConfirmDialog open title="Remove message?" onClose={() => {}} onConfirm={() => {}} confirmLabel="Remove" confirmDisabled />);
+  const dialog=screen.getByRole("alertdialog");
+  expect(within(dialog).getByRole("button",{name:"Remove"}).hasAttribute("disabled")).toBe(true);
+  expect(within(dialog).getByRole("button",{name:"Cancel"}).hasAttribute("disabled")).toBe(false);
+});
+
 it("starts a task on its safe close action rather than scheduling dialog refocus over nested tools", async () => {
   render(<AdaptiveTaskSurface open onClose={() => {}} title="Edit report"><input aria-label="Report title" /></AdaptiveTaskSurface>);
   const dialog = await screen.findByRole("dialog", { name: "Edit report" });

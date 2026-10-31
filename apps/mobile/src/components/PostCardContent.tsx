@@ -107,7 +107,7 @@ export function PostCardContent({ post, layout = "classic", enableSharedMedia = 
   const titleClassName = layout === "editorial" ? "fb-editorial-title" : layout === "masonry" ? "fb-masonry-title line-clamp-2" : layout === "compact" ? "text-sm font-bold leading-snug line-clamp-2" : "fb-feed-title line-clamp-2";
   return <div data-testid={layout === "home-feed" ? "home-feed-content" : layout === "masonry" ? "masonry-content" : undefined}
     className={`fb-post-content fb-post-${layout}`}>
-    <PostIdentityHeader post={post} overflow={overflow} />
+    <PostIdentityHeader post={post} overflow={overflow} contextReportId={post.id} />
     <PostStatusTitle post={post} titleClassName={titleClassName} enableSharedMedia={enableSharedMedia}
       linkTestId={layout === "home-feed" ? "home-feed-detail-link" : layout === "masonry" ? "masonry-detail-link" : undefined} />
     {!dense && <div className="fb-post-description"><PostDescription text={post.description} /></div>}

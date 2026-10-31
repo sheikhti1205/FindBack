@@ -3,16 +3,19 @@ import { Link } from "react-router";
 import { useAuth } from "../auth";
 import { normalizePeopleQuery, searchPeople, type PeopleSearchCursor, type PeopleSearchPage } from "../services/people";
 import { UserAvatar } from "./UserAvatar";
+import { useMessaging } from "../services/messaging/useMessaging";
 
 /** One short-lived query per account, with no cross-account result cache. */
 export function PeopleSearch({ query }: { query: string }) {
   const { user } = useAuth();
   const normalized = normalizePeopleQuery(query);
   if (!user) return null;
-  return <PeopleQuery key={JSON.stringify([user.id, normalized])} query={normalized} />;
+  return <PeopleQuery key={JSON.stringify([user.id, normalized])} accountId={user.id} query={normalized} />;
 }
 
-function PeopleQuery({ query }: { query: string }) {
+function PeopleQuery({ query, accountId }: { query: string; accountId: string }) {
+  const chat = useMessaging();
+  const projections = chat.accountId === accountId ? Object.values(chat.currentProjections ?? {}) : [];
   const [page, setPage] = useState<PeopleSearchPage>({ items: [], nextCursor: null });
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -47,12 +50,18 @@ function PeopleQuery({ query }: { query: string }) {
       {busy || (!loaded && !failed) ? "Searching people…" : loaded && !page.items.length ? "No people found." : `${page.items.length} ${page.items.length === 1 ? "person" : "people"} shown`}
     </p>
     <ul className="divide-y divide-outline-variant">
-      {page.items.map(person => <li key={person.id}>
+      {page.items.map(person => {
+        const view = projections.find(projection => projection.peerId === person.id);
+        const relationship = view?.ownBlocked ? "Blocked by you" : view?.mode === "CONNECTED" ? "Connected"
+          : view?.request === "INCOMING" ? "Message request" : view?.request === "OUTGOING" ? "Request sent" : null;
+        return <li key={person.id}>
         <Link to={`/u/${encodeURIComponent(person.username)}`} className="flex min-h-[56px] min-w-0 items-center gap-3 rounded-m3-sm px-1 py-3 hover:bg-surface-container focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
           <UserAvatar username={person.displayName?.trim() || person.username} avatarUrl={person.avatarUrl} size={36} />
-          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><span className="block font-semibold">{person.displayName?.trim() || person.username}</span>{" "}<span className="block text-sm text-on-surface-variant">@{person.username}</span></span>
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]"><span className="block font-semibold">{person.displayName?.trim() || person.username}</span>{" "}<span className="block text-sm text-on-surface-variant">@{person.username}</span>
+            {relationship && <span className="block text-xs text-on-surface-variant">{relationship}</span>}
+          </span>
         </Link>
-      </li>)}
+      </li>; })}
     </ul>
     {failed && <div className="py-3"><p role="alert" className="mb-2 text-sm text-error">Couldn't search people. Check your connection and try again.</p>
       <button type="button" className="fb-surface-button" onClick={() => { void load(page.nextCursor); }}>Try again</button></div>}

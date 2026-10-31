@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from "react-router";
 import { PostList } from "./PostList";
 import { SavedReportsProvider } from "../hooks/useSavedReports";
 import { readSavedReports } from "../services/savedReports";
+import { UserIdentityProvider, type PublicIdentity } from "./UserIdentityTrigger";
 
 const { rpc, auth } = vi.hoisted(() => ({ rpc: vi.fn(), auth: { id: "reader" as string | null } }));
 vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({ rpc }) }));
@@ -59,6 +60,15 @@ it("keeps Save in overflow while the primary actions remain Like, Comments and S
   expect(await screen.findByRole("menuitem", { name: "Remove from saved reports" })).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: "Report post" })).toBeTruthy();
   expect(screen.getByRole("menuitem", { name: "Block account" })).toBeTruthy();
+});
+
+it("supplies the originating report to the canonical identity contact owner in the feed", async () => {
+  function Contact({ person }: { person: PublicIdentity }) { return <span>Message about {person.contextReportId ?? "no report"}</span>; }
+  render(<MemoryRouter><SavedReportsProvider><UserIdentityProvider actions={Contact}>
+    <PostList items={[post]} density="home-feed" loading={false} loadingMore={false} error={null} hasMore={false} onLoadMore={async () => {}} />
+  </UserIdentityProvider></SavedReportsProvider></MemoryRouter>);
+  fireEvent.click(screen.getByRole("button", { name: "About Sam Reed" }));
+  expect(await screen.findByText("Message about p1")).toBeTruthy();
 });
 
 it("lets the owner save without offering self-report or self-block", async () => {

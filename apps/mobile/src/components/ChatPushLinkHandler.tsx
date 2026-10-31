@@ -25,7 +25,7 @@ export function ChatPushLinkHandler() {
         if (!stopped && tap) {
           if (opened !== tap.notificationId) {
             opened = tap.notificationId;
-            navigate(`/connections/${tap.conversationId}`);
+            navigate(`/chats/${tap.conversationId}`);
           }
           await acknowledgeChatPushTap(account, tap.notificationId);
         }

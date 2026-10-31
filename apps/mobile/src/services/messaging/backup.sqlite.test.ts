@@ -104,7 +104,8 @@ describe("backup round trip", () => {
     const source = await store("source"), target = await store("target");
     await source.persistInbound(envelope({ messageType: "MEDIA" }, EVENT, MAILBOX, 1));
     const classified = await source.exportSnapshot();
-    const legacy = { ...classified, messages: classified.messages.map(({ messageType: _type, ...row }) => row) };
+    // A real v1 row has neither classification nor the v3 payload keys.
+    const legacy = { ...classified, messages: classified.messages.map(({ messageType: _type, contextReportId: _report, location: _location, ...row }) => row) };
     await target.importSnapshot(legacy);
     expect((await target.getMessage(MESSAGE))?.messageType).toBeUndefined();
     await target.importSnapshot(classified);

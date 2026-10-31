@@ -70,6 +70,17 @@ describe("Shell floating primary navigation", () => {
     render(<MemoryRouter initialEntries={[path]}><TabTapProvider><PrimaryNav layout="rail" /></TabTapProvider></MemoryRouter>);
     expect(screen.getByRole("link", { name: "Chats" }).getAttribute("aria-current")).toBe("page");
   });
+  it("keeps wide thread navigation and canvas, but removes primary nav on compact threads", () => {
+    const previous=window.innerWidth;
+    try {
+      Object.defineProperty(window,"innerWidth",{value:1200,configurable:true});
+      const mount=renderShell("/chats/thread");
+      expect(screen.getByRole("navigation",{name:"Primary"})).toBeTruthy();
+      expect(screen.getByRole("main").className).not.toContain("max-w-[44rem]");
+      mount.unmount();Object.defineProperty(window,"innerWidth",{value:393,configurable:true});
+      renderShell("/chats/thread");expect(screen.queryByRole("navigation",{name:"Primary"})).toBeNull();
+    } finally { Object.defineProperty(window,"innerWidth",{value:previous,configurable:true}); }
+  });
 
   it("tracks URL after navigation and Back rather than a stale local selection", () => {
     renderShell("/my");

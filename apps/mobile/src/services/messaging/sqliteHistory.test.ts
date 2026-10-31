@@ -1181,14 +1181,42 @@ describe("chat media schema and migration", () => {
       .not.toContain("message_type");
   }
 
+  it.each([S.copyMessagesV9, S.dropMessages, S.renameMessagesV9])("keeps the v8 stamp and exact rows after failed v9 rebuild: %s", async (failAt) => {
+    seedV6();
+    database.exec(S.addMessageType); database.exec(S.backfillMediaType);
+    database.exec("update messaging_meta set value='8' where key='schema_version'");
+    const before = database.prepare("select * from messages order by id").all();
+    const media = database.prepare("select * from media_attachments").all();
+    const outbox = database.prepare("select * from outbox").all();
+    const driver = driverFor(database);
+    await expect(openSqliteMessagingHistory({ ...driver,
+      exec: async (sql) => { await driver.exec(sql); if (sql === failAt) throw new Error("Injected v9 failure"); },
+      run: async (sql, params) => { const result = await driver.run(sql, params); if (sql === failAt) throw new Error("Injected v9 failure"); return result; },
+    }, { accountId: A, deviceId: DEVICE })).rejects.toThrow("Injected v9 failure");
+    database = new DatabaseSync(path);
+    expect(database.prepare("select value from messaging_meta where key='schema_version'").get()?.value).toBe("8");
+    expect(database.prepare("select * from messages order by id").all()).toEqual(before);
+    expect(database.prepare("select * from media_attachments").all()).toEqual(media);
+    expect(database.prepare("select * from outbox").all()).toEqual(outbox);
+    expect(database.prepare("select name from sqlite_master where name='messages_v9'").all()).toEqual([]);
+    const h = await open();
+    expect(database.prepare("select value from messaging_meta where key='schema_version'").get()?.value).toBe("9");
+    expect(database.prepare("pragma foreign_key_check").all()).toEqual([]);
+    await h.close(); database = new DatabaseSync(path);
+    const reopened = await open(); expect((await reopened.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");
+    await reopened.close();
+  });
+
   it("migrates real v6 classification without guessing TEXT or losing suppressed media and outbox", async () => {
     seedV6();
     const before = database.prepare("select * from messages order by id").all();
     const outbox = database.prepare("select * from outbox").all();
     const media = database.prepare("select * from media_attachments").all();
     const history = await open();
+    // The v9 rebuild adds the bounded payload columns as NULL for existing rows.
+    const payload = { context_report_id: null, location_lat: null, location_lng: null, location_accuracy_m: null };
     expect(database.prepare("select * from messages order by id").all()).toEqual([
-      { ...before[0], message_type: null }, { ...before[1], message_type: "MEDIA" },
+      { ...before[0], message_type: null, ...payload }, { ...before[1], message_type: "MEDIA", ...payload },
     ]);
     expect(database.prepare("select * from outbox").all()).toEqual(outbox);
     expect(database.prepare("select * from media_attachments").all()).toEqual(media);

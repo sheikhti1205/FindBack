@@ -5,7 +5,7 @@ import { ClipboardList, Home, MessageCircle, Plus, Settings } from "lucide-react
 import { Focusable, Tooltip, TooltipTrigger } from "react-aria-components";
 import { TabTapProvider, useTabTap } from "./TabTap";
 import { LiveRegion } from "./LiveRegion";
-import { READABLE_COLUMN_CLASS, WIDE_CANVAS_CLASS } from "./responsive";
+import { MEDIUM_MAX_PX, READABLE_COLUMN_CLASS, useViewportWidth, WIDE_CANVAS_CLASS } from "./responsive";
 import { useNavLayout } from "./navLayout";
 import type { NavLayout } from "../appearance";
 import { RouteTransition } from "./RouteTransition";
@@ -47,8 +47,10 @@ const WIDE_CANVAS = ["/", "/search", "/chats", "/connections"];
 /** The document never scrolls: routes own the bounded viewport scroller. */
 export function Shell() {
   const { pathname } = useLocation();
-  const showNav = !HIDE_NAV.some((p) => pathname.startsWith(p));
-  const wideCanvas = WIDE_CANVAS.includes(pathname);
+  const width = useViewportWidth();
+  const chatThread = pathname.startsWith("/chats/") || pathname.startsWith("/connections/");
+  const showNav = chatThread ? width >= MEDIUM_MAX_PX : !HIDE_NAV.some((p) => pathname.startsWith(p));
+  const wideCanvas = WIDE_CANVAS.includes(pathname) || chatThread;
   const ownsInternalScroll =
     pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections") || pathname.startsWith("/chats");
   // Owner ruling 4(e): the stored preference only becomes a side rail at the

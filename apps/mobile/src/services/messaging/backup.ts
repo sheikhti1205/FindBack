@@ -32,7 +32,12 @@ export type {
 } from "./history";
 
 export const BACKUP_FORMAT = "findback.chat.backup";
-export const BACKUP_VERSION = 2;
+/**
+ * v3 adds the bounded message payload: a live report reference and one static
+ * coordinate set. Both are optional own keys on a v3 message record, so a v2
+ * file still decodes and a v3 file never smuggles them into an older shape.
+ */
+export const BACKUP_VERSION = 3;
 
 export interface HistoryBackup {
   format: typeof BACKUP_FORMAT;
@@ -120,6 +125,7 @@ const CONVERSATION_KEYS = ["id", "lastSequence", "createdAt", "updatedAt"];
 const MESSAGE_KEYS = ["id", "conversationId", "authorId", "recipientId", "body",
   "serverEventId", "serverSequence", "unsentAt", "createdAt"];
 const MESSAGE_V2_KEYS = [...MESSAGE_KEYS, "messageType"];
+const MESSAGE_V3_KEYS = [...MESSAGE_V2_KEYS, "contextReportId", "location"];
 const TOMBSTONE_KEYS = ["messageId", "conversationId", "recipientId", "unsentAt", "unsentBy"];
 const DELETION_KEYS = ["messageId", "conversationId", "deletedAt"];
 const CLEAR_KEYS = ["conversationId", "throughSequence", "clearedAt"];
@@ -201,6 +207,23 @@ function elements(value: unknown): unknown[] {
   return out;
 }
 
+/**
+ * The bounded v3 payload: a report id belongs to a TEXT message, one coordinate
+ * set belongs to a LOCATION message, and neither may ride on anything else.
+ */
+function validPayload(row: Record<string, unknown>): boolean {
+  const type = row.messageType;
+  const report = row.contextReportId;
+  if (report !== undefined && report !== null && (!isUuid(report) || type !== "TEXT")) return false;
+  const location = row.location;
+  if (location === undefined || location === null) return type !== "LOCATION" || row.body === null;
+  if (type !== "LOCATION" || !object(location)) return false;
+  const lat = location.lat, lng = location.lng, accuracy = location.accuracy;
+  return typeof lat === "number" && Number.isFinite(lat) && lat >= -90 && lat <= 90
+    && typeof lng === "number" && Number.isFinite(lng) && lng >= -180 && lng <= 180
+    && (accuracy === null || (typeof accuracy === "number" && Number.isFinite(accuracy) && accuracy > 0 && accuracy <= 100_000));
+}
+
 function validBody(value: unknown): boolean {
   // `null` is suppression. `""` is an image-only message with no caption
   // (SQLite v5 admits it), so it is portable as-is and must not be collapsed
@@ -252,10 +275,15 @@ function readSnapshot(value: unknown, version?: number): HistorySnapshot {
       }),
       messages: messages.map((row) => {
         // A v1 digest must describe the original nine fields exactly. Never add
-        // defaults before verifying it, nor let v1 smuggle a v2 discriminator.
-        const classified = version === 2 || (version === undefined && object(row)
+        // defaults before verifying it, nor let v1 smuggle a later field.
+        const payload = version === 3 || (version === undefined && object(row)
+          && Object.getOwnPropertyDescriptor(row, "contextReportId") !== undefined);
+        const classified = payload || version === 2 || (version === undefined && object(row)
           && Object.getOwnPropertyDescriptor(row, "messageType") !== undefined);
-        const r = record(row, classified ? MESSAGE_V2_KEYS : MESSAGE_KEYS);
+        const r = record(row, payload ? MESSAGE_V3_KEYS : classified ? MESSAGE_V2_KEYS : MESSAGE_KEYS);
+        // v2 introduced classification, not static location. Suppression does
+        // not make a later classification valid in an older sealed envelope.
+        if (version === 2 && r.messageType === "LOCATION") throw new BackupError("backup: invalid snapshot");
         return {
           id: r.id as string,
           conversationId: r.conversationId as string,
@@ -263,6 +291,11 @@ function readSnapshot(value: unknown, version?: number): HistorySnapshot {
           recipientId: r.recipientId as string,
           body: r.body as string | null,
           ...(classified ? { messageType: r.messageType as SnapshotMessage["messageType"] } : {}),
+          ...(payload ? {
+            contextReportId: r.contextReportId as string | null,
+            location: r.location === null ? null
+              : record(r.location, ["lat", "lng", "accuracy"]) as unknown as SnapshotMessage["location"],
+          } : {}),
           serverEventId: r.serverEventId as string,
           serverSequence: r.serverSequence as number,
           unsentAt: r.unsentAt as number | null,
@@ -332,8 +365,10 @@ function checkSnapshot(value: unknown, accountId: string): asserts value is Hist
     && isUuid(row.authorId) && isUuid(row.recipientId) && row.authorId !== row.recipientId
     && (row.authorId === accountId || row.recipientId === accountId)
     && validBody(row.body)
-    && (row.messageType === undefined || row.messageType === null || row.messageType === "TEXT" || row.messageType === "MEDIA")
+    && (row.messageType === undefined || row.messageType === null
+      || row.messageType === "TEXT" || row.messageType === "MEDIA" || row.messageType === "LOCATION")
     && (row.messageType !== "TEXT" || row.body !== "")
+    && validPayload(row)
     && isUuid(row.serverEventId) && integer(row.serverSequence, 1)
     && (row.unsentAt === null || integer(row.unsentAt, 1))
     && (row.createdAt === null || integer(row.createdAt)))) {
@@ -379,6 +414,8 @@ export function normaliseSnapshot(value: unknown): HistorySnapshot {
     messages: snapshot.messages.map((message: SnapshotMessage) => ({
       ...message,
       messageType: message.messageType ?? null,
+      contextReportId: message.contextReportId ?? null,
+      location: message.location ?? null,
       createdAt: message.createdAt ?? 0,
     })),
   };

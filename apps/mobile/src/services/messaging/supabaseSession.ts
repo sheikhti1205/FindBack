@@ -21,7 +21,10 @@ export function createSupabaseMediaTransport(scope: MessagingScope, signal: Abor
 export function createSupabaseMessagingSession(scope: MessagingScope, history: MessagingHistory) {
   return createMessagingSession(scope, history, async ({ accountId, deviceId, action, args, signal }) => {
     const sdk = getSupabase();
-    const request = action === "RECEIPT_VIEW"
+    const request = action === "MUTE"
+      ? sdk.rpc("findback_chat_set_muted", { p_account_id: accountId, p_device_id: deviceId,
+          p_conversation_id: args.conversationId, p_muted: args.muted })
+      : action === "RECEIPT_VIEW"
       ? sdk.rpc("findback_chat_receipt_view", { p_account_id: accountId, p_device_id: deviceId,
           p_conversation_id: args.conversationId, p_message_ids: args.messageIds })
       : action === "RECEIPT_OBSERVE"

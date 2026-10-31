@@ -36,6 +36,7 @@ let lastGetSignal: AbortSignal | null;
 let mutationGate: ReturnType<typeof deferred> | null, mutationEntered: ReturnType<typeof deferred>, connected: boolean;
 let downloadStatus: number;
 let sent: Array<Record<string, unknown>>;
+let muted: Map<string, boolean>, muteFails: boolean;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -52,7 +53,7 @@ beforeEach(async () => {
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
   mutationGate = null; mutationEntered = deferred(); connected = true;
-  downloadStatus = 200; sent = [];
+   downloadStatus = 200; sent = []; muted = new Map(); muteFails = false;
   const items = new Map<string, string>([["findback.messaging.installation.v1", DEVICE]]);
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("localStorage", { getItem: (key: string) => items.get(key) ?? null,
@@ -64,7 +65,14 @@ beforeEach(async () => {
     if (!online) throw new Error("offline");
     if (request.url.includes("/rpc/")) {
       const args = await request.json() as Record<string, unknown>;
-      expect(args.p_account_id).toBe(account); expect(args.p_device_id).toBe(DEVICE);
+       expect(args.p_account_id).toBe(account); expect(args.p_device_id).toBe(DEVICE);
+       if (request.url.endsWith("findback_chat_set_muted")) {
+         expect(args.p_conversation_id).toBe(CONV); expect(typeof args.p_muted).toBe("boolean");
+         requestLog.push("MUTE"); mutationEntered.resolve();
+         if (mutationGate) await mutationGate.promise;
+         if (muteFails) return Response.json({ message: "Preference unavailable" }, { status: 503 });
+         muted.set(args.p_account_id as string, args.p_muted as boolean); return Response.json(args.p_muted);
+       }
       if (request.url.endsWith("findback_fetch_chat_media_delivery")) {
         requestLog.push("delivery");
         return Response.json([...remote.values()].filter(({ metadata: m }) => !acked.has(m.id)).map(({ metadata: m }) => ({
@@ -86,7 +94,7 @@ beforeEach(async () => {
       if (action === "STATE_SYNC") return Response.json([]);
       if (action === "VIEWS") return Response.json([{ conversationId: CONV, peerId: account === A ? B : A,
         mode: connected ? "CONNECTED" : "REQUEST", request: "NONE", requestEpoch: null, ownBlocked: false,
-        ownHidden: false, ownDeclined: false, revision: 1 }]);
+         ownHidden: false, ownDeclined: false, ownMuted: muted.get(account) ?? false, revision: muted.get(account) ? 2 : 1 }]);
       if (action === "END") {
         mutationEntered.resolve(); if (mutationGate) await mutationGate.promise;
         connected = false; return Response.json(null);
@@ -129,6 +137,50 @@ afterEach(async () => {
   runtime.clearMessagingRuntime(); deliveryGate?.resolve(); mutationGate?.resolve();
   await Promise.all(boundary.handles.map((handle) => handle.close()));
   vi.unstubAllGlobals(); vi.restoreAllMocks();
+});
+
+describe("production messaging mute owner", () => {
+  it("sets the explicit own preference via the real SDK and refreshes live and durable own state", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready" && !!s.currentProjections);
+    await runtime.setMessagingMuted(A, CONV, true);
+    await waitForState(s => s.currentProjections?.[CONV]?.ownMuted === true);
+    expect(runtime.getMessagingRuntimeSnapshot().conversations[0]?.cachedProjection?.ownMuted).toBe(true);
+    expect(sent).toEqual([]);
+    await runtime.setMessagingMuted(A, CONV, false);
+    await waitForState(s => s.currentProjections?.[CONV]?.ownMuted === false);
+    expect(requestLog.filter(s => s === "MUTE")).toHaveLength(2);
+  });
+  it("rejects offline, foreign-account and unknown-conversation mutations without optimistic cached state", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready" && !!s.currentProjections);
+    await expect(runtime.setMessagingMuted(B, CONV, true)).rejects.toThrow();
+    await expect(runtime.setMessagingMuted(A, id(999), true)).rejects.toThrow();
+    online = false; window.dispatchEvent(new Event("offline"));
+    await expect(runtime.setMessagingMuted(A, CONV, true)).rejects.toThrow();
+    expect(requestLog).not.toContain("MUTE");
+    expect(runtime.getMessagingRuntimeSnapshot().conversations[0]?.cachedProjection?.ownMuted).toBe(false);
+  });
+  it("reports setter failure and refetches unchanged own state rather than claiming muted", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready" && !!s.currentProjections);
+    muteFails = true;
+    await expect(runtime.setMessagingMuted(A, CONV, true)).rejects.toThrow();
+    await waitForState(s => s.status === "ready" && !!s.currentProjections);
+    expect(runtime.getMessagingRuntimeSnapshot().currentProjections?.[CONV]?.ownMuted).toBe(false);
+  });
+  it("invalidates pending authority and refuses a late mute completion after account replacement", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready" && !!s.currentProjections);
+    mutationGate = deferred();
+    const work = runtime.setMessagingMuted(A, CONV, true);
+    const rejected = expect(work).rejects.toThrow();
+    await mutationEntered.promise;
+    expect(runtime.getMessagingRuntimeSnapshot().currentProjections).toBeNull();
+    account = B; runtime.setMessagingAccount(B); mutationGate.resolve();
+    await rejected;
+    await waitForState(s => s.accountId === B && s.status === "ready");
+    expect(boundary.handles.at(-1)?.scope.accountId).toBe(B);
+    await waitForState(s => !!s.currentProjections);
+    expect(runtime.getMessagingRuntimeSnapshot().currentProjections?.[CONV]?.ownMuted).toBe(false);
+    expect(sent).toEqual([]);
+  });
 });
 
 describe("production messaging media owner", () => {

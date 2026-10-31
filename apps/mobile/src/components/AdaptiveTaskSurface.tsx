@@ -58,15 +58,16 @@ function DialogSurface({ open, onClose, title, description, children, footer, bu
 export function AdaptiveTaskSurface(props: SurfaceProps) { return <DialogSurface {...props} />; }
 
 /** Caller owns async state/errors. Clicking Confirm never silently closes a failed operation. */
-export function ConfirmDialog({ confirmLabel, onConfirm, cancelLabel = "Cancel", destructive = true, children, ...props }: Omit<SurfaceProps, "children" | "footer"> & {
+export function ConfirmDialog({ confirmLabel, onConfirm, confirmDisabled = false, cancelLabel = "Cancel", destructive = true, children, ...props }: Omit<SurfaceProps, "children" | "footer"> & {
   confirmLabel: string;
   onConfirm: () => void;
+  confirmDisabled?: boolean;
   cancelLabel?: string;
   destructive?: boolean;
   children?: ReactNode;
 }) {
   return <DialogSurface {...props} confirmation footer={<>
     <Button autoFocus isDisabled={props.busy} onPress={props.onClose} className="fb-surface-button">{cancelLabel}</Button>
-    <Button isDisabled={props.busy} onPress={onConfirm} className={`fb-surface-button ${destructive ? "fb-confirm-danger" : "fb-confirm-primary"}`}>{confirmLabel}</Button>
+    <Button isDisabled={props.busy || confirmDisabled} onPress={onConfirm} className={`fb-surface-button ${destructive ? "fb-confirm-danger" : "fb-confirm-primary"}`}>{confirmLabel}</Button>
   </>}>{children}</DialogSurface>;
 }

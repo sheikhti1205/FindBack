@@ -9,7 +9,15 @@ export interface MessagingScope {
   deviceId: string;
 }
 
-export type MessageType = "TEXT" | "MEDIA";
+export type MessageType = "TEXT" | "MEDIA" | "LOCATION";
+
+/** One-time static share. Never background-tracked and never request-stage. */
+export interface StaticLocation {
+  lat: number;
+  lng: number;
+  /** Bounded device estimate in metres; a user-chosen manual pin has no estimate. */
+  accuracy: number | null;
+}
 
 export interface HumanMessage {
   /** Stable client-generated UUID: transport retries must preserve it. */
@@ -21,6 +29,12 @@ export interface HumanMessage {
   /** Absent only for legacy history whose classification was never received.
    * Never infer TEXT from body or missing attachment metadata. */
   messageType?: MessageType;
+  /** Report-linked contact. Only the id is stored; the report is read live so a
+   * later-inaccessible report can render "Report unavailable" instead of a
+   * stale private snapshot. TEXT only. */
+  contextReportId?: string;
+  /** Present exactly on a LOCATION message. */
+  location?: StaticLocation;
 }
 
 export interface StoredHumanMessage extends HumanMessage {
@@ -154,6 +168,10 @@ export interface SnapshotMessage {
   body: string | null;
   /** NULL/absent means legacy unknown; suppression never erases classification. */
   messageType?: MessageType | null;
+  /** v3 portable payload: a live report reference on a TEXT message. */
+  contextReportId?: string | null;
+  /** v3 portable payload: one static coordinate set on a LOCATION message. */
+  location?: StaticLocation | null;
   /** Only accepted messages are portable; a pending send is not history. */
   serverEventId: string;
   serverSequence: number;

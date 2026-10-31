@@ -18,15 +18,19 @@ vi.mock("../services/messaging/runtime", () => ({
 }));
 import { PeerIdentityActions } from "./PeerIdentityActions";
 import { UserIdentityProvider, UserIdentityTrigger } from "./UserIdentityTrigger";
+import type { PublicIdentity } from "./UserIdentityTrigger";
 
 const person = { id: "peer", username: "river", displayName: "River Lee", avatarUrl: null };
 const connected: ConversationProjection = { conversationId: "chat", peerId: "peer", mode: "CONNECTED", request: "NONE",
   requestEpoch: null, ownBlocked: false, ownHidden: false, ownDeclined: false, revision: 1 };
-function mount() {
-  return render(<MemoryRouter><Routes>
-    <Route path="/" element={<PeerIdentityActions person={person} />} />
+function mount(identity: PublicIdentity = person) {
+  return render(identityTree(identity));
+}
+function identityTree(identity: PublicIdentity) {
+  return <MemoryRouter><Routes>
+    <Route path="/" element={<PeerIdentityActions person={identity} />} />
     <Route path="/chats/:id" element={<h1>Chat opened</h1>} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter>;
 }
 beforeEach(() => {
   state.account = "viewer"; state.status = "ready"; state.projections = {};
@@ -56,7 +60,34 @@ it("opens first contact without creating or sending until explicit Send request"
   fireEvent.click(send);
   await screen.findByRole("heading", { name: "Chat opened" });
   expect(state.create).toHaveBeenCalledExactlyOnceWith("viewer", "peer");
-  expect(state.send).toHaveBeenCalledExactlyOnceWith("viewer", "chat", "peer", "I found your wallet.");
+  expect(state.send).toHaveBeenCalledExactlyOnceWith("viewer", "chat", "peer", "I found your wallet.", undefined);
+});
+
+it("carries the report subject into an existing conversation without sending", () => {
+  state.projections = { chat: connected };
+  mount({ ...person, contextReportId: "report-id" });
+  expect(screen.getByRole("link", { name: "Message about this report" }).getAttribute("href")).toBe("/chats/chat?report=report-id");
+  expect(state.create).not.toHaveBeenCalled(); expect(state.send).not.toHaveBeenCalled();
+});
+
+it("sends explicit report-origin first contact with that report, not a copied report", async () => {
+  mount({ ...person, contextReportId: "report-id" });
+  fireEvent.click(screen.getByRole("button", { name: "Connect about this report" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "First message" }), { target: { value: "Is this yours?" } });
+  expect(state.send).not.toHaveBeenCalled(); fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+  await screen.findByRole("heading", { name: "Chat opened" });
+  expect(state.send).toHaveBeenCalledExactlyOnceWith("viewer", "chat", "peer", "Is this yours?", "report-id");
+});
+
+it("drops pending first contact when the report subject changes", async () => {
+  let resolve!: (id: string) => void;
+  state.create.mockReturnValue(new Promise<string>(done => { resolve = done; }));
+  const view = mount({ ...person, contextReportId: "first-report" });
+  fireEvent.click(screen.getByRole("button", { name: "Connect about this report" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "First message" }), { target: { value: "About the first report" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+  view.rerender(identityTree({ ...person, contextReportId: "second-report" }));
+  await act(async () => { resolve("chat"); }); expect(state.send).not.toHaveBeenCalled();
 });
 
 it.each([

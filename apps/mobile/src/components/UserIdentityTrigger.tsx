@@ -2,7 +2,11 @@ import { createContext, useContext, type ComponentType, type ReactNode } from "r
 import type { SearchedProfile } from "@findback/shared";
 import { UserQuickCard } from "./UserQuickCard";
 
-export type PublicIdentity = Pick<SearchedProfile, "id" | "username"> & Partial<Pick<SearchedProfile, "displayName" | "avatarUrl">>;
+export type PublicIdentity = Pick<SearchedProfile, "id" | "username"> & Partial<Pick<SearchedProfile, "displayName" | "avatarUrl">> & {
+  /** Present when this card was opened from a report: the first message may
+   * carry that live report reference so the recipient knows the subject. */
+  contextReportId?: string;
+};
 const IdentityActions = createContext<ComponentType<{ person: PublicIdentity }> | null>(null);
 
 /** Shell supplies the account-fenced feature owner; shared anatomy stays a

@@ -16,9 +16,9 @@ export const sharedElementTransition = {
 } as const;
 
 /** Public presentation only; overflow and relationship state stay with features. */
-export function PostIdentityHeader({ post, overflow }: { post: PostItem; overflow?: ReactNode }) {
+export function PostIdentityHeader({ post, overflow, contextReportId }: { post: PostItem; overflow?: ReactNode; contextReportId?: string }) {
   return <header className="fb-post-identity">
-    <UserIdentityTrigger person={post.author} />
+    <UserIdentityTrigger person={contextReportId ? { ...post.author, contextReportId } : post.author} />
     <span data-testid="post-author" className="sr-only">@{post.author.username}</span>
     <time data-testid="post-time" dateTime={post.createdAt} title={new Date(post.createdAt).toLocaleString()} className="fb-post-time">{timeAgo(post.createdAt)}</time>
     {overflow && <div className="fb-post-overflow">{overflow}</div>}

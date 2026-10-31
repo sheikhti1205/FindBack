@@ -1,5 +1,5 @@
 import type { HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope } from "./history";
-import { copyMediaMessage, copyMessage, copyReceivedMessage, positiveSequence, uuid } from "./validation";
+import { copyContextMessage, copyLocationMessage, copyMediaMessage, copyOutgoingMessage, copyMessage, copyReceivedMessage, positiveSequence, uuid } from "./validation";
 import { copyConversationProjection, type ConversationProjection } from "./conversationIndex";
 import { copyStateEnvelope, type StateChangeEnvelope } from "./stateChanges";
 import { copyMediaMetadata, sameMediaIdentity, type MediaMetadata } from "./media";
@@ -8,7 +8,7 @@ import { PhotoUnavailableError } from "./mediaTransport";
 
 type MediaTransportFactory = (scope: MessagingScope, signal: AbortSignal) => ReturnType<typeof createMediaTransport>;
 
-type ChatAction = "REGISTER" | "CREATE" | "ACCEPT" | "END" | "BLOCK" | "SEND" | "SYNC" | "ACK" | "RECEIPT_VIEW" | "RECEIPT_OBSERVE" | "RECEIPTS" | "VIEWS" | "PRIVATE" | "PREFERENCES" | "CONTACT_MODE"
+type ChatAction = "REGISTER" | "CREATE" | "ACCEPT" | "END" | "BLOCK" | "SEND" | "SYNC" | "ACK" | "RECEIPT_VIEW" | "RECEIPT_OBSERVE" | "RECEIPTS" | "VIEWS" | "PRIVATE" | "PREFERENCES" | "CONTACT_MODE" | "MUTE"
   | "STATE_SYNC" | "STATE_ACK" | "UNSEND" | "DELETE_FOR_ME" | "CLEAR_FOR_ME";
 export interface MessagingPreferences { openMessages: boolean; readReceipts: boolean }
 export type MessagingRpc = (input: MessagingScope & {
@@ -213,9 +213,14 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
         const attempt = await history.claimNextOutgoing(failed);
         if (!attempt) break;
         try {
-          const hasMedia = attempt.message.messageType === "MEDIA";
-          if (!attempt.message.messageType) throw new Error("Message classification unavailable");
-          const message = hasMedia ? copyMediaMessage(attempt.message) : copyMessage(attempt.message);
+          const kind = attempt.message.messageType;
+          if (!kind) throw new Error("Message classification unavailable");
+          const hasMedia = kind === "MEDIA";
+          // A captured report context or location keeps its own classification;
+          // a retry must never recast it to plain text.
+          const message = hasMedia ? copyMediaMessage(attempt.message)
+            : kind === "LOCATION" ? copyLocationMessage(attempt.message)
+              : attempt.message.contextReportId ? copyContextMessage(attempt.message) : copyMessage(attempt.message);
           if (hasMedia) {
             mediaContext().live();
             const attachments = await history.listMedia(message.conversationId);
@@ -226,12 +231,18 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
           // and attachment metadata. Never downgrade its captured caption to TEXT.
           const live = await history.getMessage(message.id);
           assertOpen();
-          if (!live || live.server || live.unsentAt !== undefined || live.messageType !== message.messageType) throw new Error("Message is no longer pending");
+          if (!live || live.server || live.unsentAt !== undefined || live.messageType !== message.messageType
+            || live.contextReportId !== message.contextReportId
+            || JSON.stringify(live.location ?? null) !== JSON.stringify(message.location ?? null)) {
+            throw new Error("Message is no longer pending");
+          }
           if (hasMedia) mediaContext().live();
           const accepted = await call("SEND", {
             conversationId: message.conversationId, recipientId: message.recipientId,
             messageId: message.id, body: message.body,
-            ...(hasMedia ? { messageType: "MEDIA" } : {}),
+            ...(kind !== "TEXT" ? { messageType: kind } : {}),
+            ...(message.contextReportId ? { contextReportId: message.contextReportId } : {}),
+            ...(message.location ? { location: message.location } : {}),
             // Absent for a pre-v8 queued row: the server refuses it rather than
             // letting this client re-bind an old send to a newer boundary.
             ...(attempt.expectedEpoch ? { expectedEpoch: attempt.expectedEpoch } : {}),
@@ -365,6 +376,11 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     async setPrivateState(conversationId: string, operation: "HIDE" | "UNHIDE" | "DECLINE") {
       await call("PRIVATE", { conversationId: uuid(conversationId), operation });
     },
+    async setMuted(conversationId: string, muted: boolean) {
+      if (typeof muted !== "boolean") throw new Error("Invalid mute preference");
+      const result = await call("MUTE", { conversationId: uuid(conversationId), muted });
+      if (result !== muted) throw new Error("Invalid mute response");
+    },
     async removeMessage(conversationId: string, messageId: string, unsend: boolean) {
       const conversation = uuid(conversationId), id = uuid(messageId);
       await withMediaMutation(async () => {
@@ -415,7 +431,9 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     },
     async send(value: HumanMessage) {
       assertOpen();
-      const message = copyMessage(value);
+      // The captured payload decides the classification; a caller cannot send a
+      // location or report context through the plain-text path.
+      const message = copyOutgoingMessage(value);
       if (message.authorId !== scope.accountId) throw new Error("Invalid messaging author");
       await history.enqueueOutgoing(message, await observedEpoch(message.conversationId));
       assertOpen();

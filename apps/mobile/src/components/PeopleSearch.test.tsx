@@ -3,15 +3,16 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PeopleSearchPage } from "../services/people";
-const state = vi.hoisted(() => ({ account:"viewer", search:vi.fn() }));
+const state = vi.hoisted(() => ({ account:"viewer", search:vi.fn(), chatAccount:"viewer", projections:null as Record<string, unknown> | null }));
 vi.mock("../auth", () => ({useAuth:()=>({user:{id:state.account}})}));
+vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => ({ accountId:state.chatAccount, currentProjections:state.projections }) }));
 vi.mock("../services/people",async original=>({...await original<typeof import("../services/people")>(),searchPeople:(...args:unknown[])=>state.search(...args)}));
 import { PeopleSearch } from "./PeopleSearch";
 const river={id:"peer",username:"river",displayName:"River Lee",avatarUrl:null};
 const cursor={query:"river",rank:1,username:"river",id:"peer"};
 const view=(query:string)=><MemoryRouter><PeopleSearch query={query}/></MemoryRouter>;
 async function tick(){await act(async()=>{vi.advanceTimersByTime(250);});}
-beforeEach(()=>{vi.useFakeTimers();state.account="viewer";state.search.mockReset().mockResolvedValue({items:[river],nextCursor:null});});
+beforeEach(()=>{vi.useFakeTimers();state.account="viewer";state.chatAccount="viewer";state.projections=null;state.search.mockReset().mockResolvedValue({items:[river],nextCursor:null});});
 afterEach(()=>{cleanup();vi.useRealTimers();});
 it("does not search empty input and debounces before showing public-profile rows",async()=>{
   const mount=render(view(" @ "));await tick();expect(state.search).not.toHaveBeenCalled();
@@ -47,4 +48,11 @@ it("offers a truthful retry after failure and announces an empty result",async()
   render(view("river"));await tick();expect(screen.getByRole("alert").textContent).not.toContain("private backend");
   fireEvent.click(screen.getByRole("button",{name:"Try again"}));await act(async()=>{});
   expect(screen.getByRole("status").textContent).toMatch(/no people found/i);
+});
+it("shows viewer-authorized relationship state without exposing the counterpart's private decisions",async()=>{
+  state.projections={chat:{peerId:"peer",mode:"REQUEST",request:"OUTGOING",ownBlocked:false}};
+  const mount=render(view("river"));await tick();expect(screen.getByText("Request sent")).toBeTruthy();
+  state.projections={chat:{peerId:"peer",mode:"CONNECTED",request:"NONE",ownBlocked:false}};
+  mount.rerender(view("river"));expect(screen.getByText("Connected")).toBeTruthy();
+  state.chatAccount="other";mount.rerender(view("river"));expect(screen.queryByText("Connected")).toBeNull();
 });

@@ -43,6 +43,8 @@ export interface LocationValue {
    */
   preciseLatitude?: number | null;
   preciseLongitude?: number | null;
+  /** Real device estimate, if this selection came from a fix; never fabricated. */
+  accuracy?: number | null;
 }
 
 interface LocationPickerProps {
@@ -51,6 +53,7 @@ interface LocationPickerProps {
   maxLength?: number;
   locationAdapter?: LocationAdapter;
   disabled?: boolean;
+  visibility?: "public" | "conversation";
 }
 
 /**
@@ -58,7 +61,7 @@ interface LocationPickerProps {
  * optional + graceful fallback) plus a free-text place label, decimal
  * coordinates, or a Google Maps link. No tracking.
  */
-export function LocationPicker({ value, onChange, maxLength, locationAdapter, disabled = false }: LocationPickerProps) {
+export function LocationPicker({ value, onChange, maxLength, locationAdapter, disabled = false, visibility = "public" }: LocationPickerProps) {
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
   const [defaultAdapter] = useState(createProductionLocationAdapter);
@@ -138,6 +141,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
     lat: number | null,
     lng: number | null,
     precision: "APPROXIMATE" | "EXACT",
+    accuracy?: number | null,
   ) {
     if (disabledRef.current) return;
     if (lat == null || lng == null) {
@@ -149,12 +153,14 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
     setPrecise({ lat, lng });
     if (precision === "EXACT") {
       setApprox(false);
-      emit({ label, latitude: lat, longitude: lng, precision: "EXACT", preciseLatitude: lat, preciseLongitude: lng });
+      emit({ label, latitude: lat, longitude: lng, precision: "EXACT", preciseLatitude: lat, preciseLongitude: lng,
+        ...(visibility === "conversation" && accuracy !== undefined ? { accuracy } : {}) });
       return;
     }
     const rounded = roundToApproximate(lat, lng);
     setApprox(true);
-    emit({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE", preciseLatitude: lat, preciseLongitude: lng });
+    emit({ label, latitude: rounded.lat, longitude: rounded.lng, precision: "APPROXIMATE", preciseLatitude: lat, preciseLongitude: lng,
+      ...(visibility === "conversation" && accuracy !== undefined ? { accuracy } : {}) });
   }
 
   async function useCurrentLocation() {
@@ -167,6 +173,10 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
     const outcome = await requestFixWithGeneration(adapter, { generation: fixGeneration });
     if (outcome.kind === "idle" || disabledRef.current) return;
     if (outcome.kind === "fix") {
+      if ((visibility === "conversation" && outcome.accuracy === null)
+        || (outcome.accuracy !== null && (!Number.isFinite(outcome.accuracy) || outcome.accuracy <= 0 || outcome.accuracy > 100_000))) {
+        setGeoError(locationFailureMessage("unavailable")); setGeoErrorKind("unavailable"); setLocating(false); return;
+      }
       if (isLowAccuracy(outcome.accuracy)) {
         // Coarser than the published ~100 m pin: hold it for an explicit
         // opt-in instead of attaching a misleading pin.
@@ -178,7 +188,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
         setLocating(false);
         return;
       }
-      setCoords(value.label || "Pinned location", outcome.lat, outcome.lng, "APPROXIMATE");
+      setCoords(value.label || "Pinned location", outcome.lat, outcome.lng, "APPROXIMATE", outcome.accuracy);
       announce("Approximate location imported (~100 m).");
       setLocating(false);
       return;
@@ -218,6 +228,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
       pendingFix.lat,
       pendingFix.lng,
       "APPROXIMATE",
+      pendingFix.accuracy,
     );
     announce("Approximate location imported.");
   }
@@ -283,7 +294,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
     if (!precise) return;
     emit({ ...value, latitude: precise.lat, longitude: precise.lng, precision: "EXACT", preciseLatitude: precise.lat, preciseLongitude: precise.lng });
     setApprox(false);
-    announce("Exact pin enabled. It will be shown publicly.");
+    announce(visibility === "conversation" ? "Exact pin enabled. It will be shared in this chat." : "Exact pin enabled. It will be shown publicly.");
   }
 
   function handleMapConfirm(next: LocationValue) {
@@ -376,7 +387,8 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
       {hasCoords && !approx && (
         <div className="flex flex-wrap items-center gap-2 rounded-m3-sm border border-error px-3 py-2">
           <p className="text-xs text-error">
-            Warning: this is an exact pin and will be shown publicly. Prefer the approximate area.
+            {visibility === "conversation" ? "Warning: this is an exact pin and will be shared in this chat. Prefer the approximate area."
+              : "Warning: this is an exact pin and will be shown publicly. Prefer the approximate area."}
           </p>
           <Button type="button" variant="outline" size="md" disabled={disabled} onClick={handleApproximate}>
             Round to ~100 m
@@ -411,7 +423,7 @@ export function LocationPicker({ value, onChange, maxLength, locationAdapter, di
       )}
 
       {(geoError || parseError) && (
-        <p className="text-xs text-error">{geoError ?? parseError}</p>
+        <p role="alert" className="text-xs text-error">{geoError ?? parseError}</p>
       )}
       {geoErrorKind === "services-off" && isNativeLocationServicesAvailable() && (
         <div>

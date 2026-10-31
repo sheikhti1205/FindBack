@@ -1072,7 +1072,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
         {/* Same public identity/content sequence as the feed; business owners
             below remain detail-owned. No description control panel. */}
         <section aria-label="Report summary" className="flex flex-col gap-2">
-          <PostIdentityHeader post={post} overflow={<ReportOverflow post={post} />} />
+          <PostIdentityHeader post={post} overflow={<ReportOverflow post={post} />} contextReportId={post.id} />
           <PostStatusTitle post={post} detail enableSharedMedia titleClassName="text-2xl font-semibold leading-tight tracking-tight" />
           <PostDescription text={post.description} lines={5} />
         </section>

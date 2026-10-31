@@ -39,7 +39,7 @@ select pg_temp.r4_check('only documented chat RPCs are callable by ordinary acco
  and has_function_privilege('authenticated',p.oid,'execute')
  and p.proname not in('findback_chat_exchange','findback_chat_receipt_view',
   'findback_chat_receipt_observe','findback_reserve_chat_media',
-  'findback_fetch_chat_media_delivery','findback_ack_chat_media_delivery')));
+   'findback_fetch_chat_media_delivery','findback_ack_chat_media_delivery','findback_chat_set_muted')));
 select pg_temp.r4_check('private chat tables stay closed to clients',
  not has_table_privilege('authenticated','public.chat_conversations','select')
  and not has_table_privilege('authenticated','public.chat_messages','select')

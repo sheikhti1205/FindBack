@@ -18,6 +18,7 @@ import { MediaParentUnavailableError } from "./history";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
 import {
   MESSAGES_V5_BODY_CHECK,
+  MESSAGES_V9_TYPE_CHECK,
   MESSAGING_SQLITE_DURABILITY_CHECKS as D,
   MESSAGING_SQLITE_PRAGMAS,
   MESSAGING_SQLITE_SCHEMA,
@@ -29,7 +30,7 @@ import {
   type ConversationProjection, type ConversationSummary, type LocalConversationState,
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
-import { cachedMediaAllowed, copyMessage, copyMediaAttachment, copyMediaMessage, copyReceivedMessage, compatibleMessageType, positiveSequence, uuid } from "./validation";
+import { cachedMediaAllowed, copyOutgoingMessage, copyMediaAttachment, copyMediaMessage, copyReceivedMessage, compatibleMessageType, positiveSequence, uuid } from "./validation";
 import {
   isMediaSha256, sameMediaIdentity, verifyMediaBytes, type MediaMetadata, type MediaUploadAttempt,
 } from "./media";
@@ -72,6 +73,10 @@ interface MessageRow {
   recipientId: string;
   body: string | null;
   messageType: HumanMessage["messageType"] | null;
+  contextReportId: string | null;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationAccuracy: number | null;
   eventId: string | null;
   sequence: number | null;
   unsentAt: number | null;
@@ -120,7 +125,7 @@ const LEASE_MS = 60_000;
  * is a file written by a newer build, and it is refused before any mutation.
  */
 const SUPPORTED_PRIOR_VERSIONS: readonly string[] = [
-  "1", "2", "3", "4", "5", "6", "7", String(MESSAGING_SQLITE_SCHEMA_VERSION),
+  "1", "2", "3", "4", "5", "6", "7", "8", String(MESSAGING_SQLITE_SCHEMA_VERSION),
 ];
 
 function defaultToken(): string {
@@ -137,6 +142,10 @@ function toStored(row: MessageRow): StoredHumanMessage {
     recipientId: row.recipientId,
     body: row.body ?? "",
     ...(row.messageType ? { messageType: row.messageType } : {}),
+    ...(row.contextReportId ? { contextReportId: row.contextReportId } : {}),
+    ...(row.locationLat !== null && row.locationLng !== null
+      ? { location: { lat: row.locationLat, lng: row.locationLng, accuracy: row.locationAccuracy } }
+      : {}),
   };
   if (row.eventId !== null && row.sequence !== null) {
     stored.server = { eventId: row.eventId, sequence: row.sequence };
@@ -147,10 +156,15 @@ function toStored(row: MessageRow): StoredHumanMessage {
 
 /** Immutable identity fields. Body is checked separately because unsend erases it. */
 function sameIdentity(row: MessageRow, message: HumanMessage): boolean {
+  const rowLocation = row.locationLat !== null && row.locationLng !== null
+    ? { lat: row.locationLat, lng: row.locationLng, accuracy: row.locationAccuracy } : null;
+  const messageLocation = message.location ?? null;
   return row.conversationId === message.conversationId
     && row.authorId === message.authorId
     && row.recipientId === message.recipientId
-    && compatibleMessageType(row.messageType, message.messageType);
+    && compatibleMessageType(row.messageType, message.messageType)
+    && (row.body === null || ((row.contextReportId ?? null) === (message.contextReportId ?? null)
+      && JSON.stringify(rowLocation) === JSON.stringify(messageLocation)));
 }
 
 function positiveTimestamp(value: unknown): number {
@@ -306,6 +320,7 @@ export async function openSqliteMessagingHistory(
     await driver.exec(S.addTombstoneRecipient);
   }
 
+
   // Bind account + installation + schema version under one write lock. Checking
   // outside the transaction (or overwriting an existing binding) lets two
   // initializers end up sharing one file under different identities.
@@ -345,10 +360,12 @@ export async function openSqliteMessagingHistory(
     }
     await driver.run(S.setMetaIfAbsent, ["account_id", scope.accountId]);
     await driver.run(S.setMetaIfAbsent, ["device_id", scope.deviceId]);
-    await driver.run(S.setMetaIfAbsent, ["schema_version", String(MESSAGING_SQLITE_SCHEMA_VERSION)]);
-    // Additive v1/v2 -> v3 migration. Upgrade metadata under the same lock as
-    // identity binding; existing messages, outbox and tombstones are preserved.
-    await driver.run(S.setSchemaVersion, [String(MESSAGING_SQLITE_SCHEMA_VERSION)]);
+    // Binding/classification has reached v8. Claim v9 only if its DDL is already
+    // present; otherwise its stamp commits atomically with the rebuild below.
+    const table = (await driver.all<{ sql: string }>(S.messagesTableSql))[0];
+    const version = table?.sql.includes(MESSAGES_V9_TYPE_CHECK) ? String(MESSAGING_SQLITE_SCHEMA_VERSION) : "8";
+    await driver.run(S.setMetaIfAbsent, ["schema_version", version]);
+    await driver.run(S.setSchemaVersion, [version]);
     const confirmed = new Map(
       (await driver.all<{ key: string; value: string }>(S.getMetaRows)).map((row) => [row.key, row.value]),
     );
@@ -359,6 +376,48 @@ export async function openSqliteMessagingHistory(
   } catch (error) {
     try { await driver.exec("rollback"); } catch { /* transaction may already be gone */ }
     throw error;
+  }
+
+  // v9: `LOCATION` cannot be added to an existing CHECK, so the same proven
+  // rebuild as v5 runs when the current table does not already admit it. It runs
+  // after the binding transaction because SQLite ignores a `foreign_keys` pragma
+  // inside one, and it therefore also observes the v7 classification column that
+  // transaction guarantees. The safe direction is to rebuild on absence: running
+  // it again on a correct table is harmless, because the copy is proven exact
+  // before anything is dropped.
+  const messagesTableV9 = (await driver.all<{ sql: string }>(S.messagesTableSql))[0];
+  if (messagesTableV9 && !messagesTableV9.sql.includes(MESSAGES_V9_TYPE_CHECK)) {
+    await driver.exec("pragma foreign_keys = off");
+    const disabledV9 = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
+    if (disabledV9 !== 0) throw new Error("Messaging storage could not disable foreign keys for the v9 rebuild");
+    try {
+      await driver.exec("begin immediate");
+      try {
+        await driver.exec(S.createMessagesV9);
+        await driver.run(S.copyMessagesV9);
+        const missing = (await driver.all<{ n: number }>(S.missingMessagesV9))[0]?.n;
+        const extra = (await driver.all<{ n: number }>(S.extraMessagesV9))[0]?.n;
+        if (missing !== 0 || extra !== 0) {
+          throw new Error("Messaging v9 rebuild did not preserve every message");
+        }
+        await driver.exec(S.dropMessages);
+        await driver.exec(S.renameMessagesV9);
+        await driver.exec(S.recreateMessagesEventIndex);
+        await driver.exec(S.recreateMessagesConversationIndex);
+        if ((await driver.all(S.foreignKeyCheck)).length > 0) {
+          throw new Error("Messaging v9 rebuild broke referential integrity");
+        }
+        await driver.run(S.setSchemaVersion, [String(MESSAGING_SQLITE_SCHEMA_VERSION)]);
+        await driver.exec("commit");
+      } catch (error) {
+        try { await driver.exec("rollback"); } catch { /* commit may already have failed */ }
+        throw error;
+      }
+    } finally {
+      await driver.exec("pragma foreign_keys = on");
+    }
+    const restoredV9 = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
+    if (restoredV9 !== 1) throw new Error("Messaging storage requires foreign_keys = ON");
   }
   } catch (error) {
     await driver.close();
@@ -515,7 +574,7 @@ export async function openSqliteMessagingHistory(
   }
 
   async function enqueueOutgoing(message: HumanMessage, expectedEpoch?: string): Promise<void> {
-    const outgoing = copyMessage(message);
+    const outgoing = copyOutgoingMessage(message);
     await assertOpen();
     if (outgoing.authorId !== scope.accountId) {
       throw new Error("Outgoing messaging scope mismatch");
@@ -563,6 +622,8 @@ export async function openSqliteMessagingHistory(
       }
       await driver.run(S.insertMessage, [
         outgoing.id, outgoing.conversationId, outgoing.authorId, outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null,
+        outgoing.contextReportId ?? null, outgoing.location?.lat ?? null, outgoing.location?.lng ?? null,
+        outgoing.location?.accuracy ?? null,
       ]);
       await driver.run(S.enqueueOutbox, [outgoing.id, expectedEpoch ?? null]);
       await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
@@ -649,11 +710,7 @@ export async function openSqliteMessagingHistory(
         throw new Error("Messaging outbox identity conflict");
       }
       const attempt: OutgoingAttempt = {
-        message: {
-          id: row.id, conversationId: row.conversationId, authorId: row.authorId,
-          recipientId: row.recipientId, body: row.body,
-          ...(row.messageType ? { messageType: row.messageType } : {}),
-        },
+        message: toStored(row),
         token,
         attempt: claimed.attempts,
       };
@@ -771,6 +828,8 @@ export async function openSqliteMessagingHistory(
         } else {
           await driver.run(S.insertMessage, [
             message.id, message.conversationId, message.authorId, message.recipientId, message.body, now(), message.messageType ?? null,
+            message.contextReportId ?? null, message.location?.lat ?? null, message.location?.lng ?? null,
+            message.location?.accuracy ?? null,
           ]);
         }
         await driver.run(S.setMessageServer, [eventId, sequence, message.id]);
@@ -980,6 +1039,9 @@ export async function openSqliteMessagingHistory(
       messages: messages.map((row) => ({
         id: row.id, conversationId: row.conversationId, authorId: row.authorId,
         recipientId: row.recipientId, body: row.body, messageType: row.messageType,
+        contextReportId: row.contextReportId,
+        location: row.locationLat !== null && row.locationLng !== null
+          ? { lat: row.locationLat, lng: row.locationLng, accuracy: row.locationAccuracy } : null,
         // The query filters on both, so these are never null here.
         serverEventId: row.eventId as string, serverSequence: row.sequence as number,
         unsentAt: row.unsentAt, createdAt: row.createdAt,
@@ -1114,7 +1176,10 @@ export async function openSqliteMessagingHistory(
             || !compatibleMessageType(existing.messageType, message.messageType)
             || (existing.eventId !== null && existing.eventId !== message.serverEventId)
             || (existing.sequence !== null && existing.sequence !== message.serverSequence)
-            || (existing.body !== null && message.body !== null && existing.body !== message.body)
+            || (existing.body !== null && message.body !== null && (existing.body !== message.body
+              || !sameIdentity(existing, { ...message, body: message.body,
+                messageType: message.messageType ?? undefined, contextReportId: message.contextReportId ?? undefined,
+                location: message.location ?? undefined })))
             || (existing.unsentAt !== null && message.unsentAt !== null
               && existing.unsentAt !== message.unsentAt)) {
             throw new BackupError("backup: identity conflict");
@@ -1149,6 +1214,8 @@ export async function openSqliteMessagingHistory(
           await driver.run(S.insertSnapshotMessage, [
             message.id, message.conversationId, message.authorId, message.recipientId,
             message.body, createdAt, message.serverEventId, message.serverSequence, unsentAt, message.messageType ?? null,
+            message.contextReportId ?? null, message.location?.lat ?? null, message.location?.lng ?? null,
+            message.location?.accuracy ?? null,
           ]);
         }
         report.messages += 1;
@@ -1183,7 +1250,7 @@ export async function openSqliteMessagingHistory(
     if (row.authorId !== scope.accountId && row.recipientId !== scope.accountId) {
       throw new Error("Media participant scope mismatch");
     }
-    if (row.messageType === "TEXT") throw new Error("Media parent classification conflict");
+    if (row.messageType !== null && row.messageType !== "MEDIA") throw new Error("Media parent classification conflict");
     if (metadata.direction !== (row.authorId === scope.accountId ? "OUT" : "IN")) {
       throw new Error("Media direction scope mismatch");
     }
@@ -1263,7 +1330,7 @@ export async function openSqliteMessagingHistory(
         if (!parent.messageType) await driver.run(S.bindMessageType, ["MEDIA", outgoing.id]);
       } else {
         await driver.run(S.insertMessage, [outgoing.id, outgoing.conversationId, outgoing.authorId,
-          outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null]);
+          outgoing.recipientId, outgoing.body, now(), outgoing.messageType ?? null, null, null, null, null]);
         await driver.run(S.enqueueOutbox, [outgoing.id, expectedEpoch ?? null]);
         await driver.run(S.touchConversationState, [now(), outgoing.conversationId]);
       }

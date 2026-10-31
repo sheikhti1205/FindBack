@@ -120,6 +120,12 @@ function signedIn() {
   };
 }
 
+it.each(["/connections", "/connections/00000000-0000-4000-8000-000000000003"])("canonicalizes the authenticated legacy Chats route %s", async path => {
+  signedIn();renderAt(path+"?from=push");
+  await waitFor(()=>expect(router?.state.location.pathname).toBe(path.replace("connections","chats")));
+  expect(router?.state.location.search).toBe("?from=push");
+});
+
 // An error boundary also renders text: asserting "body has text" would pass
 // a crashed route. The afterEach guard proves the crash screen is absent on
 // every route, so the per-route marker assertions stay meaningful.

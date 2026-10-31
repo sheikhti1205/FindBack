@@ -16,6 +16,7 @@ const scope = { accountId: A, deviceId: id(11) };
 const empty = (): HistorySnapshot => ({ conversations: [], messages: [], tombstones: [], deletedForMe: [], clears: [] });
 const saved = (n = 1) => ({ id: id(100 + n), conversationId: CHAT, authorId: B, recipientId: A,
   body: `text ${n}` as string | null, messageType: "TEXT" as "TEXT" | "MEDIA" | null,
+  contextReportId: null, location: null,
   serverEventId: id(200 + n), serverSequence: n, unsentAt: null as number | null, createdAt: 0 });
 function snapshot(n = 1): HistorySnapshot {
   return { ...empty(), conversations: [{ id: CHAT, lastSequence: n, createdAt: 0, updatedAt: 25 }], messages: [saved(n)] };
@@ -197,7 +198,8 @@ describe("portable IndexedDB history, not live delivery authority", () => {
 
   it.each(["abort", "close"])("rolls back a restore after successful writes on %s, including outbox settlement", async (failure) => {
     const history = await open(); const row = { ...saved(), authorId: A, recipientId: B };
-    await history.enqueueOutgoing({ ...row, body: row.body!, messageType: "TEXT" });
+    await history.enqueueOutgoing({ id: row.id, conversationId: row.conversationId,
+      authorId: A, recipientId: B, body: row.body!, messageType: "TEXT" });
     const original = IDBObjectStore.prototype.put;
     let writes = 0;
     vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, value, key) {

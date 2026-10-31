@@ -1,5 +1,5 @@
 import { Capacitor } from "@capacitor/core";
-import type { MediaAttachment, OutboxEntry, StoredHumanMessage } from "./history";
+import type { MediaAttachment, OutboxEntry, StaticLocation, StoredHumanMessage } from "./history";
 import type { MediaMetadata } from "./media";
 import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
 import { openPlatformMessagingHistory, purgePlatformMessagingAccount, type PlatformMessagingHandle } from "./platformHistory";
@@ -336,12 +336,33 @@ export async function downloadMessagingMedia(accountId: string, conversationId: 
   assertOwner(owner); await reload(owner);
 }
 
-export async function sendMessagingText(accountId: string, conversationId: string, peerId: string, body: string): Promise<string> {
+/**
+ * Report-linked first contact/message. The report id travels with the message so
+ * the recipient can resolve the report live; it is never a copied snapshot and
+ * it never changes a plain text send into a different capability.
+ */
+export async function sendMessagingText(accountId: string, conversationId: string, peerId: string, body: string,
+  contextReportId?: string): Promise<string> {
   const owner = ownerFor(accountId);
   const id = uuid(crypto.randomUUID());
-  await owner.session.send({ id, conversationId: uuid(conversationId), authorId: uuid(accountId), recipientId: uuid(peerId), body });
+  await owner.session.send({ id, conversationId: uuid(conversationId), authorId: uuid(accountId), recipientId: uuid(peerId), body,
+    ...(contextReportId ? { messageType: "TEXT" as const, contextReportId: uuid(contextReportId) } : {}) });
   assertOwner(owner);
   await reload(owner); // Queued send appears without waiting for connectivity.
+  void refreshOwner(owner);
+  return id;
+}
+
+/** Connected-only one-time static share. There is no request-stage path and no
+ * background tracking: the caller supplies one explicit coordinate. */
+export async function sendMessagingLocation(accountId: string, conversationId: string, peerId: string,
+  location: StaticLocation): Promise<string> {
+  const owner = ownerFor(accountId);
+  const id = uuid(crypto.randomUUID());
+  await owner.session.send({ id, conversationId: uuid(conversationId), authorId: uuid(accountId), recipientId: uuid(peerId),
+    body: "", messageType: "LOCATION", location });
+  assertOwner(owner);
+  await reload(owner);
   void refreshOwner(owner);
   return id;
 }
@@ -429,6 +450,21 @@ export async function requestMessagingConversation(accountId: string, peerId: st
   await refreshOwner(owner);
   assertOwner(owner);
   return id;
+}
+
+/** Explicit preference intent, never an optimistic cached-state toggle. */
+export async function setMessagingMuted(accountId: string, conversationId: string, muted: boolean): Promise<void> {
+  const owner = ownerFor(accountId), id = uuid(conversationId);
+  if (snapshot.status !== "ready" || typeof snapshot.currentProjections?.[id]?.ownMuted !== "boolean") {
+    throw new Error("Sync this chat before changing notifications");
+  }
+  invalidateAuthority(owner);
+  try {
+    await owner.session.setMuted(id, muted);
+    assertOwner(owner);
+  } finally {
+    if (current === owner && owner.generation === generation) await refreshOwner(owner);
+  }
 }
 
 export async function changeMessagingRelationship(accountId: string, conversationId: string,
