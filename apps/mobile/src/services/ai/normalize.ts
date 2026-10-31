@@ -6,7 +6,7 @@
  *    FakeAiProvider, accept ONE object only, then STRICT validation (schema +
  *    enum/action allowlist). Multiple/conflicting objects or bad schema
  *    become INVALID_OUTPUT. Never "accept anything".
- * R2 Qwen thought-strip: MODEL-PROFILE-SPECIFIC (only profiles declaring
+ * R2 reasoning-envelope stripping: PROFILE-SPECIFIC (only profiles declaring
  *    thoughtEnvelope). Thought+answer strips and processes; thought without
  *    answer is INVALID_OUTPUT. Reasoning text never surfaces.
  * R4 empty vs refusal: whitespace-only is INVALID_OUTPUT (EMPTY

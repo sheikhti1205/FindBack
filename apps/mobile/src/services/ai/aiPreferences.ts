@@ -2,11 +2,10 @@
  * Lane A: single account-scoped AI preference source of truth.
  *
  * Settings OWNS these four fields; every other surface borrows them:
- * - `assistantMode`: which transports the assistant may use.
+ * - `assistantMode`: legacy persisted transport preference, not an active local assistant.
  * - `preferredAssistantModel`: cloud model id, or null for Automatic (the
  *   safe `openrouter/free` free-only default — never a paid row).
- * - `photoEngine`: SmolVLM2 local-first with cloud fallback under
- *   `automatic`; hard transport pins under the `-only` values.
+ * - `photoEngine`: legacy persisted preference, not an active photo tool.
  * - `matchesEngine`: `use` by default; `needle` only when installed and
  *   verified (see `isNeedleSelectable`).
  *

@@ -1,7 +1,7 @@
 /**
  * Application-wide local runtime coordinator: one authority owns
- * heavy-runtime residency (Needle vs SmolVLM2 vision), exclusive operations
- * (remove/measure), and in-flight inference — exclusion AND cancellation
+ * retained Needle residency, exclusive removal, and in-flight inference —
+ * exclusion AND cancellation
  * through a single lease object.
  *
  * One production inference lease contains the generation id, the
@@ -13,15 +13,15 @@
  * Two lifecycles, deliberately distinguished:
  * - visible request lifecycle: may return TIMEOUT/CANCELLED promptly.
  * - native operation lifecycle: the lease stays busy (refusing new
- *   inference, switches, removals, and measurements) until every tracked
+ *   inference, switches, and removals) until every tracked
  *   native promise actually settles. No switch/remove/new inference may
  *   start while orphaned native work is still running.
  *
  * Layering: this is the TypeScript application authority. Native plugins
- * keep their own operation gates (SmolVLM2 `RuntimeOperationGate`, Needle
- * locks) as defense in depth; they never grant residency by themselves.
+ * keep their own Needle locks as defense in depth; they never grant
+ * residency by themselves.
  */
-export type ResidencyOwner = "needle" | "smol-vision" | "qwen-text" | "llama" | "none";
+export type ResidencyOwner = "needle" | "none";
 
 export class ResidencyBusyError extends Error {
   constructor(label: string) {

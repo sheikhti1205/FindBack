@@ -18,16 +18,12 @@ import type { AiTaskId } from "./types";
 import type { ModelArtifact } from "./modelSupply";
 import { RETIRED_CURATED_CLEANUP } from "./retiredModelCleanup";
 
-/** Physical runtime ids. `test-*` ids exist only in test registries. */
+/** Retained runtime id; `test-*` ids exist only in test registries. */
 export const NEEDLE_RUNTIME_ID = "needle-cact" as const;
+/** Historical labels below exist only for upgrade-cleanup identities. */
 export const SMOL_VLM_RUNTIME_ID = "smolvlm2-litertlm" as const;
-/**
- * LiteRT-LM general text resident (Qwen3 0.6B). Model-specific, never a
- * bare "litertlm" id: text and vision residents arbitrate separately and
- * late callbacks must never address the wrong engine.
- */
 export const QWEN_TEXT_RUNTIME_ID = "qwen3-litertlm-text" as const;
-/** Canonical llama.cpp text/mtmd evaluation resident; no automatic product roles. */
+/** Historical GGUF cleanup label; no executable adapter or product roles. */
 export const LLAMA_CPP_RUNTIME_ID = "llamacpp-gguf" as const;
 
 export type ModelArtifactFormat = "cact" | "litertlm" | "gguf" | "tflite";

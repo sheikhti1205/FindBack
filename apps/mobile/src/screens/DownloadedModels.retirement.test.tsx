@@ -6,16 +6,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ApplicationAiService } from "../services/ai/applicationAi";
 import { NEEDLE_DESCRIPTOR, QWEN_TEXT_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "../services/ai/modelDescriptors";
 import type { ModelDownloadDriver } from "../services/ai/download/driver";
-import { importedDescriptor, type ImportSpec } from "../services/ai/download/import";
+import { parseRetiredImportedModels, type LegacyImportRecord } from "../services/ai/download/retiredImports";
 import { DownloadedModels } from "./DownloadedModels";
 
 afterEach(cleanup);
 
-function fixture(descriptors?: readonly ModelDescriptor[], previousImports: readonly ImportSpec[] = []) {
+function fixture(descriptors?: readonly ModelDescriptor[], previousImports: readonly LegacyImportRecord[] = []) {
   const disk = new Map<string, string>();
   let metadata = JSON.stringify(previousImports);
   for (const old of previousImports) {
-    const d = importedDescriptor(old);
+    const [d] = parseRetiredImportedModels(JSON.stringify([old]));
+    if (!d) throw new Error("Invalid legacy fixture");
     disk.set(`/private/models/models/${d.modelId}/${d.revision}/${d.fileName}`, d.sha256);
   }
   const removed: string[] = [];

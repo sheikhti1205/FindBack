@@ -7,11 +7,11 @@ import { CapacitorModelDownloadDriver, runManagedDownload, removeManagedModel, v
 import type { AiTaskId } from "./types";
 import type { RouteContext } from "./orchestrator/AiOrchestrator";
 import type { ProductionTextCompletion } from "./orchestrator/productionRuntimes";
-import { cleanupOnlyDescriptor, createModelRegistry, isRetiredGenerativeRuntime, NEEDLE_RUNTIME_ID, productionModelRegistry, RETIRED_MODEL_NOTICE, distributionPolicyOf, modelSupportsAbi, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
+import { createModelRegistry, NEEDLE_RUNTIME_ID, productionModelRegistry, RETIRED_MODEL_NOTICE, distributionPolicyOf, modelSupportsAbi, type ModelDescriptor, type ModelRegistry } from "./modelDescriptors";
 import { ResidencyCoordinator, ResidencyBusyError } from "./residencyCoordinator";
 import { sourcesFor, validateArtifactMirrors, type ArtifactMirrors } from "./modelSupply";
 import { runManagedBundle } from "./download/bundle";
-import { parseImportedCatalogue } from "./download/import";
+import { parseRetiredImportedModels } from "./download/retiredImports";
 import { describeOfflineReadiness } from "./modelReadiness";
 
 /** Map a descriptor runtimeId to the coordinator's residency owner. */
@@ -246,8 +246,7 @@ export class ApplicationAiService {
   private async reconcile() {
     if (!this.driver) return;
     this.root = await this.driver.rootDir();
-    for (const stored of parseImportedCatalogue(await this.driver.readMetadata?.(`${this.root}/imports.json`) ?? null)) {
-      const d = this.storedDescriptor(stored);
+    for (const d of parseRetiredImportedModels(await this.driver.readMetadata?.(`${this.root}/imports.json`) ?? null)) {
       if (!this.registry.descriptorFor(d.modelId)) {
         this.imported.push(d);
         this.manager.registerImportedAsset({ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: d.minRamMb });
@@ -343,11 +342,6 @@ export class ApplicationAiService {
   }
   private requireActive(descriptor: ModelDescriptor): void {
     if (descriptor.cleanupOnly) throw new Error(RETIRED_MODEL_NOTICE);
-  }
-  /** Imports from retired engines survive only as cleanup records. */
-  private storedDescriptor(descriptor: ModelDescriptor): ModelDescriptor {
-    const activeRuntime = this.baseRegistry.descriptors.some((d) => d.runtimeId === descriptor.runtimeId && !d.cleanupOnly);
-    return isRetiredGenerativeRuntime(descriptor.runtimeId) && !activeRuntime ? cleanupOnlyDescriptor(descriptor) : descriptor;
   }
   async download(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
     this.requireAndroid();
@@ -464,7 +458,7 @@ export class ApplicationAiService {
         } catch {
           // Already absent: the notice below still explains the state.
         }
-        this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
+        if (!descriptor.cleanupOnly) this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
         this.notices.set(
           modelId,
           actual === ""
@@ -502,7 +496,7 @@ export class ApplicationAiService {
           await this.saveImported(remaining);
           this.imported = remaining;
         }
-        this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
+        if (!descriptor.cleanupOnly) this.coordinator.released(ownerForRuntime(descriptor.runtimeId));
         this.notices.delete(modelId);
       } catch (error) {
         this.manager.dispatch(modelId, { type: "DELETE" });
@@ -517,14 +511,14 @@ export class ApplicationAiService {
    * of unloading the wrong engine.
    */
   private async unloadDescriptor(descriptor: ModelDescriptor): Promise<void> {
+    // Old imported .cact files share a format/runtime label with Needle, but
+    // cannot own the retained resident. Cleanup must not unload that helper.
+    if (descriptor.cleanupOnly) return;
     switch (descriptor.runtimeId) {
       case NEEDLE_RUNTIME_ID:
         await this.needle?.unload(); this.embedder = undefined; this.matching = "use"; return;
       default:
-        // A retired runtime is a cleanup identity, not a resident: there is no
-        // engine to unload, and its files must stay removable. Anything else is
-        // an unknown runtime and fails closed instead of guessing.
-        if (descriptor.cleanupOnly) return;
+        // Unknown active runtime: fail closed instead of unloading a guess.
         throw new Error(`No production runtime adapter for ${descriptor.runtimeId}`);
     }
   }

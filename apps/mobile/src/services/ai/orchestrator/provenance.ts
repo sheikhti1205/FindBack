@@ -43,7 +43,7 @@ export interface InferenceProvenance {
   readonly actualBackend: string;
   /**
    * Phase A (Step 6): the physical runtime that produced the value
-   * (e.g. "needle-cact", "smolvlm2-litertlm", "deterministic-local").
+   * (e.g. "needle-cact", "deterministic-local").
    * Required so consumers can prove which engine ran, instead of assuming
    * a profile from the task id.
    */

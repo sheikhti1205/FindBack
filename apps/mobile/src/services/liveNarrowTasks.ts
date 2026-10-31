@@ -153,8 +153,8 @@ export const generateForCategoryLive: GenerateFn = liveGenerateFor("classify-cat
  * `extract-search-filters`, `extract-report-fields` and `classify-category` are
  * tool-constrained (structured) tasks, and the production seam serves structured
  * roles ONLY through Needle (`applicationAi.ts` `structuredModelId`, enforced in
- * `productionRuntimes.ts`). Parsing with the Qwen *prose* profile applied that
- * engine's `[thought]` envelope to tool output, which truncated any value
+ * `productionRuntimes.ts`). Parsing with an unrelated prose profile applied a
+ * reasoning envelope to tool output, which truncated any value
  * containing the literal marker and silently dropped the whole patch.
  *
  * Single source of truth (IF-108): `CreateReport.tsx` parses the SAME two ops, so

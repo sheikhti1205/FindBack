@@ -45,11 +45,11 @@ describe("ResidencyCoordinator", () => {
   it("a failed load leaves ownership at none, never a half-loaded resident", async () => {
     const coordinator = new ResidencyCoordinator();
     await expect(
-      coordinator.switchTo("smol-vision", {
+      coordinator.switchTo("needle", {
         evict: async () => {},
-        load: async () => { throw new Error("GPU init failed"); },
+        load: async () => { throw new Error("Native load failed"); },
       }),
-    ).rejects.toThrow("GPU init failed");
+    ).rejects.toThrow("Native load failed");
     expect(coordinator.current).toBe("none");
   });
 
