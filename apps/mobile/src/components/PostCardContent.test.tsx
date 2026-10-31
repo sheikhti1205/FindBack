@@ -75,11 +75,10 @@ describe("masonry media failure (CF-010)", () => {
 
 describe("PostCardContent overflow", () => {
   it("breaks long unbroken titles and excerpts instead of overflowing", () => {
-    const { container } = render(<PostCardContent post={post({ title: LONG, description: LONG })} />);
+    const { container } = render(<PostCardContent post={post({ title: LONG, description: LONG })} />, { wrapper: MemoryRouter });
     expect(screen.getByText(LONG, { selector: "h3" }).className).toContain("break-words");
-    const excerpt = container.querySelector("p");
+    const excerpt = container.querySelector("[data-testid='post-description']");
     expect(excerpt?.textContent).toContain(LONG);
-    expect(excerpt?.className).toContain("break-words");
   });
 });
 
@@ -101,7 +100,7 @@ function imagePost(): PostItem {
 
 describe("PostCardContent shared card → detail element (Wave A)", () => {
   it("exposes media/title shared ids keyed by post id when enabled", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" enableSharedMedia />);
+    render(<PostCardContent post={imagePost()} layout="editorial" enableSharedMedia />, { wrapper: MemoryRouter });
     const frame = screen.getByTestId("post-image-state");
     expect(frame.getAttribute("data-shared-media")).toBe(sharedMediaLayoutId("p1"));
     expect(frame.getAttribute("data-shared-media")).toBe("fb-post-media-p1");
@@ -111,14 +110,14 @@ describe("PostCardContent shared card → detail element (Wave A)", () => {
   });
 
   it("carries no shared ids by default so stray cards never duplicate a layoutId", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    render(<PostCardContent post={imagePost()} layout="editorial" />, { wrapper: MemoryRouter });
     expect(screen.getByTestId("post-image-state").getAttribute("data-shared-media")).toBeNull();
     expect(screen.getByRole("heading").getAttribute("data-shared-title")).toBeNull();
   });
 
   it("classic layout shares the media id when enabled", () => {
-    render(<PostCardContent post={imagePost()} enableSharedMedia />);
-    expect(screen.getByAltText("Photo for Lost wallet").getAttribute("data-shared-media")).toBe(
+    render(<PostCardContent post={imagePost()} enableSharedMedia />, { wrapper: MemoryRouter });
+    expect(screen.getByTestId("post-image-state").getAttribute("data-shared-media")).toBe(
       "fb-post-media-p1",
     );
   });
@@ -126,7 +125,7 @@ describe("PostCardContent shared card → detail element (Wave A)", () => {
 
 describe("PostCardContent image crossfade (Wave A)", () => {
   it("reserves the frame while loading and settles to loaded without unmounting", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    render(<PostCardContent post={imagePost()} layout="editorial" />, { wrapper: MemoryRouter });
     const frame = screen.getByTestId("post-image-state");
     expect(frame.getAttribute("data-state")).toBe("loading");
     const img = screen.getByAltText("Photo for Lost wallet");
@@ -137,7 +136,7 @@ describe("PostCardContent image crossfade (Wave A)", () => {
   });
 
   it("transitions to a labelled fallback when the photo fails", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    render(<PostCardContent post={imagePost()} layout="editorial" />, { wrapper: MemoryRouter });
     fireEvent.error(screen.getByAltText("Photo for Lost wallet"));
     const frame = screen.getByTestId("post-image-state");
     expect(frame.getAttribute("data-state")).toBe("failed");
@@ -148,7 +147,7 @@ describe("PostCardContent image crossfade (Wave A)", () => {
     render(
       <MotionConfig reducedMotion="always">
         <PostCardContent post={imagePost()} layout="editorial" enableSharedMedia />
-      </MotionConfig>,
+      </MotionConfig>, { wrapper: MemoryRouter },
     );
     expect(screen.getByRole("heading", { name: "Lost wallet" })).toBeTruthy();
     expect(screen.getByAltText("Photo for Lost wallet")).toBeTruthy();

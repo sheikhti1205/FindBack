@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { RefreshCw } from "lucide-react";
 import type { PostItem } from "@findback/shared";
 import { cancelMatch, confirmMatch, handoverMatch, listMyMatches, proposeMatch, type MyMatch } from "../services/matches";
@@ -127,7 +128,7 @@ function ScopedReportMatches({ accountId, post, onChanged }: Props) {
       <ul className="divide-y divide-outline-variant">
         {matches.map((match) => <li key={match.matchId} className="flex min-w-0 flex-col gap-2 py-3">
           {match.peerAvailable && match.peerReportId
-            ? <Link to={`/posts/${match.peerReportId}`} className="break-words text-sm font-medium underline">{match.peerTitle ?? "Other report"}</Link>
+            ? <PostLink to={`/posts/${match.peerReportId}`} className="break-words text-sm font-medium underline">{match.peerTitle ?? "Other report"}</PostLink>
             : <p className="text-sm font-medium">Other report unavailable</p>}
           <p className="text-sm text-on-surface-variant">{match.state === "RECOVERED" ? "Recovery complete"
             : match.state === "CANCELLED" ? (match.cancelReason === "SUPERSEDED_BY_CONFIRMED" ? "Another match was confirmed" : match.cancelReason === "REPORT_DELETED" ? "Report removed · match ended" : "Match ended")

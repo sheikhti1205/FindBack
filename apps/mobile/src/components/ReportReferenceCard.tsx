@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { MapPin } from "lucide-react";
 import { StatusChip } from "./StatusChip";
 import { useReportPreview } from "../hooks/useReportPreview";
@@ -79,7 +79,7 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
     ? undefined
     : post.attachments.find((attachment) => attachment.mimeType.startsWith("image/"))?.fileUrl;
   return (
-    <Link
+    <PostLink
       to={`/posts/${post.id}`}
       data-testid="report-reference"
       className="inline-flex max-w-full items-center gap-2 rounded-m3-sm border border-outline-variant p-1.5 align-middle hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
@@ -111,6 +111,6 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
           ) : null}
         </span>
       </span>
-    </Link>
+    </PostLink>
   );
 }

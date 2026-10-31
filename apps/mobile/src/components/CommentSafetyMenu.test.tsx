@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CommentSafetyMenu } from "./CommentSafetyMenu";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
+import { consumeBackIntercept } from "./backNavigation";
 
 const { submit } = vi.hoisted(() => ({ submit: vi.fn().mockResolvedValue({ reportId: "receipt" }) }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "reader" } }) }));
@@ -15,6 +17,16 @@ vi.mock("../services/moderation", async (original) => ({
 
 afterEach(cleanup);
 const base = { commentId: "comment-7", authorId: "author", authorName: "Sam", viewerId: "reader" };
+
+it("consumes Back in comment actions before dismissing the enclosing report", async () => {
+  const close = vi.fn();
+  render(<AdaptiveTaskSurface open title="Report" onClose={close}><CommentSafetyMenu {...base} canDelete={false} /></AdaptiveTaskSurface>);
+  fireEvent.click(screen.getByRole("button", { name: "Actions for comment by Sam" }));
+  expect(await screen.findByRole("menu")).toBeTruthy();
+  act(() => { expect(consumeBackIntercept()).toBe(true); });
+  expect(close).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
 
 it("opens the canonical report sheet for the actual comment id and restores focus", async () => {
   render(<CommentSafetyMenu {...base} canDelete={false} />);
@@ -50,19 +62,19 @@ it("hides the trigger for signed-out viewers and for self without Delete", () =>
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("supports arrow navigation and Escape focus return like OwnerReportMenu", () => {
+it("supports arrow navigation and Escape focus return", async () => {
   render(<CommentSafetyMenu {...base} canDelete onDelete={() => {}} />);
   const trigger = screen.getByRole("button");
   trigger.focus();
-  fireEvent.click(trigger);
-  expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Report comment" }));
+  fireEvent.keyDown(trigger, { key: "ArrowDown" });
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Report comment" })));
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
   expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Block account" }));
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
   expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Delete comment" }));
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(screen.queryByRole("menu")).toBeNull();
-  expect(document.activeElement).toBe(trigger);
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
 });
 
 it("provides compact access to the canonical block control for the comment author", async () => {

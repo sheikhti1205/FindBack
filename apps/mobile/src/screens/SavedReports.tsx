@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, X } from "lucide-react";
-import { Link } from "react-router";
+import { PostLink } from "../components/PostNavigation";
 import type { PostItem } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
@@ -262,7 +262,7 @@ export function SavedReports() {
                   key={row.id}
                   className="flex items-center gap-1 border-b border-outline-variant px-4"
                 >
-                  <Link
+                  <PostLink
                     to={`/posts/${row.id}`}
                     className="flex min-h-[60px] min-w-0 flex-1 items-center gap-3 py-2"
                   >
@@ -291,7 +291,7 @@ export function SavedReports() {
                           : ""}
                       </span>
                     </span>
-                  </Link>
+                  </PostLink>
                   <button
                     type="button"
                     aria-label={`Remove ${title} from saved reports`}

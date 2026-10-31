@@ -1,4 +1,4 @@
-import { createHashRouter, Navigate, Route, RouterProvider, Routes } from "react-router";
+import { createHashRouter, Navigate, Route, RouterProvider, Routes, useLocation } from "react-router";
 import { MotionConfig } from "framer-motion";
 import { useEffect, type ReactNode } from "react";
 import { AuthProvider } from "./auth";
@@ -75,6 +75,8 @@ import { SavedReportsProvider } from "./hooks/useSavedReports";
 import { Connections, MessagingThread } from "./screens/Messaging";
 import { MessagingPrivacy } from "./screens/MessagingPrivacy";
 import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
+import { postBackgroundLocation, PostNavigationProvider } from "./components/PostNavigation";
+import { PostModal } from "./components/PostModal";
 
 function MessagingLifecycle() {
   const { user } = useAuth();
@@ -134,6 +136,9 @@ export function App({ router }: { router: ReturnType<typeof createAppRouter> }) 
 }
 
 function AppRouteTree() {
+  const location = useLocation();
+  const { user } = useAuth();
+  const background = postBackgroundLocation(location, user?.id ?? null);
   return (
     <>
           <AuthLinkBootstrap />
@@ -143,7 +148,8 @@ function AppRouteTree() {
           <ErrorBoundary>
             <AccountDeletionFeedback />
             <ReportDeletionFeedbackProvider>
-           <Routes>
+            <PostNavigationProvider value={user?.id ?? null}>
+            <Routes location={background ?? location}>
              <Route path="/shared/:id" element={<SharedReport />} />
              <Route path="/" element={<StartScreen />}>
                <Route index element={<Home />} />
@@ -256,7 +262,11 @@ function AppRouteTree() {
               <Route path="/settings/diagnostics" element={<Diagnostics />} />
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
-          </Routes>
+           </Routes>
+            {background && <Routes location={location}>
+              <Route path="/posts/:id" element={<RequireAuth><PostModal /></RequireAuth>} />
+            </Routes>}
+            </PostNavigationProvider>
             </ReportDeletionFeedbackProvider>
           </ErrorBoundary>
     </>

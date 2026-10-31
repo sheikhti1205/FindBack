@@ -62,7 +62,7 @@ function post(overrides: Partial<PostItem> = {}): PostItem {
 function renderShell() {
   return render(
     <MemoryRouter>
-      <PostCard to="/posts/p1" index={5} variant="home-feed">
+      <PostCard index={5} variant="home-feed">
         <span>body</span>
       </PostCard>
     </MemoryRouter>,
@@ -113,7 +113,7 @@ describe("W7B-HOME home-feed shell (separators over chrome)", () => {
 });
 
 describe("W7B-HOME home-feed content (media-led block)", () => {
-  it("renders the media in its own near-full-width region above inset text", () => {
+  it("renders the media in its own near-full-width region after identity and text", () => {
     renderContent(post());
     const content = screen.getByTestId("home-feed-content");
     const media = screen.getByTestId("home-feed-media");
@@ -124,8 +124,8 @@ describe("W7B-HOME home-feed content (media-led block)", () => {
     expect(media.contains(screen.getByTestId("feed-media-viewport"))).toBe(true);
     // Media region spans the block width; the text block insets separately.
     expect(media.className).toMatch(/fb-home-feed-media/);
-    const textBlock = detail.parentElement as HTMLElement;
-    expect(textBlock.className).toMatch(/px-4/);
+    expect(detail.compareDocumentPosition(media) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("button", { name: "About alice" }).compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("keeps every feed contract testid/aria hook", () => {

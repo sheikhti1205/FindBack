@@ -4,6 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { PostList } from "./PostList";
+vi.mock("../auth", () => ({ useAuth: () => ({ user: null }) }));
 
 beforeAll(() => {
   vi.stubGlobal(

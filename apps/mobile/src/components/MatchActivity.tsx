@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { RefreshCw } from "lucide-react";
 import { listMyMatches, type MyMatch } from "../services/matches";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
@@ -85,11 +85,11 @@ function ScopedMatchActivity({ accountId }: { accountId: string }) {
       {!loading && !error && matches.length === 0 && <p className="text-sm text-on-surface-variant">No match activity yet.</p>}
       <ul className="divide-y divide-outline-variant" aria-busy={loading}>
         {matches.map((match) => <li key={match.matchId} className="min-w-0 py-2">
-          {match.myReportId ? <Link to={`/posts/${match.myReportId}#detail-matches`}
+          {match.myReportId ? <PostLink to={`/posts/${match.myReportId}#detail-matches`}
             className="flex min-h-11 min-w-0 flex-col justify-center gap-1 break-words py-1 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2">
             <span className="text-sm font-medium underline">{match.myTitle ?? "Your report"}</span>
             <span className="text-sm text-on-surface-variant">{activityLabel(match)}</span>
-          </Link> : <>
+          </PostLink> : <>
             <p className="text-sm font-medium">Report removed</p>
             <p className="text-sm text-on-surface-variant">{activityLabel(match)}</p>
           </>}

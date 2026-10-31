@@ -25,6 +25,8 @@ vi.mock("../services/blocks", async (importOriginal) => {
 });
 
 import { SafetyActions } from "./SafetyActions";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
+import { consumeBackIntercept } from "./backNavigation";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -43,6 +45,35 @@ function openActions() {
 }
 
 describe("the safety overflow on a report or comment", () => {
+  it("consumes Back in the safety menu before closing its contextual report", async () => {
+    const closeReport = vi.fn();
+    render(<AdaptiveTaskSurface open title="Report" onClose={closeReport}>
+      <SafetyActions content={{ targetType: "POST", targetId: "post-1" }} person={{ userId: "user-2", name: "Sam" }} />
+    </AdaptiveTaskSurface>);
+    openActions();
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    act(() => { expect(consumeBackIntercept()).toBe(true); });
+    expect(closeReport).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "More report actions" })));
+  });
+
+  it("opens an accessible report form above its contextual report and returns one layer on Back", async () => {
+    const closeReport = vi.fn();
+    render(<AdaptiveTaskSurface open title="Report" onClose={closeReport}>
+      <SafetyActions content={{ targetType: "POST", targetId: "post-1" }} person={{ userId: "user-2", name: "Sam" }} />
+    </AdaptiveTaskSurface>);
+    openActions();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Report post" }));
+    const form = await screen.findByRole("dialog", { name: "Report a problem" });
+    await waitFor(() => expect(form.contains(document.activeElement)).toBe(true));
+    expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull();
+    act(() => { expect(consumeBackIntercept()).toBe(true); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).toBeNull());
+    expect(screen.getByRole("dialog", { name: "Report" })).toBeTruthy();
+    expect(closeReport).not.toHaveBeenCalled();
+  });
+
   it("keeps one compact trigger and lazily opens the canonical block control", async () => {
     render(
       <SafetyActions
@@ -128,7 +159,7 @@ describe("the safety overflow on a profile", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("supports menu arrows and Escape focus return", () => {
+  it("supports menu arrows and Escape focus return", async () => {
     render(<SafetyActions reportPerson person={{ userId: "user-2", name: "Sam" }} />);
     const trigger = screen.getByRole("button", { name: "More profile actions" });
     trigger.focus();
@@ -138,7 +169,7 @@ describe("the safety overflow on a profile", () => {
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Block account" }));
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
   it("runs the canonical confirmed block action for the loaded person", async () => {

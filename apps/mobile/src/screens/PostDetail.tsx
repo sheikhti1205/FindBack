@@ -1,44 +1,40 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
-import { CalendarDays, CircleCheck, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, Tag, ThumbsDown, X } from "lucide-react";
+import { CalendarDays, CircleCheck, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, ThumbsDown, X } from "lucide-react";
 import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
 import { OWNER_SELECTABLE_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
-import { UserAvatar } from "../components/UserAvatar";
+import { CommentIdentityHeader } from "../components/CommentIdentityHeader";
 import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
 import { InteractiveLocationMap } from "../components/InteractiveLocationMap";
 import { EmptyState } from "../components/PostCard";
 import { CommentSkeleton, DetailSkeleton } from "../components/uiPrimitives";
-import {
-  sharedElementTransition,
-  sharedTitleLayoutId,
-} from "../components/PostCardContent";
+import { PostIdentityHeader, PostStatusTitle, PostFacts } from "../components/PostAnatomy";
 import { DetailHeroGallery } from "../components/detail/DetailHeroGallery";
 import { MediaViewer } from "../components/MediaViewer";
 import { MarkdownView } from "../components/MarkdownView";
+import { PostDescription } from "../components/PostDescription";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { ReportReferenceCard } from "../components/ReportReferenceCard";
 import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { ReportShareButton } from "../components/ReportShareButton";
-import { SafetyActions } from "../components/SafetyActions";
+import { ReportOverflow } from "../components/ReportOverflow";
 import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
 import { RecoverySheet } from "../components/RecoverySheet";
 import { PostActionRow } from "../components/PostActionRow";
-import { SavePostButton } from "../components/SavePostButton";
 import { ReportMatches } from "../components/ReportMatches";
 import { announce } from "../components/LiveRegion";
 import { listItemVariants, motionDurations, shouldReduceMotion } from "../components/uiMotion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { recordLoadTiming } from "../utils/loadTiming";
 import { openInMaps } from "../utils/location";
-import { formatEventDate, formatTimestamp } from "../utils/dates";
-import { stripMarkdown } from "../utils/stripMarkdown";
+import { formatEventDate } from "../utils/dates";
 import {
   addComment,
   deleteComment,
@@ -65,8 +61,6 @@ import {
   onRealtime,
 } from "../services/realtime";
 
-/** Plain-text preview limit before "Show more" collapses the description. */
-const DESCRIPTION_PREVIEW_LIMIT = 280;
 /** Comments shown before "View all N comments" expands the list. */
 const COMMENTS_PREVIEW_COUNT = 5;
 /** Replies visible per thread before "View N more replies" (W3 inline threads). */
@@ -121,15 +115,16 @@ function CommentLikeButton({
       disabled={pending}
       aria-busy={pending}
       onClick={onToggle}
-      className={`ml-auto inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-2 text-xs font-medium ${state.mine ? "text-primary" : "text-on-surface-variant"}`}
+      className={`inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-full px-1.5 text-xs font-medium ${state.mine ? "text-primary" : "text-on-surface-variant"}`}
     >
       <Heart size={15} aria-hidden fill={state.mine ? "currentColor" : "none"} />
-      <span aria-hidden className="tabular-nums">{state.count}</span>
+      <span>{state.mine ? "Liked" : "Like"}</span>
+      {state.count > 0 && <span aria-hidden className="tabular-nums">{state.count}</span>}
     </button>
   );
 }
 
-export function PostDetail() {
+export function PostDetail({ contextual = false }: { contextual?: boolean } = {}) {
   const { id = "" } = useParams();
   const { hash, search, key: locationKey } = useLocation();
   const navigate = useNavigate();
@@ -203,7 +198,6 @@ export function PostDetail() {
 
   // Redesign UI state: collapsed description, lazy map/video, comment paging,
   // and the fullscreen lightbox position.
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
@@ -797,12 +791,6 @@ export function PostDetail() {
   // Owner status control is disabled while any mutation is active
   const ownerControlsDisabled = reactionPending || statusPending || current.status === "MATCHED" || current.status === "RECOVERED";
 
-  const strippedDescription = stripMarkdown(current.description ?? "");
-  const descriptionIsLong = strippedDescription.length > DESCRIPTION_PREVIEW_LIMIT;
-  const descriptionPreview = descriptionIsLong
-    ? `${strippedDescription.slice(0, DESCRIPTION_PREVIEW_LIMIT).trimEnd()}…`
-    : strippedDescription;
-
   // Threaded comments: group replies under their parent. A reply whose parent is
   // not in the current page is treated as a root so it is never hidden.
   // W3 inline threads: replies expand inline per thread (first replies +
@@ -889,6 +877,22 @@ export function PostDetail() {
     const showTarget = level > COMMENT_MAX_VISUAL_DEPTH;
     const parentName =
       showTarget && c.parentId ? (commentsById.get(c.parentId)?.author.username ?? null) : null;
+    const overflow = <CommentSafetyMenu
+      key={`${user?.id ?? "guest"}:${c.id}`}
+      commentId={c.id} authorId={c.author.id} authorName={c.author.username}
+      viewerId={user?.id ?? null} canDelete={canDelete}
+      onReported={() => {
+        // Conceal only this receipt's row while authorized topology refetches.
+        const snap = { postId: current.id, viewer: user?.id };
+        setComments(prev => prev.filter(row => row.id !== c.id));
+        setReplyTo(prev => prev?.id === c.id ? null : prev);
+        void reconcileComments(false);
+        requestAnimationFrame(() => {
+          if (!isStaleMutation(snap)) document.getElementById("detail-comments")?.focus({ preventScroll: true });
+        });
+      }}
+      onDelete={() => { if (window.confirm("Delete this comment?")) void onDeleteComment(c.id); }}
+    />;
     const threadControls = children.length > 0 && (
       <div className="mt-1 flex flex-wrap items-center gap-2">
         {remaining > 0 && (
@@ -940,21 +944,10 @@ export function PostDetail() {
             reply list, the thread controls and the @parent jump stay outside,
             so an unblocked reply (or a blocked reply's own reveal control) is
             never inert beneath this shield. */}
-        <BlockedByViewerShield rowId={c.id} blocked={c.blockedAuthor} mode="row" contentClassName="flex flex-col">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <UserAvatar avatarUrl={c.author.avatarUrl} username={c.author.username} size={28} />
-          <span className="min-w-[6em] flex-1 truncate text-sm font-semibold">@{c.author.username}</span>
-          <span className="flex shrink-0 items-center gap-2">
-          {c.author.id === post.userId && (
-            <span className="shrink-0 rounded-full border border-outline px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-on-surface-variant">
-              Author
-            </span>
-          )}
-          <span className="shrink-0 text-[11px] text-on-surface-variant">
-            {formatTimestamp(c.createdAt)}
-          </span>
-          </span>
-        </div>
+        <div className="fb-comment-main">
+        <BlockedByViewerShield rowId={c.id} blocked={c.blockedAuthor} mode="row"
+          className={c.blockedAuthor ? "pe-11" : undefined} contentClassName="flex flex-col">
+        <CommentIdentityHeader comment={c} isAuthor={c.author.id === post.userId} overflow={!c.blockedAuthor ? overflow : undefined} />
         <div className="mt-0.5 text-sm leading-relaxed">
           <MarkdownView text={bodyParts.text || c.body} linkMentions unfurlReports />
         </div>
@@ -969,7 +962,7 @@ export function PostDetail() {
               // media line per attachment in display_order (1..4), and
               // parseCommentBody lifts them back in that same order.
               const provenance = commentMediaProvenance(m.url);
-              const sourceLabel = provenance === "klipy" ? "KLIPY" : "Storage";
+              const sourceLabel = provenance === "klipy" ? "KLIPY" : m.kind === "video" ? "Video" : "Photo";
               return (
                 <figure key={`${m.url}-${i}`} className="relative m-0">
                   {m.kind === "video" ? (
@@ -978,7 +971,7 @@ export function PostDetail() {
                       controls
                       playsInline
                       preload="metadata"
-                      aria-label={`Attached video ${i + 1} via ${sourceLabel}`}
+                      aria-label={`Attached video ${i + 1}`}
                       className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
                     />
                   ) : (
@@ -987,7 +980,7 @@ export function PostDetail() {
                       onClick={() => setCommentPhoto({ id: c.id, photoId: `${c.id}:${i}`, blocked: !!c.blockedAuthor })}>
                     <img
                       src={m.url}
-                      alt={`Attached photo ${i + 1} via ${sourceLabel}`}
+                      alt={`Attached photo ${i + 1}${provenance === "klipy" ? " via KLIPY" : ""}`}
                       loading="lazy"
                       className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
                     />
@@ -1021,7 +1014,17 @@ export function PostDetail() {
           </div>
         )}
         </BlockedByViewerShield>
-        <div className="mt-1 flex items-center gap-1">
+        {/* Safety remains reachable without revealing a blocked identity/body.
+            Pin it in the same header position, outside the inert subtree. */}
+        {c.blockedAuthor && <div className="fb-comment-blocked-actions">{overflow}</div>}
+        </div>
+        <div className="fb-comment-actions">
+          <CommentLikeButton
+            comment={c}
+            summary={commentSummaryFor(c)}
+            pending={commentPending[c.id] ?? false}
+            onToggle={() => toggleCommentReaction(c)}
+          />
           <button
             type="button"
             onClick={() => setReplyTo(isReplyTarget ? null : c)}
@@ -1031,34 +1034,6 @@ export function PostDetail() {
           >
             <CornerDownRight size={13} aria-hidden /> Reply
           </button>
-          <CommentSafetyMenu
-            key={`${user?.id ?? "guest"}:${c.id}`}
-            commentId={c.id}
-            authorId={c.author.id}
-            authorName={c.author.username}
-            viewerId={user?.id ?? null}
-            canDelete={canDelete}
-            onReported={() => {
-              // This receipt identifies exactly one local concealment. Keep
-              // unrelated siblings mounted while authorized topology refetches.
-              const snap = { postId: current.id, viewer: user?.id };
-              setComments(prev => prev.filter(row => row.id !== c.id));
-              setReplyTo(prev => prev?.id === c.id ? null : prev);
-              void reconcileComments(false);
-              requestAnimationFrame(() => {
-                if (!isStaleMutation(snap)) document.getElementById("detail-comments")?.focus({ preventScroll: true });
-              });
-            }}
-            onDelete={() => {
-              if (window.confirm("Delete this comment?")) void onDeleteComment(c.id);
-            }}
-          />
-          <CommentLikeButton
-            comment={c}
-            summary={commentSummaryFor(c)}
-            pending={commentPending[c.id] ?? false}
-            onToggle={() => toggleCommentReaction(c)}
-          />
         </div>
         {children.length > 0 && nestChildren && (
           <ul className="mt-2 flex flex-col gap-2 border-l border-outline-variant pl-2">
@@ -1077,13 +1052,7 @@ export function PostDetail() {
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex items-center gap-3 px-4 pt-5">
-        <BackButton fallbackTo="/" label="Back to feed" />
-        <span className="rounded-full border border-outline px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide">
-          {post.type === "LOST" ? "Lost item" : "Found item"}
-        </span>
-        <span className="text-xs text-on-surface-variant">Posted {formatTimestamp(post.createdAt)}</span>
-      </header>
+      {!contextual && <header className="flex items-center px-4 pt-3"><BackButton fallbackTo="/" label="Back to feed" /></header>}
 
       {error && (
         <p className="mx-4 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">{error}</p>
@@ -1100,27 +1069,12 @@ export function PostDetail() {
           blocked={post.blockedAuthor}
           contentClassName="flex flex-col gap-4"
         >
-        {/* Primary info card */}
+        {/* Same public identity/content sequence as the feed; business owners
+            below remain detail-owned. No description control panel. */}
         <section aria-label="Report summary" className="flex flex-col gap-2">
-          <div className="flex min-w-0 items-start gap-2">
-            <div className="min-w-0 flex-1">
-            {/* Shared-element pair for the card title (see PostCardContent). */}
-            <motion.h1
-              className="break-words text-2xl font-semibold leading-tight tracking-tight"
-              layoutId={sharedTitleLayoutId(post.id)}
-              data-shared-title={sharedTitleLayoutId(post.id)}
-              transition={sharedElementTransition}
-            >
-              {post.title}
-            </motion.h1>
-            </div>
-            <SafetyActions content={{ targetType: "POST", targetId: post.id }} person={{ userId: post.author.id, name: post.author.displayName || post.author.username }} />
-          </div>
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-sm text-on-surface-variant">
-            <span className="min-w-0 max-w-full break-all font-medium text-on-surface">@{post.author.username}</span>
-            <span className="fb-category-chip"><Tag size={14} aria-hidden /> <span>{post.category}</span></span>
-          </div>
-          {post.locationLabel && <p className="mt-2 flex min-w-0 items-center gap-1.5 break-words text-sm text-on-surface-variant"><MapPin size={16} aria-hidden className="shrink-0" /><span className="min-w-0 break-words">{post.locationLabel}</span></p>}
+          <PostIdentityHeader post={post} overflow={<ReportOverflow post={post} />} />
+          <PostStatusTitle post={post} detail enableSharedMedia titleClassName="text-2xl font-semibold leading-tight tracking-tight" />
+          <PostDescription text={post.description} lines={5} />
         </section>
 
         <DetailHeroGallery
@@ -1131,10 +1085,10 @@ export function PostDetail() {
           onOpenLightbox={setLightbox}
         />
 
-        {/* The compact flat action row (owner reference): like + count, comment
-            + count, share, save — one row, no button cards. The row owns no
-            reaction state: the Like control keeps this screen's own state
-            owner, and Share/Save keep theirs. */}
+        <PostFacts post={post} />
+
+        {/* Primary actions keep this screen's reaction owner. Save and safety
+            actions share the identity overflow, not the primary row. */}
         <div id="detail-activity" tabIndex={-1} className="scroll-mt-4 border-t border-outline-variant pt-1">
         <PostActionRow
           commentCount={comments.length}
@@ -1157,43 +1111,9 @@ export function PostDetail() {
               </button>
             ),
             share: <ReportShareButton postId={post.id} title={post.title} />,
-            save: <SavePostButton postId={post.id} title={post.title} />,
           }}
         />
         </div>
-
-        <section aria-label="Description" className="rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
-          <h2 className="mb-2 text-sm font-medium text-on-surface-variant">Description</h2>
-          {descriptionIsLong && !descriptionExpanded ? (
-            <div>
-              <p className="line-clamp-5 whitespace-pre-line break-words text-sm leading-relaxed">
-                {descriptionPreview}
-              </p>
-              <button
-                type="button"
-                onClick={() => setDescriptionExpanded(true)}
-                aria-expanded="false"
-                className="mt-1 min-h-[48px] px-1 text-sm font-medium text-on-surface underline"
-              >
-                Show more
-              </button>
-            </div>
-          ) : descriptionIsLong ? (
-            <div>
-              <MarkdownView text={post.description} />
-              <button
-                type="button"
-                onClick={() => setDescriptionExpanded(false)}
-                aria-expanded="true"
-                className="mt-1 min-h-[48px] px-1 text-sm font-medium text-on-surface underline"
-              >
-                Show less
-              </button>
-            </div>
-          ) : (
-            <MarkdownView text={post.description} />
-          )}
-        </section>
 
         {actionError && (
           <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
@@ -1376,7 +1296,7 @@ export function PostDetail() {
         </BlockedByViewerShield>
 
         {/* Comments */}
-        <section data-testid="detail-comments" id="detail-comments" tabIndex={-1} aria-label="Comments" className="flex scroll-mt-4 flex-col gap-3">
+        <section data-testid="detail-comments" id="detail-comments" tabIndex={-1} aria-label="Comments" className="fb-comment-thread flex scroll-mt-4 flex-col gap-3">
           <h2 className="text-base font-semibold">
             Comments <span className="text-on-surface-variant">({comments.length})</span>
           </h2>

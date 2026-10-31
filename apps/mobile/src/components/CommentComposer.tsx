@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { FileText, Film, ImageOff, ImagePlus, Search, SendHorizonal, Sticker, X } from "lucide-react";
+import { FileText, Film, ImageOff, ImagePlus, Plus, Search, Sticker, X } from "lucide-react";
+import { ActionMenu, type MenuAction } from "./ActionMenu";
+import { ComposerShell } from "./ComposerShell";
 import { CommentReportPicker } from "./CommentReportPicker";
 import { UserAvatar } from "./UserAvatar";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
@@ -213,7 +215,7 @@ export function CommentComposer({
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [reportOpen, setReportOpen] = useState(false);
-  const reportTriggerRef = useRef<HTMLButtonElement>(null);
+  const attachmentActionsRef = useRef<HTMLDivElement>(null);
   const [sending, setSending] = useState(false);
   const [preparingPhotos, setPreparingPhotos] = useState(false);
   const photoIntakeRef = useRef(false);
@@ -285,26 +287,6 @@ export function CommentComposer({
     },
     [],
   );
-
-  // Auto-grow 1→5 lines from scrollHeight (never animated per keystroke).
-  useEffect(() => {
-    const el = fieldRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    // Short guidance fits one row at large text; only real drafts auto-grow.
-    if (!text) {
-      el.style.overflowY = "hidden";
-      return;
-    }
-    if (el.scrollHeight <= 0) return;
-    const style = window.getComputedStyle(el);
-    const line = Number.parseFloat(style.lineHeight) || 24;
-    const pad =
-      (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
-    const cap = line * 5 + pad;
-    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
-    el.style.overflowY = el.scrollHeight > cap ? "auto" : "hidden";
-  }, [text]);
 
   // Klipy picker search, owned by the adapter controller: debounced,
   // latest-request-wins, stale requests cancelled, trending while the query
@@ -476,7 +458,7 @@ export function CommentComposer({
 
   function closeReportPicker() {
     setReportOpen(false);
-    reportTriggerRef.current?.focus();
+    attachmentActionsRef.current?.querySelector("button")?.focus();
   }
 
   function pickReport(report: { id: string; title: string }) {
@@ -595,65 +577,21 @@ export function CommentComposer({
   // The adjacent reply context names the target. Keep the field guidance short
   // enough to remain readable at large text; its accessible name stays full.
   const placeholder = replyToUsername ? "Reply…" : "Write…";
+  const attachmentActions: MenuAction[] = [
+    { id: "photo", label: "Photo", icon: <ImagePlus size={18} aria-hidden />, onAction: () => void handleAttachClick() },
+    ...(gifEnabled ? [
+      { id: "gif", label: "GIF", icon: <Film size={18} aria-hidden />, onAction: () => { setGifTab("gifs"); setGifOpen(true); setReportOpen(false); } },
+      { id: "sticker", label: "Sticker", icon: <Sticker size={18} aria-hidden />, onAction: () => { setGifTab("stickers"); setGifOpen(true); setReportOpen(false); } },
+    ] : []),
+    ...(COMMENT_REPORTS_ENABLED ? [{ id: "report", label: "Report", icon: <FileText size={18} aria-hidden />,
+      disabled: attachments.length >= COMMENT_ATTACH_MAX,
+      onAction: () => { setReportOpen(true); setGifOpen(false); } }] : []),
+  ];
 
   return (
     <div data-testid="comment-composer" className="flex items-start gap-2">
       <UserAvatar avatarUrl={currentUser?.avatarUrl} username={currentUser?.username} size={32} />
       <div className="min-w-0 flex-1">
-        <div className="flex items-end gap-1.5">
-          <div className="relative min-w-0 flex-1">
-            <textarea
-              ref={fieldRef}
-              data-testid="comment-input"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={placeholder}
-              aria-label={replyToUsername ? `Reply to ${replyToUsername}` : "Comment"}
-              disabled={disabled || sending}
-              rows={1}
-              className="w-full resize-none overflow-y-auto rounded-m3-md border border-outline-variant bg-surface px-3.5 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none disabled:opacity-60"
-            />
-            <MentionAutocomplete
-              inputRef={fieldRef}
-              value={text}
-              participants={participants}
-              owner={owner}
-              onInsert={handleMentionInsert}
-            />
-          </div>
-          <button
-            type="button"
-            data-testid="comment-send"
-            onClick={() => void onSend()}
-            disabled={sendDisabled}
-            aria-label={replyToUsername ? "Send reply" : "Send comment"}
-            className="flex h-[48px] w-[48px] shrink-0 items-center justify-center rounded-full bg-on-surface text-surface disabled:opacity-40"
-          >
-            <SendHorizonal size={18} aria-hidden />
-          </button>
-        </div>
-
-        {/* Accessory row: photo, report and GIF live under the input so the
-            text field keeps the full usable width at 320dp. */}
-        <div className="mt-1 flex items-center gap-1">
-          <button
-            type="button"
-            data-testid="comment-attach"
-            onClick={() => void handleAttachClick()}
-            disabled={disabled || sending || preparingPhotos}
-            aria-label="Attach a photo"
-            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
-          >
-            <ImagePlus size={20} aria-hidden />
-          </button>
-          {COMMENT_REPORTS_ENABLED && (
-            <button ref={reportTriggerRef} type="button" aria-label="Attach a report" aria-expanded={reportOpen}
-              disabled={disabled || sending || preparingPhotos || attachments.length >= COMMENT_ATTACH_MAX}
-              onClick={() => { setReportOpen((open) => !open); setGifOpen(false); }}
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-on-surface">
-              <FileText size={20} aria-hidden />
-            </button>
-          )}
           <input
             ref={fileInputRef}
             data-testid="comment-file-input"
@@ -669,29 +607,11 @@ export function CommentComposer({
             className="sr-only"
             tabIndex={-1}
           />
-          {gifEnabled && (
-            <button
-              type="button"
-              data-testid="comment-gif"
-              onClick={() => {
-                setGifOpen((o) => !o);
-                setReportOpen(false);
-              }}
-              disabled={disabled || sending || preparingPhotos}
-              aria-label="Add a GIF or sticker"
-              aria-expanded={gifOpen}
-              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container disabled:opacity-60"
-            >
-              <Sticker size={20} aria-hidden />
-            </button>
-          )}
           {overLimit && (
             <span data-testid="comment-limit-hint" role="status" className="ml-auto text-[11px] text-error">
               {bodyPreview.length}/{MAX_COMMENT_BODY} — shorten text or remove media
             </span>
           )}
-        </div>
-
         {COMMENT_REPORTS_ENABLED && reportOpen && (
           <CommentReportPicker disabled={disabled || sending || attachments.length >= COMMENT_ATTACH_MAX}
             onPick={pickReport} onClose={closeReportPicker} />
@@ -712,16 +632,25 @@ export function CommentComposer({
         {/* Attachment tiling: grid in display_order (tile position =
             display_order 1..4), each tile carrying its kind/provenance chip.
             Same previews, progress, retry, and remove controls as before. */}
-        {attachments.length > 0 && (
+        <ComposerShell value={text} onChange={setText} onSend={() => void onSend()}
+          inputRef={fieldRef} placeholder={placeholder}
+          inputLabel={replyToUsername ? `Reply to ${replyToUsername}` : "Comment"}
+          inputProps={{ "data-testid": "comment-input" } as React.TextareaHTMLAttributes<HTMLTextAreaElement>}
+          disabled={disabled || sending} busy={sending} canSend={!sendDisabled}
+          sendLabel={replyToUsername ? "Send reply" : "Send comment"} sendTestId="comment-send"
+          inputOverlay={<MentionAutocomplete inputRef={fieldRef} value={text} participants={participants} owner={owner} onInsert={handleMentionInsert} />}
+          actions={<div ref={attachmentActionsRef}><ActionMenu label="Add attachment" icon={<Plus size={20} aria-hidden />}
+            disabled={disabled || sending || preparingPhotos} items={attachmentActions} /></div>}
+          attachments={attachments.length > 0 && (
           <div
             data-testid="comment-attachments"
             role="group"
             aria-label={`Attachments, ${attachments.length} of ${COMMENT_ATTACH_MAX}`}
-            className="mt-1 grid grid-cols-4 gap-1.5"
+            className="fb-comment-attachment-grid mt-1 grid gap-1.5"
           >
             {attachments.map((a, index) => {
               if (a.kind === "report") return (
-                <div key={a.id} className="col-span-4 flex min-w-0 items-center gap-2 border-b border-outline-variant py-1 text-on-surface">
+                <div key={a.id} className="col-span-full flex min-w-0 items-center gap-2 border-b border-outline-variant py-1 text-on-surface">
                   <FileText size={16} aria-hidden className="shrink-0" />
                   <span className="min-w-0 flex-1 break-words text-xs">{a.title}</span>
                   <button type="button" aria-label={`Remove report: ${a.title}`} disabled={disabled || sending}
@@ -747,20 +676,20 @@ export function CommentComposer({
                     playsInline
                     preload="metadata"
                     aria-label={a.fileName}
-                    className="h-16 w-full rounded-m3-xs border border-outline-variant object-cover"
+                    className="h-[96px] w-full rounded-m3-xs border border-outline-variant object-cover"
                   />
                 ) : a.previewUrl !== "" ? (
                   <img
                     src={a.previewUrl}
                     alt={a.fileName}
                     loading="lazy"
-                    className="h-16 w-full rounded-m3-xs border border-outline-variant object-cover"
+                    className="h-[96px] w-full rounded-m3-xs border border-outline-variant object-cover"
                   />
                 ) : (
                   <span
                     role="img"
                     aria-label={a.fileName}
-                    className="flex h-16 w-full items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant"
+                    className="flex h-[96px] w-full items-center justify-center rounded-m3-xs border border-outline-variant bg-surface-container-low text-xs text-on-surface-variant"
                   >
                     {a.fileName}
                   </span>
@@ -778,7 +707,7 @@ export function CommentComposer({
                     data-provenance={source}
                     className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white"
                   >
-                    {source === "klipy" ? "KLIPY" : "Storage"}
+                    {source === "klipy" ? "KLIPY" : a.kind === "video" ? "Video" : "Photo"}
                   </span>
                 )}
                 {a.status === "uploading" && (
@@ -803,7 +732,7 @@ export function CommentComposer({
                     data-testid={`comment-attachment-retry-${a.id}`}
                     onClick={() => retryAttachment(a)}
                     aria-label={`Retry attaching ${a.fileName}`}
-                    className="absolute inset-x-0 bottom-0 flex min-h-[44px] items-center justify-center rounded-b-m3-xs bg-error-container text-[10px] font-semibold text-on-error-container"
+                    className="absolute inset-x-0 bottom-0 flex min-h-[44px] items-center justify-center rounded-b-m3-xs border border-outline-variant bg-surface-container-high text-xs font-semibold text-error"
                   >
                     Retry
                   </button>
@@ -822,7 +751,7 @@ export function CommentComposer({
               );
             })}
           </div>
-        )}
+        )} />
 
         {gifEnabled && gifOpen && (
           <div

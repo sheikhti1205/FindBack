@@ -126,7 +126,7 @@ const longComment = {
 /** The compact safety overflow is the ONE comment action surface. */
 async function openCommentActions(author = "commenter") {
   fireEvent.click(await screen.findByRole("button", { name: `Actions for comment by ${author}` }));
-  return screen.getByRole("menu", { name: `Comment actions for ${author}` });
+  return screen.getByRole("menu", { name: `Actions for comment by ${author}` });
 }
 
 function renderDetail(entry = "/posts/p1") {
@@ -178,10 +178,13 @@ describe("PostDetail overflow", () => {
   it("keeps a readable author width while metadata can wrap at large text", async () => {
     renderDetail();
     await waitFor(() => expect(screen.getByText(/plain comment/)).toBeTruthy());
-    const author = screen.getByText(`@${LONG}`);
-    expect(author.className).toContain("truncate");
-    expect(author.className).toContain("min-w-[6em]");
-    expect(author.parentElement?.className).toContain("flex-wrap");
+    const identity = screen.getByRole("button", { name: `About ${LONG}` });
+    expect(identity.textContent).toContain(`@${LONG}`);
+    const header = identity.closest("header")!;
+    expect(header.querySelector("time")?.getAttribute("dateTime")).toBe(longComment.createdAt);
+    expect(header.querySelector("time")?.getAttribute("title")).toBeTruthy();
+    fireEvent.click(identity);
+    expect(await screen.findByRole("dialog", { name: `About ${LONG}` })).toBeTruthy();
   });
 });
 
@@ -269,7 +272,8 @@ describe("PostDetail comments", () => {
     });
     try {
       renderDetail();
-      fireEvent.click(await screen.findByRole("button", { name: "Attach a report" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Add attachment" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Report" }));
       fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://findback.example/r/${id}` } });
       fireEvent.click(screen.getByRole("button", { name: "Add report" }));
       await screen.findByRole("button", { name: "Remove report: Found blue wallet" });
@@ -1075,8 +1079,23 @@ describe("PostDetail recovery route lifetime", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Record recovery…" }));
-    fireEvent.click(await screen.findByRole("radio", { name: /someone outside findback/i }));
+    const recoveryLauncher = await screen.findByRole("button", { name: "Record recovery…" });
+    expect(recoveryLauncher.isConnected, "recovery launcher still mounted after async lookup").toBe(true);
+    expect(recoveryLauncher).toHaveProperty("disabled", false);
+    fireEvent.click(recoveryLauncher);
+    let helperChoice: HTMLElement;
+    try {
+      helperChoice = await screen.findByRole("radio", { name: /someone outside findback/i });
+    } catch (error) {
+      throw new Error(`RECOVERY_OPEN_DIAGNOSTIC ${JSON.stringify({
+        launcherConnected: recoveryLauncher.isConnected,
+        launcherDisabled: recoveryLauncher.getAttribute("disabled"),
+        dialogs: [...document.querySelectorAll('[role="dialog"]')].map((node) => node.outerHTML),
+        radios: [...document.querySelectorAll('[role="radio"]')].map((node) => node.outerHTML),
+        hiddenRoots: [...document.querySelectorAll('[aria-hidden="true"], [inert]')].filter((node) => node.querySelector('[role="radio"]')).map((node) => node.outerHTML),
+      })}`, { cause: error });
+    }
+    fireEvent.click(helperChoice);
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(recoveryService.markRecovered).toHaveBeenCalledWith(
       expect.objectContaining({ postId: "p1", helperKind: "OUTSIDE" }),

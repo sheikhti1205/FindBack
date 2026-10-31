@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostCard } from "./PostCard";
 import { PostCardContent } from "./PostCardContent";
+import { PostNavigationProvider } from "./PostNavigation";
 import { FeedLoveProvider, type FeedPatchItem } from "../hooks/useFeedLove";
 
 const { feedFetchMock, loveToggleMock } = vi.hoisted(() => ({
@@ -23,7 +24,7 @@ vi.mock("../services/feedReactions", async (importOriginal) => {
 
 function LocationProbe() {
   const loc = useLocation();
-  return <div data-testid="location">{`${loc.pathname}${loc.search}`}</div>;
+  return <><div data-testid="location">{`${loc.pathname}${loc.search}`}</div><output data-testid="navigation-state">{JSON.stringify(loc.state)}</output></>;
 }
 
 function post(overrides: Partial<PostItem> = {}): PostItem {
@@ -136,11 +137,11 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     expect(title.className).toMatch(/line-clamp-2/);
   });
 
-  it("clamps the description and strips markdown", () => {
+  it("renders a fitting description without exposing markdown syntax", () => {
     renderHomeFeed(post({ description: "**Urgent**: lost near the *river* `trail`." }));
     const body = screen.getByTestId("post-description");
     expect(body.textContent).toBe("Urgent: lost near the river trail.");
-    expect(body.className).toMatch(/line-clamp-2/);
+    expect(body.textContent).not.toContain("**");
   });
 
   it("omits the description element when empty", () => {
@@ -302,7 +303,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     const order = within(card)
       .getAllByTestId(/post-status-chip|post-time|post-title|post-description|post-location|post-author|post-footer/)
       .map((el) => el.getAttribute("data-testid"));
-    expect(order[0]).toBe("post-status-chip");
+    expect(order[0]).toBe("post-author");
     expect(order).toContain("post-title");
     expect(order.indexOf("post-title")).toBeGreaterThan(order.indexOf("post-status-chip"));
     expect(order.indexOf("post-footer")).toBeGreaterThan(order.indexOf("post-title"));
@@ -412,7 +413,7 @@ describe("home-feed detail link + Like action siblings (never nested)", () => {
   it("renders the Like toggle as a sibling of the detail link, never inside it", () => {
     render(
       <MemoryRouter>
-        <PostCard to="/posts/p1" index={0} variant="home-feed">
+        <PostCard index={0} variant="home-feed">
           <FeedLoveProvider items={[imagePost()]} patchItem={vi.fn() as unknown as FeedPatchItem}>
             <PostCardContent post={imagePost()} layout="home-feed" />
           </FeedLoveProvider>
@@ -434,7 +435,7 @@ describe("home-feed detail link + Like action siblings (never nested)", () => {
   it("keeps the home-feed card shell free of a wrapping link (siblings own navigation)", () => {
     render(
       <MemoryRouter>
-        <PostCard to="/posts/p1" index={5} variant="home-feed">
+        <PostCard index={5} variant="home-feed">
           <FeedLoveProvider items={[imagePost()]} patchItem={vi.fn() as unknown as FeedPatchItem}>
             <PostCardContent post={imagePost()} layout="home-feed" />
           </FeedLoveProvider>
@@ -545,6 +546,24 @@ describe("home-feed media polish (edge-to-edge cover for loaded photos)", () => 
 });
 
 describe("home-feed content-first interactions", () => {
+  it.each(["title", "comments"])("opens %s with its signed-in background context on wide screens", (target) => {
+    vi.stubGlobal("innerWidth", 1024);
+    try {
+      render(<MemoryRouter initialEntries={["/search?q=wallet"]}>
+        <PostNavigationProvider value="viewer">
+          <FeedLoveProvider items={[imagePost()]} patchItem={vi.fn() as unknown as FeedPatchItem}>
+            <PostCardContent post={imagePost()} layout="home-feed" />
+          </FeedLoveProvider>
+        </PostNavigationProvider>
+        <LocationProbe />
+      </MemoryRouter>);
+      fireEvent.click(target === "title" ? screen.getByTestId("home-feed-detail-link") : screen.getByRole("link", { name: "Comments, 3" }));
+      const state = JSON.parse(screen.getByTestId("navigation-state").textContent!);
+      expect(state).toMatchObject({ postBackground: { viewerId: "viewer", location: { pathname: "/search", search: "?q=wallet" } } });
+      expect(screen.getByTestId("location").textContent).toBe("/posts/p1");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("opens the canonical MediaViewer at the current carousel index on an image tap", () => {
     renderHomeFeed(imagePost(4));
     const track = screen.getByTestId("feed-media-track");
@@ -572,26 +591,37 @@ describe("home-feed content-first interactions", () => {
     expect(screen.queryByTestId("media-viewer")).toBeNull();
   });
 
-  it("shows See more only when the description is actually truncated, and it navigates to detail", async () => {
+  it("expands the full rich description inline without navigating, then collapses", async () => {
     const scrollHeight = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight");
     const clientHeight = Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight");
     // jsdom has no layout; drive a real truncation measurement.
     Object.defineProperty(Element.prototype, "scrollHeight", { configurable: true, get: () => 96 });
     Object.defineProperty(Element.prototype, "clientHeight", { configurable: true, get: () => 40 });
     try {
+      const target = imagePost(1, { description: "**Identifying details**: blue collar.\n\n[Owner notes](https://example.test/notes)" });
       render(
         <MemoryRouter initialEntries={["/"]}>
-          <FeedLoveProvider items={[imagePost()]} patchItem={vi.fn() as unknown as FeedPatchItem}>
-            <PostCardContent post={imagePost()} layout="home-feed" />
+          <FeedLoveProvider items={[target]} patchItem={vi.fn() as unknown as FeedPatchItem}>
+            <PostCardContent post={target} layout="home-feed" />
           </FeedLoveProvider>
           <LocationProbe />
         </MemoryRouter>,
       );
       const more = await screen.findByTestId("post-description-more");
       expect(more.textContent).toMatch(/see more/i);
-      expect(more.closest("a")?.getAttribute("href")).toBe("/posts/p1");
+      expect(more.tagName).toBe("BUTTON");
+      expect(more.closest("a")).toBeNull();
+      expect(more.getAttribute("aria-expanded")).toBe("false");
       fireEvent.click(more);
-      await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/posts/p1"));
+      expect(screen.getByTestId("location").textContent).toBe("/");
+      expect(screen.getByText("Identifying details").tagName).toBe("STRONG");
+      expect(screen.getByRole("link", { name: "Owner notes" }).getAttribute("href")).toBe("https://example.test/notes");
+      const less = screen.getByRole("button", { name: "Show less" });
+      expect(less.getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(less);
+      expect(screen.queryByRole("link", { name: "Owner notes" })).toBeNull();
+      expect(screen.getByRole("button", { name: "See more" }).getAttribute("aria-expanded")).toBe("false");
+      expect(screen.getByTestId("location").textContent).toBe("/");
     } finally {
       if (scrollHeight) Object.defineProperty(Element.prototype, "scrollHeight", scrollHeight);
       else delete (Element.prototype as { scrollHeight?: unknown }).scrollHeight;
@@ -625,16 +655,13 @@ describe("home-feed content-first interactions", () => {
     expect(screen.getByRole("button", { name: /share report/i })).toBeTruthy();
   });
 
-  it("keeps the category chip in the meta line instead of a footer row of its own", () => {
+  it("keeps identity time local and facts after media, before primary actions", () => {
     renderHomeFeed(imagePost());
-    const chip = screen.getByTestId("post-status-chip");
     const time = screen.getByTestId("post-time");
     const category = screen.getByTestId("post-category");
-    // Status · time · category share ONE line.
-    const meta = chip.parentElement as HTMLElement;
-    expect(meta.contains(time)).toBe(true);
-    expect(meta.contains(category)).toBe(true);
-    expect(meta.className).toMatch(/flex-nowrap/);
+    const identity = screen.getByRole("button", { name: "About alice" }).closest("header")!;
+    expect(identity.contains(time)).toBe(true);
+    expect(screen.getByTestId("home-feed-media").compareDocumentPosition(category) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // The separate category-only row is gone: the card footer now holds the
     // action row, and the category chip is not in it.
     const footer = screen.getByTestId("post-footer");
@@ -642,13 +669,10 @@ describe("home-feed content-first interactions", () => {
     expect(footer.contains(screen.getByTestId("home-feed-actions"))).toBe(true);
   });
 
-  it("keeps the card's vertical rhythm tight", () => {
+  it("keeps the content navigation independent from identity and actions", () => {
     renderHomeFeed(post());
-    const text = screen.getByTestId("post-title").closest("div.flex") as HTMLElement;
-    // The text block: px-4 insets, a small top padding and a small bottom
-    // padding — the old `pt-3 pb-2` and `gap-2` spent the space.
-    expect(text.className).toMatch(/gap-1\.5/);
-    expect(text.className).toMatch(/pt-2/);
-    expect(text.className).toMatch(/pb-1/);
+    const link = screen.getByTestId("home-feed-detail-link");
+    expect(link.contains(screen.getByRole("button", { name: "About alice" }))).toBe(false);
+    expect(link.contains(screen.getByRole("group", { name: "Report actions" }))).toBe(false);
   });
 });

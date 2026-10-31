@@ -64,6 +64,7 @@ export function MentionAutocomplete({
   const [blurClosed, setBlurClosed] = useState(false);
   const seq = useRef(0);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const composing = useRef(false);
 
   const resolvedCaret = caret ?? value.length;
   const token = tokenBeforeCaret(value, resolvedCaret);
@@ -87,13 +88,21 @@ export function MentionAutocomplete({
       if (blurTimer.current) clearTimeout(blurTimer.current);
       blurTimer.current = setTimeout(() => setBlurClosed(true), BLUR_CLOSE_MS);
     };
+    const startComposition = () => { composing.current = true; };
+    const endComposition = () => { composing.current = false; sync(); };
+    el.addEventListener("compositionstart", startComposition);
+    el.addEventListener("compositionend", endComposition);
     el.addEventListener("keyup", sync);
+    el.addEventListener("input", sync);
     el.addEventListener("click", sync);
     el.addEventListener("select", sync);
     el.addEventListener("focus", sync);
     el.addEventListener("blur", scheduleBlurClose);
     return () => {
+      el.removeEventListener("compositionstart", startComposition);
+      el.removeEventListener("compositionend", endComposition);
       el.removeEventListener("keyup", sync);
+      el.removeEventListener("input", sync);
       el.removeEventListener("click", sync);
       el.removeEventListener("select", sync);
       el.removeEventListener("focus", sync);
@@ -178,7 +187,12 @@ export function MentionAutocomplete({
     const picked = suggestions[index];
     if (!token || !picked) return;
     const next = `${value.slice(0, token.start)}@${picked.username} ${value.slice(resolvedCaret)}`;
-    onInsert(next, token.start + picked.username.length + 2);
+    const nextCaret = token.start + picked.username.length + 2;
+    // Publish the new token boundary with the controlled value, not on the
+    // parent's next animation frame. A fast second Enter must not reselect
+    // using the old caret and splice the completed username a second time.
+    setCaret(nextCaret);
+    onInsert(next, nextCaret);
   }
 
   // Keyboard handling lives here (listener on the input) so the parent form
@@ -189,6 +203,7 @@ export function MentionAutocomplete({
     if (!el) return;
     const onKeyDown = (e: Event) => {
       const ke = e as KeyboardEvent;
+      if (composing.current || ke.isComposing || ke.keyCode === 229 || ke.repeat || ke.shiftKey || ke.ctrlKey || ke.altKey || ke.metaKey) return;
       if (!token || dismissedKey === tokenKey || blurClosed || suggestions.length === 0) return;
       if (ke.key === "ArrowDown") {
         ke.preventDefault();
@@ -216,7 +231,7 @@ export function MentionAutocomplete({
       id={LISTBOX_ID}
       role="listbox"
       aria-label="Mention suggestions"
-      className="absolute inset-x-0 top-full z-50 mt-1 overflow-hidden rounded-m3-sm border border-outline-variant bg-surface-container shadow-lg"
+      className="absolute inset-x-0 bottom-full z-50 mb-1 overflow-hidden rounded-m3-sm border border-outline-variant bg-surface-container shadow-lg"
     >
       <ul className="max-h-56 overflow-y-auto py-1">
         {suggestions.map((s, i) => (

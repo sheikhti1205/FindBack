@@ -1,15 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useId, useRef, useState } from "react";
 import { Copy, Share2 } from "lucide-react";
 import { copyReportLink, shareReport } from "../utils/shareReport";
 import { announce } from "./LiveRegion";
-import { BottomSheet } from "./BottomSheet";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
+import { ActionMenu } from "./ActionMenu";
 
 /**
  * The one share control: the system share sheet plus the copy action.
  *
- * One icon slot opens an explicit Share / Copy menu. Menu keyboard handling
- * follows OwnerReportMenu: arrows/Home/End, Escape return, Tab leaves freely.
+ * One icon slot opens the shared anchored Share / Copy menu. React Aria owns
+ * focus/keyboard/positioning; the overlay bridge consumes nested Back/Escape.
  *
  * HONESTY: a capability that is missing is never dressed up as a success.
  * The share path reports what actually happened (shared / dismissed / copied)
@@ -21,12 +21,7 @@ export function ReportShareButton({ postId, title }: { postId: string; title: st
   const [error, setError] = useState<string | null>(null);
   const [manualLink, setManualLink] = useState<string | null>(null);
   const fieldId = useId();
-  const menuId = useId();
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ left: 8, top: 8 });
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const lastItem = useRef(false);
 
   // Lifetime: an async share/copy may finish after this control has been
   // reused for another report or removed from the screen. Neither the
@@ -57,59 +52,6 @@ export function ReportShareButton({ postId, title }: { postId: string; title: st
 
   function close() {
     setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const trigger = triggerRef.current?.getBoundingClientRect();
-    const menu = menuRef.current?.getBoundingClientRect();
-    if (!trigger || !menu) return;
-    const left = Math.max(8, Math.min(trigger.left, window.innerWidth - menu.width - 8));
-    const below = trigger.bottom + 4;
-    const top = Math.max(8, Math.min(
-      below + menu.height <= window.innerHeight - 8 ? below : trigger.top - menu.height - 4,
-      window.innerHeight - menu.height - 8,
-    ));
-    setPosition({ left, top });
-    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
-    items?.[lastItem.current ? items.length - 1 : 0]?.focus();
-  }, [open, error]);
-
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = () => setOpen(false);
-    const outside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) dismiss();
-    };
-    const scroll = (event: Event) => { if (!menuRef.current?.contains(event.target as Node)) dismiss(); };
-    document.addEventListener("pointerdown", outside);
-    window.addEventListener("resize", dismiss);
-    document.addEventListener("scroll", scroll, true);
-    return () => {
-      document.removeEventListener("pointerdown", outside);
-      window.removeEventListener("resize", dismiss);
-      document.removeEventListener("scroll", scroll, true);
-    };
-  }, [open]);
-
-  function onMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape" || event.key === "Tab") {
-      // Escape belongs to this menu, not an enclosing modal. Tab is not trapped:
-      // restore the anchor so the browser can advance to the next row action.
-      if (event.key === "Escape") event.preventDefault();
-      event.stopPropagation();
-      close();
-      return;
-    }
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
-    if (!items.length) return;
-    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 :
-      (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-    items[next]?.focus();
   }
 
   async function onShare() {
@@ -166,45 +108,14 @@ export function ReportShareButton({ postId, title }: { postId: string; title: st
   }
 
   return (
-    <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}
-      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>
-        <button
-          type="button"
-          aria-label="Share report"
-          ref={triggerRef}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-controls={open ? menuId : undefined}
-          aria-busy={busy}
-          aria-disabled={busy}
-          className="fb-report-action"
-          onClick={() => { if (!busy) { lastItem.current = false; setOpen((value) => !value); } }}
-          onKeyDown={(event) => {
-            if (!busy && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-              event.preventDefault();
-              lastItem.current = event.key === "ArrowUp";
-              setOpen(true);
-            }
-          }}
-        >
-          <Share2 size={18} aria-hidden /><span>Share</span>
-        </button>
-      {open ? <div id={menuId} role="menu" aria-label="Share options" ref={menuRef}
-        onKeyDown={onMenuKeyDown}
-        style={{ ...position, width: "min(14rem, calc(100vw - 16px))", maxHeight: "calc(100dvh - 16px)" }}
-        className="fixed z-50 overflow-y-auto rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg">
-        {error ? <p role="alert" className="px-3 py-1 text-xs text-error">{error}</p> : null}
-        <button type="button" role="menuitem" onClick={() => void onShare()}
-          className="flex min-h-[44px] w-full items-center gap-2 rounded-m3-sm px-3 py-2 text-left text-sm text-on-surface">
-          <Share2 size={18} className="shrink-0" aria-hidden />Share report
-        </button>
-        <button type="button" role="menuitem" onClick={() => void onCopy()}
-          className="flex min-h-[44px] w-full items-center gap-2 rounded-m3-sm px-3 py-2 text-left text-sm text-on-surface">
-          <Copy size={18} className="shrink-0" aria-hidden />Copy link
-        </button>
-      </div> : null}
-      {manualLink && typeof document !== "undefined" ? createPortal(
-        <BottomSheet open onClose={() => setManualLink(null)} title="Copy link" height="large">
+    <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}>
+      <ActionMenu label="Share report" open={open} onOpenChange={setOpen} disabled={busy} triggerClassName="fb-report-action"
+        feedback={error && <p role="alert" className="max-w-56 px-3 py-2 text-xs text-error">{error}</p>}
+        icon={<><Share2 size={18} aria-hidden /><span>Share</span></>} items={[
+          { id: "share", label: "Share report", icon: <Share2 size={18} aria-hidden />, onAction: () => { void onShare(); } },
+          { id: "copy", label: "Copy link", icon: <Copy size={18} aria-hidden />, onAction: () => { void onCopy(); } },
+        ]} />
+      {manualLink && <AdaptiveTaskSurface open onClose={() => setManualLink(null)} title="Copy link">
         <div className="mt-1 flex min-w-0 flex-col gap-1">
           <label htmlFor={fieldId} className="text-xs text-on-surface-variant">
             Report link
@@ -221,8 +132,7 @@ export function ReportShareButton({ postId, title }: { postId: string; title: st
           />
           <p className="text-xs text-on-surface-variant">Select the link to copy it.</p>
         </div>
-        </BottomSheet>, document.body,
-      ) : null}
+      </AdaptiveTaskSurface>}
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type KeyboardEvent } from "react";
+import { flushSync } from "react-dom";
 import { Button, Menu, MenuItem, MenuTrigger, Separator, SubmenuTrigger } from "react-aria-components";
 import { ChevronRight, MoreHorizontal } from "lucide-react";
 import { LayeredPopover } from "./overlayFoundation";
@@ -33,23 +34,41 @@ function actionRows(items: readonly MenuAction[]) {
 }
 
 /** Anchored actions on every input/width. Never turns a simple action into a sheet. */
-export function ActionMenu({ label, items, icon, disabled = false }: {
+export function ActionMenu({ label, items, icon, disabled = false, open: controlledOpen, onOpenChange, triggerClassName = "fb-icon-control", feedback }: {
   label: string;
   items: readonly (MenuAction | MenuGroup)[];
   icon?: ReactNode;
   disabled?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  triggerClassName?: string;
+  /** Keep operation feedback in the active layer, not in its inert background. */
+  feedback?: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = (value: boolean) => { setLocalOpen(value); onOpenChange?.(value); };
+  const leaveOnTab = (event: KeyboardEvent) => {
+    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey || event.nativeEvent.isComposing) return;
+    // RAC's modal Popover contains Tab. A menu must instead dismiss and let
+    // the browser advance from its launcher (the parent dialog still traps).
+    // Remove containment/inert synchronously before the native default action.
+    flushSync(() => setOpen(false));
+    trigger.current?.focus({ preventScroll: true });
+  };
   const finePointer = useFinePointer();
   const width = useViewportWidth();
   // Sideways collision flipping cannot fit two 15rem panels into a narrow
   // window. Touch uses a stacked second panel; roomy fine-pointer gets flyout.
   const flyout = finePointer && width >= COMPACT_MAX_PX;
   return <MenuTrigger isOpen={open} onOpenChange={setOpen}>
-    <Button aria-label={label} isDisabled={disabled} className="fb-icon-control">
+    <Button ref={trigger} aria-label={label} isDisabled={disabled} className={triggerClassName}>
       {icon ?? <MoreHorizontal size={20} aria-hidden="true" />}
     </Button>
     <LayeredPopover placement="bottom end" offset={4}>
+      <div onKeyDownCapture={leaveOnTab}>
+      {feedback}
       <Menu aria-label={label} className="fb-action-menu">
         {items.flatMap((item, index) => {
           if (!("items" in item)) return [
@@ -66,6 +85,7 @@ export function ActionMenu({ label, items, icon, disabled = false }: {
           </SubmenuTrigger>];
         })}
       </Menu>
+      </div>
     </LayeredPopover>
   </MenuTrigger>;
 }

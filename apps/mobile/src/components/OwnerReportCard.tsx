@@ -12,7 +12,7 @@ import {
   Tag,
   Heart,
 } from "lucide-react";
-import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { MediaViewer } from "./MediaViewer";
 import { OwnerReportMenu, useOwnerReportActions } from "./OwnerReportActions";
 import { OwnerStatusSwipe } from "./OwnerStatusSwipe";
@@ -164,7 +164,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
             </span>
           )}
         </div>
-        <Link
+        <PostLink
           to={`/posts/${post.id}`}
           data-testid="owner-report-content"
           className="flex min-w-0 flex-col gap-1.5"
@@ -227,7 +227,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
             </span>
             <OwnerMetrics post={post} />
           </div>
-        </Link>
+        </PostLink>
       </div>
     </div>
   );

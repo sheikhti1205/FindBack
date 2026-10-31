@@ -27,8 +27,12 @@ const staged = {
 function props() {
   return { postId: "parent", participants: [], onSubmit: vi.fn().mockResolvedValue(undefined), onError: vi.fn() };
 }
+function chooseAttachment(name: "Photo" | "Report") {
+  fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
 async function stageReport() {
-  fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+  chooseAttachment("Report");
   fireEvent.change(screen.getByLabelText("Report link"), { target: { value: reportUrl } });
   fireEvent.click(screen.getByRole("button", { name: "Add report" }));
   await screen.findByRole("button", { name: "Remove report: Found blue wallet" });
@@ -49,7 +53,8 @@ describe("typed report references in the composer", () => {
   it("renders no picker affordance when the release gate is off", () => {
     state.enabled = false;
     render(<CommentComposer {...props()} />);
-    expect(screen.queryByRole("button", { name: "Attach a report" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+    expect(screen.queryByRole("menuitem", { name: "Report" })).toBeNull();
     expect(screen.queryByLabelText("Report link")).toBeNull();
   });
 
@@ -100,7 +105,7 @@ describe("typed report references in the composer", () => {
 
   it("rejects foreign links before resolving them", () => {
     render(<CommentComposer {...props()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+    chooseAttachment("Report");
     fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://other.example/r/${reportId}` } });
     fireEvent.click(screen.getByRole("button", { name: "Add report" }));
     expect(screen.getByRole("alert").textContent).toBe("Paste a FindBack report link.");
@@ -113,7 +118,7 @@ describe("typed report references in the composer", () => {
   ])("refuses unresolved reports without leaking the raw error (%s)", async (error, copy) => {
     state.fetchPost.mockRejectedValue(error);
     render(<CommentComposer {...props()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+    chooseAttachment("Report");
     fireEvent.change(screen.getByLabelText("Report link"), { target: { value: reportUrl } });
     fireEvent.click(screen.getByRole("button", { name: "Add report" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(copy));
@@ -124,13 +129,13 @@ describe("typed report references in the composer", () => {
     let resolve!: (value: unknown) => void;
     state.fetchPost.mockReturnValue(new Promise((r) => { resolve = r; }));
     render(<CommentComposer {...props()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+    chooseAttachment("Report");
     fireEvent.change(screen.getByLabelText("Report link"), { target: { value: reportUrl } });
     fireEvent.click(screen.getByRole("button", { name: "Add report" }));
     fireEvent.keyDown(screen.getByLabelText("Report link"), { key: "Escape" });
     await act(async () => resolve({ id: reportId, title: "Found blue wallet" }));
     expect(screen.queryByRole("button", { name: /Remove report:/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Attach a report" })).toBe(document.activeElement);
+    expect(screen.getByRole("button", { name: "Add attachment" })).toBe(document.activeElement);
   });
 
   it("can resolve again after being disabled during a pending lookup", async () => {
@@ -138,7 +143,7 @@ describe("typed report references in the composer", () => {
     state.fetchPost.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
     const p = props();
     const { rerender } = render(<CommentComposer {...p} />);
-    fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+    chooseAttachment("Report");
     fireEvent.change(screen.getByLabelText("Report link"), { target: { value: reportUrl } });
     fireEvent.click(screen.getByRole("button", { name: "Add report" }));
     rerender(<CommentComposer {...p} disabled />);
@@ -185,14 +190,17 @@ describe("typed report references in the composer", () => {
     render(<CommentComposer {...props()} />);
     for (let i = 1; i <= 4; i++) {
       const id = `${i}1111111-1111-4111-8111-111111111111`;
-      fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+      chooseAttachment("Report");
       fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://findback.example/r/${id}` } });
       fireEvent.click(screen.getByRole("button", { name: "Add report" }));
       await screen.findByRole("button", { name: `Remove report: ${id}` });
     }
-    expect(screen.getByRole("button", { name: "Attach a report" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+    expect(screen.getByRole("menuitem", { name: "Report" }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     fireEvent.click(screen.getAllByRole("button", { name: /Remove report:/ })[0]!);
-    expect(screen.getByRole("button", { name: "Attach a report" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+    expect(screen.getByRole("menuitem", { name: "Report" }).getAttribute("aria-disabled")).not.toBe("true");
   });
 
   it("reserves the final slot while native photo preparation overlaps a report-selection attempt", async () => {
@@ -206,14 +214,14 @@ describe("typed report references in the composer", () => {
     render(<CommentComposer {...p} />);
     for (let i = 1; i <= 3; i++) {
       const id = `${i}1111111-1111-4111-8111-111111111111`;
-      fireEvent.click(screen.getByRole("button", { name: "Attach a report" }));
+      chooseAttachment("Report");
       fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://findback.example/r/${id}` } });
       fireEvent.click(screen.getByRole("button", { name: "Add report" }));
       await screen.findByRole("button", { name: `Remove report: ${id}` });
     }
-    fireEvent.click(screen.getByRole("button", { name: "Attach a photo" }));
+    chooseAttachment("Photo");
     await waitFor(() => expect(state.prepare).toHaveBeenCalledTimes(1));
-    const reportControl = screen.getByRole("button", { name: "Attach a report" });
+    const reportControl = screen.getByRole("button", { name: "Add attachment" });
     expect(reportControl).toHaveProperty("disabled", true);
     fireEvent.click(reportControl);
     expect(screen.queryByLabelText("Report link")).toBeNull();

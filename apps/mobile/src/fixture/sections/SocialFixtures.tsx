@@ -367,7 +367,7 @@ export function SocialFixtures() {
           />
         </FixtureFrame>
         <FixtureFrame section="my-reports" variant="long-content">
-          <PostCard to="/posts/fx-detail" index={0}>
+          <PostCard index={0}>
             <PostCardContent
               post={makePost("fx-owner-long", {
                 title:

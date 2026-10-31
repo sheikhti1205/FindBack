@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useAuth } from "../auth";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
-import { BottomSheet } from "./BottomSheet";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { Button } from "./Button";
 import { TextAreaField } from "./Fields";
 import { PreferenceRadioRow } from "./settings";
@@ -123,12 +123,11 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
   };
 
   return (
-    <BottomSheet
+    <AdaptiveTaskSurface
       open={open}
       onClose={onClose}
       title="Report a problem"
       description={`Tell us what is wrong with ${subject}.`}
-      height="large"
     >
       {sent ? (
         <div className="flex flex-col gap-3 py-2" data-testid="report-receipt">
@@ -184,7 +183,7 @@ export function ReportSheet({ open, onClose, target, onReported }: ReportSheetPr
           </Button>
         </div>
       )}
-    </BottomSheet>
+    </AdaptiveTaskSurface>
   );
 }
 

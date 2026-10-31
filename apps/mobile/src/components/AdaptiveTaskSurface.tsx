@@ -12,9 +12,10 @@ interface SurfaceProps {
   children: ReactNode;
   footer?: ReactNode;
   busy?: boolean;
+  width?: "standard" | "report";
 }
 
-function DialogSurface({ open, onClose, title, description, children, footer, busy = false, confirmation = false }: SurfaceProps & { confirmation?: boolean }) {
+function DialogSurface({ open, onClose, title, description, children, footer, busy = false, confirmation = false, width = "standard" }: SurfaceProps & { confirmation?: boolean }) {
   const depth = useOverlayDepth();
   const descriptionId = useId();
   const viewport = useKeyboardInset();
@@ -26,7 +27,7 @@ function DialogSurface({ open, onClose, title, description, children, footer, bu
       top: Math.max(0, window.innerHeight - viewport.insetPx - viewport.viewportHeightPx),
       bottom: "auto",
     }}>
-    <Modal className={`fb-modal-panel ${confirmation ? "fb-confirm-panel" : "fb-task-panel"}`}>
+    <Modal className={`fb-modal-panel ${confirmation ? "fb-confirm-panel" : "fb-task-panel"} ${width === "report" ? "fb-report-panel" : ""}`}>
       <OverlayDepthProvider depth={depth}>
         <OverlayStackBridge onClose={onClose} dismissible={!busy} />
         <Dialog role={confirmation ? "alertdialog" : "dialog"} aria-describedby={description ? descriptionId : undefined}

@@ -10,6 +10,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetNativeShare, __setNativeShare } from "../utils/shareReport";
 import { ReportShareButton } from "./ReportShareButton";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
+import { consumeBackIntercept } from "./backNavigation";
 
 const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
@@ -44,6 +46,16 @@ afterEach(() => {
 });
 
 describe("ReportShareButton", () => {
+  it("consumes Back in a nested share menu instead of closing the report", async () => {
+    const close = vi.fn();
+    render(<AdaptiveTaskSurface open title="Report" onClose={close}><ReportShareButton postId={id} title="Lost keys" /></AdaptiveTaskSurface>);
+    fireEvent.click(screen.getByRole("button", { name: "Share report" }));
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    act(() => { expect(consumeBackIntercept()).toBe(true); });
+    expect(close).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
   function choose(name: string) {
     fireEvent.click(screen.getByRole("button", { name: "Share report" }));
     fireEvent.click(screen.getByRole("menuitem", { name }));
@@ -53,14 +65,14 @@ describe("ReportShareButton", () => {
     render(<ReportShareButton postId={id} title="Lost keys" />);
     expect(screen.getAllByRole("button")).toHaveLength(1);
     const trigger = screen.getByRole("button", { name: "Share report" });
-    expect(trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(["true", "menu"]).toContain(trigger.getAttribute("aria-haspopup"));
     fireEvent.click(trigger);
     expect(screen.getByRole("menuitem", { name: "Share report" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeTruthy();
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog")?.getAttribute("aria-modal")).not.toBe("true");
   });
 
-  it("supports keyboard navigation, Escape focus return and non-trapping Tab", () => {
+  it("supports keyboard navigation, Escape focus return and non-trapping Tab", async () => {
     render(<ReportShareButton postId={id} title="Lost keys" />);
     const trigger = screen.getByRole("button", { name: "Share report" });
     trigger.focus();
@@ -74,11 +86,11 @@ describe("ReportShareButton", () => {
     expect(document.activeElement).toBe(share);
     fireEvent.keyDown(share, { key: "Escape" });
     expect(screen.queryByRole("menu")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
     fireEvent.keyDown(trigger, { key: "ArrowUp" });
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Copy link" }));
     fireEvent.keyDown(document.activeElement!, { key: "Tab" });
-    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
   it("dismisses the native sheet honestly and does not copy", async () => {

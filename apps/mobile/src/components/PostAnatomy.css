@@ -1,0 +1,25 @@
+.fb-post-content { display: flex; flex-direction: column; min-width: 0; gap: .375rem; }
+.fb-post-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.fb-post-identity .fb-quick-trigger { min-width: 0; flex-shrink: 1; font-size: .875rem; font-weight: 600; }
+.fb-post-identity .fb-identity-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-post-time { flex-shrink: 0; color: var(--fb-on-surface-variant); font-size: .75rem; }
+.fb-post-overflow { margin-inline-start: auto; flex-shrink: 0; }
+.fb-post-heading { display: flex; flex-direction: column; min-width: 0; gap: .25rem; }
+.fb-post-status { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; color: var(--fb-on-surface-variant); font-size: .75rem; }
+.fb-post-title-link { display: block; border-radius: .25rem; }
+.fb-post-title-link:focus-visible, .fb-post-photo:focus-visible { outline: 2px solid var(--fb-on-surface); outline-offset: 2px; }
+.fb-post-facts { display: flex; flex-wrap: wrap; gap: .25rem .75rem; color: var(--fb-on-surface-variant); font-size: .75rem; }
+.fb-post-facts p { display: flex; align-items: center; gap: .25rem; min-width: 0; overflow-wrap: anywhere; }
+.fb-post-facts svg { flex-shrink: 0; }
+.fb-post-photo { display: block; min-width: 44px; min-height: 44px; padding: 0; text-align: start; }
+.fb-post-photo > .fb-thumb { display: block; }
+.fb-post-home-feed .fb-post-heading, .fb-post-home-feed > .fb-post-identity, .fb-post-home-feed > .fb-post-description, .fb-post-home-feed > .fb-post-facts, .fb-post-home-feed > [data-testid="post-footer"] { margin-inline: .5rem; }
+.fb-post-compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .625rem; }
+.fb-post-compact .fb-post-identity { grid-column: 1 / -1; }
+.fb-post-compact .fb-post-heading { grid-column: 1; grid-row: 2; }
+.fb-post-compact .fb-post-photo { grid-column: 2; grid-row: 2 / 4; align-self: start; }
+.fb-post-compact .fb-post-facts { grid-column: 1; grid-row: 3; }
+.fb-post-compact [data-testid="post-footer"] { grid-column: 1 / -1; }
+.fb-post-masonry .fb-post-identity { flex-wrap: wrap; gap: .125rem .375rem; }
+.fb-post-masonry .fb-post-identity .fb-quick-trigger { flex: 1; }
+.fb-post-masonry .fb-post-time { order: 1; }

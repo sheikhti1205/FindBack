@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { motion } from "framer-motion";
 import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
@@ -203,7 +203,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
               ) : (
                 <MatchPhoto post={match.post} />
               )}
-              <Link
+              <PostLink
                 to={`/posts/${match.post.id}`}
                 className="flex min-w-0 flex-1 flex-col gap-2"
               >
@@ -231,7 +231,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
                   </ul>
                 </div>
               )}
-              </Link>
+              </PostLink>
               {onConfirmMatch && (
                 <button
                   type="button"

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { PostLink } from "./PostNavigation";
 import { MessageSquare } from "lucide-react";
 import "./PostActionRow.css";
 
@@ -72,9 +72,9 @@ export function PostActionRow({ slots, commentCount, className, commentsHref }: 
     >
       {slots.like}
       {commentsHref ? (
-        <Link to={commentsHref} aria-label={commentLabel} className="fb-report-action">
+        <PostLink to={commentsHref} aria-label={commentLabel} className="fb-report-action">
           {commentControl}
-        </Link>
+        </PostLink>
       ) : (
         <button
           type="button"

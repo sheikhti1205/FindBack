@@ -112,17 +112,29 @@ describe("PostDetail redesign (UXN-3)", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
-  it("collapses a long description with Show more/less + aria-expanded", async () => {
+  it("discloses visually overflowing description with See more/less and retains all text", async () => {
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(300);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(100);
     renderDetail();
-    const more = await screen.findByRole("button", { name: /show more/i });
+    const more = await screen.findByRole("button", { name: /see more/i });
+    expect(screen.getByTestId("post-description").textContent?.length).toBeGreaterThan(280);
     expect(more.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(more);
     const less = await screen.findByRole("button", { name: /show less/i });
     expect(less.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(less);
-    expect(await screen.findByRole("button", { name: /show more/i })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /see more/i })).toBeTruthy();
+  });
+
+  it("uses rendered overflow, not a 280-character budget, for disclosure", async () => {
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(180);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(100);
+    postsMock.fetchPost.mockResolvedValue({ ...basePost, description: "Blue\nleather\nwallet\nwith\na\nsmall\nzip." });
+    renderDetail();
+    expect(await screen.findByRole("button", { name: "See more" })).toBeTruthy();
   });
 
   it("comments action scrolls to the Comments section", async () => {
@@ -132,6 +144,25 @@ describe("PostDetail redesign (UXN-3)", () => {
     const action = await screen.findByRole("button", { name: /comments, 7/i });
     fireEvent.click(action);
     expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("uses shared identity before content, inline description before media, and Save in overflow", async () => {
+    renderDetail();
+    const summary = await screen.findByRole("region", { name: "Report summary" });
+    const identity = within(summary).getByRole("button", { name: "About owner" });
+    const title = within(summary).getByRole("heading", { level: 1, name: "Lost wallet" });
+    expect(identity.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const description = screen.getByTestId("post-description");
+    const photo = screen.getByRole("button", { name: "Open photo 1 of 2 fullscreen" });
+    expect(description.compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(identity);
+    const card = await screen.findByRole("dialog", { name: "About owner" });
+    expect(within(card).getByRole("link", { name: "View profile" }).getAttribute("href")).toBe("/u/owner");
+    fireEvent.keyDown(card, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "About owner" })).toBeNull());
+    expect(within(screen.getByRole("group", { name: "Report actions" })).queryByRole("button", { name: "Save report" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More report actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Save report" })).toBeTruthy();
   });
 
   it("uses instant scroll under reduced motion", async () => {

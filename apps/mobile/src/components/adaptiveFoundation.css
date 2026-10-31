@@ -30,8 +30,9 @@
   position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
   background: var(--scrim); padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
-.fb-modal-panel { width: 100%; min-width: 0; max-height: 100%; border-radius: 20px; background: var(--fb-surface); color: var(--fb-on-surface); box-shadow: var(--shadow-md); }
+.fb-modal-panel { display: flex; flex-direction: column; width: 100%; min-width: 0; max-height: 100%; border-radius: 20px; background: var(--fb-surface); color: var(--fb-on-surface); box-shadow: var(--shadow-md); }
 .fb-task-panel { max-width: 44rem; }
+.fb-report-panel { max-width: 960px; }
 .fb-confirm-panel { max-width: 26rem; }
 .fb-surface-dialog { display: flex; flex-direction: column; min-height: 0; max-height: inherit; outline: none; }
 .fb-surface-dialog:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; border-radius: inherit; }
@@ -60,14 +61,24 @@
 .fb-split-list, .fb-split-detail { height: 100%; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
 .fb-split-wide .fb-split-list { border-inline-end: 1px solid var(--fb-outline-variant); }
 .fb-split-list:focus-visible, .fb-split-detail:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; }
-.fb-composer-shell { min-width: 0; width: 100%; border: 1px solid var(--fb-outline-variant); background: var(--fb-surface); border-radius: 20px; }
+.fb-composer-shell { container: composer / inline-size; min-width: 0; width: 100%; border: 1px solid var(--fb-outline-variant); background: var(--fb-surface); border-radius: 20px; }
 .fb-composer-shell:focus-within { border-color: var(--fb-focus); }
 .fb-composer-row { display: flex; align-items: flex-end; gap: 4px; padding: 4px; }
-.fb-composer-row textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 208px; resize: none; padding: 10px 8px; font: inherit; line-height: 1.5; color: inherit; background: transparent; }
+.fb-composer-field { position: relative; flex: 1; min-width: 0; }
+.fb-composer-row textarea { display: block; width: 100%; min-width: 0; min-height: 44px; max-height: 208px; resize: none; padding: 10px 8px; font: inherit; line-height: 1.5; color: inherit; background: transparent; }
 .fb-composer-row textarea:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; border-radius: 12px; }
 .fb-composer-send { color: var(--fb-primary); }
 .fb-composer-actions { display: flex; flex-wrap: wrap; flex: none; }
 .fb-composer-context, .fb-composer-attachments { min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--fb-outline-variant); overflow-wrap: anywhere; }
+.fb-comment-attachment-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 5rem), 5rem)); }
+/* Reflow within the same coherent bar instead of squeezing large-text drafts
+   between two icon targets. Responds to available space, not device guesses. */
+@container composer (max-width: 16rem) {
+  .fb-composer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .fb-composer-field { grid-column: 1 / -1; grid-row: 1; }
+  .fb-composer-actions { grid-column: 1; grid-row: 2; }
+  .fb-composer-send { grid-column: 2; grid-row: 2; }
+}
 @media (max-width: 767px) {
   .fb-modal-backdrop:has(.fb-task-panel) { padding: 0; }
   .fb-task-panel { height: 100%; max-height: 100%; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }

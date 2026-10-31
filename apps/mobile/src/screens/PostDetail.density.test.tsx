@@ -131,7 +131,7 @@ describe("PostDetail density (owner wave)", () => {
     const body = await screen.findByText("Nested reply");
     const reply = body.closest("li")!;
     fireEvent.click(within(reply).getByRole("button", { name: "Actions for comment by helper" }));
-    fireEvent.click(within(reply).getByRole("menuitem", { name: "Report comment" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Report comment" }));
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
     await screen.findByTestId("report-receipt");
@@ -213,7 +213,7 @@ describe("PostDetail density (owner wave)", () => {
     expect(screen.getByText("first comment")).toBeTruthy();
   });
 
-  it("puts like, comments, share and save in ONE flat action row", async () => {
+  it("puts like, comments and share in one flat row, with Save in the identity overflow", async () => {
     renderDetail();
     const row = await screen.findByTestId("post-action-row");
     // One group, no bordered button cards: the row is the action surface.
@@ -221,13 +221,15 @@ describe("PostDetail density (owner wave)", () => {
     expect(row.getAttribute("aria-label")).toBe("Report actions");
     // Every action of the reference row is reachable from it.
     expect(row.querySelector('[data-testid="detail-like"]')).not.toBeNull();
-    expect(row.querySelector('[data-testid="save-report-button"]')).not.toBeNull();
+    expect(row.querySelector('[data-testid="save-report-button"]')).toBeNull();
     expect(row.querySelector('[aria-label^="Comments"]')).not.toBeNull();
     expect(row.querySelector('[aria-label="Share report"]')).not.toBeNull();
     // The old three-cell grid is gone.
     expect(screen.queryByRole("group", { name: "Report actions" })?.getAttribute("class")).not.toContain(
       "grid-cols-3",
     );
+    fireEvent.click(screen.getByRole("button", { name: "More report actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Save report" })).toBeTruthy();
   });
 
   it("renders a comment as a flat row, not as its own bordered card", async () => {
@@ -240,6 +242,31 @@ describe("PostDetail density (owner wave)", () => {
     expect(row?.className ?? "").not.toContain("border-outline-variant");
     expect(row?.className ?? "").not.toContain("rounded-m3-md");
     expect(row?.className ?? "").not.toContain("p-3");
+  });
+
+  it("opens comment identity in a quick card and keeps overflow in its local header", async () => {
+    renderDetail();
+    const row = (await screen.findByText("first comment")).closest("li")!;
+    const identity = within(row).getByRole("button", { name: "About neighbour" });
+    const header = identity.closest("header")!;
+    expect(header).not.toBeNull();
+    expect(within(header).getByRole("button", { name: "Actions for comment by neighbour" })).toBeTruthy();
+    const time = header.querySelector("time")!;
+    expect(time.getAttribute("dateTime")).toBe(comment.createdAt);
+    expect(time.getAttribute("title")).toBeTruthy();
+    fireEvent.click(identity);
+    const card = await screen.findByRole("dialog", { name: "About neighbour" });
+    expect(within(card).getByRole("link", { name: "View profile" }).getAttribute("href")).toBe("/u/neighbour");
+  });
+
+  it("keeps Like immediately beside Reply instead of pushing it to the far edge", async () => {
+    renderDetail();
+    const row = (await screen.findByText("first comment")).closest("li")!;
+    const like = within(row).getByTestId("comment-react-c1");
+    const reply = within(row).getByRole("button", { name: "Reply to neighbour" });
+    expect(like.textContent).toContain("Like");
+    expect(like.nextElementSibling).toBe(reply);
+    expect(like.parentElement?.contains(within(row).getByRole("button", { name: "Actions for comment by neighbour" }))).toBe(false);
   });
 
   it("keeps the write bar at the END of the thread, not above it", async () => {

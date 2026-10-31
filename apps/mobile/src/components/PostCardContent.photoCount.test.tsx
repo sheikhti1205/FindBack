@@ -3,6 +3,7 @@ import type { PostItem } from "@findback/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PostCardContent } from "./PostCardContent";
+import { MemoryRouter } from "react-router";
 
 function postWithPhotos(count: number): PostItem {
   return {
@@ -39,22 +40,22 @@ describe("PostCardContent photo counts (G17)", () => {
   afterEach(cleanup);
 
   it("editorial cards show the photo count", () => {
-    render(<PostCardContent post={postWithPhotos(3)} layout="editorial" />);
+    render(<PostCardContent post={postWithPhotos(3)} layout="editorial" />, { wrapper: MemoryRouter });
     expect(screen.getByTestId("photo-count").textContent).toMatch(/3 photos/);
   });
 
   it("editorial cards show a singular count for one photo", () => {
-    render(<PostCardContent post={postWithPhotos(1)} layout="editorial" />);
+    render(<PostCardContent post={postWithPhotos(1)} layout="editorial" />, { wrapper: MemoryRouter });
     expect(screen.getByTestId("photo-count").textContent).toMatch(/1 photo/);
   });
 
   it("compact cards show the photo count", () => {
-    render(<PostCardContent post={postWithPhotos(5)} layout="compact" />);
+    render(<PostCardContent post={postWithPhotos(5)} layout="compact" />, { wrapper: MemoryRouter });
     expect(screen.getByTestId("photo-count").textContent).toMatch(/5 photos/);
   });
 
-  it("classic cards stay verbatim (no count badge)", () => {
-    render(<PostCardContent post={postWithPhotos(3)} layout="classic" />);
-    expect(screen.queryByTestId("photo-count")).toBeNull();
+  it("classic cards disclose their additional photos like other static previews", () => {
+    render(<PostCardContent post={postWithPhotos(3)} layout="classic" />, { wrapper: MemoryRouter });
+    expect(screen.getByTestId("photo-count").textContent).toBe("3 photos");
   });
 });

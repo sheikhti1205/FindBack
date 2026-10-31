@@ -101,7 +101,7 @@ function deleteButtonFor(commentId: string) {
   const row = document.getElementById(`detail-comment-${commentId}`)!;
   const trigger = within(row).getAllByRole("button", { name: /actions for comment by/i }).find(b => b.closest("li") === row)!;
   fireEvent.click(trigger);
-  return within(row).getByRole("menuitem", { name: /delete comment/i });
+  return screen.getByRole("menuitem", { name: /delete comment/i });
 }
 
 describe("PostDetail inline comment threads", () => {
@@ -131,7 +131,8 @@ describe("PostDetail inline comment threads", () => {
     // Actions: Reply and the Like control with its count — no picker, no tray.
     const reply = within(row).getByRole("button", { name: /reply to u1/i });
     const like = within(row).getByRole("button", { name: /like this comment/i });
-    expect(like.textContent).toMatch(/\d/);
+    expect(like.textContent).toContain("Like");
+    expect(like.getAttribute("aria-label")).toMatch(/0 likes/);
     for (const control of [reply, like]) {
       expect(control.className).toMatch(/min-h-\[4[48]px\]/);
     }

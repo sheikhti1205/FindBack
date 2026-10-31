@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router";
 import { MotionConfig } from "framer-motion";
 import { PostCardContent } from "./PostCardContent";
 import { PostList } from "./PostList";
+vi.mock("../auth", () => ({ useAuth: () => ({ user: null }) }));
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -66,8 +67,8 @@ function imagePost() {
 
 describe("PostCardContent editorial (Home Variant A)", () => {
   it("renders kicker, serif headline, and a reserved image frame while loading", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" />);
-    expect(screen.getByText("Found · Electronics · Open")).toBeTruthy();
+    render(<PostCardContent post={imagePost()} layout="editorial" />, { wrapper: MemoryRouter });
+    expect(screen.getByTestId("post-status-chip").textContent).toBe("Found");
     const title = screen.getByRole("heading", { name: "Black over-ear headphones" });
     expect(title.className).toContain("fb-editorial-title");
     expect(title.className).toContain("break-words");
@@ -79,7 +80,7 @@ describe("PostCardContent editorial (Home Variant A)", () => {
   });
 
   it("shows a labelled fallback with no layout shift when the photo fails", () => {
-    render(<PostCardContent post={imagePost()} layout="editorial" />);
+    render(<PostCardContent post={imagePost()} layout="editorial" />, { wrapper: MemoryRouter });
     fireEvent.error(screen.getByAltText("Photo for Black over-ear headphones"));
     const frame = screen.getByTestId("post-image-state");
     expect(frame.getAttribute("data-state")).toBe("failed");
@@ -87,38 +88,38 @@ describe("PostCardContent editorial (Home Variant A)", () => {
   });
 
   it("renders text-only posts without an image box", () => {
-    render(<PostCardContent post={post()} layout="editorial" />);
-    expect(screen.getByText("No photo attached")).toBeTruthy();
+    render(<PostCardContent post={post()} layout="editorial" />, { wrapper: MemoryRouter });
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
     expect(screen.queryByTestId("post-image-state")).toBeNull();
   });
 });
 
 describe("PostCardContent compact (Search Variant B)", () => {
   it("renders a 64px thumb row with title and tag meta", () => {
-    render(<PostCardContent post={imagePost()} layout="compact" />);
+    render(<PostCardContent post={imagePost()} layout="compact" />, { wrapper: MemoryRouter });
     expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
-    expect(screen.getByText("Found · Electronics · Open")).toBeTruthy();
+    expect(screen.getByTestId("post-status-chip").textContent).toBe("Found");
     expect(screen.getByTestId("post-image-state").className).toContain("fb-thumb");
   });
 
-  it("keeps column rhythm with a no-photo tile", () => {
-    render(<PostCardContent post={post()} layout="compact" />);
-    expect(screen.getByText("No photo")).toBeTruthy();
+  it("keeps reports without photos text-first instead of reserving an empty tile", () => {
+    render(<PostCardContent post={post()} layout="compact" />, { wrapper: MemoryRouter });
+    expect(screen.queryByRole("button", { name: /Photo for/ })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
   });
 
   it("P6: compact title clamps to two lines so long titles wrap readably", () => {
-    render(<PostCardContent post={imagePost()} layout="compact" />);
+    render(<PostCardContent post={imagePost()} layout="compact" />, { wrapper: MemoryRouter });
     const title = screen.getByRole("heading", { name: "Black over-ear headphones" });
     expect(title.className).toMatch(/line-clamp-2/);
   });
 });
 
 describe("PostCardContent classic default", () => {
-  it("preserves the pre-U2 rendering when no layout is passed", () => {
-    const { container } = render(<PostCardContent post={imagePost()} />);
-    const img = container.querySelector("img");
-    expect(img?.className).toContain("aspect-[4/3]");
-    expect(screen.queryByTestId("post-image-state")).toBeNull();
+  it("uses the same independent photo preview when no layout is passed", () => {
+    render(<PostCardContent post={imagePost()} />, { wrapper: MemoryRouter });
+    expect(screen.getByRole("button", { name: "Photo for Black over-ear headphones" })).toBeTruthy();
+    expect(screen.getByTestId("post-image-state").className).toContain("fb-img-frame");
   });
 });
 
@@ -138,7 +139,7 @@ describe("PostList density", () => {
         <PostList items={[imagePost()]} {...base} density="editorial" />
       </MemoryRouter>,
     );
-    expect(screen.getByText("Found · Electronics · Open")).toBeTruthy();
+    expect(screen.getByTestId("post-status-chip").textContent).toBe("Found");
     expect(screen.getByTestId("post-image-state").className).toContain("fb-img-frame");
   });
 
@@ -199,11 +200,10 @@ describe("PostList home-feed density (reference-inspired Home redesign)", () => 
     const row = screen.getByTestId("post-action-row");
     expect(row.className).toMatch(/flex-nowrap/);
     expect(row.className).not.toMatch(/grid/);
-    // The category chip rides in the meta line (status · time · category)
-    // instead of spending a footer row of its own.
-    const meta = screen.getByTestId("post-status-chip").parentElement as HTMLElement;
-    expect(meta.contains(screen.getByTestId("post-time"))).toBe(true);
-    expect(meta.contains(screen.getByTestId("post-category"))).toBe(true);
+    // Time belongs to the identity; category is a compact fact after media.
+    const identity = screen.getByRole("button", { name: "About alice" }).closest("header")!;
+    expect(identity.contains(screen.getByTestId("post-time"))).toBe(true);
+    expect(screen.getByTestId("home-feed-media").compareDocumentPosition(screen.getByTestId("post-category")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const footer = screen.getByTestId("post-footer") as HTMLElement;
     expect(footer.contains(screen.getByTestId("post-category"))).toBe(false);
     expect(footer.contains(screen.getByTestId("home-feed-actions"))).toBe(true);
@@ -326,6 +326,6 @@ describe("PostList state transitions (Wave A)", () => {
       </MotionConfig>,
     );
     expect(screen.getByRole("heading", { name: "Black over-ear headphones" })).toBeTruthy();
-    expect(screen.getByRole("link")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Black over-ear headphones" }).getAttribute("href")).toBe("/posts/p1");
   });
 });

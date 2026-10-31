@@ -116,6 +116,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+function chooseAttachment(name: "GIF" | "Photo" | "Sticker") {
+  fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 describe("CommentComposer social layout", () => {
   it("renders avatar, expandable input, and a send icon (disabled while empty)", () => {
     render(<CommentComposer {...baseProps()} />);
@@ -512,7 +517,7 @@ describe("CommentComposer attachment tiling (display_order + provenance)", () =>
   const STORAGE_URL =
     "https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/public/findback-comment-media/u-9/x.jpg";
 
-  it("tiles uploads in pick order with position badges and a Storage chip once uploaded", async () => {
+  it("tiles uploads in pick order without exposing storage implementation copy", async () => {
     attachMock.upload.mockResolvedValue({ remoteUrl: STORAGE_URL, objectKey: "u-9/x.jpg" });
     render(<CommentComposer {...baseProps()} />);
     const picker = screen.getByTestId("comment-file-input") as HTMLInputElement;
@@ -520,10 +525,11 @@ describe("CommentComposer attachment tiling (display_order + provenance)", () =>
     expect(await screen.findByTestId("comment-attachments")).toBeTruthy();
     const strip = screen.getByTestId("comment-attachments");
     expect(strip.className).toMatch(/grid/);
-    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    await waitFor(() => expect(strip.querySelector('[data-provenance="storage"]')).toBeTruthy());
     const order = screen.getByText("1");
     expect(order.getAttribute("data-testid")).toMatch(/^comment-attachment-order-/);
-    const source = screen.getByText("Storage");
+    expect(screen.queryByText("Storage")).toBeNull();
+    const source = screen.getByText("Photo");
     expect(source.getAttribute("data-provenance")).toBe("storage");
   });
 
@@ -544,8 +550,8 @@ describe("CommentComposer attachment tiling (display_order + provenance)", () =>
     fireEvent.change(screen.getByTestId("comment-file-input") as HTMLInputElement, {
       target: { files: [file("p.jpg", "image/jpeg")] },
     });
-    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    await waitFor(() => expect(screen.getByText("Photo")).toBeTruthy());
+    chooseAttachment("GIF");
     fireEvent.change(screen.getByTestId("comment-gif-search"), { target: { value: "happy" } });
     fireEvent.click(await screen.findByTestId("comment-gif-result-happy-1"));
     await waitFor(() => expect(screen.getByText("KLIPY")).toBeTruthy());
@@ -557,7 +563,9 @@ describe("CommentComposer attachment tiling (display_order + provenance)", () =>
 });
 
 describe("CommentComposer Klipy", () => {  it("hides the GIF control when the key is absent (graceful)", () => {    render(<CommentComposer {...baseProps()} />);
-    expect(screen.queryByTestId("comment-gif")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add attachment" }));
+    expect(screen.queryByRole("menuitem", { name: "GIF" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Sticker" })).toBeNull();
   });
 
   it("searches Klipy, picks a result, and tracks the share only on post", async () => {
@@ -574,7 +582,7 @@ describe("CommentComposer Klipy", () => {  it("hides the GIF control when the ke
     ]);
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(<CommentComposer {...baseProps({ onSubmit })} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     expect(screen.getByTestId("comment-gif-search").getAttribute("placeholder")).toBe("Search KLIPY");
     fireEvent.change(screen.getByTestId("comment-gif-search"), { target: { value: "happy" } });
     const result = await screen.findByTestId("comment-gif-result-happy-1");
@@ -617,7 +625,7 @@ describe("CommentComposer Klipy search states", () => {
       .mockImplementationOnce(() => new Promise<unknown[]>((r) => { resolveFirst = r; }))
       .mockImplementationOnce(() => new Promise<unknown[]>((r) => { resolveSecond = r; }));
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     // Panel open fires the trending search; typing supersedes it.
     await waitFor(() => expect(klipyMock.searchGifs).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getByTestId("comment-gif-search"), { target: { value: "ab" } });
@@ -633,7 +641,7 @@ describe("CommentComposer Klipy search states", () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockRejectedValueOnce(new Error("offline"));
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     expect(await screen.findByTestId("comment-gif-retry")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toMatch(/couldn't load/i);
     klipyMock.searchGifs.mockResolvedValue([]);
@@ -661,7 +669,7 @@ describe("CommentComposer Klipy picker feel", () => {
     let resolve!: (items: unknown[]) => void;
     klipyMock.searchGifs.mockImplementation(() => new Promise<unknown[]>((r) => { resolve = r; }));
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     await waitFor(() => expect(klipyMock.searchGifs).toHaveBeenCalled());
     // Progress is announced for assistive tech but not shown as visible text.
     expect(screen.getByText("Searching GIFs")).toBeTruthy();
@@ -675,7 +683,7 @@ describe("CommentComposer Klipy picker feel", () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockResolvedValue([sized("wide", 400, 200), sized("unknown", 0, 0)]);
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     const wide = await screen.findByTestId("comment-gif-result-wide");
     expect(wide.getAttribute("style")).toContain("aspect-ratio: 2 / 1");
     // Missing dimensions fall back to a square tile, never a broken layout.
@@ -687,7 +695,7 @@ describe("CommentComposer Klipy picker feel", () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockResolvedValue([sized("tall", 10, 5000)]);
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     const tall = await screen.findByTestId("comment-gif-result-tall");
     expect(tall.getAttribute("style")).toContain("aspect-ratio: 0.5 / 1");
   });
@@ -696,7 +704,7 @@ describe("CommentComposer Klipy picker feel", () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockRejectedValueOnce(new Error("offline"));
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     for (const tab of ["comment-gif-tab-gifs", "comment-gif-tab-stickers"]) {
       expect(screen.getByTestId(tab).className).toContain("min-h-[44px]");
     }
@@ -709,7 +717,7 @@ describe("CommentComposer Klipy picker feel", () => {
     vi.stubEnv("VITE_KLIPY_API_KEY", "testing-key");
     klipyMock.searchGifs.mockResolvedValue([sized("happy-1", 400, 200)]);
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-gif"));
+    chooseAttachment("GIF");
     const search = screen.getByTestId("comment-gif-search") as HTMLInputElement;
     expect(screen.queryByTestId("comment-gif-search-clear")).toBeNull();
     fireEvent.change(search, { target: { value: "happy" } });
@@ -732,7 +740,7 @@ describe("CommentComposer native photo intake (FBX-038)", () => {
       objectKey: "u-9/x.jpg",
     });
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-attach"));
+    chooseAttachment("Photo");
     await waitFor(() =>
       expect(nativeMediaMock.chooseImages).toHaveBeenCalledWith({ source: "photos", limit: 4 }),
     );
@@ -753,7 +761,7 @@ describe("CommentComposer native photo intake (FBX-038)", () => {
       objectKey: "u-9/x.jpg",
     });
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-attach"));
+    chooseAttachment("Photo");
     await waitFor(() => expect(nativeMediaMock.chooseImages).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("comment-attachments")).toBeTruthy();
     expect(await screen.findByTestId("comment-attach-notice")).toBeTruthy();
@@ -765,7 +773,7 @@ describe("CommentComposer native photo intake (FBX-038)", () => {
     nativeMediaMock.available = true;
     nativeMediaMock.chooseImages.mockResolvedValue(null);
     render(<CommentComposer {...baseProps()} />);
-    fireEvent.click(screen.getByTestId("comment-attach"));
+    chooseAttachment("Photo");
     await waitFor(() => expect(nativeMediaMock.chooseImages).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("comment-attachments")).toBeNull();
     expect(screen.queryByTestId("comment-attach-notice")).toBeNull();

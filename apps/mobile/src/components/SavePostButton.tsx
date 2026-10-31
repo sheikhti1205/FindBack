@@ -2,6 +2,20 @@ import { Bookmark } from "lucide-react";
 import { announce } from "./LiveRegion";
 import { useSavedReports } from "../hooks/useSavedReports";
 
+/** One outcome/announcement owner for the button and the report overflow. */
+export function useSavePostAction(postId: string, title?: string) {
+  const { isSaved, toggle, pending, hasAccount } = useSavedReports();
+  const saved = isSaved(postId);
+  return {
+    saved, pending, hasAccount,
+    label: saved ? "Remove from saved reports" : "Save report",
+    onAction: async () => {
+      const written = await toggle(postId, title);
+      announce(written ? saved ? "Removed from saved reports" : "Report saved" : "Couldn't save this report");
+    },
+  };
+}
+
 /**
  * The Save (bookmark) control for a report.
  *
@@ -41,8 +55,7 @@ export function SavePostButton({
   /** Optional title snapshot for the saved list; the live title wins on the screen. */
   title?: string;
 }) {
-  const { isSaved, toggle, pending, hasAccount } = useSavedReports();
-  const saved = isSaved(postId);
+  const { saved, pending, hasAccount, label, onAction } = useSavePostAction(postId, title);
 
   return (
     <button
@@ -50,23 +63,10 @@ export function SavePostButton({
       data-testid="save-report-button"
       data-saved={saved ? "true" : "false"}
       aria-pressed={saved}
-      aria-label={saved ? "Remove from saved reports" : "Save report"}
+      aria-label={label}
       aria-busy={pending}
       disabled={!hasAccount}
-      onClick={async () => {
-        // The device write happens inside the toggle, before its first await,
-        // so the announcement follows a save that already happened — it never
-        // waits for the account round trip to tell the reader it worked. The
-        // answer decides whether anything happened at all.
-        const written = await toggle(postId, title);
-        announce(
-          written
-            ? saved
-              ? "Removed from saved reports"
-              : "Report saved"
-            : "Couldn't save this report",
-        );
-      }}
+      onClick={onAction}
       className={`fb-report-action min-h-[44px] min-w-[44px] gap-1 ${
         saved ? "bg-surface-container text-on-surface" : "text-on-surface-variant"
       } ${className}`}

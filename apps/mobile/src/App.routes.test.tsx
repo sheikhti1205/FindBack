@@ -55,7 +55,7 @@ const marker = vi.hoisted(() => (name: string) => () => <p>{name} screen</p>);
 vi.mock("./screens/Verify", () => ({ Verify: () => <p>Verify screen</p> }));
 vi.mock("./screens/ForgotPassword", () => ({ ForgotPassword: () => <p>ForgotPassword screen</p> }));
 vi.mock("./screens/Recovery", () => ({ Recovery: () => <p>Recovery screen</p> }));
-vi.mock("./screens/Home", () => ({ Home: () => <p>Home screen</p> }));
+vi.mock("./screens/Home", () => ({ Home: () => <><p>Home screen</p><input aria-label="Feed draft" defaultValue="" /></> }));
 vi.mock("./screens/SearchScreen", () => ({ SearchScreen: () => <p>Search screen</p> }));
 vi.mock("./screens/CreateReport", () => ({ CreateReport: () => <p>CreateReport screen</p> }));
 vi.mock("./screens/PostDetail", () => ({ PostDetail: () => <p>PostDetail screen</p> }));
@@ -176,6 +176,51 @@ afterEach(() => {
 });
 
 describe("consumer route map", () => {
+  it("keeps the exact background mounted under a contextual report and returns on Close", async () => {
+    signedIn();
+    renderAt("/");
+    const home = await screen.findByText("Home screen");
+    fireEvent.change(screen.getByLabelText("Feed draft"), { target: { value: "Keep my context" } });
+    const background = router!.state.location;
+    await act(async () => { await router!.navigate("/posts/p1#detail-comments", {
+      state: { postBackground: { location: background, viewerId: "u1" } },
+    }); });
+    const dialog = await screen.findByRole("dialog", { name: "Report" });
+    expect(dialog.textContent).toContain("PostDetail screen");
+    expect(screen.getByText("Home screen")).toBe(home);
+    expect((screen.getByLabelText("Feed draft") as HTMLInputElement).value).toBe("Keep my context");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/"));
+    expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull();
+    expect(screen.getByText("Home screen")).toBe(home);
+  });
+
+  it("closes contextual report on history Back without remounting the feed", async () => {
+    signedIn();
+    renderAt("/");
+    const home = await screen.findByText("Home screen");
+    await act(async () => { await router!.navigate("/posts/p1", {
+      state: { postBackground: { location: router!.state.location, viewerId: "u1" } },
+    }); });
+    expect(await screen.findByRole("dialog", { name: "Report" })).toBeTruthy();
+    await act(async () => { await router!.navigate(-1); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull());
+    expect(screen.getByText("Home screen")).toBe(home);
+  });
+
+  it("renders a direct report link standalone and never restores a different account background", async () => {
+    signedIn();
+    renderAt("/posts/p1");
+    expect(await screen.findByText("PostDetail screen")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull();
+    await act(async () => { await router!.navigate("/posts/p2", {
+      state: { postBackground: { location: { pathname: "/", search: "", hash: "", key: "old", state: null }, viewerId: "other-account" } },
+    }); });
+    expect(await screen.findByText("PostDetail screen")).toBeTruthy();
+    expect(screen.queryByText("Home screen")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull();
+  });
+
   it("protects the actual cold hash Edit route on Android back, asking only once per press", async () => {
     signedIn();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

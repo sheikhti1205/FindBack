@@ -1,24 +1,19 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { Link } from "react-router";
-import { listItemVariants, motionDurations, motionEasings, pressFeedback } from "./uiMotion";
-
-/** Router link with shared press feedback (motion pass: always animated). */
-const MotionLink = motion.create(Link);
+import { listItemVariants, motionDurations, motionEasings } from "./uiMotion";
 
 interface PostCardProps {
   children: ReactNode;
-  to: string;
   index?: number;
   /**
    * Home-feed redesign (W7B-HOME media-led): `home-feed` renders a chromeless
    * report block — no border, no surface fill, no rounding, no shadow. The
    * media spans the near-full block width while text/actions inset
    * separately inside the content; reports separate by whitespace + a thin
-   * hairline, never nested container chrome. Unlike the default card it is
-   * NOT a wrapping Link — the content block owns the detail link and the
-   * action controls as siblings. Default keeps the pre-existing column card
-   * verbatim.
+   * hairline, never nested container chrome. It is not a wrapping link —
+   * the content block owns the detail link and the
+   * action controls as siblings. All other layouts now follow that same
+   * non-wrapping anatomy; the shell owns only separation and entrance motion.
    *
    * CF-010 masonry: `masonry` is the same kind of chromeless block without the
    * hairline — the grid's own gutter separates cards, and the column is already
@@ -51,17 +46,16 @@ export function __resetFeedEntranceForTests(): void {
   feedEntrancePlayed = false;
 }
 
-export function PostCard({ children, to, index = 0, variant = "default" }: PostCardProps) {
-  const animated = index < POST_CARD_ANIMATED_COUNT && !feedEntrancePlayed;
+export function PostCard({ children, index = 0, variant = "default" }: PostCardProps) {
+  // Entrance eligibility belongs to this mount. Recomputing after the session
+  // flag flips swaps motion.article for article and remounts all controls,
+  // invalidating open viewers and modal return-focus targets on a refetch.
+  const [animated] = useState(() => index < POST_CARD_ANIMATED_COUNT && !feedEntrancePlayed);
   useEffect(() => {
     if (animated) feedEntrancePlayed = true;
   }, [animated]);
-  // UXN-2 / W2: the home-feed card is NOT one wrapping Link. A button nested
-  // in a link is invalid DOM and breaks assistive tech, so the shell is a plain
-  // div and PostCardContent owns navigation AND actions as siblings: the media
-  // (own tap target), the detail Link (text), and the flat action row.
-  // `to` is kept for API parity with PostList and still drives the default
-  // variant; home-feed ignores it because PostCardContent links itself.
+  // Every density uses sibling identity/media/navigation/action targets.
+  // A wrapping link would invalidate their native keyboard/assistive semantics.
   const body =
     variant === "home-feed" ? (
       // Density: the block's trailing space is the whitespace that separates
@@ -74,14 +68,9 @@ export function PostCard({ children, to, index = 0, variant = "default" }: PostC
     ) : variant === "masonry" ? (
       <div className="flex flex-col bg-transparent">{children}</div>
     ) : (
-      <MotionLink
-        to={to}
-        whileTap={pressFeedback.button}
-        transition={{ duration: motionDurations.instant }}
-        className="flex flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low p-4 transition-colors hover:border-on-surface-variant active:bg-surface-container"
-      >
+      <div className="flex flex-col gap-2 border-b border-outline-variant py-3">
         {children}
-      </MotionLink>
+      </div>
     );
   if (!animated) {
     return (
