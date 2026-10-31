@@ -1,14 +1,13 @@
 /**
- * Production runtime registration tests (WS-G).
+ * Production runtime registration tests.
  *
- * The task specs name `local-text`, `local-embedding`, and `local-vision`
- * runtimes, but the default registry only carries `deterministic-local`:
- * without production adapters every non-deterministic route ends in
- * NO_RUNTIME. These tests pin the production layer — manager-driven
- * availability (installed + checksum-verified + seam present), invoke-time
- * liveness re-probes, and provenance carrying the real profile id,
- * backend, and revision — using hand-built fake seams. No network, no
- * model binaries, no native bridge.
+ * The task specs name `local-text` and `local-embedding` runtimes; the default
+ * registry only carries `deterministic-local`, so without production adapters
+ * every non-deterministic route ends in NO_RUNTIME. These tests pin the
+ * production layer — manager-driven availability (installed +
+ * checksum-verified + seam present), invoke-time liveness re-probes, and
+ * provenance carrying the real profile id, backend, and revision — using
+ * hand-built fake seams. No network, no model binaries, no native bridge.
  */
 import { describe, expect, it } from "vitest";
 import { OfflineModelManager, type OfflineAssetPin } from "../offlineModelManager";
@@ -16,7 +15,6 @@ import { AiOrchestrator } from "./AiOrchestrator";
 import {
   LOCAL_EMBEDDING_RUNTIME_ID,
   LOCAL_TEXT_RUNTIME_ID,
-  LOCAL_VISION_RUNTIME_ID,
   PRODUCTION_RUNTIME_IDS,
   registerProductionRuntimes,
   type ProductionRuntimeDeps,
@@ -24,10 +22,10 @@ import {
 import { RuntimeRegistry } from "./runtimeRegistry";
 
 const TEXT_PIN: OfflineAssetPin = {
-  modelId: "qwen3-0.6b-dynamic-int4",
-  sha256: "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
-  downloadBytes: 600_000_000,
-  minFreeRamMb: 1500,
+  modelId: "needle3-cact-l20",
+  sha256: "c9d915eca282ed42d1a09b143b592adb4cc6744ffe2d294adf5cfc5548170c38",
+  downloadBytes: 35_335_380,
+  minFreeRamMb: 512,
 };
 
 const EMBEDDING_PIN: OfflineAssetPin = {
@@ -37,12 +35,7 @@ const EMBEDDING_PIN: OfflineAssetPin = {
   minFreeRamMb: 512,
 };
 
-const VISION_PIN: OfflineAssetPin = {
-  modelId: "smolvlm2-500M-vision",
-  sha256: "b808b328d845a600a33c5295f93d9217487317bd334dbc91b2a8d50e26e60ad0",
-  downloadBytes: 360_822_960,
-  minFreeRamMb: 1500,
-};
+const TEXT_ROLES = ["extract-report-fields", "extract-search-filters", "classify-category"];
 
 function install(manager: OfflineModelManager, pin: OfflineAssetPin): void {
   manager.dispatch(pin.modelId, { type: "QUEUE_DOWNLOAD", userInitiated: true });
@@ -52,16 +45,6 @@ function install(manager: OfflineModelManager, pin: OfflineAssetPin): void {
   manager.dispatch(pin.modelId, { type: "VERIFY_OK", actualSha256: pin.sha256 });
 }
 
-const TEXT_ROLES = [
-  "extract-report-fields",
-  "extract-search-filters",
-  "classify-category",
-  "classify-intent",
-  "route-intent",
-  "answer-help",
-  "summarize-local-context",
-];
-
 function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
   return {
     manager,
@@ -70,7 +53,6 @@ function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
       runtimeId: "test-text",
       taskRoles: TEXT_ROLES,
       isReady: async () => true,
-      completeText: async (input: string) => input,
       completeStructured: async (input: string) => JSON.stringify({ echo: input.slice(0, 8) }),
     },
     embedding: {
@@ -81,62 +63,48 @@ function depsWithFakes(manager: OfflineModelManager): ProductionRuntimeDeps {
       isReady: async () => true,
       embed: async (texts: string[]) => texts.map(() => [0.5, -0.25, 0.125, -0.0625]),
     },
-    vision: {
-      modelId: VISION_PIN.modelId,
-      runtimeId: "test-vision",
-      taskRoles: ["analyze-image", "ground-objects"],
-      isAvailable: async () => true,
-      describe: async (prompt: string) => `saw: ${prompt}`,
-    },
   };
 }
 
 function installedDeps(): ProductionRuntimeDeps {
-  const manager = new OfflineModelManager([TEXT_PIN, EMBEDDING_PIN, VISION_PIN]);
+  const manager = new OfflineModelManager([TEXT_PIN]);
   install(manager, TEXT_PIN);
-  install(manager, EMBEDDING_PIN);
-  install(manager, VISION_PIN);
   return depsWithFakes(manager);
 }
 
 describe("registerProductionRuntimes", () => {
-  it("registers the local-text, local-embedding, and local-vision runtime ids", () => {
+  it("registers the local-text and local-embedding runtime ids", () => {
     const registry = new RuntimeRegistry();
     const registered = registerProductionRuntimes(registry, installedDeps());
     expect([...registered].sort()).toEqual([...PRODUCTION_RUNTIME_IDS].sort());
     expect(registry.get(LOCAL_TEXT_RUNTIME_ID)).toBeDefined();
     expect(registry.get(LOCAL_EMBEDDING_RUNTIME_ID)).toBeDefined();
-    expect(registry.get(LOCAL_VISION_RUNTIME_ID)).toBeDefined();
   });
 
   it("registers only the runtimes whose backend seam is provided", () => {
     const manager = new OfflineModelManager([TEXT_PIN]);
     install(manager, TEXT_PIN);
     const registry = new RuntimeRegistry();
-    const { text, ..._rest } = depsWithFakes(manager);
-    void _rest;
+    const { text } = depsWithFakes(manager);
     registerProductionRuntimes(registry, { manager, text });
     expect(registry.get(LOCAL_TEXT_RUNTIME_ID)).toBeDefined();
     expect(registry.get(LOCAL_EMBEDDING_RUNTIME_ID)).toBeUndefined();
-    expect(registry.get(LOCAL_VISION_RUNTIME_ID)).toBeUndefined();
   });
 
-  it("never registers the lab-only llama.cpp challenger as a routable runtime", () => {
+  it("registers no local generative runtime at all", () => {
     const registry = new RuntimeRegistry();
     registerProductionRuntimes(registry, installedDeps());
     for (const runtime of registry.list()) {
-      expect(runtime.id).not.toMatch(/llama|lab/i);
+      expect(runtime.id).not.toMatch(/llama|vision|prose|qwen|smol/i);
     }
-    expect(registry.get("llama-cpp")).toBeUndefined();
   });
 
   it("reports unavailable while the model is not installed and verified", () => {
-    const manager = new OfflineModelManager([TEXT_PIN, EMBEDDING_PIN, VISION_PIN]);
+    const manager = new OfflineModelManager([TEXT_PIN]);
     const registry = new RuntimeRegistry();
     registerProductionRuntimes(registry, depsWithFakes(manager));
     expect(registry.get(LOCAL_TEXT_RUNTIME_ID)?.available()).toBe(false);
     expect(registry.get(LOCAL_EMBEDDING_RUNTIME_ID)?.available()).toBe(false);
-    expect(registry.get(LOCAL_VISION_RUNTIME_ID)?.available()).toBe(false);
   });
 
   it("reports available once installed, verified, and the seam is present", () => {
@@ -144,34 +112,6 @@ describe("registerProductionRuntimes", () => {
     registerProductionRuntimes(registry, installedDeps());
     expect(registry.get(LOCAL_TEXT_RUNTIME_ID)?.available()).toBe(true);
     expect(registry.get(LOCAL_EMBEDDING_RUNTIME_ID)?.available()).toBe(true);
-    expect(registry.get(LOCAL_VISION_RUNTIME_ID)?.available()).toBe(true);
-  });
-
-  it("advertises structured roles only while the structured engine is installed", () => {
-    const manager = new OfflineModelManager([TEXT_PIN, EMBEDDING_PIN]);
-    install(manager, TEXT_PIN);
-    const registry = new RuntimeRegistry();
-    registerProductionRuntimes(registry, {
-      manager,
-      text: {
-        modelId: TEXT_PIN.modelId,
-        modelIds: [TEXT_PIN.modelId, EMBEDDING_PIN.modelId],
-        runtimeId: "test-text",
-        taskRoles: TEXT_ROLES,
-        structuredModelId: EMBEDDING_PIN.modelId,
-        isReady: async () => true,
-        completeText: async (input: string) => input,
-        completeStructured: async () => "{}",
-      },
-    });
-    const runtime = registry.get(LOCAL_TEXT_RUNTIME_ID);
-    // Prose install alone: chat is served, structured extraction is not.
-    expect(runtime?.available()).toBe(true);
-    expect(runtime?.servesTask?.("answer-help")).toBe(true);
-    expect(runtime?.servesTask?.("extract-report-fields")).toBe(false);
-    // Installing the structured engine opens the structured role.
-    install(manager, EMBEDDING_PIN);
-    expect(runtime?.servesTask?.("extract-report-fields")).toBe(true);
   });
 
   it("fails closed with MODEL_NOT_READY when the resident dies between availability and invoke", async () => {
@@ -186,7 +126,6 @@ describe("registerProductionRuntimes", () => {
         runtimeId: "test-text",
         taskRoles: TEXT_ROLES,
         isReady: async () => live,
-        completeText: async () => "{}",
         completeStructured: async () => "{}",
       },
     });
@@ -217,7 +156,6 @@ describe("registerProductionRuntimes", () => {
         runtimeId: "test-text",
         taskRoles: TEXT_ROLES,
         isReady: async () => true,
-        completeText: async () => "not json at all",
         completeStructured: async () => "not json at all",
       },
     });
@@ -275,7 +213,6 @@ describe("registerProductionRuntimes", () => {
         runtimeId: "test-text",
         taskRoles: TEXT_ROLES,
         isReady: async () => true,
-        completeText: async () => "{}",
         completeStructured: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     });
@@ -293,7 +230,7 @@ describe("registerProductionRuntimes", () => {
       expect(result.provenance.requestedBackend).toBe("deterministic-local");
       expect(result.provenance.modelId).toBe(TEXT_PIN.modelId);
       expect(result.provenance.modelRevision).toBe(
-        "a3c5d805ae362dff7f580bc25f2dfb9a5a7eaa76",
+        "c7c415a3d1b3d929014bc6e866d51ebb971f7089",
       );
     }
   });
@@ -312,23 +249,6 @@ describe("registerProductionRuntimes", () => {
       expect(result.provenance.actualBackend).toBe(LOCAL_EMBEDDING_RUNTIME_ID);
       expect(result.provenance.modelId).toBe(EMBEDDING_PIN.modelId);
       expect(result.value).toEqual({ vectors: [[0.5, -0.25, 0.125, -0.0625]] });
-    }
-  });
-
-  it("routes analyze-image through local-vision", async () => {
-    const registry = new RuntimeRegistry();
-    registerProductionRuntimes(registry, installedDeps());
-    const orchestrator = new AiOrchestrator();
-    const result = await orchestrator.route(
-      "analyze-image",
-      { prompt: "describe", imageBase64: "aGVsbG8=" },
-      { traceId: "trace-prod-vision", registry },
-    );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.provenance.actualBackend).toBe(LOCAL_VISION_RUNTIME_ID);
-      expect(result.provenance.modelId).toBe(VISION_PIN.modelId);
-      expect(result.value).toEqual({ text: "saw: describe" });
     }
   });
 });

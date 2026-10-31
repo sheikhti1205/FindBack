@@ -7,20 +7,19 @@ import {
 } from "./taskRegistry";
 
 describe("taskRegistry", () => {
-  it("registers exactly the 10 WS-A tasks", () => {
+  it("registers exactly the retained local tool tasks", () => {
+    // The retired local generative surface (prose answer/summarize, photo
+    // analysis, object grounding) has no task here: those runtimes are gone,
+    // so a task id for them could only ever end in NO_RUNTIME.
     expect(TASK_IDS).toEqual([
       "classify-intent",
       "extract-report-fields",
-      "answer-help",
       "extract-search-filters",
-      "analyze-image",
       "route-intent",
       "embed-texts",
-      "ground-objects",
       "classify-category",
-      "summarize-local-context",
     ]);
-    expect(listTaskSpecs()).toHaveLength(10);
+    expect(listTaskSpecs()).toHaveLength(6);
   });
 
   it("exposes a full AiTaskSpec for every task", () => {
@@ -46,11 +45,11 @@ describe("taskRegistry", () => {
     }
   });
 
-  it("keeps image tasks bounded to image runtimes and text tasks imageless", () => {
-    expect(getTaskSpec("analyze-image")?.maxImages).toBe(1);
-    expect(getTaskSpec("ground-objects")?.maxImages).toBe(1);
-    expect(getTaskSpec("classify-intent")?.maxImages).toBe(0);
-    expect(getTaskSpec("embed-texts")?.maxImages).toBe(0);
+  it("keeps every retained task text-only and imageless", () => {
+    for (const taskId of TASK_IDS) {
+      expect(getTaskSpec(taskId)?.maxImages).toBe(0);
+      expect(getTaskSpec(taskId)?.privacy.handlesImage).toBe(false);
+    }
   });
 
   it("returns undefined for an unknown task id", () => {

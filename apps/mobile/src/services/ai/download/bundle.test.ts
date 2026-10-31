@@ -2,9 +2,21 @@ import { expect, it } from "vitest";
 import { runManagedBundle } from "./bundle";
 import { OfflineModelManager } from "../offlineModelManager";
 import type { ModelDownloadDriver } from "./driver";
-import { productionModelRegistry } from "../modelDescriptors";
+import { NEEDLE_DESCRIPTOR, type ModelDescriptor } from "../modelDescriptors";
+
+// A synthetic multi-file artifact exercises the generic lifecycle without
+// bringing a retired model-lab catalogue back into production.
+const bundle: ModelDescriptor = {
+  ...NEEDLE_DESCRIPTOR,
+  modelId: "test-bundle",
+  fileName: "tool.cact",
+  bytes: 100,
+  sha256: "a".repeat(64),
+  url: "https://models.example.org/tool.cact",
+  companions: [{ fileName: "vocabulary.bin", bytes: 20, sha256: "c".repeat(64), url: "https://models.example.org/vocabulary.bin" }],
+};
 it("verifies both language and projector before one atomic directory promotion", async () => {
-  const d = productionModelRegistry().requireDescriptor("lfm2-vl-450m-q4_0");
+  const d = bundle;
   const m = new OfflineModelManager([{ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: 1 }]);
   const promotions: string[] = [];
   const driver: ModelDownloadDriver = {
@@ -19,7 +31,7 @@ it("verifies both language and projector before one atomic directory promotion",
 });
 
 it("uses a separate same-byte mirror for each artifact and keeps both immutable pins", async () => {
-  const d = productionModelRegistry().requireDescriptor("lfm2-vl-450m-q4_0");
+  const d = bundle;
   const projector = d.companions![0]!;
   const m = new OfflineModelManager([{ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: 1 }]);
   const requests: { url: string; sha: string; bytes: number }[] = [];
@@ -37,13 +49,13 @@ it("uses a separate same-byte mirror for each artifact and keeps both immutable 
 });
 
 it("never promotes the bundle when the projector checksum is corrupt", async () => {
-  const d = productionModelRegistry().requireDescriptor("lfm2-vl-450m-q4_0");
+  const d = bundle;
   const m = new OfflineModelManager([{ modelId: d.modelId, sha256: d.sha256, downloadBytes: d.bytes, minFreeRamMb: 1 }]);
   const promotions: string[] = [];
   const driver: ModelDownloadDriver = {
     rootDir: async () => "/private", freeBytes: async () => 1e10, stagedSize: async () => 0, readJournalText: async () => null,
     cancelDownload: async () => {}, removeFile: async () => {}, hashFile: async () => "", promoteFile: async (_from, to) => { promotions.push(to); },
-    download: async (a) => ({ receivedBytes: a.maxBytes, totalBytes: a.maxBytes, actualHex: a.stagingPath.includes("mmproj") ? "b".repeat(64) : a.expectedSha256, finalUrl: a.url }),
+    download: async (a) => ({ receivedBytes: a.maxBytes, totalBytes: a.maxBytes, actualHex: a.stagingPath.includes("vocabulary") ? "b".repeat(64) : a.expectedSha256, finalUrl: a.url }),
   };
   expect(await runManagedBundle(m, driver, d, new AbortController().signal)).toMatchObject({ ok: false });
   expect(promotions).not.toContain(`/private/models/${d.modelId}/${d.revision}`);

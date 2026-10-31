@@ -8,9 +8,9 @@ import type { OfflineAssetPin } from "./offlineModelManager";
 import { bootProductionAi } from "./production";
 
 const TEXT_PIN: OfflineAssetPin = {
-  modelId: "qwen3-0.6b-dynamic-int4",
-  sha256: "03e7da1eb1108b50dffaa9bb52cc7bcbad2eb0c66ca990267f480c1e545d2856",
-  downloadBytes: 600_000_000,
+  modelId: "needle3-cact-l20",
+  sha256: "a".repeat(64),
+  downloadBytes: 35_335_380,
   minFreeRamMb: 1500,
 };
 
@@ -23,7 +23,6 @@ describe("bootProductionAi", () => {
         runtimeId: "test-text",
         taskRoles: ["extract-report-fields"],
         isReady: async () => true,
-        completeText: async () => "{}",
         completeStructured: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     });

@@ -29,13 +29,10 @@ function fixture(descriptors?: readonly ModelDescriptor[], previousImports: read
     hashFile: async (path) => disk.get(path) ?? "",
     cancelDownload: async () => {},
     promoteFile: async (from, to) => { disk.set(to, disk.get(from)!); disk.delete(from); },
-    removeFile: async (path) => { removed.push(path); for (const key of disk.keys()) if (key === path || key.startsWith(`${path}/`)) disk.delete(key); },
+    removeFile: async (path) => { removed.push(path); for (const key of disk.keys()) if (key === path || key.startsWith(`${path}/`)) disk.delete(key); }
   };
   const service = new ApplicationAiService({ android: true, driver, descriptors,
-    needle: { bridgeName: "needle-cact", isNeedleAvailable: async () => false, unload: unloadNeedle, loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [], initTools: async () => {}, completeJson: async () => "{}" },
-    smol: { bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false, loadVisionModel: async () => {}, unloadVisionModel: async () => {}, cancelGeneration: async () => {}, describeImage: async function* () {} },
-    qwenText: { bridgeName: "qwen3-litertlm-text", isTextAvailable: async () => false, loadTextModel: async () => {}, unloadTextModel: async () => {}, cancelGeneration: async () => {}, generateText: async function* () {} },
-    llama: { bridgeName: "llama-cpp-lab", isLlamaAvailable: async () => false, loadLlamaModel: async () => {}, unloadLlamaModel: async () => {}, cancelGeneration: async () => {}, inferLlama: async function* () {} },
+    needle: { bridgeName: "needle-cact", isNeedleAvailable: async () => false, unload: unloadNeedle, loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [], initTools: async () => {}, completeJson: async () => "{}" }
   });
   function seed(d: ModelDescriptor, state: "installed" | "partial" = "installed") {
     const paths = service.manager.stagingPathsFor("/private/models", d.modelId, d.revision, d.fileName);

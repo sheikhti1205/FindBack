@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { summarizeLocalContext, type SummarizeLocalContextInput } from "./summarizeLocalContext";
-import { getTaskSpec } from "../orchestrator/taskRegistry";
 import { REFUSAL_TEXT } from "../testing/FakeAiProvider";
 import { mustProfile, stubGenerate } from "./testSupport";
 
@@ -124,16 +123,5 @@ describe("summarize-local-context op", () => {
     });
     expect(result).toEqual({ ok: false, error: { errorClass: "CANCELLED", diagnostic: "ABORT_BEFORE_START" } });
     expect(generate.calls).toBe(0);
-  });
-
-  it("carries the canonical task envelope with budgets, runtimes, timeout, and no consent", () => {
-    const spec = getTaskSpec("summarize-local-context")!;
-    expect(spec.taskId).toBe("summarize-local-context");
-    expect(spec.maxInputChars).toBe(2000);
-    expect(spec.maxOutputTokens).toBeGreaterThan(0);
-    expect(spec.timeoutMs).toBeGreaterThan(0);
-    expect(spec.privacy.tier).toBe("local-only");
-    expect(spec.runtimes).toContain("local-text");
-    expect(spec.consent.required).toBe(false);
   });
 });

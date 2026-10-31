@@ -66,18 +66,6 @@ function toolAwareNeedle() {
   };
 }
 
-function arm64Smol(describeText: string) {
-  let loaded = false;
-  return {
-    bridgeName: "smolvlm2-litertlm",
-    isVisionAvailable: async () => loaded,
-    loadVisionModel: async () => { loaded = true; },
-    unloadVisionModel: async () => { loaded = false; },
-    describeImage: async function* () { yield { textDelta: describeText }; },
-    cancelGeneration: async () => {},
-    collectDeviceFacts: async (): Promise<Record<string, unknown>> => ({ supportedAbis: ["arm64-v8a"] }),
-  };
-}
 
 function suppressedNeedle() {
   const installed: Array<{ system: string; tools: Array<{ name: string }> }> = [];
@@ -112,7 +100,7 @@ const EXPECTED_TOOL: Readonly<Record<string, string>> = {
 describe("advertised Needle roles have real production generators", () => {
   it("every structured role installs its own schema and validates end to end", async () => {
     const needle = toolAwareNeedle();
-    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("saw it") });
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
     for (const taskId of ["extract-report-fields", "extract-search-filters", "classify-category"] as const) {
@@ -140,7 +128,7 @@ describe("advertised Needle roles have real production generators", () => {
 
   it("extraction succeeds when Needle withholds the record in suppressed_calls", async () => {
     const needle = suppressedNeedle();
-    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("saw it") });
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
     const result = await service.route(
@@ -157,7 +145,7 @@ describe("advertised Needle roles have real production generators", () => {
 
   it("every retained production role resolves through real Needle wiring", async () => {
     const needle = toolAwareNeedle();
-    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("A red umbrella on a bench.") });
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
     for (const taskId of NEEDLE_DESCRIPTOR.taskRoles) {
@@ -181,7 +169,7 @@ describe("advertised Needle roles have real production generators", () => {
 
   it("Needle tool schemas match the tool-model contract (Phase A.4)", async () => {
     const needle = toolAwareNeedle();
-    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge, smol: arm64Smol("saw it") });
+    const service = new ApplicationAiService({ android: true, driver: driver(), needle: needle.bridge });
     await service.ready;
     await service.download(NEEDLE_MODEL_ID);
     await service.route("extract-report-fields", { prompt: "a red umbrella" }, { traceId: "trace-schema-report" });

@@ -15,7 +15,8 @@
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import { profileFor } from "./modelProfiles";
 import type { AiTaskId } from "./types";
-import { SUPPLY_CANDIDATES, type ModelArtifact, type LicenseFacts } from "./modelSupply";
+import type { ModelArtifact } from "./modelSupply";
+import { RETIRED_CURATED_CLEANUP } from "./retiredModelCleanup";
 
 /** Physical runtime ids. `test-*` ids exist only in test registries. */
 export const NEEDLE_RUNTIME_ID = "needle-cact" as const;
@@ -59,7 +60,6 @@ export interface ModelDescriptor {
   readonly cleanupOnly?: boolean;
   readonly sources?: readonly string[];
   readonly companions?: readonly ModelArtifact[];
-  readonly licenseFacts?: LicenseFacts;
   readonly minRuntimeVersion?: string;
   readonly deviceQualifiedAbis?: readonly string[];
   readonly modelId: string;
@@ -162,14 +162,6 @@ export interface ModelRegistry {
   visionDescriptor(): ModelDescriptor | undefined;
   /** All downloadable catalogue entries, in catalogue order. */
   catalogue(): readonly ModelDescriptor[];
-  /**
-   * Advanced entries: registered lab/evaluation candidates. Verified pins
-   * are downloadable (exact revision/SHA-256/bytes + license facts);
-   * pending, license-restricted, or unmeasured entries stay
-   * non-downloadable. Rendered in Advanced with their truthful reason —
-   * never a second shadow list owned by the UI.
-   */
-  advancedCatalogue(): readonly ModelDescriptor[];
 }
 
 export interface ModelRegistryOptions {
@@ -187,7 +179,8 @@ const NEEDLE_PIN = profilePin(NEEDLE_MODEL_ID);
 export const SMOL_VISION_MODEL_ID = "smolvlm2-500M-vision";
 const SMOL_PIN = profilePin(SMOL_VISION_MODEL_ID);
 
-const SMOL_TASK_ROLES: readonly AiTaskId[] = ["analyze-image", "ground-objects"];
+/** Cleanup identity only: the retired photo runtime serves no product role. */
+const NO_TASK_ROLES: readonly AiTaskId[] = [];
 /**
  * Audit closure: Needle's advertised roles are exactly what its native
  * path genuinely satisfies today — the record_item tool-constrained
@@ -245,7 +238,7 @@ export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
   url: "https://huggingface.co/litert-community/SmolVLM2-500M/resolve/dad030b6e56756201d670cfb4d042736a2ce3a5c/SmolVLM2-500M.litertlm",
   bytes: 360822960,
   capabilities: ["vision"],
-  taskRoles: SMOL_TASK_ROLES,
+  taskRoles: NO_TASK_ROLES,
   maturity: "production",
   trust: "curated",
   license: "redistributable-apache-2.0",
@@ -270,17 +263,8 @@ export const SMOL_VISION_DESCRIPTOR: ModelDescriptor = {
  */
 export const QWEN_TEXT_MODEL_ID = "qwen3-0.6b-dynamic-int4";
 const QWEN_PIN = profilePin(QWEN_TEXT_MODEL_ID);
-/**
- * Qwen3 0.6B is the prose assistant. It advertises ONLY `answer-help`.
- *
- * The extraction/classification roles are STRUCTURED (tool-constrained)
- * tasks served by Needle's `record_item`/`search_filters`/`item_category`
- * schemas — the production seam wires `completeStructured` to Needle, and
- * Qwen runs prose completion. Advertising those roles here made a Qwen-only
- * install claim "Fills in reports" while the route actually needed Needle,
- * so the claim was removed. Roles expand with evidence, never with hope.
- */
-const QWEN_TASK_ROLES: readonly AiTaskId[] = ["answer-help"];
+/** Cleanup identity only: the retired text runtime serves no product role. */
+const QWEN_TASK_ROLES: readonly AiTaskId[] = NO_TASK_ROLES;
 
 export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
   modelId: QWEN_TEXT_MODEL_ID,
@@ -308,16 +292,16 @@ export const QWEN_TEXT_DESCRIPTOR: ModelDescriptor = {
 };
 
 /**
- * Advanced acquisition and evaluation are independent of task qualification.
- * Immutable upstream evidence and bundle identities live in modelSupply.
+ * The retired generative descriptors survive ONLY as exact upgrade-cleanup
+ * identities: pins, modality and file locations so an upgrade can still find
+ * and remove bytes an older build downloaded. They are never downloadable,
+ * never serve a task, and never appear on a catalogue.
  */
-export const ADVANCED_DESCRIPTORS: readonly ModelDescriptor[] = SUPPLY_CANDIDATES;
-
 const ALL_DESCRIPTORS: readonly ModelDescriptor[] = [
   NEEDLE_DESCRIPTOR,
   SMOL_VISION_DESCRIPTOR,
   QWEN_TEXT_DESCRIPTOR,
-  ...ADVANCED_DESCRIPTORS,
+  ...RETIRED_CURATED_CLEANUP,
 ];
 
 /** True when the descriptor verifies this ABI. Unknown ABI never counts. */
@@ -350,7 +334,6 @@ export function createModelRegistry(
     visionDescriptor: () =>
       defaultVisionModelId === undefined ? undefined : frozen.find((item) => item.modelId === defaultVisionModelId && !item.cleanupOnly),
     catalogue: () => frozen.filter((item) => !item.cleanupOnly && item.downloadable && tierOf(item) === "recommended"),
-    advancedCatalogue: () => frozen.filter((item) => !item.cleanupOnly && tierOf(item) === "advanced"),
   };
 }
 
@@ -363,7 +346,6 @@ let production: ModelRegistry | undefined;
  */
 export function productionModelRegistry(): ModelRegistry {
   return (production ??= createModelRegistry(
-    [...ALL_DESCRIPTORS.filter((d) => d.maturity === "production"), ...SUPPLY_CANDIDATES]
-      .map((d) => isRetiredGenerativeRuntime(d.runtimeId) ? cleanupOnlyDescriptor(d) : d),
+    ALL_DESCRIPTORS.map((d) => isRetiredGenerativeRuntime(d.runtimeId) ? cleanupOnlyDescriptor(d) : d),
   ));
 }

@@ -1,10 +1,9 @@
 /**
- * Task interpreter tests: exhaustive contracts, raw/structured generation
+ * Task interpreter tests: exhaustive contracts, structured generation
  * modes, and role-driven selection.
  *
  * Every model-routable task id must have an interpreter (no implicit
- * success); prose tasks validate free text without JSON; roles decide
- * which tasks a runtime may serve.
+ * success); roles decide which tasks a runtime may serve.
  */
 import { describe, expect, it } from "vitest";
 import { OfflineModelManager, type OfflineAssetPin } from "../offlineModelManager";
@@ -77,55 +76,6 @@ describe("structured task interpreters", () => {
   });
 });
 
-describe("prose task interpreters", () => {
-  it("accepts validated free prose for answer-help (never JSON)", () => {
-    const interpreter = interpreterFor("answer-help")!;
-    expect(interpreter.generation).toBe("raw");
-    const result = interpreter.interpret("Open the Report tab, choose Lost, then fill in the item details.", {
-      taskId: "answer-help",
-      input: {},
-    });
-    expect(result).toEqual({
-      ok: true,
-      value: { answerText: "Open the Report tab, choose Lost, then fill in the item details." },
-    });
-  });
-
-  it("screens unsafe prose into the grounded reply instead of succeeding raw", () => {
-    const interpreter = interpreterFor("answer-help")!;
-    const result = interpreter.interpret("SELECT * FROM users WHERE id = 1", {
-      taskId: "answer-help",
-      input: {},
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      const value = result.value as { answerText: string };
-      expect(value.answerText).not.toContain("SELECT");
-    }
-  });
-
-  it("rejects empty and overlong help prose", () => {
-    const interpreter = interpreterFor("answer-help")!;
-    expect(interpreter.interpret("   ", { taskId: "answer-help", input: {} }).ok).toBe(false);
-    expect(interpreter.interpret("x".repeat(2001), { taskId: "answer-help", input: {} }).ok).toBe(false);
-  });
-
-  it("rejects summaries that leak coordinates", () => {
-    const interpreter = interpreterFor("summarize-local-context")!;
-    expect(interpreter.generation).toBe("raw");
-    const leaked = interpreter.interpret("Two reports near 23.8103, 90.4125 downtown.", {
-      taskId: "summarize-local-context",
-      input: {},
-    });
-    expect(leaked.ok).toBe(false);
-    const clean = interpreter.interpret("Two reports filed downtown this week.", {
-      taskId: "summarize-local-context",
-      input: {},
-    });
-    expect(clean).toEqual({ ok: true, value: { summary: "Two reports filed downtown this week." } });
-  });
-});
-
 describe("role-driven selection", () => {
   function depsWithRoles(taskRoles: readonly string[]): ProductionRuntimeDeps {
     const manager = new OfflineModelManager([PIN]);
@@ -137,7 +87,6 @@ describe("role-driven selection", () => {
         runtimeId: "needle-cact",
         taskRoles,
         isReady: async () => true,
-        completeText: async (input: string) => input,
         completeStructured: async () => JSON.stringify({ fields: { title: "wallet" } }),
       },
     };
@@ -154,40 +103,6 @@ describe("role-driven selection", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.denialReason).toBe("NO_RUNTIME");
-  });
-
-  it("routes free prose through raw generation for answer-help", async () => {
-    const manager = new OfflineModelManager([PIN]);
-    install(manager);
-    let structuredCalls = 0;
-    const registry = new RuntimeRegistry();
-    registerProductionRuntimes(registry, {
-      manager,
-      text: {
-        modelId: PIN.modelId,
-        runtimeId: "needle-cact",
-        taskRoles: ["answer-help"],
-        isReady: async () => true,
-        completeText: async () => "Open the Report tab, choose Lost, then fill in the item details.",
-        completeStructured: async () => {
-          structuredCalls += 1;
-          throw new Error("structured mode must not run for prose tasks");
-        },
-      },
-    });
-    const orchestrator = new AiOrchestrator();
-    const result = await orchestrator.route(
-      "answer-help",
-      { prompt: "where do i file a lost item report" },
-      { traceId: "trace-raw-prose", registry },
-    );
-    expect(structuredCalls).toBe(0);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toEqual({
-        answerText: "Open the Report tab, choose Lost, then fill in the item details.",
-      });
-    }
   });
 
   it("fails closed when the generation mode does not match the task", async () => {

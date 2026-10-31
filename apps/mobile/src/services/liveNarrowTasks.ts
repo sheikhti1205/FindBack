@@ -25,7 +25,7 @@
  *   cleanup; nothing in the narrow-task path calls either.
  */
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
-import { describeOfflineReadiness } from "./ai/providers/offline";
+import { describeOfflineReadiness } from "./ai/modelReadiness";
 import { createOpenRouterClient } from "./openRouter";
 import { aiCredentials } from "./aiCredentials";
 import { getSupabase } from "./supabaseClient";

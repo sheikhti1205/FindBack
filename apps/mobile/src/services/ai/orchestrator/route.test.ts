@@ -46,15 +46,15 @@ describe("AiOrchestrator.route", () => {
   });
 
   it("invokes exactly one runtime on the model path", async () => {
-    const first = modelRuntime("local-text", { answerText: "model answer" });
-    const second = modelRuntime("remote-text", { answerText: "other answer" });
+    const first = modelRuntime("local-text", { fields: { title: "red umbrella" } });
+    const second = modelRuntime("remote-text", { fields: { title: "other umbrella" } });
     const registry = new RuntimeRegistry();
     registry.register(first.runtime);
     registry.register(second.runtime);
     const orchestrator = new AiOrchestrator();
     const seen: OrchestratorState[] = [];
     const result = await orchestrator.route(
-      "answer-help",
+      "extract-report-fields",
       { text: "xqzzy incomprehensible wobble query 42" },
       {
         traceId: "trace-route-single-001",
@@ -72,10 +72,10 @@ describe("AiOrchestrator.route", () => {
   });
 
   it("denies a destructive model proposal and records the denial", async () => {
-    // Contract-valid help answer carrying a destructive proposal: the task
-    // contract passes, then the action gate denies the proposed op.
+    // Retained tools accept only their narrow data contracts: an action
+    // proposal is rejected before it can reach the independent action gate.
     const evil = modelRuntime("local-text", {
-      answerText: "model answer",
+      fields: { title: "red umbrella" },
       op: "publish_report",
       args: { reportId: "r-1" },
     });
@@ -83,7 +83,7 @@ describe("AiOrchestrator.route", () => {
     registry.register(evil.runtime);
     const orchestrator = new AiOrchestrator();
     const result = await orchestrator.route(
-      "answer-help",
+      "extract-report-fields",
       { text: "xqzzy incomprehensible wobble query 42" },
       {
         traceId: "trace-route-destructive-001",
@@ -93,25 +93,26 @@ describe("AiOrchestrator.route", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.denialReason).toBe("DESTRUCTIVE_OP");
-      expect(result.provenance.denialReason).toBe("DESTRUCTIVE_OP");
+      expect(result.denialReason).toBe("LOCAL_TASK_INVALID");
+      expect(result.provenance.denialReason).toBe("LOCAL_TASK_INVALID");
       expect(result.state).toBe("FAILED");
     }
     expect(orchestrator.routeState).toBe("FAILED");
   });
 
   it("always populates the full provenance record", async () => {
-    const runtime = modelRuntime("local-text", { answerText: "model answer" });
+    const runtime = modelRuntime("local-text", { fields: { title: "red umbrella" } });
     const registry = new RuntimeRegistry();
     registry.register(runtime.runtime);
     const orchestrator = new AiOrchestrator();
     const result = await orchestrator.route(
-      "answer-help",
+      "extract-report-fields",
       { text: "xqzzy incomprehensible wobble query 42" },
       { traceId: "trace-route-prov-001", registry, modelId: "model-under-test" },
     );
     const provenance = result.provenance;
-    expect(provenance.taskId).toBe("answer-help");
+    expect(result.ok).toBe(true);
+    expect(provenance.taskId).toBe("extract-report-fields");
     expect(provenance.modelId).toBe("model-under-test");
     expect(typeof provenance.requestedBackend).toBe("string");
     expect(typeof provenance.actualBackend).toBe("string");
@@ -134,7 +135,7 @@ describe("AiOrchestrator.route", () => {
     }
   });
 
-  it("surfaces a local fallback when the model runtime fails", async () => {
+  it("fails closed without fabricated tool output when the model runtime fails", async () => {
     const failing: AiRuntime = {
       id: "local-text",
       kind: "model",
@@ -145,14 +146,14 @@ describe("AiOrchestrator.route", () => {
     registry.register(failing);
     const orchestrator = new AiOrchestrator();
     const result = await orchestrator.route(
-      "summarize-local-context",
+      "extract-report-fields",
       { text: "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima" },
       { traceId: "trace-route-fallback-001", registry },
     );
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.fallback).toBeDefined();
-      expect(typeof result.fallback).toBe("string");
+      expect(result.denialReason).toBe("RUNTIME_ERROR");
+      expect(result.fallback).toBeUndefined();
     }
   });
 });
@@ -165,29 +166,31 @@ describe("AiOrchestrator.route image budget", () => {
     return { registry, vision };
   }
 
-  it("routes an inline base64 image past the byte guard — images are bounded by maxImages, not the text budget", async () => {
+  it.each(["analyze-image", "ground-objects", "answer-help", "summarize-local-context"])("refuses retired task %s even if a runtime is injected", async (taskId) => {
     const { registry, vision } = visionRegistry();
     const orchestrator = new AiOrchestrator();
     const result = await orchestrator.route(
-      "analyze-image",
+      taskId,
       { prompt: "describe", imageBase64: "A".repeat(200_000) },
       { traceId: "trace-image-budget-001", registry },
     );
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.provenance.actualBackend).toBe("local-vision");
-    expect(vision.invoke).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.denialReason).toBe("UNKNOWN_TASK");
+    expect(vision.invoke).not.toHaveBeenCalled();
   });
 
-  it("still fails INPUT_BOUNDS when the non-image text exceeds the task budget", async () => {
-    const { registry, vision } = visionRegistry();
+  it.each([{ imageBase64: "aGVsbG8=" }, { images: ["aGVsbG8="] }])("refuses images on retained text-only tasks before invoking a runtime: %j", async (image) => {
+    const text = modelRuntime("local-text", { fields: { title: "umbrella" } });
+    const registry = new RuntimeRegistry();
+    registry.register(text.runtime);
     const orchestrator = new AiOrchestrator();
     const result = await orchestrator.route(
-      "analyze-image",
-      { prompt: "x".repeat(4_096), imageBase64: "aGVsbG8=" },
+      "extract-report-fields",
+      { prompt: "describe", ...image },
       { traceId: "trace-image-budget-002", registry },
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.denialReason).toBe("INPUT_BOUNDS");
-    expect(vision.invoke).not.toHaveBeenCalled();
+    expect(text.invoke).not.toHaveBeenCalled();
   });
 });

@@ -8,10 +8,9 @@
  *   unwraps envelopes, never guesses a task shape.
  * - the task interpreter for the routed task id then interprets that raw
  *   output: it selects the generation mode the runtime must use
- *   (`structured` = tool-constrained JSON envelope, `raw` = free model
- *   text, `typed` = already-typed adapter value such as vectors), parses
- *   exactly once, runs the task's strict contract, and only then produces
- *   the route value.
+ *   (`structured` = tool-constrained JSON envelope, `typed` = already-typed
+ *   adapter value such as vectors), parses exactly once, runs the task's
+ *   strict contract, and only then produces the route value.
  *
  * Exhaustive: EVERY model-routable task id has an interpreter. There is no
  * permissive fallthrough — an unlisted task id fails closed, never ok:true.
@@ -19,10 +18,7 @@
  * re-checks an already-interpreted value at the orchestrator layer, so a
  * future adapter cannot bypass interpretation and still succeed.
  */
-import { groundAppAnswer } from "../appKnowledge";
 import {
-  checkNonEmptyOrRefusal,
-  MAX_HELP_CHARS,
   validateIntentPayload,
   validateReportSlots,
   validateSearchFilters,
@@ -30,12 +26,10 @@ import {
 } from "../normalize";
 import { validateCategoryPayload } from "../ops/classifyCategory";
 import { validateRouteIntent, type RouteIntentInput } from "../ops/routeIntent";
-import { SUMMARY_MAX_CHARS } from "../ops/summarizeLocalContext";
 import { isIntent, type AiResult, type AiTaskId } from "../types";
-import { looksLikeCoordinates } from "../../search/coordinates";
 
 /** How the runtime must generate for this task before interpretation. */
-export type TaskGenerationMode = "structured" | "raw" | "typed";
+export type TaskGenerationMode = "structured" | "typed";
 
 export interface TaskInterpretContext {
   readonly taskId: string;
@@ -114,8 +108,6 @@ function asRouteIntentInput(input: unknown): RouteIntentInput | undefined {
   };
 }
 
-const VISION_TEXT_MAX_CHARS = 4_000;
-
 function interpretEmbedVectors(taskId: string, raw: unknown): TaskInterpretation {
   if (!isRecord(raw) || !Array.isArray(raw["vectors"]) || raw["vectors"].length === 0) {
     return { ok: false, error: `Task "${taskId}" needs a non-empty vectors array.` };
@@ -126,33 +118,6 @@ function interpretEmbedVectors(taskId: string, raw: unknown): TaskInterpretation
     }
   }
   return { ok: true, value: { vectors: raw["vectors"] } };
-}
-
-/**
- * Route contract for vision tasks: bounded prose text. The strict 9-field
- * photo schema stays in the analyze-image op (with its retry budget) and
- * box geometry plus image consent stay in the ground-objects op — the
- * route never invents photo facts, boxes, or consent.
- */
-function interpretVisionText(taskId: string, raw: unknown): TaskInterpretation {
-  if (!isRecord(raw) || typeof raw["text"] !== "string") {
-    return { ok: false, error: `Task "${taskId}" needs a text field.` };
-  }
-  const bounded = proseBounds(taskId, raw["text"], VISION_TEXT_MAX_CHARS);
-  if (bounded !== undefined) return bounded;
-  return { ok: true, value: { text: raw["text"].trim() } };
-}
-
-function proseBounds(taskId: string, text: string, maxChars: number): TaskInterpretation | undefined {
-  const checked = checkNonEmptyOrRefusal(text);
-  if (!checked.ok) {
-    return { ok: false, error: `Task "${taskId}" output failed its contract: ${describeError(checked)}`.slice(0, 400) };
-  }
-  const answer = checked.value.trim();
-  if (answer.length > maxChars) {
-    return { ok: false, error: `Task "${taskId}" output exceeds ${maxChars} chars.` };
-  }
-  return undefined;
 }
 
 const INTERPRETERS: readonly TaskInterpreter[] = [
@@ -186,67 +151,10 @@ const INTERPRETERS: readonly TaskInterpreter[] = [
     revalidate: (value, ctx) => validateRouteIntent(value, undefined, asRouteIntentInput(ctx.input)).ok,
   },
   {
-    taskId: "answer-help",
-    generation: "raw",
-    interpret: (raw, ctx) => {
-      if (typeof raw !== "string") {
-        return { ok: false, error: `Task "${ctx.taskId}" needs model text; got ${typeof raw}.` };
-      }
-      const bounded = proseBounds(ctx.taskId, raw, MAX_HELP_CHARS);
-      if (bounded !== undefined) return bounded;
-      const answer = raw.trim();
-      // Screen before success: SQL, private data, and model-identity claims
-      // resolve to the honest grounded reply (same contract as the help op).
-      const grounded = groundAppAnswer(answer);
-      return { ok: true, value: { answerText: grounded.safe ? grounded.text : grounded.reply } };
-    },
-    revalidate: (value, ctx) => {
-      if (!isRecord(value) || typeof value["answerText"] !== "string") return false;
-      // Shape + bounds here; the grounding screen ran at interpret time and
-      // is deterministic on the same text, so re-running adds no signal.
-      return proseBounds(ctx.taskId, value["answerText"], MAX_HELP_CHARS) === undefined;
-    },
-  },
-  {
-    taskId: "summarize-local-context",
-    generation: "raw",
-    interpret: (raw, ctx) => {
-      if (typeof raw !== "string") {
-        return { ok: false, error: `Task "${ctx.taskId}" needs model text; got ${typeof raw}.` };
-      }
-      const bounded = proseBounds(ctx.taskId, raw, SUMMARY_MAX_CHARS);
-      if (bounded !== undefined) return bounded;
-      const summary = raw.trim();
-      // Local summaries must never leak coordinates, even when the model
-      // echoes them from the notes.
-      if (looksLikeCoordinates(summary)) {
-        return { ok: false, error: `Task "${ctx.taskId}" output failed its contract: INVALID_OUTPUT:R5_COORDINATES_NOT_ACCEPTED:summary` };
-      }
-      return { ok: true, value: { summary } };
-    },
-    revalidate: (value, ctx) => {
-      if (!isRecord(value) || typeof value["summary"] !== "string") return false;
-      if (proseBounds(ctx.taskId, value["summary"], SUMMARY_MAX_CHARS) !== undefined) return false;
-      return !looksLikeCoordinates(value["summary"].trim());
-    },
-  },
-  {
     taskId: "embed-texts",
     generation: "typed",
     interpret: (raw, ctx) => interpretEmbedVectors(ctx.taskId, raw),
     revalidate: (value, ctx) => interpretEmbedVectors(ctx.taskId, value).ok,
-  },
-  {
-    taskId: "analyze-image",
-    generation: "typed",
-    interpret: (raw, ctx) => interpretVisionText(ctx.taskId, raw),
-    revalidate: (value, ctx) => interpretVisionText(ctx.taskId, value).ok,
-  },
-  {
-    taskId: "ground-objects",
-    generation: "typed",
-    interpret: (raw, ctx) => interpretVisionText(ctx.taskId, raw),
-    revalidate: (value, ctx) => interpretVisionText(ctx.taskId, value).ok,
   },
 ];
 

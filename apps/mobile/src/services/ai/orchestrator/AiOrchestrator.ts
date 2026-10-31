@@ -113,8 +113,9 @@ function inputBytes(input: unknown): number {
 }
 
 function inputImages(input: unknown): number {
-  if (isRecord(input) && Array.isArray(input["images"])) return input["images"].length;
-  return 0;
+  if (!isRecord(input)) return 0;
+  const images = Array.isArray(input["images"]) ? input["images"].length : 0;
+  return images + (typeof input["imageBase64"] === "string" ? 1 : 0);
 }
 
 function timeoutError(timeoutMs: number): Error {

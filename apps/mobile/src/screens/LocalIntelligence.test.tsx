@@ -21,11 +21,6 @@ function nativeService() {
     bridgeName: "needle-cact", unload: async () => {}, isNeedleAvailable: async () => false,
     loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [],
     initTools: async () => {}, completeJson: async () => "{}",
-  }, smol: {
-    bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
-    loadVisionModel: async () => {}, unloadVisionModel: async () => {},
-    cancelGeneration: async () => {}, describeImage: async function* () {},
-    collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
   } });
 }
 

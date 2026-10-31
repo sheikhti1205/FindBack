@@ -40,11 +40,6 @@ function device({ failStorage = false, abi = "arm64-v8a" } = {}) {
     bridgeName: "needle-cact", unload: async () => { unloaded = true; }, isNeedleAvailable: async () => false,
     loadModel: async () => 2, embeddingDimension: async () => 2, embedNeedleTexts: async () => [],
     initTools: async () => {}, completeJson: async () => "{}",
-  }, smol: {
-    bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
-    loadVisionModel: async () => {}, unloadVisionModel: async () => {},
-    cancelGeneration: async () => {}, describeImage: async function* () {},
-    collectDeviceFacts: async () => ({ supportedAbis: [abi] }),
   } });
   return { service, offsets, files, removed };
 }

@@ -8,35 +8,35 @@ const seams = vi.hoisted(() => ({
   callback: undefined as ((event: string, session: unknown) => void) | undefined,
   fetchMe: vi.fn(), restoreSession: vi.fn(),
   login: vi.fn(), register: vi.fn(), seed: vi.fn(),
-  resetAi: undefined as (() => Promise<void>) | undefined,
+  resetAi: undefined as (() => Promise<void>) | undefined
 }));
 vi.mock("@capacitor/core", () => ({
-  Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" }, registerPlugin: vi.fn(),
+  Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" }, registerPlugin: vi.fn()
 }));
 vi.mock("./services/supabaseClient", () => ({ getSupabase: () => ({ auth: {
   onAuthStateChange: (callback: typeof seams.callback) => {
     seams.callback = callback;
     return { data: { subscription: { unsubscribe: () => {} } } };
-  },
+  }
 } }) }));
 vi.mock("./services/auth", () => ({
   BootTimeoutError: class BootTimeoutError extends Error {},
   restoreSession: () => seams.restoreSession(), fetchMe: (...args: unknown[]) => seams.fetchMe(...args),
-  login: (...args: unknown[]) => seams.login(...args), logout: vi.fn(), register: (...args: unknown[]) => seams.register(...args), sendPendingEmailCode: vi.fn(), verifyPendingEmailCode: vi.fn(),
+  login: (...args: unknown[]) => seams.login(...args), logout: vi.fn(), register: (...args: unknown[]) => seams.register(...args), sendPendingEmailCode: vi.fn(), verifyPendingEmailCode: vi.fn()
 }));
 vi.mock("./services/auth/googleSignIn", async (importOriginal) => ({
   ...await importOriginal<typeof import("./services/auth/googleSignIn")>(),
-  getNeedsProfileSeed: (...args: unknown[]) => seams.seed(...args),
+  getNeedsProfileSeed: (...args: unknown[]) => seams.seed(...args)
 }));
 vi.mock("./services/realtime", () => ({
-  connectRealtime: vi.fn(), disconnectRealtime: vi.fn(), joinInboxRoom: vi.fn(), leaveInboxRoom: vi.fn(),
+  connectRealtime: vi.fn(), disconnectRealtime: vi.fn(), joinInboxRoom: vi.fn(), leaveInboxRoom: vi.fn()
 }));
 vi.mock("./services/pushRuntime", () => ({ startPushNotifications: vi.fn(), stopPushNotifications: vi.fn() }));
 // Inject the real service behind the singleton cleanup seam; preserve the
 // actual AuthProvider -> userScopedState -> residency/reset production path.
 vi.mock("./services/ai/applicationAi", async (importOriginal) => ({
   ...await importOriginal<typeof import("./services/ai/applicationAi")>(),
-  resetLocalAiForAccount: () => seams.resetAi?.(),
+  resetLocalAiForAccount: () => seams.resetAi?.()
 }));
 
 import { AuthProvider, useAuth } from "./auth";
@@ -50,7 +50,7 @@ import { disconnectRealtime } from "./services/realtime";
 
 const A: PublicUser = {
   id: "switch-a", username: "alice", email: "alice@example.invalid", phone: "", emailVerified: true,
-  phoneVerified: false, avatarUrl: null, createdAt: "2026-01-01T00:00:00.000Z",
+  phoneVerified: false, avatarUrl: null, createdAt: "2026-01-01T00:00:00.000Z"
 };
 const B = { ...A, id: "switch-b", username: "bob" };
 const C = { ...A, id: "switch-c", username: "carol" };
@@ -78,7 +78,7 @@ function activeAi(unload = vi.fn(async () => {})) {
       cancelDownload: async () => {},
       hashFile: async (path) => { if (!disk.has(path)) throw new Error("missing"); return disk.get(path)!; },
       promoteFile: async (from, to) => { disk.set(to, disk.get(from)!); disk.delete(from); },
-      removeFile: async (path) => { disk.delete(path); },
+      removeFile: async (path) => { disk.delete(path); }
     },
     needle: {
       bridgeName: "needle-cact", isNeedleAvailable: async () => true,
@@ -88,13 +88,8 @@ function activeAi(unload = vi.fn(async () => {})) {
         started = true;
         await new Promise<void>((resolve) => { release = resolve; });
         return JSON.stringify({ function_calls: [{ name: "record_item", arguments: { title: "Red umbrella" } }] });
-      },
-    },
-    smol: {
-      bridgeName: "smolvlm2-litertlm", isVisionAvailable: async () => false,
-      loadVisionModel: async () => {}, unloadVisionModel: async () => {}, cancelGeneration: async () => {},
-      describeImage: async function* () {}, collectDeviceFacts: async () => ({ supportedAbis: ["arm64-v8a"] }),
-    },
+      }
+    }
   });
   seams.resetAi = () => service.resetForAccount();
   return { service, unload, started: () => started, release: () => release() };

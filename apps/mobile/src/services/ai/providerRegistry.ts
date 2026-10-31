@@ -33,7 +33,6 @@ import { createMistralAdapter } from "./providers/mistral";
 import { createOpenAiAdapter } from "./providers/openai";
 import { createOpenRouterAdapter } from "./providers/openrouter";
 import { createXaiAdapter } from "./providers/xai";
-import { getApplicationAi, type ApplicationAiService } from "./applicationAi";
 
 /**
  * Standard credential-getter seam. Returns the vault key for one
@@ -45,7 +44,6 @@ export type RegistryCredentialGetter = (
 ) => Promise<string | null>;
 
 export type ProviderRegistryOptions = {
-  readonly offlineService?: ApplicationAiService;
   /** Owning account; its per-provider slot is the only slot ever read. */
   readonly accountId: string;
   /** Standard seam, e.g. `(accountId, provider) => aiCredentials.get(accountId, provider)`. */
@@ -68,6 +66,9 @@ export type ProviderRegistryOptions = {
   readonly assembleSystemText?: (request: NormalizedRequest) => string | undefined;
 };
 
+// `offline` stays a known id so a legacy stored selection resolves to the
+// honest "no longer available" message instead of a generic unknown-provider
+// error. It has no adapter any more.
 const KNOWN_PROVIDERS: ReadonlySet<string> = new Set([...SUPPORTED_AI_PROVIDERS, "offline"]);
 
 function isKnownProvider(provider: unknown): provider is ProviderId {
@@ -133,14 +134,9 @@ export function createProviderAdapter(
         fetchImpl,
       });
     }
-    case "offline":
-      return (options.offlineService ?? getApplicationAi()).offlineAdapter(
-        resolveImageUrl === undefined ? undefined : async (id) => {
-          const url = await resolveImageUrl(id);
-          const bytes = url?.match(/^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/)?.[1];
-          if (!bytes) throw new Error("Approved local image bytes are unavailable");
-          return bytes;
-        },
-      );
+    default:
+      // `offline` is a legacy stored id from the retired on-device chat. It has
+      // no adapter any more; the message names the product state, never a key.
+      throw new Error("That provider is no longer available. Choose a cloud provider in AI settings.");
   }
 }

@@ -35,7 +35,7 @@ function install(manager: OfflineModelManager, pin: OfflineAssetPin): void {
 /**
  * Mirror of the production text seam: the structured mode always runs the
  * `record_item` report tool and returns report slots nested under `fields`,
- * whatever the task was. Raw mode echoes free text.
+ * whatever the task was.
  */
 function needleReportShapedBackend() {
   return {
@@ -43,7 +43,6 @@ function needleReportShapedBackend() {
     runtimeId: "needle-cact",
     taskRoles: ["extract-report-fields", "extract-search-filters", "classify-category"],
     isReady: async () => true,
-    completeText: async (input: string) => input,
     completeStructured: async () =>
       JSON.stringify({ fields: { title: "red umbrella", description: "found downtown" } }),
   };
@@ -141,14 +140,6 @@ describe("Phase A: route timeout cancels the underlying work", () => {
         taskRoles: ["extract-report-fields", "extract-search-filters", "classify-category"],
         isReady: async () => true,
         // Never settles on its own; only the abort signal may release it.
-        completeText: (input: string) =>
-          new Promise<string>((resolve, reject) => {
-            void input;
-            observedSignal?.addEventListener("abort", () => {
-              settled = true;
-              reject(new Error("cancelled"));
-            });
-          }),
         completeStructured: () =>
           new Promise<string>((_resolve, reject) => {
             observedSignal?.addEventListener("abort", () => {

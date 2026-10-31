@@ -7,7 +7,6 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  ADVANCED_DESCRIPTORS,
   createModelRegistry,
   distributionPolicyOf,
   modelSupportsAbi,
@@ -19,7 +18,6 @@ import {
   tierOf,
 } from "./modelDescriptors";
 import { profileFor } from "./modelProfiles";
-import { qualifiedUiRolesForOfflineModel } from "./uiModelRoles";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 
 describe("modelDescriptors", () => {
@@ -42,21 +40,6 @@ describe("modelDescriptors", () => {
     expect(productionModelRegistry()).toBe(registry);
   });
 
-  it("keeps one canonical registry: every product-visible model has a descriptor, Advanced never a shadow list", () => {
-    const registry = productionModelRegistry();
-    const ids = registry.descriptors.map((item) => item.modelId);
-    for (const advanced of ADVANCED_DESCRIPTORS) {
-      expect(ids).toContain(advanced.modelId);
-      expect(registry.descriptorFor(advanced.modelId)).toMatchObject({ cleanupOnly: true, sha256: advanced.sha256, revision: advanced.revision, fileName: advanced.fileName, taskRoles: [], downloadable: false });
-    }
-    expect(registry.advancedCatalogue()).toEqual([]);
-    // Catalogue and Advanced never overlap: one authority, no double rows.
-    const catalogueIds = new Set(registry.catalogue().map((item) => item.modelId));
-    for (const advanced of registry.advancedCatalogue()) {
-      expect(catalogueIds.has(advanced.modelId)).toBe(false);
-    }
-  });
-
   it("retains Qwen's historical byte identity without promoting its former roles or acquisition", () => {
     const descriptor = productionModelRegistry().requireDescriptor(QWEN_TEXT_MODEL_ID);
     const profile = profileFor(QWEN_TEXT_MODEL_ID);
@@ -72,31 +55,6 @@ describe("modelDescriptors", () => {
     expect(descriptor.cleanupOnly).toBe(true);
     expect(modelSupportsAbi(QWEN_TEXT_DESCRIPTOR, "arm64-v8a")).toBe(true);
     expect(modelSupportsAbi(QWEN_TEXT_DESCRIPTOR, "x86_64")).toBe(false);
-  });
-
-  it("preserves former Advanced pins for cleanup without any acquisition or evaluation offer", () => {
-    const registry = productionModelRegistry();
-    expect(ADVANCED_DESCRIPTORS.length).toBeGreaterThan(0);
-    for (const old of ADVANCED_DESCRIPTORS) {
-      const descriptor = registry.requireDescriptor(old.modelId);
-      expect(tierOf(descriptor)).toBe("advanced");
-      expect(descriptor.downloadable).toBe(false);
-      expect(descriptor.taskRoles).toEqual([]);
-      expect(descriptor.maturity).toBe("lab");
-      expect(descriptor.deviceQualifiedAbis).toEqual([]);
-      expect(distributionPolicyOf(descriptor)).toBe("unavailable");
-      expect(descriptor.importable).toBe(false);
-      expect(descriptor.cleanupOnly).toBe(true);
-      expect(descriptor.sha256).toMatch(/^[a-f0-9]{64}$/);
-      expect(descriptor.revision).toMatch(/^[a-f0-9]{40}$/);
-      expect(descriptor.bytes).toBeGreaterThan(0);
-      expect(descriptor.url).toContain(`/resolve/${descriptor.revision}/`);
-    }
-    // The 1.7B artifact has exact upstream metadata and an independent
-    // minimum-runtime requirement, not the old guessed pending pin.
-    const qwen17 = registry.descriptorFor("qwen3-1.7b-dynamic-int4");
-    expect(qwen17?.sha256).toBe("2a72330b504a6596d53a2c00923c57173b10f1b83e6a541213ffec08d1fc5de8");
-    expect(qwen17?.minRuntimeVersion).toBe("0.18.0");
   });
 
   it("never advertises an install action this build cannot perform", () => {
@@ -173,11 +131,8 @@ describe("modelDescriptors", () => {
       expect(NEEDLE_DESCRIPTOR.taskRoles).toContain(role);
     }
     expect(needleProfileRoles).not.toContain("embed-texts");
-    // Routing proof: consumer qualification derives embeddings from the
-    // descriptor's embed-texts role (the lab profile alone yields no such
-    // signal through task roles).
-    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).toContain("embeddings");
-    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).toContain("tools");
-    expect(qualifiedUiRolesForOfflineModel(NEEDLE_MODEL_ID)).not.toContain("chat");
+    // Routing proof: embeddings are a descriptor role, so the routing
+    // authority advertises it even though the lab profile omits it.
+    expect(NEEDLE_DESCRIPTOR.taskRoles).toContain("embed-texts");
   });
 });

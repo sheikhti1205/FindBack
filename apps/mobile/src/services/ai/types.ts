@@ -252,14 +252,10 @@ export interface PhotoAnalysis {
 export const AI_TASK_IDS = [
   "classify-intent",
   "extract-report-fields",
-  "answer-help",
   "extract-search-filters",
-  "analyze-image",
   "route-intent",
   "embed-texts",
-  "ground-objects",
   "classify-category",
-  "summarize-local-context",
 ] as const;
 export type AiTaskId = (typeof AI_TASK_IDS)[number];
 

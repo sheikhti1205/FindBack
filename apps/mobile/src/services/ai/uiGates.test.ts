@@ -1,36 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { PROBE_VERSION, type ProbeContext, type ProbeRecord } from "./deviceProbe";
 import { createInitialStatus, transitionOfflineModel } from "./offlineModelManager";
 import type { OfflineAssetPin } from "./offlineModelManager";
-import {
-  canShowAuto,
-  canShowGpu,
-  canShowNeedle,
-  canShowOffline,
-} from "./uiGates";
-
-const CONTEXT: ProbeContext = {
-  modelRev: "rev-a",
-  probeVersion: PROBE_VERSION,
-  corpusVersion: "ws7-v1",
-};
-
-function probe(overrides: Partial<ProbeRecord> = {}): ProbeRecord {
-  return {
-    socModel: "Test SoC",
-    gpuInfo: "Test GPU",
-    ramMb: 8192,
-    osVersion: "Android 15",
-    backend: "cpu",
-    ttftMs: 200,
-    tokensPerSec: 20,
-    corpusVersion: CONTEXT.corpusVersion,
-    probeVersion: CONTEXT.probeVersion,
-    modelRev: CONTEXT.modelRev,
-    correctnessPass: true,
-    ...overrides,
-  };
-}
+import { canShowNeedle, canShowOffline } from "./uiGates";
 
 const PIN: OfflineAssetPin = {
   modelId: "test-model",
@@ -53,28 +24,6 @@ function installedVerifiedStatus() {
     actualSha256: PIN.sha256,
   });
 }
-
-describe("uiGates canShowAuto", () => {
-  it("defaults to false without evidence", () => {
-    expect(canShowAuto([], CONTEXT)).toBe(false);
-    expect(canShowAuto(undefined, CONTEXT)).toBe(false);
-    expect(canShowAuto(null, CONTEXT)).toBe(false);
-    expect(canShowAuto([probe()], undefined)).toBe(false);
-    expect(canShowAuto([probe()], null)).toBe(false);
-  });
-
-  it("is true only with a fresh passing probe", () => {
-    expect(canShowAuto([probe()], CONTEXT)).toBe(true);
-  });
-
-  it("stays false for stale or failing probes", () => {
-    expect(canShowAuto([probe({ modelRev: "rev-old" })], CONTEXT)).toBe(false);
-    expect(canShowAuto([probe({ correctnessPass: false })], CONTEXT)).toBe(false);
-    expect(
-      canShowAuto([probe({ tokensPerSec: Number.NaN })], CONTEXT),
-    ).toBe(false);
-  });
-});
 
 describe("uiGates canShowOffline", () => {
   it("defaults to false without evidence", () => {
@@ -134,61 +83,6 @@ describe("uiGates canShowNeedle", () => {
     ).toBe(false);
     expect(
       canShowNeedle({ measured: false, correctnessPass: true, fresh: true }),
-    ).toBe(false);
-  });
-});
-
-describe("uiGates canShowGpu", () => {
-  it("defaults to false without evidence", () => {
-    expect(canShowGpu([], CONTEXT)).toBe(false);
-    expect(canShowGpu(undefined, CONTEXT)).toBe(false);
-    expect(canShowGpu(null, CONTEXT)).toBe(false);
-    expect(canShowGpu([probe({ backend: "gpu" })], undefined)).toBe(false);
-  });
-
-  it("is true only when a fresh passing GPU probe is the measured winner", () => {
-    expect(
-      canShowGpu(
-        [
-          probe({ backend: "cpu", tokensPerSec: 20, ttftMs: 200 }),
-          probe({ backend: "gpu", tokensPerSec: 42, ttftMs: 120 }),
-        ],
-        CONTEXT,
-      ),
-    ).toBe(true);
-  });
-
-  it("stays false when the CPU probe measures faster (no GPU-faster claims)", () => {
-    expect(
-      canShowGpu(
-        [
-          probe({ backend: "cpu", tokensPerSec: 60, ttftMs: 100 }),
-          probe({ backend: "gpu", tokensPerSec: 42, ttftMs: 120 }),
-        ],
-        CONTEXT,
-      ),
-    ).toBe(false);
-    // The auto gate still shows: measurement exists, GPU just did not win.
-    expect(
-      canShowAuto(
-        [
-          probe({ backend: "cpu", tokensPerSec: 60, ttftMs: 100 }),
-          probe({ backend: "gpu", tokensPerSec: 42, ttftMs: 120 }),
-        ],
-        CONTEXT,
-      ),
-    ).toBe(true);
-  });
-
-  it("stays false for stale or failing GPU probes", () => {
-    expect(
-      canShowGpu([probe({ backend: "gpu", modelRev: "rev-old" })], CONTEXT),
-    ).toBe(false);
-    expect(
-      canShowGpu(
-        [probe({ backend: "gpu", correctnessPass: false, tokensPerSec: 999 })],
-        CONTEXT,
-      ),
     ).toBe(false);
   });
 });

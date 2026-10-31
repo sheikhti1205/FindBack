@@ -1,21 +1,17 @@
 /**
- * Task registry: the single canonical authority for the 10 routable AI
- * tasks (Phase A Step 4 — the retired taskSpecs table is merged here).
+ * Task registry: the single canonical authority for the routable local tool
+ * tasks.
  *
- * Each spec bounds one task (input bytes/images, ordered runtime
- * preferences, enforced timeout, route consent, result schema) and carries
- * the advisory op bounds (maxInputChars/maxOutputTokens/retryLimit/privacy
- * handles) preserved from taskSpecs. Lookup is total: unknown ids yield
- * `undefined` and the orchestrator fails closed.
+ * Each spec bounds one task (input bytes, ordered runtime preferences,
+ * enforced timeout, route consent, result schema) and carries the advisory op
+ * bounds (maxInputChars/maxOutputTokens/retryLimit/privacy handles). Lookup is
+ * total: unknown ids yield `undefined` and the orchestrator fails closed.
  *
- * Timeout values are the ENFORCED route budgets (previously only in this
- * table; taskSpecs carried larger advisory numbers that nothing enforced).
+ * Timeout values are the ENFORCED route budgets.
  *
- * `tryDeterministic` is the deterministic-first path: pure, synchronous,
- * no I/O. A resolved outcome lets `route` skip model runtimes entirely.
- * Anything it cannot decide returns `{ resolved: false }` and the model
- * path runs. `fallbackFor` surfaces a local extractive fallback when a
- * model runtime fails (currently only summarize-local-context has one).
+ * `tryDeterministic` is the deterministic-first path: pure, synchronous, no
+ * I/O. A resolved outcome lets `route` skip model runtimes entirely. Anything
+ * it cannot decide returns `{ resolved: false }` and the model path runs.
  */
 import type { AiTaskId, AiTaskSpec } from "../types";
 import { isAiTaskId } from "../types";
@@ -23,18 +19,13 @@ import { isAiTaskId } from "../types";
 export const TASK_IDS: readonly AiTaskId[] = [
   "classify-intent",
   "extract-report-fields",
-  "answer-help",
   "extract-search-filters",
-  "analyze-image",
   "route-intent",
   "embed-texts",
-  "ground-objects",
   "classify-category",
-  "summarize-local-context",
 ];
 
 const TEXT_PRIVACY = { tier: "local-only", handlesImage: false, handlesText: true } as const;
-const IMAGE_PRIVACY = { tier: "local-only", handlesImage: true, handlesText: true } as const;
 const NO_ROUTE_CONSENT = { required: false } as const;
 
 const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
@@ -64,19 +55,6 @@ const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
     privacy: TEXT_PRIVACY,
     consent: NO_ROUTE_CONSENT,
   },
-  "answer-help": {
-    taskId: "answer-help",
-    maxBytes: 4_096,
-    maxImages: 0,
-    runtimes: ["deterministic-local", "local-text"],
-    timeoutMs: 8_000,
-    schema: "help-answer/v1",
-    maxInputChars: 2000,
-    maxOutputTokens: 256,
-    retryLimit: 0,
-    privacy: TEXT_PRIVACY,
-    consent: NO_ROUTE_CONSENT,
-  },
   "extract-search-filters": {
     taskId: "extract-search-filters",
     maxBytes: 4_096,
@@ -88,19 +66,6 @@ const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
     maxOutputTokens: 256,
     retryLimit: 0,
     privacy: TEXT_PRIVACY,
-    consent: NO_ROUTE_CONSENT,
-  },
-  "analyze-image": {
-    taskId: "analyze-image",
-    maxBytes: 2_048,
-    maxImages: 1,
-    runtimes: ["local-vision"],
-    timeoutMs: 30_000,
-    schema: "photo-analysis/v2",
-    maxInputChars: 2000,
-    maxOutputTokens: 512,
-    retryLimit: 1,
-    privacy: IMAGE_PRIVACY,
     consent: NO_ROUTE_CONSENT,
   },
   "route-intent": {
@@ -129,22 +94,6 @@ const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
     privacy: TEXT_PRIVACY,
     consent: NO_ROUTE_CONSENT,
   },
-  "ground-objects": {
-    taskId: "ground-objects",
-    maxBytes: 2_048,
-    maxImages: 1,
-    runtimes: ["local-vision"],
-    timeoutMs: 30_000,
-    schema: "object-grounding/v1",
-    maxInputChars: 140,
-    maxOutputTokens: 512,
-    retryLimit: 0,
-    privacy: IMAGE_PRIVACY,
-    // Route-level consent stays false (no behavior change): the image-consent
-    // flag is enforced by the ground-objects op itself (imageConsent option),
-    // never by the route. `kind` documents that op-level requirement.
-    consent: { required: false, kind: "image" },
-  },
   "classify-category": {
     taskId: "classify-category",
     maxBytes: 4_096,
@@ -153,19 +102,6 @@ const SPECS: Readonly<Record<AiTaskId, AiTaskSpec>> = {
     timeoutMs: 5_000,
     schema: "item-category/v1",
     maxInputChars: 280,
-    maxOutputTokens: 256,
-    retryLimit: 0,
-    privacy: TEXT_PRIVACY,
-    consent: NO_ROUTE_CONSENT,
-  },
-  "summarize-local-context": {
-    taskId: "summarize-local-context",
-    maxBytes: 16_384,
-    maxImages: 0,
-    runtimes: ["deterministic-local", "local-text"],
-    timeoutMs: 10_000,
-    schema: "local-summary/v1",
-    maxInputChars: 2000,
     maxOutputTokens: 256,
     retryLimit: 0,
     privacy: TEXT_PRIVACY,
@@ -190,11 +126,8 @@ export type DeterministicOutcome =
   | { readonly resolved: true; readonly value: unknown }
   | { readonly resolved: false };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readText(input: unknown): string {  if (typeof input === "string") return input;
+function readText(input: unknown): string {
+  if (typeof input === "string") return input;
   if (typeof input === "object" && input !== null) {
     const text = (input as Record<string, unknown>)["text"];
     if (typeof text === "string") return text;
@@ -219,17 +152,6 @@ function extractAfterMarker(text: string, marker: string): string | undefined {
   return value === "" ? undefined : value;
 }
 
-const HELP_FAQ: ReadonlyArray<{ readonly match: RegExp; readonly answer: string }> = [
-  {
-    match: /how (do|can) i report/i,
-    answer: "Open the report flow from the home screen, add a title and a photo, then submit.",
-  },
-  {
-    match: /how (do|can) i search/i,
-    answer: "Open search from the home screen and enter keywords, a category, or a date range.",
-  },
-];
-
 const CATEGORY_KEYWORDS: ReadonlyArray<{ readonly match: RegExp; readonly category: string }> = [
   { match: /\b(wallet|keys|phone|bag|umbrella|backpack|laptop)\b/i, category: "accessories" },
   { match: /\b(dog|cat|parrot|pet)\b/i, category: "pets" },
@@ -237,12 +159,10 @@ const CATEGORY_KEYWORDS: ReadonlyArray<{ readonly match: RegExp; readonly catego
   { match: /\b(jacket|coat|shoe|hat|glove)\b/i, category: "clothing" },
 ];
 
-const SUMMARY_FALLBACK_MAX = 280;
-
 /**
- * Pure deterministic rules, one per task that admits them. Vision and
- * embedding tasks never resolve here (they need a runtime); text tasks
- * resolve only on unambiguous local signals and defer otherwise.
+ * Pure deterministic rules, one per task that admits them. Embedding never
+ * resolves here (it needs a runtime); text tasks resolve only on unambiguous
+ * local signals and defer otherwise.
  */
 export function tryDeterministic(taskId: AiTaskId, input: unknown): DeterministicOutcome {
   const text = readText(input);
@@ -256,11 +176,6 @@ export function tryDeterministic(taskId: AiTaskId, input: unknown): Deterministi
       const intent = classifyIntentText(text);
       if (intent === undefined) return { resolved: false };
       return { resolved: true, value: { intent, route: intent.toLowerCase(), deterministic: true } };
-    }
-    case "answer-help": {
-      const hit = HELP_FAQ.find((entry) => entry.match.test(text));
-      if (hit === undefined) return { resolved: false };
-      return { resolved: true, value: { answerText: hit.answer, deterministic: true } };
     }
     case "extract-report-fields": {
       const title = extractAfterMarker(text, "title:");
@@ -297,39 +212,16 @@ export function tryDeterministic(taskId: AiTaskId, input: unknown): Deterministi
       if (hit === undefined) return { resolved: false };
       return { resolved: true, value: { category: hit.category, deterministic: true } };
     }
-    case "summarize-local-context": {
-      // Local extractive summary needs the actual turns: plain text without
-      // turns defers to the model path (whose failure still surfaces the
-      // truncation fallback via `fallbackFor`).
-      if (!isRecord(input) || !Array.isArray(input["turns"])) return { resolved: false };
-      const turns = (input["turns"] as unknown[]).filter(
-        (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
-      );
-      if (turns.length === 0) return { resolved: false };
-      const joined = turns.join(" ").trim();
-      const summary =
-        joined.length > SUMMARY_FALLBACK_MAX
-          ? `${joined.slice(0, SUMMARY_FALLBACK_MAX).trimEnd()}…`
-          : joined;
-      return { resolved: true, value: { summary, deterministic: true } };
-    }
-    case "analyze-image":
     case "embed-texts":
-    case "ground-objects":
       return { resolved: false };
   }
 }
 
 /**
- * Local extractive fallback surfaced (alongside the failure) when a model
- * runtime fails. Only summarize-local-context defines one: truncation is
- * always available and never leaves the device.
+ * Local fallback surfaced (alongside the failure) when a model runtime fails.
+ * The retained local tools have no model-free fallback: callers fail closed
+ * and the ordinary non-AI path keeps working.
  */
-export function fallbackFor(taskId: AiTaskId, input: unknown): unknown | undefined {
-  if (taskId !== "summarize-local-context") return undefined;
-  const trimmed = readText(input).trim().replace(/\s+/g, " ");
-  if (trimmed === "") return undefined;
-  return trimmed.length > SUMMARY_FALLBACK_MAX
-    ? `${trimmed.slice(0, SUMMARY_FALLBACK_MAX).trimEnd()}…`
-    : trimmed;
+export function fallbackFor(_taskId: AiTaskId, _input: unknown): unknown | undefined {
+  return undefined;
 }
