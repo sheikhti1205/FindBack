@@ -3,7 +3,7 @@ import type { PostItem } from "@findback/shared";
 import { motion } from "framer-motion";
 import { MapPin, Tag } from "lucide-react";
 import { timeAgo } from "../utils/dates";
-import { UserQuickCard } from "./UserQuickCard";
+import { UserIdentityTrigger } from "./UserIdentityTrigger";
 import { StatusChip } from "./StatusChip";
 import { PostLink } from "./PostNavigation";
 import { motionDurations, motionEasings, motionSprings } from "./uiMotion";
@@ -18,7 +18,7 @@ export const sharedElementTransition = {
 /** Public presentation only; overflow and relationship state stay with features. */
 export function PostIdentityHeader({ post, overflow }: { post: PostItem; overflow?: ReactNode }) {
   return <header className="fb-post-identity">
-    <UserQuickCard username={post.author.username} displayName={post.author.displayName} avatarUrl={post.author.avatarUrl} />
+    <UserIdentityTrigger person={post.author} />
     <span data-testid="post-author" className="sr-only">@{post.author.username}</span>
     <time data-testid="post-time" dateTime={post.createdAt} title={new Date(post.createdAt).toLocaleString()} className="fb-post-time">{timeAgo(post.createdAt)}</time>
     {overflow && <div className="fb-post-overflow">{overflow}</div>}

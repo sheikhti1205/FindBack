@@ -150,7 +150,7 @@ a.fb-account-card:hover {
   outline-offset: 2px;
 }
 
-/* Profile header: single link to /profile/edit. Plain (no card) to reduce
+/* Profile header: single link to /profile. Plain (no card) to reduce
    card-overuse; the 48px-tall hit area doubles as the touch target. */
 .fb-settings-profile {
   display: flex;
@@ -204,6 +204,18 @@ a.fb-settings-profile:hover {
   font-weight: 500;
   color: var(--fb-link);
   white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .fb-settings-profile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .fb-settings-profile-edit {
+    grid-column: 2;
+    justify-self: start;
+    white-space: normal;
+  }
 }
 
 /* Nested disclosure groups (Advanced, Help & about). Native details/summary:

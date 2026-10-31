@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { MotionConfig } from "framer-motion";
-import { Shell } from "./Shell";
+import { PrimaryNav, Shell } from "./Shell";
+import { TabTapProvider } from "./TabTap";
 import { resetBackInterceptors } from "./backNavigation";
 import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE } from "../appearance";
 import { COMPACT_MAX_PX } from "./responsive";
@@ -26,6 +27,11 @@ function renderShell(entry = "/") {
         <Route path="/chats" element={<p>Chats screen</p>} />
         <Route path="/settings" element={<p>Settings screen</p>} />
         <Route path="/profile" element={<p>Profile screen</p>} />
+        <Route path="/profile/edit" element={<p>Edit profile screen</p>} />
+        <Route path="/chats/:id" element={<p>Chat thread</p>} />
+        <Route path="/connections/:id" element={<p>Legacy chat thread</p>} />
+        <Route path="/settings/appearance" element={<p>Appearance screen</p>} />
+        <Route path="/my/:id/edit" element={<p>Edit report screen</p>} />
         <Route path="/notifications" element={<p>Notifications screen</p>} />
         <Route path="/report" element={<p>Report screen</p>} />
         <Route path="/ai-connection" element={<p>AI connection</p>} />
@@ -48,7 +54,9 @@ describe("Shell floating primary navigation", () => {
 
   it.each([
     ["/", "Home"], ["/search", "Home"], ["/my", "My Reports"],
-    ["/chats", "Chats"], ["/settings", "Settings"],
+    ["/chats", "Chats"], ["/settings", "Settings"], ["/profile", "Settings"],
+    ["/profile/edit", "Settings"],
+    ["/settings/appearance", "Settings"], ["/my/report/edit", "My Reports"],
   ])("selects only %s's destination with a visible label", (path, label) => {
     renderShell(path);
     const nav = screen.getByRole("navigation", { name: "Primary" });
@@ -56,6 +64,11 @@ describe("Shell floating primary navigation", () => {
     expect(links.filter((link) => link.getAttribute("aria-current") === "page").map((link) => link.getAttribute("aria-label") ?? link.textContent)).toEqual([label]);
     expect(within(nav).getByText(label).getAttribute("aria-hidden")).not.toBe("true");
     expect(links.slice(0, 4).filter((link) => link.textContent?.trim()).map((link) => link.textContent?.trim())).toEqual([label]);
+  });
+
+  it.each(["/chats/thread", "/connections/thread"])("selects Chats when a thread rail is rendered at %s", (path) => {
+    render(<MemoryRouter initialEntries={[path]}><TabTapProvider><PrimaryNav layout="rail" /></TabTapProvider></MemoryRouter>);
+    expect(screen.getByRole("link", { name: "Chats" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("tracks URL after navigation and Back rather than a stale local selection", () => {

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { CommentItem } from "@findback/shared";
-import { UserQuickCard } from "./UserQuickCard";
+import { UserIdentityTrigger } from "./UserIdentityTrigger";
 import { UserAvatar } from "./UserAvatar";
 import { timeAgo } from "../utils/dates";
 import "./CommentThread.css";
@@ -11,7 +11,7 @@ export function CommentIdentityHeader({ comment, isAuthor, overflow }: {
 }) {
   const exact = new Date(comment.createdAt).toLocaleString();
   return <header className="fb-comment-header">
-    <UserQuickCard username={comment.author.username} displayName={comment.author.displayName} avatarUrl={comment.author.avatarUrl}
+    <UserIdentityTrigger person={comment.author}
       trigger={<><UserAvatar username={comment.author.username} avatarUrl={comment.author.avatarUrl} size={28} />
         <span className="fb-identity-name">@{comment.author.username}</span></>} />
     {isAuthor && <span className="fb-comment-author">Author</span>}

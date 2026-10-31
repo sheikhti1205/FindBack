@@ -77,6 +77,8 @@ import { MessagingPrivacy } from "./screens/MessagingPrivacy";
 import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
 import { postBackgroundLocation, PostNavigationProvider } from "./components/PostNavigation";
 import { PostModal } from "./components/PostModal";
+import { UserIdentityProvider } from "./components/UserIdentityTrigger";
+import { PeerIdentityActions } from "./components/PeerIdentityActions";
 
 function MessagingLifecycle() {
   const { user } = useAuth();
@@ -148,7 +150,7 @@ function AppRouteTree() {
           <ErrorBoundary>
             <AccountDeletionFeedback />
             <ReportDeletionFeedbackProvider>
-            <PostNavigationProvider value={user?.id ?? null}>
+             <UserIdentityProvider actions={PeerIdentityActions}><PostNavigationProvider value={user?.id ?? null}>
             <Routes location={background ?? location}>
              <Route path="/shared/:id" element={<SharedReport />} />
              <Route path="/" element={<StartScreen />}>
@@ -266,7 +268,7 @@ function AppRouteTree() {
             {background && <Routes location={location}>
               <Route path="/posts/:id" element={<RequireAuth><PostModal /></RequireAuth>} />
             </Routes>}
-            </PostNavigationProvider>
+             </PostNavigationProvider></UserIdentityProvider>
             </ReportDeletionFeedbackProvider>
           </ErrorBoundary>
     </>

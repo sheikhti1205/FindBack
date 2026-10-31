@@ -6,6 +6,7 @@ import type { PostType } from "@findback/shared";
 import { Segmented } from "../components/Segmented";
 import { EmptyState } from "../components/PostCard";
 import { PostList } from "../components/PostList";
+import { PeopleSearch } from "../components/PeopleSearch";
 import { useFeed } from "../hooks/useFeed";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
@@ -114,13 +115,38 @@ function SearchHelperSetup({ service = getApplicationAi(), onDismiss, onTransfer
   </div>;
 }
 
-export function SearchScreen(props: {
+interface SearchScreenProps {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).
    * Absent means the live transport. Explicit undefined keeps smart search
    * unavailable: the button stays disabled and nothing is ever guessed. */
   nlExtract?: (input: string) => Promise<NlFilterPatch>;
   helperService?: LocalIntelligenceService;
-}) {
+}
+
+export function SearchScreen(props: SearchScreenProps) {
+  const [params, setParams] = useSearchParams();
+  const people = params.get("scope") === "people";
+  const [peopleQuery, setPeopleQuery] = useUrlParam("people");
+  return <div className="flex h-full min-h-0 flex-col">
+    <div role="group" aria-label="Search type" className="flex shrink-0 gap-3 border-b border-outline-variant px-3">
+      {(["Reports", "People"] as const).map(label => <button key={label} type="button" aria-pressed={people === (label === "People")}
+        className={`min-h-[44px] border-b-2 px-2 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${people === (label === "People") ? "border-on-surface text-on-surface" : "border-transparent text-on-surface-variant"}`}
+        onClick={() => setParams(previous => { const next = new URLSearchParams(previous); if (label === "People") next.set("scope", "people"); else next.delete("scope"); return next; }, { replace: true })}>{label}</button>)}
+    </div>
+    <div hidden={people} className={people ? "hidden" : "min-h-0 flex-1"}><ReportSearch {...props} /></div>
+    {people && <section aria-label="People search" className="flex min-h-0 flex-1 flex-col">
+      <header className="shrink-0 px-4 pt-4"><h1 className="mb-3 text-lg font-semibold">Search people</h1>
+        <label className="block text-sm font-medium">Username or name
+          <input type="search" aria-label="Search people" value={peopleQuery} onChange={event => setPeopleQuery(event.target.value)}
+            className="mt-2 w-full rounded-m3-sm border border-outline-variant bg-surface px-3 py-3 text-sm focus:border-on-surface focus:outline focus:outline-2 focus:outline-primary" />
+        </label>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto"><PeopleSearch query={peopleQuery} /></div>
+    </section>}
+  </div>;
+}
+
+function ReportSearch(props: SearchScreenProps) {
   // Default-on live transport: a bare mount (App.tsx) gets nlExtractLive.
   // An explicit prop — including explicit undefined — always wins so tests
   // can inject fakes or pin the disabled copy.

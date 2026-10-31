@@ -171,14 +171,14 @@ describe("Settings home", () => {
     }
   });
 
-  it("shows the profile header with avatar, display name, @username, and Edit profile", () => {
+  it("opens Profile rather than edit from the identity header", () => {
     renderSettings();
-    const header = screen.getByRole("link", { name: /edit profile/i });
-    expect(header.getAttribute("href")).toBe("/profile/edit");
+    const header = screen.getByRole("link", { name: /view profile/i });
+    expect(header.getAttribute("href")).toBe("/profile");
     expect(screen.getByTestId("user-avatar")).toBeTruthy();
     expect(screen.getByText("Test Person")).toBeTruthy();
     expect(screen.getByText("@tester")).toBeTruthy();
-    expect(header.textContent).toMatch(/edit profile/i);
+    expect(header.textContent).toMatch(/view profile/i);
   });
 
   it("offers the local surfaces from the Intelligence group", () => {
@@ -192,7 +192,7 @@ describe("Settings home", () => {
     renderSettings();
     const hrefs = rootHrefs();
     for (const href of [
-      "/profile/edit",
+      "/profile",
       "/settings/account",
       "/settings/appearance",
       "/settings/notifications",
@@ -322,7 +322,7 @@ describe("Settings home", () => {
         expect(row.querySelectorAll("button,a,input").length).toBe(0);
       }
     }
-    const header = screen.getByRole("link", { name: /edit profile/i });
+    const header = screen.getByRole("link", { name: /view profile/i });
     expect(header.querySelectorAll("button,a,input").length).toBe(0);
   });
 });

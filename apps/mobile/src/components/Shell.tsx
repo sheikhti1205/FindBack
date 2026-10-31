@@ -179,7 +179,10 @@ export function PrimaryNav({
   // hiding it would widen <main> by 6.5rem and pull it back, so it stays.
   if (fullscreen || (keyboardOpen && !rail)) return null;
 
-  const selectedPath = activePath ?? (pathname === "/search" ? "/" : pathname === "/connections" ? "/chats" : pathname);
+  const belongsTo = (root: string) => pathname === root || pathname.startsWith(`${root}/`);
+  const selectedPath = activePath ?? (belongsTo("/chats") || belongsTo("/connections") ? "/chats"
+    : belongsTo("/settings") || belongsTo("/profile") ? "/settings"
+    : belongsTo("/my") ? "/my" : pathname === "/search" ? "/" : pathname);
 
   const createAction = (
     <Link to="/report" aria-label="Create report" className="fb-nav-create bg-primary text-on-primary">

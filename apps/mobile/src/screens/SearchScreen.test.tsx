@@ -19,6 +19,10 @@ vi.mock("../services/liveNarrowTasks", () => ({
 }));
 
 import { SearchScreen } from "./SearchScreen";
+vi.mock("../services/people", async original => ({
+  ...await original<typeof import("../services/people")>(),
+  searchPeople: async () => ({ items: [], nextCursor: null }),
+}));
 import { clearFeedCaches } from "../hooks/feedCache";
 import { makePost } from "../fixture/posts";
 import { NEEDLE_DESCRIPTOR } from "../services/ai/modelDescriptors";
@@ -91,6 +95,18 @@ describe("SearchScreen URL filters", () => {
   afterEach(() => {
     cleanup();
     clearFeedCaches();
+  });
+
+  it("switches to People without losing the mounted report search and its filters", async () => {
+    renderSearch("/search?type=FOUND&q=wallet");
+    await screen.findByRole("searchbox", { name: "Search posts" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Describe your search" }), { target: { value: "near the old station" } });
+    fireEvent.click(screen.getByRole("button", { name: "People" }));
+    expect(screen.getByRole("searchbox", { name: "Search people" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Reports" }));
+    expect(screen.getByRole("searchbox", { name: "Search posts" })).toHaveProperty("value", "wallet");
+    expect(screen.getByRole("textbox", { name: "Describe your search" })).toHaveProperty("value", "near the old station");
+    expect(screen.getByTestId("location").textContent).toContain("type=FOUND");
   });
 
   it("keeps the filter column a bounded scroll region so nothing in it is clipped away", () => {
