@@ -169,7 +169,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
   const suggestionSummary = `${visibleMatches.length} possible match${visibleMatches.length === 1 ? "" : "es"} to review.`;
 
   return (
-    <section className="min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
+    <section className="fb-match-list min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
       <h2 id="possible-matches-heading" className="mb-1 text-base font-semibold">
         Possible matches
       </h2>
@@ -186,9 +186,9 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
               ease: motionEasings.out,
               delay: index * motionStagger,
             }}
-            className="min-w-0"
+            className="fb-match-suggestion min-w-0"
           >
-            <div className="flex min-w-0 gap-3 rounded-m3-md border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant">
+            <div className="fb-match-suggestion-content fb-match-card flex min-w-0 gap-3 rounded-m3-md border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant">
               <div className="w-20 shrink-0 sm:w-24">
                 {match.post.photoUrl ? (
                   <button

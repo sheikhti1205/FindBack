@@ -201,6 +201,27 @@ describe("EditReport", () => {
     expect(screen.getByText("My Reports")).toBeTruthy();
   });
 
+  it("re-enables saving after a late save settles and the owner keeps editing", async () => {
+    // A save can settle while the leave question is open. Choosing "Keep
+    // editing" must not leave the editor permanently marked as saved: the next
+    // edit is a new unsaved change and must be saveable and guarded again.
+    const save = deferred<ReturnType<typeof post>>();
+    updatePostMock.mockReturnValueOnce(save.promise);
+    renderEditor();
+    await startSave();
+    fireEvent.click(screen.getByRole("button", { name: /discard changes/i }));
+    const confirm = await screen.findByRole("alertdialog");
+    await act(async () => save.resolve(post({ title: "Another title" })));
+    fireEvent.click(within(confirm).getByRole("button", { name: /keep editing/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "Third title" } });
+    const saveButton = screen.getByRole("button", { name: /save changes/i }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(false);
+    fireEvent.click(saveButton);
+    await waitFor(() => expect(updatePostMock).toHaveBeenCalledTimes(2));
+    expect(updatePostMock.mock.calls[1]![1]).toMatchObject({ title: "Third title" });
+  });
+
   it("locks every canonical field while saving and retains the draft after failure", async () => {
     const save = deferred<ReturnType<typeof post>>();
     updatePostMock.mockReturnValue(save.promise);

@@ -1,5 +1,19 @@
 /* One overlay language. Portals set z-index from shared React depth; legacy
    layers are below 70. Children always stack above their owning task surface. */
+/* The thumbnail must never consume the text column at large text or in a
+   narrow task pane. Query available inline space, not the device width. */
+.fb-match-suggestion { container-type: inline-size; }
+.fb-match-suggestion-content { flex-direction: column; }
+@container (min-width: 18rem) {
+  .fb-match-suggestion-content { flex-direction: row; }
+}
+/* Nested rem padding collapses the text column when the pane is narrow and the
+   text is large. Below this inline size the suggestion stops being a card
+   inside a card, so the title, reasons and actions keep real width. */
+.fb-match-list { container-type: inline-size; }
+@container (max-width: 22rem) {
+  .fb-match-card { padding: 0; border: 0; background: transparent; }
+}
 .fb-icon-control, .fb-surface-button, .fb-quick-trigger {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; min-width: 44px; flex-shrink: 0; border-radius: 12px;

@@ -3,9 +3,13 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BlockControl } from "./BlockControl";
 import { ApiError } from "../services/session";
-const mocks = vi.hoisted(() => ({ list: vi.fn(), block: vi.fn(), unblock: vi.fn(), mutual: vi.fn(), viewer: "me" }));
+import { subscribeSafetyChanged } from "../services/safetySignals";
+import { ChatReportContext } from "../screens/Messaging";
+import { MemoryRouter } from "react-router";
+const mocks = vi.hoisted(() => ({ list: vi.fn(), block: vi.fn(), unblock: vi.fn(), mutual: vi.fn(), fetchPost: vi.fn(), viewer: "me" }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: mocks.viewer } }) }));
 vi.mock("../services/blocks", () => ({ listMyBlocks: mocks.list, blockUser: mocks.block, unblockUser: mocks.unblock, isBlockedWithMe: mocks.mutual }));
+vi.mock("../services/posts", () => ({ fetchPost: mocks.fetchPost }));
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks(); mocks.viewer = "me";
@@ -13,6 +17,37 @@ beforeEach(() => {
   mocks.unblock.mockResolvedValue({ stillHidden: true });
 });
 const props = { userId: "sam", name: "Sam" };
+
+it("a real block confirmation revokes a third-author report preview without changing its conversation peer", async () => {
+  let blocked = false;
+  mocks.fetchPost.mockImplementation(async () => ({ id: "third-report", title: "Third author wallet", type: "FOUND",
+    blockedAuthor: blocked, locationLabel: "Private place", attachments: [{ mimeType: "image/jpeg", fileUrl: "/private.jpg" }] }));
+  mocks.block.mockImplementation(async () => { blocked = true; });
+  render(<MemoryRouter><BlockControl {...props} blocked={false} /><ChatReportContext reportId="third-report" /></MemoryRouter>);
+  await screen.findByRole("link", { name: /Third author wallet/ });
+  fireEvent.click(screen.getByRole("button", { name: "Block Sam" }));
+  confirmBlock("Block");
+  expect(await screen.findByText("Report unavailable")).toBeTruthy();
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(screen.queryByRole("img")).toBeNull();
+  expect(screen.queryByText("Private place")).toBeNull();
+});
+
+it("invalidates other mounted subjects even if this block control leaves while the write is pending", async () => {
+  let finish!: () => void;
+  mocks.block.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+  const changed = vi.fn();
+  const unsubscribe = subscribeSafetyChanged(changed);
+  try {
+    const view = render(<BlockControl {...props} blocked={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Block Sam" }));
+    confirmBlock("Block");
+    expect(mocks.block).toHaveBeenCalledWith("sam");
+    view.unmount();
+    await act(async () => { finish(); });
+    expect(changed).toHaveBeenCalledTimes(1);
+  } finally { unsubscribe(); }
+});
 
 /** Blocking asks through the canonical alert dialog, never window.confirm. */
 function confirmBlock(label: "Block" | "Unblock") {

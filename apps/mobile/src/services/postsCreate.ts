@@ -4,7 +4,7 @@ import { refusalStatus } from "../utils/interactionRefusal";
 import { getSupabase } from "./supabaseClient";
 import { diag } from "./diag";
 import { withTimeout } from "./timeout";
-import { PublishOutcomeUncertainError } from "./publishOutcome";
+import { PublishOutcomeUncertainError, UploadCancelledError } from "./publishOutcome";
 
 /**
  * Bound for the create-post RPC. A hang must surface as uncertain (the
@@ -13,12 +13,49 @@ import { PublishOutcomeUncertainError } from "./publishOutcome";
  */
 export const CREATE_POST_RPC_TIMEOUT_MS = 30_000;
 
-async function createRpc(name: string, args: Record<string, unknown>, traceId?: string): Promise<string> {
+/**
+ * The create RPC runs under the SDK's CURRENT session, so an irreversible write
+ * must be bound to the account the form was filled under. Publishing account A's
+ * captured draft as account B is not recoverable, so a moved session refuses
+ * before any write is issued.
+ */
+async function assertRequestAccount(expectedAccountId: string | undefined): Promise<void> {
+  if (!expectedAccountId) return;
+  const { data } = await getSupabase().auth.getSession();
+  if (data.session?.user.id !== expectedAccountId) {
+    throw new ApiError("Your account changed. Sign in again to publish this report.", 401);
+  }
+}
+
+/**
+ * Account-bound entry points. The wrapper compares the captured account with
+ * the session INSIDE the creating statement, so the check and the write cannot
+ * be split by a session swap between two client reads.
+ */
+const BOUND_CREATE_RPC: Record<string, string> = {
+  findback_create_post_client: "findback_create_post_client_bound",
+  findback_create_post_client_multi: "findback_create_post_client_multi_bound",
+};
+
+async function createRpc(
+  name: string,
+  args: Record<string, unknown>,
+  traceId?: string,
+  expectedAccountId?: string,
+  isCurrent?: () => boolean,
+): Promise<string> {
   const start = Date.now();
+  // Early, friendly refusal; the bound RPC below is the authoritative guard.
+  await assertRequestAccount(expectedAccountId);
+  // Account lookup is async too: leaving during it must not cross dispatch.
+  if (isCurrent && !isCurrent()) throw new UploadCancelledError();
+  const bound = expectedAccountId ? BOUND_CREATE_RPC[name] : undefined;
+  const rpcName = bound ?? name;
+  const rpcArgs = bound ? { ...args, p_expected_account: expectedAccountId } : args;
   let result: Awaited<ReturnType<ReturnType<typeof getSupabase>["rpc"]>>;
   try {
     result = await withTimeout(
-      () => Promise.resolve(getSupabase().rpc(name, args)),
+      () => Promise.resolve(getSupabase().rpc(rpcName, rpcArgs)),
       CREATE_POST_RPC_TIMEOUT_MS,
       "Report publish timed out",
     );
@@ -27,7 +64,7 @@ async function createRpc(name: string, args: Record<string, unknown>, traceId?: 
   }
   if (result.error) {
     diag("posts.create.rpc.error", {
-      rpc: name,
+      rpc: rpcName,
       code: result.error.code,
       message: result.error.message,
       ms: Date.now() - start,
@@ -60,6 +97,11 @@ export interface CreatePostInput {
   longitude?: number | null;
   youtubeUrl?: string;
   attachmentKey?: string;
+  /**
+   * Account the form was filled under. Sent to the bound RPC so the database
+   * refuses a session swap between the client guard and credential dispatch.
+   */
+  expectedAccountId?: string;
 }
 
 /** Ordered staging-upload ids for the versioned multi-image RPC (0–5). */
@@ -70,7 +112,7 @@ export interface CreatePostMultiInput extends Omit<CreatePostInput, "attachmentK
 /** Mirrors the DB contract (`findback_create_post_client_multi`: at most 5 keys). */
 export const MAX_ATTACHMENT_KEYS = 5;
 
-export async function createPost(input: CreatePostInput, traceId?: string): Promise<string> {
+export async function createPost(input: CreatePostInput, traceId?: string, isCurrent?: () => boolean): Promise<string> {
   const start = Date.now();
   const id = await createRpc("findback_create_post_client", {
     p_type: input.type,
@@ -83,7 +125,7 @@ export async function createPost(input: CreatePostInput, traceId?: string): Prom
     p_location_label: input.locationLabel ?? null,
     p_youtube_url: input.youtubeUrl ?? null,
     p_attachment_key: input.attachmentKey ?? null,
-  });
+  }, traceId, input.expectedAccountId, isCurrent);
   diag("posts.create.rpc.success", {
     rpc: "findback_create_post_client",
     ms: Date.now() - start,
@@ -98,7 +140,7 @@ export async function createPost(input: CreatePostInput, traceId?: string): Prom
  * Client-side guards (count, duplicates, blanks) mirror the RPC so doomed
  * publishes fail before any upload bytes move.
  */
-export async function createPostMulti(input: CreatePostMultiInput, traceId?: string): Promise<string> {
+export async function createPostMulti(input: CreatePostMultiInput, traceId?: string, isCurrent?: () => boolean): Promise<string> {
   const keys = input.attachmentKeys ?? [];
   if (keys.length > MAX_ATTACHMENT_KEYS) {
     throw new ApiError(`At most ${MAX_ATTACHMENT_KEYS} attachments are allowed`, 400);
@@ -121,7 +163,7 @@ export async function createPostMulti(input: CreatePostMultiInput, traceId?: str
     p_longitude: input.longitude ?? null,
     p_location_label: input.locationLabel ?? null,
     p_youtube_url: input.youtubeUrl ?? null,
-  });
+  }, traceId, input.expectedAccountId, isCurrent);
   diag("posts.create.rpc.success", {
     rpc: "findback_create_post_client_multi",
     ms: Date.now() - start,

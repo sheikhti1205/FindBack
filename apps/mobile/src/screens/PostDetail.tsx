@@ -237,8 +237,11 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
   // Track in-flight mutations to disable owner controls
   const [statusPending, setStatusPending] = useState(false);
   // Destructive owner/moderator actions ask through the canonical dialog.
-  const [confirmingClose, setConfirmingClose] = useState(false);
-  const [pendingCommentDelete, setPendingCommentDelete] = useState<string | null>(null);
+  // Each pending intent CAPTURES the report and account it was asked about: the
+  // contextual modal reuses this component for another report in place, so a
+  // bare boolean could confirm a different report than the one on screen.
+  const [confirmingClose, setConfirmingClose] = useState<{ postId: string; userId: string } | null>(null);
+  const [pendingCommentDelete, setPendingCommentDelete] = useState<{ postId: string; commentId: string } | null>(null);
   // Latest comments for realtime comment-reaction patches (the effect below
   // only depends on [id, load], so it reads through this ref).
   const commentsRef = useRef<CommentItem[]>([]);
@@ -264,6 +267,9 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
     setCommentsLoading(true); setCommentsError(null);
     setMyReaction(null); setMyRating(null); setPostCountsOverride(null);
     setLightbox(null); setCommentPhoto(null); setPost(null); setLoading(true); postPresentRef.current = false;
+    // A pending destructive intent belongs to the report/account it was asked
+    // about; a replacement must never inherit an armed confirmation.
+    setConfirmingClose(null); setPendingCommentDelete(null);
     return () => { ++loadGen.current; ++commentsSeq.current; ++socialSeq.current; };
   }, [id, user?.id]);
 
@@ -763,14 +769,16 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
     }
     // Closed is terminal for the searcher: ask before writing it.
     if (status === "CLOSED") {
-      setConfirmingClose(true);
+      setConfirmingClose({ postId: current.id, userId: current.userId });
       return;
     }
-    await writeStatus(status);
+    await writeStatus(status, current.id);
   }
 
-  async function writeStatus(status: PostStatus) {
-    if (!current) return;
+  async function writeStatus(status: PostStatus, expectedPostId: string) {
+    // The caller may have asked about a report that is no longer the one on
+    // screen (in-place contextual navigation). Never write to the replacement.
+    if (!current || current.id !== expectedPostId) return;
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++statusSeq.current;
     const snap = { postId: current.id, viewer: user?.id };
@@ -900,7 +908,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
           if (!isStaleMutation(snap)) document.getElementById("detail-comments")?.focus({ preventScroll: true });
         });
       }}
-      onDelete={() => setPendingCommentDelete(c.id)}
+      onDelete={() => setPendingCommentDelete({ postId: current.id, commentId: c.id })}
     />;
     const threadControls = children.length > 0 && (
       <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1425,16 +1433,18 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
       )}
 
       <ConfirmDialog
-        open={confirmingClose}
-        onClose={() => setConfirmingClose(false)}
+        open={confirmingClose !== null}
+        onClose={() => setConfirmingClose(null)}
         title="Close this report?"
         confirmLabel="Close report"
         cancelLabel="Keep it open"
         destructive
         busy={statusPending}
         onConfirm={() => {
-          setConfirmingClose(false);
-          void writeStatus("CLOSED");
+          const intent = confirmingClose;
+          setConfirmingClose(null);
+          if (!intent || !current || intent.postId !== current.id || intent.userId !== current.userId) return;
+          void writeStatus("CLOSED", intent.postId);
         }}
       >
         <p>It will leave the open search. You can reopen it from My Reports.</p>
@@ -1448,9 +1458,10 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
         cancelLabel="Keep comment"
         destructive
         onConfirm={() => {
-          const commentId = pendingCommentDelete;
+          const intent = pendingCommentDelete;
           setPendingCommentDelete(null);
-          if (commentId) void onDeleteComment(commentId);
+          if (!intent || !current || intent.postId !== current.id) return;
+          void onDeleteComment(intent.commentId);
         }}
       >
         <p>It is removed for everyone. Replies to it stay.</p>

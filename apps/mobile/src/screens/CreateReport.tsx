@@ -55,7 +55,7 @@ import {
   type CategorySuggestion,
 } from "../services/categorySuggestion";
 import { diag, startActionTrace, clearAmbientTrace } from "../services/diag";
-import { PublishOutcomeUncertainError } from "../services/publishOutcome";
+import { PublishOutcomeUncertainError, UploadCancelledError } from "../services/publishOutcome";
 
 
 const inputCls =
@@ -104,19 +104,6 @@ const TITLE_MAX = 120;
 const DESCRIPTION_MIN = 10;
 const DESCRIPTION_MAX = 3000;
 const LOCATION_LABEL_MAX = 200;
-
-/**
- * Cooperative publish cancel: thrown from the upload onProgress callback when
- * the user cancels. uploadPhotos stages strictly in order and calls onProgress
- * after each staged file, so throwing here skips every remaining file while
- * uploadPhotos' own catch removes exactly this attempt's staged objects.
- */
-class UploadCancelledError extends Error {
-  constructor() {
-    super("Upload cancelled. Your photos are kept — try again.");
-    this.name = "UploadCancelledError";
-  }
-}
 
 /** Check if a date string is a valid calendar date in YYYY-MM-DD format. */
 function isValidCalendarDate(isoDate: string): boolean {
@@ -439,6 +426,15 @@ function ReportForm() {
     youtubeUrl?: string;
   }>({});
   const submitting = useRef(false);
+  // Mount/account lifetime. The form is keyed by account, so this is false as
+  // soon as the screen is left or the account is replaced. Every continuation
+  // after an await must check it before touching drafts, photos or navigation:
+  // an abandoned publish settling later belongs to a form that no longer exists.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
   const traceIdRef = useRef<string | null>(null);
   const descriptionEditorRef = useRef<Editor | null>(null);
   const descriptionLiveRef = useRef(description);
@@ -1390,9 +1386,13 @@ function ReportForm() {
     if (errs.title || errs.description || errs.category || errs.eventDate || errs.locationLabel || errs.youtubeUrl || !category) return;
     submitting.current = true;
     setBusy(true);
+    // The account this submit belongs to. The create RPC runs under the live
+    // session, so the captured id travels with the request and refuses a swap.
+    const publishAccount = accountId;
     // Let any queued duplicate-detection finish before we snapshot the files,
     // so identical bytes cannot slip into the same publish (R-068).
     await pickQueueRef.current.catch(() => {});
+    if (!aliveRef.current) return;
     const reportFiles = photosRef.current.map((p) => p.file);
     // Diag: publish start
     diag("report.publish.start", {
@@ -1408,6 +1408,7 @@ function ReportForm() {
       // Inside the try: `submitting`/`busy` are reset in the finally below, so
       // this await must never be able to escape onSubmit and wedge the form.
       await restorePromiseRef.current;
+      if (!aliveRef.current) return;
       // Explicit user confirmation is this submit: nothing publishes without it.
       // 0–1 photos keep the legacy single-photo path; 2–5 use the ordered multi path.
       const reportInput = {
@@ -1420,6 +1421,7 @@ function ReportForm() {
         latitude: location.latitude,
         longitude: location.longitude,
         youtubeUrl: trimmedYoutube || undefined,
+        expectedAccountId: publishAccount ?? undefined,
       };
       // Multi-photo uploads report "Uploading i/N" with cancel. The cancel
       // is cooperative: uploadPhotos stages strictly in order and calls
@@ -1431,10 +1433,14 @@ function ReportForm() {
       if (uploadController) setUploadProgress({ completed: 0, total: reportFiles.length });
       const postId =
         reportFiles.length <= 1
-          ? await publishReport(reportInput, reportFiles[0] ?? null, traceIdRef.current ?? undefined)
+          ? await publishReport(reportInput, reportFiles[0] ?? null, traceIdRef.current ?? undefined,
+              () => aliveRef.current)
           : await publishReportWithPhotos(reportInput, reportFiles, {
               traceId: traceIdRef.current ?? undefined,
               signal: uploadController?.signal,
+              // The irreversible create must not happen for a form that no
+              // longer exists (left the screen, account replaced).
+              isCurrent: () => aliveRef.current,
               onProgress: ({ completed, total }) => {
                 if (uploadController?.signal.aborted) throw new UploadCancelledError();
                 setUploadProgress({ completed, total });
@@ -1444,6 +1450,10 @@ function ReportForm() {
       diag("report.publish.success", {
         postId,
       }, { traceId: traceIdRef.current ?? undefined });
+      // The write is irreversible and already committed, but the UI cleanup is
+      // not: a settled publish from a form the person left (or from another
+      // account) must never clear a newer draft or steal its navigation.
+      if (!aliveRef.current) return;
       clearDraft(accountId);
       clearPhotos();
       clearPhotoStore(accountId);

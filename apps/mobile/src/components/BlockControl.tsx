@@ -3,6 +3,7 @@ import { useAuth } from "../auth";
 import { announce } from "./LiveRegion";
 import { friendlyError } from "../utils/friendlyErrors";
 import { blockUser, listMyBlocks, unblockUser } from "../services/blocks";
+import { signalSafetyChanged } from "../services/safetySignals";
 import { runMessagingAuthorityAction } from "../services/messaging/runtime";
 import { BLOCKING_EXPLANATION, UNAVAILABLE_SENTENCES, unblockOutcome } from "../utils/safetyCopy";
 import { isMissingServerFunction } from "../utils/safetyService";
@@ -63,6 +64,9 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className, accou
       } else {
         await runMessagingAuthorityAction(accountId, () => blockUser(userId));
       }
+      // Other mounted readers must revoke stale subjects even if this control
+      // left while its successful write was pending. No private data is emitted.
+      signalSafetyChanged();
       if (!alive.current) return;
       const next = !known;
       setKnown(next);

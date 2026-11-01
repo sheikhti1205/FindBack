@@ -44,7 +44,7 @@ const {
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
 vi.mock("./image", () => ({ normalizeImage: (...args: unknown[]) => normalizeMock(...args) }));
 
-import { publishReportWithPhotos } from "./posts";
+import { publishReport, publishReportWithPhotos } from "./posts";
 
 const input = {
   type: "LOST" as const,
@@ -78,6 +78,44 @@ beforeEach(() => {
     height: 100,
   }));
   rpcMock.mockResolvedValue({ data: "post-new", error: null });
+});
+
+describe("publish lifetime fence (F5)", () => {
+  it.each(["single", "multi"])("does not create when the form leaves during deferred %s staging", async (mode) => {
+    let finishUpload!: (value: { error: null }) => void;
+    let started!: () => void;
+    const uploading = new Promise<void>(resolve => { started = resolve; });
+    uploadMock.mockImplementation(() => {
+      started();
+      return new Promise(resolve => { finishUpload = resolve; });
+    });
+    let current = true;
+    const pending = mode === "single"
+      ? publishReport(input, photo("late.jpg"), undefined, () => current)
+      : publishReportWithPhotos(input, [photo("late.jpg")], { isCurrent: () => current });
+    const assertion = expect(pending).rejects.toMatchObject({ name: "UploadCancelledError" });
+    await uploading;
+    current = false;
+    finishUpload({ error: null });
+    await assertion;
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(removeMock).toHaveBeenCalledTimes(1);
+    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a single-photo publish stops before the create when the form is gone", async () => {
+    await expect(publishReport(input, photo("p1.jpg"), undefined, () => false))
+      .rejects.toMatchObject({ name: "UploadCancelledError" });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(removeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a multi-photo publish stops before the create when the form is gone", async () => {
+    await expect(publishReportWithPhotos(input, [photo("p1.jpg")], { isCurrent: () => false }))
+      .rejects.toMatchObject({ name: "UploadCancelledError" });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(removeMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("publishReportWithPhotos cancellation boundary (P1)", () => {

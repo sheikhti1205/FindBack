@@ -27,7 +27,7 @@ import { displaySizeOrNull } from "./media/displayDimensions";
 import { recordOperation } from "./monitoring/operations";
 import { diag } from "./diag";
 import { withTimeout } from "./timeout";
-import { PublishOutcomeUncertainError } from "./publishOutcome";
+import { PublishOutcomeUncertainError, UploadCancelledError } from "./publishOutcome";
 
 export { createPost, createPostMulti } from "./postsCreate";
 export type { CreatePostInput, CreatePostMultiInput } from "./postsCreate";
@@ -789,11 +789,27 @@ export async function fetchMatchCandidates(
   return ((data ?? []) as ClientPostRow[]).slice(0, limit).map(mapClientPost);
 }
 
-export async function publishReport(input: CreatePostInput, photo: File | null, traceId?: string): Promise<string> {
-  if (!photo) return createPost(input, traceId);
+/**
+ * Cooperative publish cancellation. The caller's lifetime may end (left the
+ * screen, account replaced) while staging is still running; nothing is created
+ * and the staged objects for this attempt are removed, while the caller's local
+ * files and draft stay untouched for a retry.
+ */
+export async function publishReport(
+  input: CreatePostInput,
+  photo: File | null,
+  traceId?: string,
+  /** False once the calling form no longer exists. Checked before the create. */
+  isCurrent?: () => boolean,
+): Promise<string> {
+  if (!photo) return createPost(input, traceId, isCurrent);
   const stored = await uploadImage(photo, traceId);
+  if (isCurrent && !isCurrent()) {
+    await removeStagedUpload(stored, traceId);
+    throw new UploadCancelledError();
+  }
   try {
-    return await createPost({ ...input, attachmentKey: stored.id }, traceId);
+    return await createPost({ ...input, attachmentKey: stored.id }, traceId, isCurrent);
   } catch (err) {
     if (!(err instanceof PublishOutcomeUncertainError)) await removeStagedUpload(stored, traceId);
     throw err;
@@ -813,6 +829,12 @@ export interface PublishPhotosOptions {
    * post row.
    */
   signal?: AbortSignal;
+  /**
+   * False once the calling form no longer exists. Checked at the pre-create
+   * boundary so a completed upload never becomes an irreversible post after the
+   * person left.
+   */
+  isCurrent?: () => boolean;
 }
 
 /**
@@ -838,7 +860,8 @@ export async function publishReportWithPhotos(
         "The extra photo was not published — remove one first and try again.",
     );
   }
-  if (photos.length === 0) return createPost(input, options.traceId);
+  const isCurrent = () => !options.signal?.aborted && (options.isCurrent?.() ?? true);
+  if (photos.length === 0) return createPost(input, options.traceId, isCurrent);
   diag("posts.publish.multi_start", {
     photoCount: photos.length,
   }, { traceId: options.traceId });
@@ -849,16 +872,15 @@ export async function publishReportWithPhotos(
     // stalled upload must stop waiting now, not after the last photo lands.
     signal: options.signal,
   });
-  if (options.signal?.aborted) {
+  if (options.signal?.aborted || (options.isCurrent && !options.isCurrent())) {
     await removeStagedUploads(staged, options.traceId);
-    const cancelled = new Error("Upload cancelled. Your photos are kept \u2014 try again.");
-    cancelled.name = "UploadCancelledError";
-    throw cancelled;
+    throw new UploadCancelledError();
   }
   try {
     const postId = await createPostMulti(
       { ...input, attachmentKeys: staged.map((s) => s.id) },
       options.traceId,
+      isCurrent,
     );
     diag("posts.publish.multi_success", {
       postId,

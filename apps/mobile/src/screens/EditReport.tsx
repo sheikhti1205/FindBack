@@ -232,6 +232,10 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
 
   const onChange = useCallback((patch: Partial<ReportEditorValues>) => {
     if (!activeRef.current || saveInFlightRef.current) return;
+    // A settled save does not make LATER edits saved. Without this, keeping the
+    // editor open after a save completes (the leave question was open) would
+    // pin `saved` forever, so the next edit could neither be saved nor guarded.
+    setSaved(false);
     setValues((current) => (current ? { ...current, ...patch } : current));
     setFieldErrors((current) => {
       const next = { ...current };

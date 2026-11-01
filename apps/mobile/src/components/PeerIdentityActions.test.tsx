@@ -38,6 +38,37 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("supplies the §9 safety rows in a stranger quick card", async () => {
+  mount();
+  expect(screen.getByRole("button", { name: "Connect" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "More profile actions" }));
+  expect(await screen.findByRole("menuitem", { name: "Report user" })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Block account" })).toBeTruthy();
+});
+
+it("names an outgoing request's conversation action and keeps safety available", () => {
+  state.projections = { chat: { ...connected, mode: "REQUEST", request: "OUTGOING" } };
+  mount();
+  expect(screen.getByText("Request sent")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Open request conversation" }).getAttribute("href")).toBe("/chats/chat");
+  expect(screen.getByRole("button", { name: "More profile actions" })).toBeTruthy();
+});
+
+it("keeps an incoming request as View request with safety available", () => {
+  state.projections = { chat: { ...connected, mode: "REQUEST", request: "INCOMING" } };
+  mount();
+  expect(screen.getByRole("link", { name: "View request" }).getAttribute("href")).toBe("/chats/chat");
+  expect(screen.getByRole("button", { name: "More profile actions" })).toBeTruthy();
+});
+
+it("offers connection options alongside message on a connected card", () => {
+  state.projections = { chat: connected };
+  mount();
+  expect(screen.getByRole("link", { name: "Message" }).getAttribute("href")).toBe("/chats/chat");
+  expect(screen.getByRole("link", { name: "Connection options" }).getAttribute("href")).toBe("/chats/chat");
+  expect(screen.getByRole("button", { name: "More profile actions" })).toBeTruthy();
+});
+
 it("supplies the same contact owner to a public quick card without leaking private identity", async () => {
   render(<MemoryRouter><UserIdentityProvider actions={PeerIdentityActions}>
     <UserIdentityTrigger person={{ ...person, email: "private@example.test" } as typeof person} />
@@ -92,7 +123,7 @@ it("drops pending first contact when the report subject changes", async () => {
 
 it.each([
   ["connected", { ...connected }, "Message", "Connected"],
-  ["outgoing", { ...connected, mode: "REQUEST", request: "OUTGOING" }, "View request", "Request sent"],
+  ["outgoing", { ...connected, mode: "REQUEST", request: "OUTGOING" }, "Open request conversation", "Request sent"],
   ["incoming", { ...connected, mode: "REQUEST", request: "INCOMING" }, "View request", "Message request"],
 ] as const)("opens the existing %s conversation without creating another request", async (_name, projection, label, summary) => {
   state.projections = { chat: projection };

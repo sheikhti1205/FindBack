@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const { mockSubmitReport, mockIsBlockedWithMe, authState, listMyBlocks, blockUser, unblockUser, announce } = vi.hoisted(() => ({
   mockSubmitReport: vi.fn(),
@@ -173,11 +173,13 @@ describe("the safety overflow on a profile", () => {
   });
 
   it("runs the canonical confirmed block action for the loaded person", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<SafetyActions reportPerson person={{ userId: "user-2", name: "Sam" }} />);
     openActions();
     fireEvent.click(screen.getByRole("menuitem", { name: "Block account" }));
+    // Blocking asks through the canonical dialog; the trigger only opens it.
     fireEvent.click(await screen.findByRole("button", { name: "Block Sam" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Block Sam?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Block" }));
     expect((await screen.findByTestId("block-outcome")).textContent).toContain("You blocked Sam.");
     expect(blockUser).toHaveBeenCalledExactlyOnceWith("user-2");
     expect(unblockUser).not.toHaveBeenCalled();

@@ -5,3 +5,11 @@ export class PublishOutcomeUncertainError extends Error {
     this.name = "PublishOutcomeUncertainError";
   }
 }
+
+/** Publication was stopped before dispatch; staged bytes may be cleaned safely. */
+export class UploadCancelledError extends Error {
+  constructor() {
+    super("Upload cancelled. Your photos are kept — try again.");
+    this.name = "UploadCancelledError";
+  }
+}

@@ -8,6 +8,7 @@ import { MAX_BODY_UNITS } from "../services/messaging/validation";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { ComposerShell } from "./ComposerShell";
+import { SafetyActions } from "./SafetyActions";
 import { UserAvatar } from "./UserAvatar";
 
 /** Account/peer/report key invalidates drafts and async continuations synchronously. */
@@ -65,16 +66,27 @@ function PeerActionsSession({ accountId, person }: { accountId: string; person: 
   }
 
   if (projection?.ownBlocked) return null;
+  // §9 quick card: the conversation is the canonical owner of relationship
+  // options, so a connected card routes to it instead of duplicating accept /
+  // decline / end policy here. Outgoing requests name the action they perform.
+  const conversationHref = projection
+    ? `/chats/${encodeURIComponent(projection.conversationId)}${reportId ? `?report=${encodeURIComponent(reportId)}` : ""}`
+    : null;
   return <div className="fb-peer-actions">
     {available && projection && <>
       <p className="fb-identity-relationship">{projection.mode === "CONNECTED" ? "Connected"
         : projection.request === "OUTGOING" ? "Request sent" : "Message request"}</p>
-      <Link className="fb-surface-button" to={`/chats/${encodeURIComponent(projection.conversationId)}${reportId ? `?report=${encodeURIComponent(reportId)}` : ""}`}>
-        {projection.mode === "CONNECTED" ? reportId ? "Message about this report" : "Message" : "View request"}
+      <Link className="fb-surface-button" to={conversationHref!}>
+        {projection.mode === "CONNECTED" ? reportId ? "Message about this report" : "Message"
+          : projection.request === "OUTGOING" ? "Open request conversation" : "View request"}
       </Link>
+      {projection.mode === "CONNECTED" && <Link className="fb-surface-button" to={`/chats/${encodeURIComponent(projection.conversationId)}`}>Connection options</Link>}
     </>}
     {(!projection || !available) && <button type="button" className="fb-surface-button" disabled={!available}
       onClick={() => setOpen(true)}>{reportId ? "Connect about this report" : "Connect"}</button>}
+    {/* §9 safety rows: the canonical safety owner supplies Report user and
+        Block user; this card composes it rather than adding a second control. */}
+    <SafetyActions reportPerson person={{ userId: person.id, name }} />
     <AdaptiveTaskSurface open={open} onClose={() => setOpen(false)} busy={busy}
       title={reportId ? `Message ${name} about this report` : `Connect with ${name}`}
       description={reportId

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, RouterProvider, Routes, createMemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@capacitor/core", () => ({
@@ -95,7 +95,6 @@ function renderDetail(entry = "/posts/p1") {
     </MemoryRouter>,
   );
 }
-
 describe("PostDetail redesign (UXN-3)", () => {
   beforeEach(() => {
     // The share path builds a public link, which reads this var and throws when
@@ -163,6 +162,28 @@ describe("PostDetail redesign (UXN-3)", () => {
     expect(within(screen.getByRole("group", { name: "Report actions" })).queryByRole("button", { name: "Save report" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More report actions" }));
     expect(await screen.findByRole("menuitem", { name: "Save report" })).toBeTruthy();
+  });
+
+  it("clears a pending Close confirmation when the report is replaced in place", async () => {
+    // The contextual desktop modal reuses this component for a different
+    // report. A confirmation asked about report A must never write to B. The
+    // modal layer makes the rest of the page inert, so the replacement arrives
+    // as route delivery (Back/history/deep link), not as a click in the tree.
+    authState.user = { id: "u2", username: "owner" };
+    postsMock.fetchPost.mockImplementation(async (id: string) => ({
+      ...basePost,
+      id,
+      title: id === "p2" ? "Second report" : "Lost wallet",
+    }));
+    const router = createMemoryRouter([{ path: "/posts/:id", element: <PostDetail /> }], { initialEntries: ["/posts/p1"] });
+    render(<RouterProvider router={router} />);
+    const group = await screen.findByRole("radiogroup", { name: "Post status" });
+    fireEvent.click(within(group).getByRole("radio", { name: "Closed" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    await act(async () => { await router.navigate("/posts/p2"); });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Second report" })).toBeTruthy();
+    expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
   });
 
   it("uses instant scroll under reduced motion", async () => {

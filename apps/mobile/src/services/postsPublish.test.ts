@@ -39,7 +39,7 @@ describe("publishReport", () => {
 
     await expect(publishReport(input, new File(["x"], "p.jpg", { type: "image/jpeg" }), "test-trace-id")).resolves.toBe("p1");
 
-    expect(createPostMock).toHaveBeenCalledWith(expect.objectContaining({ attachmentKey: "u1" }), "test-trace-id");
+    expect(createPostMock).toHaveBeenCalledWith(expect.objectContaining({ attachmentKey: "u1" }), "test-trace-id", undefined);
     expect(removeStagedUploadMock).not.toHaveBeenCalled();
   });
 

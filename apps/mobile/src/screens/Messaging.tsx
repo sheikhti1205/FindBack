@@ -4,6 +4,8 @@ import { Archive, ArrowLeft, BellOff, ChevronDown, Ellipsis, Flag, Images, Info,
 import { Capacitor } from "@capacitor/core";
 import type { PostItem } from "@findback/shared";
 import { copyStaticLocation, isUuid } from "../services/messaging/validation";
+import { subscribeSafetyChanged } from "../services/safetySignals";
+import { onRealtime } from "../services/realtime";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
 import { StatusChip } from "../components/StatusChip";
@@ -39,8 +41,18 @@ import "./Messaging.css";
 /** Live report subject for a report-linked message. Only the id travels with the
  * message; readability is resolved here, so a later-hidden report reads
  * "Report unavailable" instead of showing a stale private snapshot. */
-export function ChatReportContext({ reportId, preview = false }: { reportId: string; preview?: boolean }) {
-  return <ReportContextSession key={reportId} reportId={reportId} preview={preview} />;
+export function ChatReportContext({ reportId, preview = false, safetyKey = "" }: {
+  reportId: string;
+  preview?: boolean;
+  /**
+   * The caller's current relationship/concealment state for this conversation.
+   * A block in this tab must revoke a loaded preview, not wait for a focus
+   * event, so a changed key starts a fresh session instead of keeping a
+   * snapshot that was read under the previous authority.
+   */
+  safetyKey?: string;
+}) {
+  return <ReportContextSession key={`${reportId}:${safetyKey}`} reportId={reportId} preview={preview} />;
 }
 
 function ReportContextSession({ reportId, preview }: { reportId: string; preview: boolean }) {
@@ -51,12 +63,30 @@ function ReportContextSession({ reportId, preview }: { reportId: string; preview
       const request = ++generation;
       setState({ status: "loading" });
       void fetchPost(reportId).then((post) => {
-        if (!cancelled && request === generation) setState({ status: "ready", post });
+        if (cancelled || request !== generation) return;
+        // fetchPost is not exclusion-only: it can return a public row the reader
+        // has blocked and leave concealment to presentation. A chat preview has
+        // no shield, so a blocked report is unavailable here — never a title,
+        // photo or place.
+        setState(post.blockedAuthor === true ? { status: "unavailable" } : { status: "ready", post });
       }).catch(() => { if (!cancelled && request === generation) setState({ status: "unavailable" }); });
     };
     const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    // A block made in this tab (the quick card, a profile) must revoke what is
+    // already on screen even when the peer's own projection is unrelated: the
+    // subject here may be a third person's report.
+    const unsubscribe = subscribeSafetyChanged(refresh);
+    // The canonical feed channel already carries every report UPDATE/DELETE,
+    // including moderation. Do not open one private room per history preview
+    // (rooms are shared with detail); invalidate only this report's subject.
+    const offPost = onRealtime("feed:changed", payload => {
+      if (payload.postId === reportId) refresh();
+    });
     refresh(); window.addEventListener("focus", refresh); document.addEventListener("visibilitychange", onVisible);
-    return () => { cancelled = true; window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVisible); };
+    return () => {
+      cancelled = true; unsubscribe(); offPost();
+      window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [reportId]);
   if (preview && state.status !== "ready") return <span className="fb-chat-row-context">{state.status === "loading" ? "Loading report…" : "Report unavailable"}</span>;
   if (state.status === "loading") return <p className="fb-chat-context fb-chat-secondary">Loading report…</p>;
@@ -250,7 +280,7 @@ function ConnectionsSession({ accountId, selectedId }: { accountId: string; sele
               <span className="fb-chat-row-copy"><strong>{name ? `@${name}` : "Member"}</strong>
                 <span className="fb-chat-preview">{row.lastMessage?.unsentAt !== undefined ? "Message unsent"
                   : row.lastMessage?.body || (row.lastMessage?.messageType === "LOCATION" ? "Location shared" : row.lastMessage?.messageType === "MEDIA" ? "Photo" : state)}</span>
-                {row.lastMessage?.contextReportId && row.lastMessage.unsentAt === undefined && <ChatReportContext reportId={row.lastMessage.contextReportId} preview />}
+                {row.lastMessage?.contextReportId && row.lastMessage.unsentAt === undefined && <ChatReportContext reportId={row.lastMessage.contextReportId} safetyKey={view?.ownBlocked ? "blocked" : "clear"} preview />}
                 {row.lastMessage && <span className="fb-chat-secondary">{state}{!chat.currentProjections ? " · Saved chat" : ""}</span>}
               </span>
                <span className="fb-chat-row-meta">
@@ -664,7 +694,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             <span className="sr-only">{own ? "You: " : `${name ? `@${name}` : "Member"}: `}</span>
             {message.unsentAt !== undefined ? <p>Message unsent</p> : <>
             {message.messageType === "MEDIA" && attachment && photoAllowed && <ChatPhoto key={attachment.id} accountId={accountId} conversationId={conversationId} attachment={attachment} onOpen={openPhoto} onReady={rememberPhoto} />}
-            {message.contextReportId && <ChatReportContext reportId={message.contextReportId} />}
+            {message.contextReportId && <ChatReportContext reportId={message.contextReportId} safetyKey={view?.ownBlocked ? "blocked" : "clear"} />}
             {message.location && <ChatLocation location={message.location} />}
             {message.body ? <p dir="auto">{message.body}</p> : !attachment && message.messageType !== "LOCATION" && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
             {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
