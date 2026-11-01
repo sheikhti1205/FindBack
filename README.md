@@ -14,8 +14,8 @@ Web links to shared reports: <https://findbackapp.social>
 
 ## Screenshots
 
-Earlier-beta browser captures with synthetic reports in light and true-black
-themes (capture source/date in the manifest). They predate the adaptive M7-P
+Browser captures with synthetic reports in light and true-black themes, from
+an earlier beta (capture source/date in the manifest). They predate the adaptive
 refresh and are not current-source, native-device or real-account acceptance.
 
 <p>
@@ -53,22 +53,23 @@ Capture dimensions and checksums: [screenshot manifest](docs/screenshots/manifes
 - Optional AI Chat using your own API key from the provider you choose
 
 This is an internal beta under validation, not a public-ready release. The current
-source version is `0.12.0-beta.1`; new backend capabilities remain pending hosted
-application. A source version is not an installable release or a live-service claim.
+source version is `0.13.0-beta.1`. Product Fit Reset migrations have exact hosted
+readback; final CI and web deployment receipts are tracked separately. A source
+version is not an installable release or a real-device acceptance claim.
 
 ## Your privacy
 
 The full text is in the app under Settings: Privacy Policy, Terms and Community Guidelines. Short version of how the app is built:
 
 - **Email and phone stay private.** Other users see your public profile (name, username, avatar, verification badges). They never see your email address or phone number.
-- **Reports are visible to FindBack users.** Photos, descriptions, comments and locations you post can be seen by signed-in users. Shared report links ask the viewer to sign in. Don't post anything you wouldn't want a stranger to read, and blur addresses, papers, faces and serial numbers before adding a photo. The app reminds you of this while you write.
+- **Reports are visible to FindBack users.** Photos, descriptions, comments and locations you post can be seen by signed-in users. Eligible shared links show a minimal anonymous preview without raw report text, photos, contact details or location; full reports and private actions require sign-in. You can withdraw a preview. Don't post anything you wouldn't want a stranger to read, and blur addresses, papers, faces and serial numbers before adding a photo. The app reminds you of this while you write.
 - **You choose how exact a location is.** You can pin an exact spot or an approximate one.
 - **Smart Search and match suggestions run on your phone.** What you type into Smart Search is not sent to a cloud model.
 - **AI Chat is separate and uses your own key.** Your key stays on your device. Messages you send in AI Chat go to the provider you picked, under that provider's terms, and charges depend on your account with them. FindBack does not run a server that relays them. Chat history is kept only while the app is open and is gone when you close it.
 - **Private messages are separate from AI Chat.** Accepted history is stored on each device, with temporary server delivery and private image storage. Messages are not end-to-end encrypted. Push notifications wake the app rather than carrying message text. There is no consumer Drive backup option in this beta.
 - **Chat location is a one-time choice, not live tracking.** Only connected conversations can send it. Review the exact or approximate pin before sending. Archive hides a conversation for you; it does not erase the other person's history.
 - **You can delete your account** from Settings. That removes your account, reports and photos. Limited safety records are retained: reported-content evidence for up to 90 days, and appeal, moderation and audit records after deletion. Deletion cannot remove another person's existing copies of messages or files.
-- **Staff tools are locked down.** Moderators and admins use the same app as everyone else. Their tools only appear for accounts that have been given a role, and the backend checks the role on every privileged action. Hiding a button is never the only protection.
+- **Staff tools are locked down.** Moderators and admins use the same app as everyone else. A privileged email offer requires normal verified account setup and explicit acceptance; signup alone never grants a role. The backend checks the role on every privileged action. Hiding a button is never the only protection.
 
 ## Safety
 
@@ -83,9 +84,11 @@ Android is the primary target. Only builds explicitly verified and published on 
 FindBack is a working internal beta. The consumer flows are implemented and covered by
 automated checks, but real two-account, multi-device, staff-session and phone-photo
 acceptance is still outstanding. Physical Android and Sentry ingestion acceptance
-also remain unpassed. M7-P has local source/fixture acceptance; its migrations
-have not been applied to the hosted service. See
-[the source checkpoint](docs/releases/M7_P_SOURCE_CLOSURE_2026-11-01.md),
+also remain unpassed. M7-P is historical source closure; its four migrations were
+already hosted when Product Fit Reset began. The authorized reset deleted old
+Auth accounts, product rows and uploads while preserving schema/configuration
+and only pending privileged email offers. See
+[the current beta checkpoint](docs/releases/PRODUCT_FIT_RESET_2026-11-02.md),
 [ROADMAP.md](ROADMAP.md) for direction and
 [docs/history/](docs/history/) for how the version line is derived.
 
