@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Button, Dialog, DialogTrigger, Heading } from "react-aria-components";
 import { useSearchParams } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { CATEGORIES, POST_STATUSES, type Category, type PostStatus, type PostType } from "@findback/shared";
 import { SlidersHorizontal, X } from "lucide-react";
-import { BottomSheet } from "../components/BottomSheet";
+import { AdaptiveTaskSurface } from "../components/AdaptiveTaskSurface";
+import { LayeredPopover } from "../components/overlayFoundation";
+import { COMPACT_MAX_PX, useViewportWidth } from "../components/responsive";
 import { CategoryField } from "../components/CategoryField";
 import { SelectField, TextField } from "../components/Fields";
 import { STATUS_OPTIONS, statusLabel } from "../components/Segmented";
@@ -17,6 +20,7 @@ import {
   pressFeedback,
   scaleInVariants,
 } from "../components/uiMotion";
+import "./SearchScreen.css";
 
 /** The first value that is actually there: an empty string is "not there". */
 function firstPresent(...values: (string | undefined)[]): string {
@@ -138,6 +142,9 @@ export function AdvancedSearchFilters({
   open: controlledOpen,
   onOpenChange,
   hideTrigger = false,
+  compactTrigger = false,
+  additionalControls,
+  additionalFilters = [],
   dateRange,
   postType,
   place,
@@ -148,6 +155,9 @@ export function AdvancedSearchFilters({
   onOpenChange?: (open: boolean) => void;
   /** Hide the default full-width trigger when the caller renders its own. */
   hideTrigger?: boolean;
+  compactTrigger?: boolean;
+  additionalControls?: ReactNode;
+  additionalFilters?: readonly { key: string; label: string; clear: () => void }[];
   /** Search can expose dates without changing Home's filter/URL contract. */
   dateRange?: {
     /** The APPLIED bounds. The chips count these: a value the feed never
@@ -187,6 +197,7 @@ export function AdvancedSearchFilters({
   };
 }) {
   const { category, status, sort, setCategory, setStatus, setSort, clearAll } = filters;
+  const width = useViewportWidth();
   const [internalOpen, setInternalOpen] = useState(false);
   const sheetOpen = controlledOpen ?? internalOpen;
   const setSheetOpen = onOpenChange ?? setInternalOpen;
@@ -209,22 +220,48 @@ export function AdvancedSearchFilters({
   // the badge counts it, so a reader with only a type filter never sees a
   // chip on screen and no count beside it.
   const typeActive = Boolean(postType?.value);
-  const activeCount = active.length + (typeActive ? 1 : 0);
+  const activeCount = active.length + additionalFilters.length + (typeActive ? 1 : 0);
+  const description = dateRange ? "Changes apply immediately." : "Category, status and sort. Changes apply immediately.";
+  const fields = <div className="fb-filter-fields">
+    <CategoryField value={category} onChange={setCategory} />
+    <SelectField label="Status" value={status} onChange={e => setStatus(e.target.value as PostStatus | "")} options={STATUS_OPTIONS} />
+    {dateRange && <>
+      <TextField label="From date" type="date" style={{ paddingInline: 12 }} value={dateFromField} max={dateToField || undefined} onChange={e => dateRange.onFromChange(e.target.value)} />
+      <TextField label="To date" type="date" style={{ paddingInline: 12 }} value={dateToField} min={dateFromField || undefined} onChange={e => dateRange.onToChange(e.target.value)} />
+    </>}
+    {place && <TextField label="Place" placeholder="e.g. Gulshan" value={place.value}
+      hint="Matches place names in the loaded reports. More may match as you load them."
+      error={placeRejection(place.value) ? PLACE_REJECTION_COPY[placeRejection(place.value)!] : undefined}
+      onChange={e => place.onChange(e.target.value)} />}
+    {additionalControls}
+    <SelectField label="Sort" value={sort} onChange={e => setSort(e.target.value as "newest" | "oldest")} options={[
+      { value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" },
+    ]} />
+    {activeCount > 0 && <button type="button" onClick={clearAll} className="fb-surface-button">Clear all filters</button>}
+  </div>;
+  const done = <Button className="fb-surface-button" onPress={() => setSheetOpen(false)}>Done</Button>;
+  const task = <AdaptiveTaskSurface open={sheetOpen} onClose={() => setSheetOpen(false)} title="Filters" description={description} footer={done}>{fields}</AdaptiveTaskSurface>;
 
   return (
     <>
-      {!hideTrigger && (
-        <button
-          type="button"
-          onClick={() => setSheetOpen(true)}
-          aria-haspopup="dialog"
-          aria-expanded={sheetOpen}
-          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-m3-sm border border-outline-variant bg-surface px-4 text-sm font-medium text-on-surface"
-        >
-          <SlidersHorizontal size={16} aria-hidden />
-          Filters{activeCount > 0 ? ` (${activeCount})` : ""}
-        </button>
-      )}
+      {!hideTrigger && <DialogTrigger isOpen={sheetOpen} onOpenChange={setSheetOpen}>
+        <Button aria-label={compactTrigger ? activeCount > 0 ? `Filters, ${activeCount} active` : "Filters" : undefined}
+          className={compactTrigger ? "fb-icon-control fb-filter-trigger" : "fb-surface-button gap-2"}>
+          <SlidersHorizontal size={18} aria-hidden />
+          {!compactTrigger && <>Filters{activeCount > 0 ? ` (${activeCount})` : ""}</>}
+          {compactTrigger && activeCount > 0 && <span aria-hidden="true" data-testid="filters-active-count" className="fb-filter-count">{activeCount}</span>}
+        </Button>
+        {width >= COMPACT_MAX_PX ? <LayeredPopover placement="bottom end" maxHeight={680} className="fb-search-filter-popover">
+          <Dialog className="fb-search-filter-dialog">
+            <header className="fb-surface-header"><Heading slot="title" className="fb-surface-title">Filters</Heading>
+              <Button autoFocus aria-label="Close" className="fb-icon-control" onPress={() => setSheetOpen(false)}><X size={20} aria-hidden /></Button>
+            </header>
+            <div className="fb-search-filter-body"><p className="fb-surface-description">{description}</p>{fields}</div>
+            <footer className="fb-surface-footer">{done}</footer>
+          </Dialog>
+        </LayeredPopover> : task}
+      </DialogTrigger>}
+      {hideTrigger && task}
 
       {/* The chips row.
           The TYPE chip lives OUTSIDE the animated group, and the group is
@@ -233,11 +270,11 @@ export function AdvancedSearchFilters({
           screen at once — they must not keep the cleared chips on screen
           while they fade out — and the type chip is its own summary, so it
           fades in and out on its own. */}
-      {(active.length > 0 || typeActive) && (
+      {(active.length > 0 || typeActive || additionalFilters.length > 0) && (
         <motion.div
           layout
           transition={motionSprings.snappy}
-          className="flex flex-wrap items-center gap-2"
+          className="fb-search-filter-chips"
           aria-label="Active filters"
         >
           <AnimatePresence initial={false}>
@@ -260,6 +297,8 @@ export function AdvancedSearchFilters({
               </motion.button>
             )}
           </AnimatePresence>
+          {additionalFilters.map(item => <button key={item.key} type="button" onClick={item.clear}
+            aria-label={`Remove ${item.key} filter`} className="fb-search-chip">{item.label}<X size={14} aria-hidden /></button>)}
           {active.length > 0 && (
             <AnimatePresence initial={false}>
               {active.map(item => (
@@ -290,49 +329,6 @@ export function AdvancedSearchFilters({
         </motion.div>
       )}
 
-      <BottomSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        title="Filters"
-        description={dateRange ? "Changes apply immediately." : "Category, status and sort. Changes apply immediately."}
-        height={dateRange ? "large" : "medium"}
-      >
-        <div className="flex flex-col gap-3 pb-2">
-          <CategoryField value={category} onChange={setCategory} />
-          <SelectField label="Status" value={status} onChange={e => setStatus(e.target.value as PostStatus | "")} options={STATUS_OPTIONS} />
-          {dateRange && <>
-            <TextField label="From date" type="date" style={{ paddingInline: 12 }} value={dateFromField} max={dateToField || undefined} onChange={e => dateRange.onFromChange(e.target.value)} />
-            <TextField label="To date" type="date" style={{ paddingInline: 12 }} value={dateToField} min={dateFromField || undefined} onChange={e => dateRange.onToChange(e.target.value)} />
-          </>}
-          {place && (
-            <TextField
-              label="Place"
-              placeholder="e.g. Gulshan"
-              value={place.value}
-              hint="Keeps the loaded reports whose place name matches — the place is matched on this device, so more reports may match as you load them. A report with only a map pin and no place name is not included."
-              // A value that is not a place name (a coordinate, a bare
-              // number, a name that is too long) is not a filter. The reader
-              // is told WHICH reason it is, instead of watching a filter
-              // that never applies.
-              error={
-                placeRejection(place.value)
-                  ? PLACE_REJECTION_COPY[placeRejection(place.value)!]
-                  : undefined
-              }
-              onChange={e => place.onChange(e.target.value)}
-            />
-          )}
-          <SelectField label="Sort" value={sort} onChange={e => setSort(e.target.value as "newest" | "oldest")} options={[
-            { value: "newest", label: "Newest first" },
-            { value: "oldest", label: "Oldest first" },
-          ]} />
-          {activeCount > 0 && (
-            <button type="button" onClick={clearAll} className="inline-flex min-h-[48px] items-center justify-center rounded-m3-sm border border-outline-variant px-4 text-sm font-medium">
-              Clear all filters
-            </button>
-          )}
-        </div>
-      </BottomSheet>
     </>
   );
 }

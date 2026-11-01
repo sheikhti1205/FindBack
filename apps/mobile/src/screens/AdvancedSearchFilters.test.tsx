@@ -70,9 +70,9 @@ describe("AdvancedSearchFilters controlled + hideTrigger (Home search bar)", () 
 
     fireEvent.click(screen.getByRole("button", { name: "Filters" }));
     expect(await screen.findByRole("dialog", { name: "Filters" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Filters" }).getAttribute("aria-expanded")).toBe(
-      "true",
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("button", { name: "Filters" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("derives the badge and chips from the URL contract", async () => {
@@ -220,9 +220,7 @@ describe("AdvancedSearchFilters optional date range", () => {
     expect(screen.queryByLabelText("To date")).toBeNull();
   });
 
-  it("keeps Home's sheet shape: a medium sheet that says what it holds", async () => {
-    // Home's sheet is shared, so its shape is pinned here: the optional date
-    // range must not change Home's height or its description.
+  it("keeps Home's category/status/sort controls without adding dates", async () => {
     render(
       <MemoryRouter>
         <HomeLike />
@@ -231,13 +229,15 @@ describe("AdvancedSearchFilters optional date range", () => {
     fireEvent.click(screen.getByRole("button", { name: "Filters" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Filters" });
-    expect(dialog.getAttribute("data-height")).toBe("medium");
+    expect(dialog.querySelector('input[type="date"]')).toBeNull();
+    expect(screen.getByLabelText("Status")).toBeTruthy();
+    expect(screen.getByLabelText("Sort")).toBeTruthy();
     expect(
       screen.getByText("Category, status and sort. Changes apply immediately."),
     ).toBeTruthy();
   });
 
-  it("gives the sheet the large height and its own description when dates are offered", async () => {
+  it("makes both date fields available with a clear Done action", async () => {
     render(
       <MemoryRouter>
         <SheetHarness appliedFrom="2026-10-01" appliedTo="2026-10-21" />
@@ -246,7 +246,8 @@ describe("AdvancedSearchFilters optional date range", () => {
     fireEvent.click(screen.getByRole("button", { name: "Filters" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Filters" });
-    expect(dialog.getAttribute("data-height")).toBe("large");
+    expect(dialog.querySelectorAll('input[type="date"]')).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
     expect(screen.getByText("Changes apply immediately.")).toBeTruthy();
   });
 });

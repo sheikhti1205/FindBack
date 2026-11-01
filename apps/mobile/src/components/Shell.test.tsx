@@ -10,6 +10,8 @@ import { APPEARANCE_STORAGE_KEY, DEFAULT_APPEARANCE } from "../appearance";
 import { COMPACT_MAX_PX } from "./responsive";
 import { readFileSync } from "node:fs";
 
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "shell-reader" } }) }));
+
 afterEach(() => { cleanup(); resetBackInterceptors(); document.body.style.overflow = ""; });
 
 function renderShell(entry = "/") {

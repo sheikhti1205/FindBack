@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, KeyRound, Sparkles } from "lucide-react";
+import { KeyRound, Sparkles } from "lucide-react";
 import { useAuth } from "../auth";
 import {
   SettingsGroup,
@@ -77,8 +77,8 @@ export function AiSettings({ accountId }: { accountId?: string }) {
 
   return (
     <SettingsPage
-      title="AI & intelligence"
-      description="Optional cloud chat and the local tools stored on this phone. Core features work without any AI setup."
+      title="Optional AI Chat"
+      description="Chat with your chosen AI provider. Core features work without any AI setup."
       backTo="/settings"
     >
       <SettingsGroup
@@ -98,18 +98,6 @@ export function AiSettings({ accountId }: { accountId?: string }) {
           icon={Sparkles}
           iconTone="ai"
           route="/settings/ai/chat-models"
-        />
-      </SettingsGroup>
-      <SettingsGroup
-        title="On this device"
-        description="Tools that run on this phone once downloaded."
-      >
-        <SettingsRow
-          title="Local intelligence"
-          description="Search and report-text tools that run here. Downloaded models are managed under it."
-          icon={Cpu}
-          iconTone="ai"
-          route="/settings/local-intelligence"
         />
       </SettingsGroup>
     </SettingsPage>

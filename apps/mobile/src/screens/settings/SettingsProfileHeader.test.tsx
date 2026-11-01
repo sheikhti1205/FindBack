@@ -26,10 +26,10 @@ function renderHeader(user: Record<string, unknown> = {}) {
 }
 
 describe("SettingsProfileHeader", () => {
-  it("links the whole header to the existing profile edit route", () => {
+  it("links the whole header to Profile, leaving Edit on Profile", () => {
     renderHeader();
-    const link = screen.getByRole("link", { name: /edit profile/i });
-    expect(link.getAttribute("href")).toBe("/profile/edit");
+    const link = screen.getByRole("link", { name: /view profile/i });
+    expect(link.getAttribute("href")).toBe("/profile");
   });
 
   it("shows the display name and @username without clipping labels", () => {
@@ -50,10 +50,10 @@ describe("SettingsProfileHeader", () => {
     expect(screen.getByTestId("user-avatar").getAttribute("aria-hidden")).toBe("true");
   });
 
-  it("exposes a visible Edit profile affordance and no nested controls", () => {
+  it("exposes a visible View profile affordance and no nested controls", () => {
     renderHeader();
-    const link = screen.getByRole("link", { name: /edit profile/i });
-    expect(link.textContent).toMatch(/edit profile/i);
+    const link = screen.getByRole("link", { name: /view profile/i });
+    expect(link.textContent).toMatch(/view profile/i);
     expect(link.querySelectorAll("button,input,a").length).toBe(0);
   });
 

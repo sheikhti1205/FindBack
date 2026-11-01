@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useOutlet } from "react-router";
+import { SplitView } from "../components/SplitView";
 import {
   Accessibility,
   Activity,
@@ -127,6 +129,15 @@ export function notificationSummary(
  * Live summaries degrade to honest fallback text when a source is unreadable.
  */
 export function Settings() {
+  const { user } = useAuth();
+  const detail = useOutlet();
+  return <div className="fb-settings-layout"><SplitView selected={Boolean(detail)}
+    list={<SettingsNavigation key={user?.id ?? "guest"} detailSelected={Boolean(detail)} />}
+    detail={detail ?? <section className="fb-settings-placeholder"><h2>Your settings</h2><p>Choose a category to make it yours.</p></section>} />
+  </div>;
+}
+
+function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const { settings } = useAppearance();
@@ -181,7 +192,7 @@ export function Settings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   if (!user) return null;
 
@@ -206,7 +217,7 @@ export function Settings() {
   };
 
   return (
-    <SettingsPage title="Settings" className="fb-settings-root">
+    <SettingsPage title="Settings" className="fb-settings-root" headingLevel={detailSelected ? 2 : 1} autoFocus={!detailSelected}>
       <SettingsProfileHeader user={user} />
       <SettingsSearch
         query={query}
@@ -248,7 +259,7 @@ export function Settings() {
               route="/settings/appearance"
             />
             <SettingsRow
-              title="Notifications"
+              title="Notification preferences"
               icon={Bell}
               iconTone="notifications"
               value={notifValue ?? "Review settings"}
@@ -271,19 +282,22 @@ export function Settings() {
           </SettingsGroup>
           <SettingsGroup title="Intelligence">
             <SettingsRow
-              title="Local intelligence"
-              description="Search and report tools that run on this phone."
+              title="Local tools"
+              description="Smart Search and matching tools."
               icon={Cpu}
               iconTone="ai"
               route="/settings/local-intelligence"
             />
             <SettingsRow
-              title="AI & models"
-              description="Cloud chat, and models that run on this phone."
+              title="Optional AI Chat"
+              description="Your provider, key and chat model."
               icon={Sparkles}
               iconTone="ai"
               route="/settings/ai"
             />
+          </SettingsGroup>
+          <SettingsGroup title="Chats">
+            <SettingsRow title="Chat preferences" description="Who can contact you." icon={MessageSquare} route="/settings/privacy/messages" />
           </SettingsGroup>
           <SettingsGroup title="Privacy">
             <SettingsRow

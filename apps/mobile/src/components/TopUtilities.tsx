@@ -1,20 +1,32 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { Bell, Search } from "lucide-react";
+import { useAuth } from "../auth";
+import { NotificationPopover } from "./NotificationPopover";
+import { COMPACT_MAX_PX, useViewportWidth } from "./responsive";
 import { fetchUnreadCount } from "../services/notifications";
 import { INBOX_CHANGED_EVENT } from "../services/notificationSignals";
 import { onRealtime } from "../services/realtime";
 import { PUSH_RECEIVED_EVENT } from "../services/pushNotifications";
 import "./adaptiveFoundation.css";
 
-/** The single notification utility owner, shared by Shell and Home's chrome.
- * Preview integration belongs here, not in the primary destination list. */
-export function TopUtilities({ showSearch = true, liveBadge = true, unreadCount, account }: {
+interface TopUtilitiesProps {
   showSearch?: boolean;
   liveBadge?: boolean;
   unreadCount?: number;
   account?: ReactNode;
-}) {
+}
+
+/** One notification utility and unread-count owner, shared by Shell and Home.
+ * Replacement accounts never inherit a badge, request or open private layer. */
+export function TopUtilities({ liveBadge = true, ...props }: TopUtilitiesProps) {
+  const { user } = useAuth();
+  return <AccountTopUtilities key={user?.id ?? "signed-out"} {...props} liveBadge={liveBadge && !!user} allowPreview={!!user} />;
+}
+
+function AccountTopUtilities({ showSearch = true, liveBadge, unreadCount, account, allowPreview }: TopUtilitiesProps & { allowPreview: boolean }) {
+  const width = useViewportWidth();
+  const location = useLocation();
   const [unread, setUnread] = useState<number | null>(null);
   useEffect(() => {
     if (!liveBadge) return;
@@ -45,12 +57,14 @@ export function TopUtilities({ showSearch = true, liveBadge = true, unreadCount,
     };
   }, [liveBadge]);
   const count = unreadCount ?? unread;
+  const bell = <><Bell size={20} aria-hidden="true" />
+    {count !== null && count > 0 && <span aria-hidden="true" data-testid="notifications-unread-badge" className="fb-notification-badge bg-error text-on-error">{count > 99 ? "99+" : count}</span>}
+  </>;
   return <nav aria-label="App utilities" className="fb-top-utilities">
     {showSearch && <Link to="/search" aria-label="Search" className="fb-icon-control"><Search size={20} aria-hidden="true" /></Link>}
-    <Link to="/notifications" aria-label="Notifications" className="fb-icon-control relative">
-      <Bell size={20} aria-hidden="true" />
-      {count !== null && count > 0 && <span aria-hidden="true" data-testid="notifications-unread-badge" className="fb-notification-badge bg-error text-on-error">{count > 99 ? "99+" : count}</span>}
-    </Link>
+    {allowPreview && width >= COMPACT_MAX_PX && location.pathname !== "/notifications"
+      ? <NotificationPopover key={location.key} trigger={bell} />
+      : <Link to="/notifications" aria-label="Notifications" className="fb-icon-control relative">{bell}</Link>}
     {account}
   </nav>;
 }

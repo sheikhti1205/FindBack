@@ -223,7 +223,7 @@ function AppRouteTree() {
               <Route path="/ai-connection" element={<AiConnection />} />
                 <Route path="/ai-models" element={<Navigate to="/settings/local-intelligence" replace />} />
                <Route path="/offline-ai" element={<Navigate to="/settings/local-intelligence" replace />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings" element={<Settings />}>
               {/* Eligibility and the claim itself are server-controlled. An
                   existing admin role must not be required to reach setup. */}
               <Route path="/settings/administrator" element={<AdminBootstrap />} />
@@ -263,6 +263,7 @@ function AppRouteTree() {
               <Route path="/settings/privacy-policy" element={<PrivacyPolicy />} />
               <Route path="/settings/community-guidelines" element={<CommunityGuidelines />} />
               <Route path="/settings/diagnostics" element={<Diagnostics />} />
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/splash" replace />} />
            </Routes>

@@ -1,8 +1,44 @@
-import { Bookmark, FileStack, MessagesSquare, Settings as SettingsIcon, ShieldQuestion, UserRound } from "lucide-react";
+import { Bookmark, FileStack, MessagesSquare, Settings as SettingsIcon, ShieldQuestion, Star, UserRound } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
 import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../components/settings";
+import {
+  fetchReputationTier,
+  REPUTATION_TIER_LABELS,
+  type ReputationTier,
+} from "../services/trust";
+
+/**
+ * Own-profile reputation. The tier is a SERVER-owned label (NEW / NORMAL /
+ * TRUSTED): this reads it and never derives, averages or caches a score. The
+ * value is keyed by account so a previous account's label cannot survive a
+ * switch, and an unreadable tier says so instead of guessing.
+ */
+function useOwnReputation(userId: string | undefined) {
+  const [state, setState] = useState<
+    { accountId: string; status: "loading" } | { accountId: string; status: "ready"; tier: ReputationTier } | { accountId: string; status: "unavailable" }
+  >({ accountId: userId ?? "", status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    const accountId = userId ?? "";
+    if (!accountId) return;
+    setState({ accountId, status: "loading" });
+    void fetchReputationTier(accountId)
+      .then((tier) => {
+        if (!cancelled) setState({ accountId, status: "ready", tier });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ accountId, status: "unavailable" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+  // Never show a previous account's label during the first render after a switch.
+  return state.accountId === (userId ?? "") ? state : { accountId: userId ?? "", status: "loading" as const };
+}
 
 /**
  * Profile landing: identity hero plus Public profile / My reports / Settings /
@@ -10,9 +46,14 @@ import { SettingsGroup, SettingsPage, SettingsRow, StatusPill } from "../compone
  * card) so it reads as part of Settings, not a boxed utility screen.
  * The identity hero uses the canonical UserAvatar; the account email and
  * verification status stay owner-only (never part of the public profile).
+ *
+ * Profile is the ONE canonical trust surface (packet 08 §C/§D): the reputation
+ * label and the way into ratings live here, not scattered onto every card, and
+ * rating detail is reached from here rather than from Settings.
  */
 export function Profile() {
   const { user } = useAuth();
+  const reputation = useOwnReputation(user?.id);
   if (!user) return null;
 
   return (
@@ -43,6 +84,25 @@ export function Profile() {
           Edit profile
         </Link>
       </section>
+
+      <SettingsGroup title="Reputation" description="Worked out by FindBack from your returns and ratings. Not a score you raise directly.">
+        {reputation.status === "loading" && <p role="status" className="fb-settings-row-description">Checking your reputation…</p>}
+        {reputation.status === "unavailable" && <p role="status" className="fb-settings-row-description">Your reputation is unavailable right now.</p>}
+        {reputation.status === "ready" && (
+          <p className="fb-settings-row-description" data-testid="profile-reputation">
+            <StatusPill tone={reputation.tier === "TRUSTED" ? "success" : reputation.tier === "NORMAL" ? "accent" : "neutral"}>
+              {REPUTATION_TIER_LABELS[reputation.tier]}
+            </StatusPill>
+          </p>
+        )}
+        <SettingsRow
+          title="Ratings and recovered items"
+          description="What came back, and what each side said."
+          icon={Star}
+          iconTone="amber"
+          route="/settings/returns"
+        />
+      </SettingsGroup>
 
       <nav aria-label="Profile actions">
         <SettingsGroup>

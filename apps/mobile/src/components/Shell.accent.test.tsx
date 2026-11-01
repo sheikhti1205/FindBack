@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { unreadMock } = vi.hoisted(() => ({ unreadMock: vi.fn() }));
 
 vi.mock("../services/notifications", () => ({ fetchUnreadCount: unreadMock }));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "accent-reader" } }) }));
 
 import { Shell } from "./Shell";
 

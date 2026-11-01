@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from "react";
-import { Link, type To } from "react-router";
+import { NavLink, type To } from "react-router";
 import { Check, ChevronRight, Search, X, type LucideIcon } from "lucide-react";
 import { ACCENT_OPTIONS, type AccentId } from "../../appearance";
 import type { Theme } from "../../theme";
@@ -32,11 +32,15 @@ export interface SettingsPageProps {
   backTo?: string;
   backLabel?: string;
   className?: string;
+  headingLevel?: 1 | 2;
+  autoFocus?: boolean;
 }
 /** Content only: Shell remains the sole viewport/safe-area/scroll owner. */
-export function SettingsPage({ title, description, children, backTo, backLabel = "Back to Settings", className = "" }: SettingsPageProps) {
+export function SettingsPage({ title, description, children, backTo, backLabel = "Back to Settings", className = "", headingLevel = 1, autoFocus = true }: SettingsPageProps) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const Heading = headingLevel === 1 ? "h1" : "h2";
   useEffect(() => {
+    if (!autoFocus) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     heading.current?.focus({ preventScroll: true });
     return () => {
@@ -44,11 +48,11 @@ export function SettingsPage({ title, description, children, backTo, backLabel =
       // screen-reader users do not lose their place.
       previouslyFocused?.focus?.({ preventScroll: true });
     };
-  }, [title]);
+  }, [title, autoFocus]);
   return <section className={`fb-settings-page ${className}`}>
     <div className="fb-settings-sticky">
       {backTo && <BackButton fallbackTo={backTo} label={backLabel} />}
-      <h1 ref={heading} tabIndex={-1}>{title}</h1>
+      <Heading ref={heading} tabIndex={-1}>{title}</Heading>
     </div>
     {description && <p className="fb-settings-page-description">{description}</p>}
     <div className="fb-settings-page-content">{children}</div>
@@ -108,7 +112,7 @@ export function SettingsRow({ title, description, icon, iconTone, value, badge, 
     "aria-labelledby": `${id}-title`,
     "aria-describedby": describedBy,
   };
-  if (route && !disabled) return <Link {...common} to={route}>{content}</Link>;
+  if (route && !disabled) return <NavLink {...common} to={route}>{content}</NavLink>;
   if (onClick) return <button {...common} type="button" onClick={onClick} disabled={disabled}>{content}</button>;
   return <div {...common} aria-disabled={disabled || undefined}>{content}</div>;
 }

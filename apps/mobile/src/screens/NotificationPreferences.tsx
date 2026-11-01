@@ -9,7 +9,7 @@ import "./NotificationPreferences.css";
 export function NotificationPreferences() {
   return (
     <SettingsPage
-      title="Notifications"
+      title="Notification preferences"
       backTo="/settings"
       description="Choose which report activity reaches this device. The in-app inbox keeps every notification either way."
     >

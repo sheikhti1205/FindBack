@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,6 +75,8 @@ import {
 } from "./Settings";
 import { cloudConnectionsSummary } from "../services/aiCredentials";
 import { Settings } from "./Settings";
+import { SettingsPage } from "../components/settings";
+import { RouteTransition } from "../components/RouteTransition";
 
 afterEach(cleanup);
 
@@ -138,6 +140,31 @@ describe("summary helpers", () => {
 });
 
 describe("Settings home", () => {
+  it("keeps category search mounted while routed details change and exposes one primary heading", async () => {
+    render(<MemoryRouter initialEntries={["/settings"]}><Routes>
+      <Route element={<RouteTransition />}><Route path="/settings" element={<Settings />}>
+        <Route path="appearance" element={<SettingsPage title="Appearance detail" backTo="/settings">Theme choices</SettingsPage>} />
+      </Route></Route>
+    </Routes></MemoryRouter>);
+    const search = screen.getByRole("searchbox", { name: "Search settings" });
+    fireEvent.change(search, { target: { value: "appearance" } });
+    fireEvent.click(screen.getByRole("link", { name: "Appearance" }));
+    await screen.findByRole("heading", { level: 1, name: "Appearance detail" });
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("searchbox", { name: "Search settings" })).toBe(search);
+    expect((search as HTMLInputElement).value).toBe("appearance");
+    expect(screen.getByRole("link", { name: "Appearance" }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(screen.getByRole("button", { name: "Back to Settings" }));
+    await screen.findByRole("heading", { level: 1, name: "Settings" });
+    expect(screen.getByRole("searchbox", { name: "Search settings" })).toBe(search);
+  });
+
+  it("separates local tools, optional AI Chat and notification preferences", () => {
+    renderSettings();
+    expect(screen.getByRole("link", { name: "Local tools" }).getAttribute("href")).toBe("/settings/local-intelligence");
+    expect(screen.getByRole("link", { name: "Optional AI Chat" }).getAttribute("href")).toBe("/settings/ai");
+    expect(screen.getByRole("link", { name: "Notification preferences" }).getAttribute("href")).toBe("/settings/notifications");
+  });
   it("offers recovered items and feedback without needing a staff role", () => {
     renderSettings();
     expect(screen.getByRole("link", { name: /Recovered items/i }).getAttribute("href")).toBe("/settings/returns");
@@ -184,8 +211,8 @@ describe("Settings home", () => {
   it("offers the local surfaces from the Intelligence group", () => {
     renderSettings();
     const group = screen.getByRole("region", { name: "Intelligence" });
-    expect(within(group).getByRole("link", { name: /Local intelligence/ })).toBeTruthy();
-    expect(within(group).getByRole("link", { name: /AI & models/ })).toBeTruthy();
+    expect(within(group).getByRole("link", { name: /Local tools/ })).toBeTruthy();
+    expect(within(group).getByRole("link", { name: /Optional AI Chat/ })).toBeTruthy();
   });
 
   it("links every row to its real route_map.csv target (nested disclosures included)", () => {
@@ -212,15 +239,15 @@ describe("Settings home", () => {
       expect(hrefs, `row linking to ${href} exists`).toContain(href);
     }
     // Cloud connections moved inside AI & models: reachable via the AI row + search, not a root row.
-    const aiRow = screen.getByRole("link", { name: /AI & models/ });
+    const aiRow = screen.getByRole("link", { name: /Optional AI Chat/ });
     expect(aiRow.getAttribute("href")).toBe("/settings/ai");
   });
 
   it("routes Local intelligence to the consumer local surfaces, not the technical catalogue", () => {
     renderSettings();
-    const row = screen.getByRole("link", { name: /Local intelligence/ });
+    const row = screen.getByRole("link", { name: /Local tools/ });
     expect(row.getAttribute("href")).toBe("/settings/local-intelligence");
-    expect(row.textContent).toMatch(/on this phone/i);
+    expect(row.textContent).toMatch(/Smart Search and matching tools/i);
   });
 
   it("offers the CF-010 feed layout row, showing what it resolves to on this screen", () => {
@@ -481,10 +508,10 @@ describe("settings row touch-target contract", () => {
     expect(ruleBlock(sharedCss, ".fb-settings-row")).toMatch(/min-height:\s*3\.75rem/);
   });
 
-  it("never lets the Settings-root override shrink rows below the shared minimum", () => {
+  it("keeps compact category navigation at least 48px tall independently of text scale", () => {
     const override = ruleBlock(rootCss, ".fb-settings-root .fb-settings-row");
-    const declared = override.match(/min-height:\s*([\d.]+)rem/);
+    const declared = override.match(/min-height:\s*([\d.]+)px/);
     expect(declared).toBeTruthy();
-    expect(Number(declared![1])).toBeGreaterThanOrEqual(3.75);
+    expect(Number(declared![1])).toBeGreaterThanOrEqual(48);
   });
 });

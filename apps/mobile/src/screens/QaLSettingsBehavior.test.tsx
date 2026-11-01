@@ -23,7 +23,8 @@ const SEARCH_MATRIX: ReadonlyArray<{ title: string; keywords: string; route: str
   { title: "Accessibility", keywords: "font text size motion reduce animation", route: "/settings/accessibility" },
   { title: "Media & uploads", keywords: "photo image quality data storage upload", route: "/settings/media" },
   { title: "Notifications", keywords: "push comment mention like status report bell", route: "/settings/notifications" },
-  { title: "AI & models", keywords: "ai local on device model cloud chat providers", route: "/settings/ai" },
+  { title: "Optional AI Chat", keywords: "ai model cloud chat providers", route: "/settings/ai" },
+  { title: "Local tools", keywords: "local on device search helper", route: "/settings/local-intelligence" },
   { title: "Providers", keywords: "providers cloud connections openrouter api key provider openai google mistral groq", route: "/settings/ai/connections" },
   { title: "Privacy & permissions", keywords: "privacy location permission sharing", route: "/settings/privacy" },
   { title: "Diagnostics", keywords: "debug build logs export support", route: "/settings/diagnostics" },
@@ -192,7 +193,7 @@ describe("QA L: Providers stays reachable through AI & models", () => {
         </Routes>
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("link", { name: /AI & models/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Optional AI Chat/ }));
     const cloudRow = await screen.findByRole("link", { name: /^providers$/i });
     expect(cloudRow.getAttribute("href")).toBe("/settings/ai/connections");
     fireEvent.click(cloudRow);
@@ -229,14 +230,14 @@ describe("QA L: AI & models row shows no retired mode value", () => {
     // back into the root row: Chat is cloud-only and has no mode switch.
     localStorage.setItem(assistantModeKey("u1"), "offline-first");
     renderSettings();
-    const row = await screen.findByRole("link", { name: /AI & models/ });
+    const row = await screen.findByRole("link", { name: /Optional AI Chat/ });
     expect(row.textContent).not.toMatch(/Automatic|Offline-first|On-device only|Cloud only/);
   });
 
   it("describes what the AI row leads to instead of a mode label", async () => {
     renderSettings();
-    const row = await screen.findByRole("link", { name: /AI & models/ });
-    expect(row.textContent).toMatch(/cloud chat/i);
+    const row = await screen.findByRole("link", { name: /Optional AI Chat/ });
+    expect(row.textContent).toMatch(/provider, key and chat model/i);
   });
 });
 
@@ -366,8 +367,8 @@ describe("QA L: W4 root groups moved rows without orphaning destinations", () =>
 
   it("shows the profile header linking to the existing profile edit route", () => {
     renderSettingsRoot();
-    const header = screen.getByRole("link", { name: /edit profile/i });
-    expect(header.getAttribute("href")).toBe("/profile/edit");
+    const header = screen.getByRole("link", { name: /view profile/i });
+    expect(header.getAttribute("href")).toBe("/profile");
     expect(screen.getByText("@tester")).toBeTruthy();
   });
 });

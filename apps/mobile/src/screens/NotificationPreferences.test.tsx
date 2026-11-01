@@ -51,7 +51,7 @@ describe("NotificationPreferences", () => {
     );
 
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(screen.getByRole("heading", { level: 1, name: "Notifications" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Notification preferences" })).toBeTruthy();
     await screen.findByRole("switch", { name: "Push notifications" });
     expect(screen.getByRole("heading", { name: "Comments & mentions" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Report activity" })).toBeTruthy();

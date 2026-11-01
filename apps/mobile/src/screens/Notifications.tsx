@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { motion, type PanInfo } from "framer-motion";
+import { Heading } from "react-aria-components";
 import { Bell, Check, Mail, MoreVertical, RotateCcw, Settings, Trash2 } from "lucide-react";
 import { BackButton } from "../components/BackButton";
+import { ActionMenu } from "../components/ActionMenu";
 import { useAuth } from "../auth";
 import { BlockedByViewerShield } from "../components/BlockedByViewerShield";
 import { UserAvatar } from "../components/UserAvatar";
@@ -20,8 +22,10 @@ import {
 import { signalInboxChanged } from "../services/notificationSignals";
 import { reactionEmojiForWire, reactionKindLabel } from "../services/reactions";
 import { onRealtime } from "../services/realtime";
+import { PUSH_RECEIVED_EVENT } from "../services/pushNotifications";
 import { friendlyError } from "../utils/friendlyErrors";
 import { formatTimestamp, timeAgo } from "../utils/dates";
+import "./Notifications.css";
 
 /** How long the undo affordance stays available after a delete. */
 export const UNDO_WINDOW_MS = 5000;
@@ -106,13 +110,19 @@ function startsInsideShield(event: Event): boolean {
   return target.closest("[data-testid=\"blocked-shield\"]") !== null;
 }
 
-export function Notifications() {
-  const { user } = useAuth();
-  return user ? <AccountNotifications key={user.id} /> : null;
+interface NotificationsProps {
+  preview?: boolean;
+  onNavigate?: () => void;
 }
 
-function AccountNotifications() {
+export function Notifications({ preview = false, onNavigate }: NotificationsProps = {}) {
+  const { user } = useAuth();
+  return user ? <AccountNotifications key={user.id} preview={preview} onNavigate={onNavigate} /> : null;
+}
+
+function AccountNotifications({ preview, onNavigate }: NotificationsProps) {
   const [view, setView] = useState<InboxView>("inbox");
+  const [filter, setFilter] = useState<"all" | "unread">("all");
   const [items, setItems] = useState<NotificationItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -202,9 +212,11 @@ function AccountNotifications() {
       if (document.visibilityState === "visible") void load("inbox");
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(PUSH_RECEIVED_EVENT, onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(PUSH_RECEIVED_EVENT, onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [load, view]);
@@ -350,6 +362,8 @@ function AccountNotifications() {
   );
 
   const unreadCount = items?.filter((item) => !item.read).length ?? 0;
+  const filteredItems = items?.filter((item) => filter === "all" || !item.read) ?? [];
+  const visibleItems = preview ? filteredItems.slice(0, 8) : filteredItems;
   // The list owns the gesture guard: a pointer-down that starts inside a
   // shield never reaches the row's drag surface, so it can never commit a
   // swipe. The list is mounted only when there is something to show, so the
@@ -364,14 +378,19 @@ function AccountNotifications() {
     };
     list.addEventListener("pointerdown", onPointerDown, true);
     return () => list.removeEventListener("pointerdown", onPointerDown, true);
-  }, [items]);
+  }, [items, filter]);
 
   return (
-    <div className="flex min-h-full flex-col px-4 py-5">
-      <header className="flex flex-wrap items-center gap-2">
-        <BackButton fallbackTo="/" label="Back to home" />
-        <h1 className="text-xl font-semibold tracking-tight">Notifications</h1>
+    <div className={`fb-notifications ${preview ? "fb-notifications--preview" : "fb-notifications--full"}`}>
+      <header className="fb-notification-header">
+        {!preview && <BackButton fallbackTo="/" label="Back to home" />}
+        {preview ? <Heading slot="title" className="fb-notification-title">Notifications</Heading>
+          : <h1 className="fb-notification-title">Notifications</h1>}
         <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1">
+          {preview ? <ActionMenu label="Inbox actions" items={[
+            { id: "read-all", label: "Mark all read", disabled: unreadCount === 0, icon: <Check size={16} aria-hidden />,
+              onAction: () => void handleMarkAllRead() },
+          ]} /> : <>
           {view === "inbox" && unreadCount > 0 && (
             <button
               type="button"
@@ -383,6 +402,7 @@ function AccountNotifications() {
           )}
           <Link
             to="/settings/notifications"
+            onClick={onNavigate}
             aria-label="Notification settings"
             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-2 text-on-surface-variant"
           >
@@ -392,6 +412,7 @@ function AccountNotifications() {
             type="button"
             onClick={() => {
               setView((current) => (current === "inbox" ? "deleted" : "inbox"));
+              setFilter("all");
               clearUndo();
             }}
             aria-pressed={view === "deleted"}
@@ -399,32 +420,37 @@ function AccountNotifications() {
           >
             {view === "inbox" ? "Deleted" : "Inbox"}
           </button>
+          </>}
         </div>
       </header>
+
+      {view === "inbox" && <div className="fb-notification-filters" role="group" aria-label="Filter notifications">
+        <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>All</button>
+        <button type="button" aria-pressed={filter === "unread"} onClick={() => setFilter("unread")}>Unread</button>
+      </div>}
 
       {actionError && <p role="alert" className="py-2 text-sm text-error [overflow-wrap:anywhere]">{actionError}</p>}
 
       {/* Inbox states swap with one short fade — loading holds fixed-size
           skeleton rows so resolving content never reflows. */}
-      <StateSwap stateKey={error ? "error" : items === null ? "loading" : items.length === 0 ? "empty" : `content-${view}`}>
+      <div className="fb-notification-content">
+      <StateSwap stateKey={error ? "error" : items === null ? "loading" : visibleItems.length === 0 ? "empty" : `content-${view}`}>
       {error ? (
         <section className="flex flex-1 flex-col items-center justify-center px-4 py-4 text-center">
           <ErrorView message={error} onRetry={() => void load(view)} />
         </section>
       ) : items === null ? (
         <section className="flex-1" aria-label="Loading notifications">
-          <InboxSkeleton />
+          <InboxSkeleton count={preview ? 5 : 4} />
         </section>
-      ) : items.length === 0 ? (
+      ) : visibleItems.length === 0 ? (
         <section
-          className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-12 text-center"
+          className="fb-notification-empty"
           aria-labelledby="notifications-empty-title"
         >
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-container text-on-surface-variant">
-            <Bell size={28} aria-hidden />
-          </div>
-          <h2 id="notifications-empty-title" className="text-lg font-semibold">
-            {view === "deleted" ? "No deleted notifications" : "No notifications"}
+          <Bell size={24} aria-hidden className="text-on-surface-variant" />
+          <h2 id="notifications-empty-title" className="font-semibold">
+            {view === "deleted" ? "No deleted notifications" : filter === "unread" ? "No unread notifications" : "No notifications"}
           </h2>
           <p className="max-w-xs text-sm text-on-surface-variant">
             {view === "deleted"
@@ -433,8 +459,8 @@ function AccountNotifications() {
           </p>
         </section>
       ) : (
-        <ul ref={listRef} className="flex flex-col gap-2 py-4" aria-label="Notifications">
-          {items.map((item) => {
+        <ul ref={listRef} className="fb-notification-list" aria-label="Notifications">
+          {visibleItems.map((item) => {
             // O5 (CF-060 B1): the DB returns the row either way and projects
             // the caller-scoped, direction-free `blocked_actor` bit. A blocked
             // row is screened IN PLACE with the canonical shield — never
@@ -448,27 +474,28 @@ function AccountNotifications() {
                 to={route ?? `/posts/${item.postId}`}
                 onClick={() => {
                   if (!item.read) void handleMarkRead(item.id);
+                  onNavigate?.();
                 }}
                 aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
-                className="flex min-w-0 flex-1 flex-col gap-1 rounded-m3-sm p-2.5"
+                className="fb-notification-body"
               >
                 <NotificationBody item={item} />
               </Link>
             ) : (
-              <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
+              <div className="fb-notification-body">
                 <NotificationBody item={item} />
               </div>
             );
             return (
               <li key={item.id}>
                 <motion.div
-                  drag={view === "inbox" ? "x" : false}
+                  drag={!preview && view === "inbox" ? "x" : false}
                   dragDirectionLock
                   dragConstraints={{ left: 0, right: 0 }}
                   dragElastic={0.25}
                   data-testid="notification-row"
                   onDragEnd={(_event, info: PanInfo) => {
-                    if (view !== "inbox") return;
+                    if (preview || view !== "inbox") return;
                     const action = swipeActionFor(info.offset.x);
                     if (action === "delete") void handleDelete([item.id]);
                     else if (action === "toggle-read") {
@@ -476,11 +503,8 @@ function AccountNotifications() {
                       else void handleMarkRead(item.id);
                     }
                   }}
-                  className={`flex items-start gap-1 rounded-m3-md border py-1 pl-1 pr-1 ${
-                    !item.read && view === "inbox"
-                      ? "border-primary bg-surface-container"
-                      : "border-outline-variant"
-                  }`}
+                  className="fb-notification-row"
+                  data-unread={!item.read && view === "inbox" ? "true" : undefined}
                 >
                   {blocked ? (
                     // The shield wraps the row's content region from OUTSIDE, so
@@ -524,11 +548,12 @@ function AccountNotifications() {
         </ul>
       )}
       </StateSwap>
+      </div>
 
       {lastDeleted && view === "inbox" ? (
         <div
           role="status"
-          className="sticky bottom-3 mt-auto flex min-w-0 flex-wrap items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+          className="fb-notification-undo"
         >
           <span className="min-w-0 flex-[1_1_8rem] [overflow-wrap:anywhere]">
             {lastDeleted.length === 1 ? "Notification deleted" : `${lastDeleted.length} notifications deleted`}
@@ -542,12 +567,10 @@ function AccountNotifications() {
           </button>
         </div>
       ) : null}
+      {preview && <Link className="fb-notification-see-all" to="/notifications" onClick={onNavigate}>See all notifications</Link>}
     </div>
   );
 }
-
-const NOTIFICATION_MENU_ITEM_CLASS =
-  "flex w-full min-h-[44px] items-center gap-2 rounded-m3-sm px-3 text-left text-sm font-medium text-on-surface";
 
 /**
  * Packet `08` §17 overflow. The row's actions used to sit in a permanent
@@ -570,9 +593,6 @@ function NotificationOverflow({
   onDelete: (ids: readonly string[]) => Promise<void>;
   onRestore: (ids: readonly string[]) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   // A shielded row must not name its actor: the row's content is hidden until
   // the user asks for it, so the trigger's label stays neutral for a blocked
   // actor (the block bit is direction-free — it never says who blocked whom).
@@ -580,120 +600,21 @@ function NotificationOverflow({
     ? "a hidden notification"
     : `${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}`;
 
-  // Focus moves into the menu on open, Escape/outside tap closes it, and focus
-  // returns to the trigger so a keyboard user never loses their place.
-  useEffect(() => {
-    if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
-    function onPointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
-  function close() {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  function run(action: () => void) {
-    setOpen(false);
-    triggerRef.current?.focus();
-    action();
-  }
-
-  function onMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (event.key === "Tab") {
-      // Tab leaves the menu; do not trap focus in a non-modal popover.
-      setOpen(false);
-      return;
-    }
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-    );
-    if (items.length === 0) return;
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      items[event.key === "Home" ? 0 : items.length - 1]?.focus();
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
-    const step = event.key === "ArrowDown" ? 1 : -1;
-    items[(current + step + items.length) % items.length]?.focus();
-  }
-
   return (
-    <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={open ? `Close actions for ${summary}` : `More actions for ${summary}`}
-        onClick={() => {
-          if (open) close();
-          else setOpen(true);
-        }}
-        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant"
-      >
-        <MoreVertical size={18} aria-hidden />
-      </button>
-      {open ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          aria-label={`Actions for ${summary}`}
-          onKeyDown={onMenuKeyDown}
-          className="absolute right-0 top-full z-20 mt-1 w-44 rounded-m3-sm border border-outline-variant bg-surface p-1 shadow-xl"
-        >
-          {view === "deleted" ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => run(() => void onRestore([item.id]))}
-              className={NOTIFICATION_MENU_ITEM_CLASS}
-            >
-              <RotateCcw size={15} aria-hidden /> Restore
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() =>
-                  run(() => {
-                    announce(item.read ? "Marked as unread" : "Marked as read");
-                    void (item.read ? onMarkUnread(item.id) : onMarkRead(item.id));
-                  })
-                }
-                className={NOTIFICATION_MENU_ITEM_CLASS}
-              >
-                {item.read ? <Mail size={15} aria-hidden /> : <Check size={15} aria-hidden />}
-                {item.read ? "Mark unread" : "Mark read"}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => run(() => void onDelete([item.id]))}
-                className={`${NOTIFICATION_MENU_ITEM_CLASS} text-error`}
-              >
-                <Trash2 size={15} aria-hidden /> Delete
-              </button>
-            </>
-          )}
-        </div>
-      ) : null}
+    <div className="fb-notification-overflow" onPointerDown={(event) => event.stopPropagation()}>
+      <ActionMenu label={`More actions for ${summary}`} icon={<MoreVertical size={18} aria-hidden />}
+        items={view === "deleted" ? [
+          { id: "restore", label: "Restore", icon: <RotateCcw size={16} aria-hidden />, onAction: () => void onRestore([item.id]) },
+        ] : [
+          { id: "read", label: item.read ? "Mark unread" : "Mark read",
+            icon: item.read ? <Mail size={16} aria-hidden /> : <Check size={16} aria-hidden />,
+            onAction: () => {
+              announce(item.read ? "Marked as unread" : "Marked as read");
+              void (item.read ? onMarkUnread(item.id) : onMarkRead(item.id));
+            } },
+          { id: "delete", label: "Delete", destructive: true, icon: <Trash2 size={16} aria-hidden />,
+            onAction: () => void onDelete([item.id]) },
+        ]} />
     </div>
   );
 }
@@ -711,15 +632,11 @@ function NotificationBody({ item }: { item: NotificationItem }) {
     ? LEGACY_STATUS_PREVIEWS.get(item.preview) ?? item.preview : item.preview;
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        {!item.read && (
-          <span
-            aria-label="Unread"
-            className="h-2 w-2 shrink-0 rounded-full bg-primary"
-          />
-        )}
+      <span className="fb-notification-avatar">
         <UserAvatar username={item.actorUsername} size={32} />
-        <p className="min-w-0 flex-[1_1_6rem] text-sm [overflow-wrap:anywhere]">
+      </span>
+      <div className="fb-notification-copy">
+        <p className="fb-notification-summary">
           <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
           <span className="text-on-surface-variant">
             {item.type === "REACTION" && reactionKindLabel(item.reactionKind)
@@ -732,20 +649,23 @@ function NotificationBody({ item }: { item: NotificationItem }) {
               : typeLabel(item.type)}
           </span>
         </p>
-      </div>
       {item.postTitle ? (
-        <p className="text-sm font-medium [overflow-wrap:anywhere]">{item.postTitle}</p>
+        <p className="fb-notification-subject">{item.postTitle}</p>
       ) : null}
       {preview && preview !== item.postTitle ? (
-        <p className={`${item.type === "MODERATION" || item.type === "STATUS" ? "" : "line-clamp-2 "}text-sm text-on-surface-variant [overflow-wrap:anywhere]`}>{preview}</p>
+        <p className={`fb-notification-preview ${item.type === "MODERATION" || item.type === "STATUS" ? "" : "line-clamp-2"}`}>{preview}</p>
       ) : null}
+      <div className="fb-notification-meta">
+      {!item.read && <span aria-label="Unread" className="fb-notification-dot" />}
       <time
         dateTime={item.createdAt}
         title={formatTimestamp(item.createdAt)}
-        className="text-xs text-on-surface-variant"
+        className="fb-notification-time"
       >
         {timeAgo(item.createdAt)}
       </time>
+      </div>
+      </div>
     </>
   );
 }

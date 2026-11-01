@@ -32,10 +32,24 @@ vi.mock("../auth", () => ({
 import { Profile } from "./Profile";
 import { ThemeProvider } from "../theme";
 
+const trust = vi.hoisted(() => ({
+  fetchReputationTier: vi.fn(),
+  listMyRecoveries: vi.fn(),
+}));
+vi.mock("../services/trust", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/trust")>()),
+  fetchReputationTier: trust.fetchReputationTier,
+  listMyRecoveries: trust.listMyRecoveries,
+}));
+
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  trust.fetchReputationTier.mockResolvedValue("TRUSTED");
+  trust.listMyRecoveries.mockResolvedValue([
+    { returnId: "r1", lostPostId: "p1", counterpartUserId: "u2", externalHelper: false, recoveredAt: "2026-10-01T00:00:00Z", myRating: 5, counterpartRating: 4 },
+  ]);
   mockUser.value = {
     id: "u1",
     username: "tester",
@@ -111,8 +125,7 @@ describe("Profile landing", () => {
     expect(within(nav).getByText("Help & guide")).toBeTruthy();
   });
 
-  it("removes debug-panel content: phone hero, appearance, AI links, self-test, about, logout", () => {
-    renderProfile();
+  it("removes debug-panel content: phone hero, appearance, AI links, self-test, about, logout", () => {    renderProfile();
     expect(screen.queryByText("+10000000000")).toBeNull();
     expect(screen.queryByText(/phone verification/i)).toBeNull();
     expect(screen.queryByRole("radiogroup")).toBeNull();
@@ -120,5 +133,35 @@ describe("Profile landing", () => {
     expect(screen.queryByRole("link", { name: /models/i })).toBeNull();
     expect(screen.queryByRole("link", { name: "About" })).toBeNull();
     expect(screen.queryByRole("button", { name: /log out|sign out/i })).toBeNull();
+  });
+
+  it("shows the server-owned reputation label on the own profile", async () => {
+    renderProfile();
+    const region = await screen.findByRole("region", { name: "Reputation" });
+    expect(await within(region).findByText("Trusted")).toBeTruthy();
+    expect(trust.fetchReputationTier).toHaveBeenCalledWith("u1");
+  });
+
+  it("reaches rating detail from Profile, not from Settings", async () => {
+    renderProfile();
+    const link = await screen.findByRole("link", { name: /ratings and recovered items/i });
+    expect(link.getAttribute("href")).toBe("/settings/returns");
+  });
+
+  it("keeps trust honest while loading and when the server refuses", async () => {
+    let reject!: (error: Error) => void;
+    trust.fetchReputationTier.mockReturnValue(new Promise((_ok, no) => { reject = no; }));
+    renderProfile();
+    const region = await screen.findByRole("region", { name: "Reputation" });
+    expect(within(region).getByRole("status").textContent).toMatch(/checking your reputation/i);
+    reject(new Error("offline"));
+    expect(await within(region).findByText(/reputation is unavailable right now/i)).toBeTruthy();
+    expect(within(region).queryByText(/trusted|established|^new$/i)).toBeNull();
+  });
+
+  it("never puts the owner's email or phone on the public identity row", async () => {
+    renderProfile();
+    const region = await screen.findByRole("region", { name: "Reputation" });
+    expect(region.textContent).not.toMatch(/tester@example\.com|\+10000000000/);
   });
 });

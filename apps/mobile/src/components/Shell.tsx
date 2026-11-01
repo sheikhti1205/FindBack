@@ -50,9 +50,10 @@ export function Shell() {
   const width = useViewportWidth();
   const chatThread = pathname.startsWith("/chats/") || pathname.startsWith("/connections/");
   const showNav = chatThread ? width >= MEDIUM_MAX_PX : !HIDE_NAV.some((p) => pathname.startsWith(p));
-  const wideCanvas = WIDE_CANVAS.includes(pathname) || chatThread;
+  const settingsRoute = pathname === "/settings" || pathname.startsWith("/settings/");
+  const wideCanvas = WIDE_CANVAS.includes(pathname) || chatThread || settingsRoute;
   const ownsInternalScroll =
-    pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections") || pathname.startsWith("/chats");
+    settingsRoute || pathname === "/" || pathname === "/search" || pathname.startsWith("/help") || pathname.startsWith("/connections") || pathname.startsWith("/chats");
   // Owner ruling 4(e): the stored preference only becomes a side rail at the
   // compact breakpoint and up. The rail is an in-flow sibling of the content,
   // so it takes layout space and never covers what the reader is reading.

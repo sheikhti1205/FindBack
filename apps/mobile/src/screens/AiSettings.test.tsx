@@ -61,7 +61,7 @@ describe("AiSettings consumer root", () => {
     const view = renderSettings();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(
-      /ai & intelligence/i,
+      /optional ai chat/i,
     );
     expect(screen.getByRole("link", { name: /^providers$/i }).getAttribute("href")).toBe(
       "/settings/ai/connections",
@@ -69,9 +69,7 @@ describe("AiSettings consumer root", () => {
     expect(screen.getByRole("link", { name: /^models$/i }).getAttribute("href")).toBe(
       "/settings/ai/chat-models",
     );
-    expect(screen.getByRole("link", { name: /local intelligence/i }).getAttribute("href")).toBe(
-      "/settings/local-intelligence",
-    );
+    expect(screen.queryByRole("link", { name: /local intelligence|local tools/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /on-device ai/i })).toBeNull();
     expect(screen.getByRole("button", { name: /back to settings/i })).toBeTruthy();
     await waitFor(() => expect(mocks.get).toHaveBeenCalled());
@@ -80,12 +78,9 @@ describe("AiSettings consumer root", () => {
 
   it("groups the rows by what the reader is choosing", () => {
     renderSettings();
-    for (const name of ["AI Chat", "On this device"]) {
-      expect(screen.getByRole("region", { name })).toBeTruthy();
-    }
-    // The local download owner is reached from the local row, not from a
-    // second competing "manage models" entry point.
-    expect(screen.getAllByRole("link", { name: /local intelligence/i })).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "AI Chat" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "On this device" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /local intelligence|local tools/i })).toBeNull();
   });
 
   it("offers no AI mode switch: Chat is cloud-only, so the retired radio cannot come back", () => {

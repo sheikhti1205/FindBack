@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "r
 import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useSearchParams } from "react-router";
+import { useAuth } from "../auth";
 import type { PostType } from "@findback/shared";
 import { Segmented } from "../components/Segmented";
 import { EmptyState } from "../components/PostCard";
@@ -11,6 +12,8 @@ import { useFeed } from "../hooks/useFeed";
 import { useUrlParam } from "../hooks/useUrlParam";
 import { useTabTap } from "../components/TabTap";
 import { AdvancedSearchFilters, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
+import { SearchNearbyControls, useSearchNearby } from "./SearchNearby";
+import "./SearchScreen.css";
 import type { NlFilterPatch } from "../services/search/nlFilters";
 import { cleanPlace, matchesPlace } from "../services/search/placeScope";
 import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
@@ -124,10 +127,15 @@ interface SearchScreenProps {
 }
 
 export function SearchScreen(props: SearchScreenProps) {
+  const { user } = useAuth();
+  return <AccountSearchScreen key={user?.id ?? "signed-out"} {...props} />;
+}
+
+function AccountSearchScreen(props: SearchScreenProps) {
   const [params, setParams] = useSearchParams();
   const people = params.get("scope") === "people";
   const [peopleQuery, setPeopleQuery] = useUrlParam("people");
-  return <div className="flex h-full min-h-0 flex-col">
+  return <div className="fb-search-screen">
     <div role="group" aria-label="Search type" className="flex shrink-0 gap-3 border-b border-outline-variant px-3">
       {(["Reports", "People"] as const).map(label => <button key={label} type="button" aria-pressed={people === (label === "People")}
         className={`min-h-[44px] border-b-2 px-2 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${people === (label === "People") ? "border-on-surface text-on-surface" : "border-transparent text-on-surface-variant"}`}
@@ -162,6 +170,7 @@ function ReportSearch(props: SearchScreenProps) {
   const type: TypeFilter = typeParam === "LOST" || typeParam === "FOUND" ? typeParam : "ALL";
   const setType = (next: TypeFilter) => setTypeParam(next === "ALL" ? "" : next);
   const advanced = useAdvancedSearchFilters();
+  const nearby = useSearchNearby();
   const [qParam, setQParam] = useUrlParam("q");
   const [query, setQuery] = useState(qParam);
   const [appliedQuery, setAppliedQuery] = useState(qParam.trim());
@@ -195,6 +204,7 @@ function ReportSearch(props: SearchScreenProps) {
     setDateFromParam("");
     setDateToParam("");
     setPlaceParam("");
+    nearby.clear();
     // The TYPE is a chip in the same row as "Clear all filters", so clearing
     // every filter clears it too. A control that sits next to a filter it
     // does not clear is a lie about what it does.
@@ -208,7 +218,7 @@ function ReportSearch(props: SearchScreenProps) {
     setClearingFilters(false);
     setSearchParams(previous => {
       const next = new URLSearchParams(previous);
-      for (const key of ["category", "status", "sort", "dateFrom", "dateTo", "place", "type"]) next.delete(key);
+      for (const key of ["category", "status", "sort", "dateFrom", "dateTo", "place", "type", "near"]) next.delete(key);
       return next;
     }, { replace: true });
   }, [clearingFilters, setSearchParams]);
@@ -241,7 +251,7 @@ function ReportSearch(props: SearchScreenProps) {
   // reader changed in the meantime.
   const ordinaryQueryRef = useRef(query);
   ordinaryQueryRef.current = query;
-  const filterContext = JSON.stringify([type, place, advanced.category, advanced.status, advanced.sort, dateFrom, dateTo]);
+  const filterContext = JSON.stringify([type, place, advanced.category, advanced.status, advanced.sort, dateFrom, dateTo, nearby.feedFilters]);
   const filterContextRef = useRef(filterContext);
   filterContextRef.current = filterContext;
   const nlRequest = useRef(0);
@@ -435,6 +445,7 @@ function ReportSearch(props: SearchScreenProps) {
       q: appliedQuery || undefined,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
+      ...nearby.feedFilters,
     },
     { cacheKey: "search:feed", scrollRef },
   );
@@ -481,16 +492,29 @@ function ReportSearch(props: SearchScreenProps) {
     searchInputRef.current?.blur();
   }
 
+  const filterPanel = <AdvancedSearchFilters compactTrigger
+    filters={{ ...advanced, clearAll: clearSearchFilters }}
+    additionalControls={<SearchNearbyControls nearby={nearby} />}
+    additionalFilters={nearby.active ? [{ key: "nearby", label: `Nearby: ${nearby.radius} km`, clear: nearby.clear }] : []}
+    dateRange={{ from: dateFrom, to: dateTo,
+      draftFrom: validDay(dateFromParam) ? dateFromParam : dateFrom,
+      draftTo: validDay(dateToParam) ? dateToParam : dateTo,
+      onFromChange: setDateFromParam, onToChange: setDateToParam,
+    }}
+    postType={{ value: type === "ALL" ? "" : type, onChange: next => setType(next === "" ? "ALL" : next) }}
+    place={{ value: placeParam, applied: place, onChange: setPlaceParam }}
+  />;
+
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-2">
       <header
         data-testid="search-toolbar"
         style={{ transitionDuration: reduceMotion ? "0s" : `${motionDurations.fast}s` }}
-        className={`border-b px-3 pt-4 transition-[border-color,box-shadow] ${
+         className={`border-b px-3 pt-2 transition-[border-color,box-shadow] ${
           toolbarSeparated ? "border-outline-variant shadow-sm" : "border-transparent shadow-none"
         }`}
       >
-        <h1 className="text-lg font-semibold tracking-tight">Search &amp; filter</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Search reports</h1>
         <AnimatePresence initial={false} mode="wait">
           <motion.p
             key={`${total}:${visibleItems.length}`}
@@ -509,29 +533,14 @@ function ReportSearch(props: SearchScreenProps) {
         </AnimatePresence>
       </header>
 
-      {/* The filter column is a BOUNDED scroll region, and that bound is a
-          promise to the reader: nothing in this column can end up clipped and
-          unreachable by touch. The app's viewport never scrolls (the route owns
-          the scroller), so at 320 dp with 200 % text this column is taller
-          than the screen — the Filters trigger, the offer's Download button
-          and the way out would otherwise be cut off below the fold with no way
-          to reach them. The column scrolls instead, and the results keep the
-          rest of the screen.
-
-          The cap is a share of THIS column's real parent, not a share of the
-          viewport: a viewport fraction (60dvh) also cut the Filters trigger at
-          320 dp / 125 % text, where the column fits comfortably inside the
-          screen and should not have scrolled at all. 75 % of the parent leaves
-          the column whole at 125 % and still bounds it at 200 %. */}
-      <section
-        aria-label="Search filters"
-        className="flex max-h-[75%] min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain px-3"
-      >
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Ordinary search stays visible; only the advanced fields occupy a panel.
+          Large text/helper downloads can scroll without consuming the results. */}
+      <div className="fb-search-controls">
+        <div className="fb-search-query">
           <motion.label
             layout
             transition={motionSprings.soft}
-            className="relative block min-w-0 flex-1 basis-[160px]"
+            className="relative block min-w-0 flex-1 basis-[128px]"
           >
             <Search
               size={16}
@@ -547,7 +556,7 @@ function ReportSearch(props: SearchScreenProps) {
               onBlur={() => setSearchFocused(false)}
               placeholder="Search title or description…"
               aria-label="Search posts"
-              className="w-full rounded-m3-sm border border-outline-variant bg-surface py-3 pl-[40px] pr-[56px] text-sm placeholder:text-on-surface-variant focus:border-on-surface focus:outline-none"
+               className="w-full rounded-m3-sm border border-outline-variant bg-surface py-2.5 pl-[40px] pr-[44px] text-sm placeholder:text-on-surface-variant focus:border-on-surface"
             />
             <AnimatePresence initial={false}>
               {query.length > 0 && (
@@ -562,7 +571,7 @@ function ReportSearch(props: SearchScreenProps) {
                   animate="visible"
                   exit="exit"
                   transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-                   className="absolute right-[4px] top-1/2 flex min-h-[48px] min-w-[48px] -translate-y-1/2 items-center justify-center rounded-full text-on-surface-variant"
+                    className="absolute right-0 top-1/2 flex min-h-[44px] min-w-[44px] -translate-y-1/2 items-center justify-center rounded-full text-on-surface-variant"
                 >
                   <X size={16} aria-hidden />
                 </motion.button>
@@ -574,18 +583,20 @@ function ReportSearch(props: SearchScreenProps) {
               <motion.button
                 key="search-cancel"
                 type="button"
+                aria-label="Cancel"
                 onClick={collapseSearch}
                 variants={fadeVariants}
                 initial="hidden"
                 animate="visible"
                 exit="exit"
                 transition={{ duration: motionDurations.fast, ease: motionEasings.out }}
-                className="shrink-0 rounded-full min-h-[48px] px-2 text-sm font-medium text-on-surface"
+                className="fb-search-cancel shrink-0 rounded-full min-h-[44px] min-w-[44px] px-2 text-sm font-medium text-on-surface"
               >
-                Cancel
+                <span>Cancel</span><X size={18} aria-hidden />
               </motion.button>
             )}
           </AnimatePresence>
+          {filterPanel}
         </div>
 
         <Segmented<TypeFilter>
@@ -622,7 +633,7 @@ function ReportSearch(props: SearchScreenProps) {
             title={nlExtract === undefined ? "Smart search unavailable" : "Apply smart filters"}
             className="inline-flex min-h-[48px] shrink-0 items-center justify-center rounded-m3-sm border border-outline-variant bg-surface px-4 text-sm font-medium text-on-surface disabled:opacity-50"
           >
-            {nlBusy ? "Applying…" : "Smart search"}
+             {nlBusy ? "Applying…" : "Smart search"}
           </button>
         </div>
         {nlNote !== null && (
@@ -646,35 +657,7 @@ function ReportSearch(props: SearchScreenProps) {
         )}
 
         {invalidDates && <p role="alert" className="text-sm text-error">Choose a valid date range: use real days, with the start date on or before the end date.</p>}
-        <AdvancedSearchFilters
-          filters={{ ...advanced, clearAll: clearSearchFilters }}
-          dateRange={{
-            from: dateFrom,
-            to: dateTo,
-            // The FIELDS show what the reader entered (a reversed range can
-            // then be fixed); the CHIPS count the applied bounds, so a filter
-            // the feed never received is never counted.
-            draftFrom: validDay(dateFromParam) ? dateFromParam : dateFrom,
-            draftTo: validDay(dateToParam) ? dateToParam : dateTo,
-            onFromChange: setDateFromParam,
-            onToChange: setDateToParam,
-          }}
-          // The type is a chip here and a segmented control on the screen:
-          // the chip is the state summary and the way out, exactly like the
-          // date chips.
-          postType={{
-            value: type === "ALL" ? "" : type,
-            onChange: next => setType(next === "" ? "ALL" : next),
-          }}
-          place={{
-            // The field shows what the reader typed; only a usable name is
-            // ever in force, so a coordinate can never become a filter.
-            value: placeParam,
-            applied: place,
-            onChange: setPlaceParam,
-          }}
-        />
-      </section>
+      </div>
 
       {/* The results keep a floor of their own. The column above is bounded so
           it can never be taller than the screen, but a bound that eats the

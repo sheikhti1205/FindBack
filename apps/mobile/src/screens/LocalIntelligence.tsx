@@ -9,7 +9,7 @@ export function LocalIntelligence({ service = getApplicationAi(), downloadsTo = 
   downloadsTo?: string;
 }) {
   const { helper, phase } = useLocalIntelligenceService(service);
-  return <SettingsPage title="Local intelligence" description="Small tools for search and report text. Separate from AI Chat." backTo="/settings">
+  return <SettingsPage title="Local tools" description="Small tools for search and report text. Separate from AI Chat." backTo="/settings">
     <SettingsGroup title="Smart Search" description="Normal search works without this helper.">
       <LocalSearchHelperRow service={service} descriptor={helper} phase={phase} />
     </SettingsGroup>

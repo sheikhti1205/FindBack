@@ -1,0 +1,27 @@
+.fb-search-screen { display:flex; flex-direction:column; height:100%; min-height:0; width:100%; max-width:56rem; margin-inline:auto; }
+/* Keep a useful results viewport when large text wraps the query controls.
+   The controls remain independently scrollable, including helper transfers. */
+.fb-search-controls { display:flex; flex-direction:column; flex:none; min-height:0; max-height:40%; overflow:auto; overscroll-behavior:contain; gap:.5rem; padding:0 .75rem; }
+.fb-search-query { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:.35rem; }
+.fb-search-cancel { display:flex; align-items:center; justify-content:center; }
+.fb-search-cancel > svg { display:none; }
+@media (max-width:599px) {
+  .fb-search-cancel > span { display:none; }
+  .fb-search-cancel > svg { display:block; }
+  .fb-search-query > .fb-search-cancel { width:44px; padding:0; }
+}
+.fb-search-controls > [role="radiogroup"] { display:flex; flex-wrap:wrap; align-self:flex-start; gap:.25rem; padding:0; background:transparent; }
+.fb-search-controls > [role="radiogroup"] button { min-height:44px; padding:.3rem .5rem; font-size:.8125rem; }
+.fb-filter-trigger { position:relative; flex:none; }
+.fb-filter-count { position:absolute; right:0; top:0; min-width:18px; border-radius:1rem; background:var(--fb-on-surface); color:var(--fb-surface); font-size:.6875rem; padding:0 .2rem; }
+.fb-popover.fb-search-filter-popover { display:flex; flex-direction:column; width:380px; overflow:hidden; }
+.fb-search-filter-dialog { display:flex; flex-direction:column; min-height:0; max-height:inherit; outline:none; }
+.fb-search-filter-body { min-height:0; overflow:auto; overscroll-behavior:contain; padding:0 1rem 1rem; }
+.fb-filter-fields { display:flex; flex-direction:column; gap:.65rem; min-width:0; }
+.fb-search-nearby { display:flex; flex-direction:column; gap:.4rem; min-width:0; padding-top:.5rem; border-top:1px solid var(--fb-outline-variant); }
+.fb-search-nearby legend { padding-top:.5rem; }
+.fb-search-filter-chips { display:flex; flex-wrap:wrap; flex-basis:100%; grid-column:1 / -1; gap:.25rem .4rem; }
+.fb-search-filter-chips button, .fb-search-chip { display:inline-flex; align-items:center; gap:.35rem; min-height:44px; max-width:100%; border:0; background:transparent; padding:.25rem .4rem; border-radius:.4rem; font-size:.8125rem; text-align:start; overflow-wrap:anywhere; }
+.fb-search-filter-chips button:hover { background:var(--fb-surface-container); }
+.fb-search-filter-chips button svg { flex:none; }
+.fb-search-controls input:focus-visible, .fb-search-filter-chips button:focus-visible, .fb-search-nearby button:focus-visible { outline:2px solid var(--fb-focus); outline-offset:-2px; }

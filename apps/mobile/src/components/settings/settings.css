@@ -43,7 +43,7 @@
   min-width: 48px;
   margin: 0 0 0 -0.5rem;
 }
-.fb-settings-sticky h1 {
+.fb-settings-sticky :is(h1, h2) {
   flex: 1;
   min-width: 0;
   margin: 0;

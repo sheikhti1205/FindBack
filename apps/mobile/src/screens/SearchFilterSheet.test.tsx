@@ -65,6 +65,7 @@ describe("SearchScreen filter sheet (G14)", () => {
     fireEvent.click(screen.getByRole("button", { name: /^filters/i }));
     await screen.findByLabelText("Category");
     await chooseCategory("Electronics");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
 
     // Chip appears; URL carries the filter (existing :18-35 semantics).
     expect(await screen.findByRole("button", { name: /remove category filter/i })).toBeTruthy();

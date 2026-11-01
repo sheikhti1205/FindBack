@@ -109,15 +109,12 @@ describe("SearchScreen URL filters", () => {
     expect(screen.getByTestId("location").textContent).toContain("type=FOUND");
   });
 
-  it("keeps the filter column a bounded scroll region so nothing in it is clipped away", () => {
-    // The app's viewport never scrolls: the route owns the scroller. At 320 dp
-    // with 200 % text the filter column is taller than the screen, so it must
-    // be BOUNDED and scrollable — otherwise the Filters trigger and the
-    // offer's buttons are cut off below the fold and unreachable by touch.
+  it("keeps ordinary search visible with a compact advanced-filter launcher", () => {
     renderSearch("/search");
-    const column = screen.getByRole("region", { name: "Search filters" });
-    expect(column.className).toContain("overflow-y-auto");
-    expect(column.className).toContain("max-h-");
+    expect(screen.getByRole("searchbox", { name: "Search posts" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Filters" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Search filters" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Filters" })).toBeNull();
   });
 
   it("restores every filter from the URL on mount", async () => {

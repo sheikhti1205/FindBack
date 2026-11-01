@@ -71,7 +71,8 @@ export function RouteTransition() {
     <LayoutGroup>
       <AnimatePresence initial={false} mode="popLayout">
         <motion.div
-          key={location.pathname === "/chats" || location.pathname.startsWith("/chats/") ? "/chats" : location.pathname}
+          key={location.pathname === "/chats" || location.pathname.startsWith("/chats/") ? "/chats"
+            : location.pathname === "/settings" || location.pathname.startsWith("/settings/") ? "/settings" : location.pathname}
           variants={variants}
           initial="hidden"
           animate="visible"

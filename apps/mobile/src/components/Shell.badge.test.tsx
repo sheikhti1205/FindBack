@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { unreadMock } = vi.hoisted(() => ({ unreadMock: vi.fn() }));
 
 vi.mock("../services/notifications", () => ({ fetchUnreadCount: unreadMock }));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "badge-reader" } }) }));
 
 import { Shell } from "./Shell";
 
@@ -27,7 +28,7 @@ afterEach(() => {
 });
 
 describe("Shell notifications badge", () => {
-  it("shows the unread count on the bell without renaming the link", async () => {
+  it("shows the unread count on the utility bell, not a primary destination", async () => {
     unreadMock.mockResolvedValue(3);
     renderShell();
 
@@ -36,7 +37,7 @@ describe("Shell notifications badge", () => {
     expect(badge.getAttribute("aria-hidden")).toBe("true");
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(within(nav).queryByRole("link", { name: "Notifications" })).toBeNull();
-    expect(within(screen.getByRole("navigation", { name: "App utilities" })).getByRole("link", { name: "Notifications" })).toBeTruthy();
+    expect(within(screen.getByRole("navigation", { name: "App utilities" })).getByRole("button", { name: "Notifications" })).toBeTruthy();
   });
 
   it("caps a large count and hides the badge at zero or on failure", async () => {

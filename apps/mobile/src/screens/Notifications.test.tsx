@@ -35,6 +35,8 @@ function item(overrides: Record<string, unknown> = {}) {
     postId: "p1",
     postTitle: "Lost wallet",
     commentId: null,
+    reactionKind: null,
+    blockedActor: false,
     ...overrides,
   };
 }
@@ -91,6 +93,19 @@ afterEach(() => {
 });
 
 describe("Notifications inbox", () => {
+  it("filters unread activity locally without losing deleted/restore access", async () => {
+    fetchMock.mockResolvedValue([item(), item({ id: "n2", read: true, actorUsername: "cara" })]);
+    renderNotifications();
+    await screen.findByText("cara");
+    fireEvent.click(screen.getByRole("button", { name: "Unread" }));
+    expect(screen.getByRole("button", { name: "Unread" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("bob")).toBeTruthy();
+    expect(screen.queryByText("cara")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByText("cara")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Deleted" })).toBeTruthy();
+  });
   it("renders an actorless moderation outcome as a review update with server consequence copy", async () => {
     fetchMock.mockResolvedValue([item({ type: "MODERATION", actorId: null, actorUsername: null,
       postId: null, postTitle: null, preview: "Your account cannot publish new reports right now." })]);
@@ -491,21 +506,20 @@ describe("Notifications inbox", () => {
     expect(screen.queryByRole("menuitem", { name: /^delete$/i })).toBeNull();
     const trigger = screen.getByRole("button", { name: /more actions for bob/i });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(trigger.className).toMatch(/min-h-\[44px\]/);
-    expect(trigger.className).toMatch(/min-w-\[44px\]/);
 
-    fireEvent.click(trigger);
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     const menu = await screen.findByRole("menu");
     const mark = within(menu).getByRole("menuitem", { name: /mark read/i });
     const del = within(menu).getByRole("menuitem", { name: /^delete$/i });
     // Focus enters the menu, arrows rove, Escape leaves and hands focus back.
-    expect(document.activeElement).toBe(mark);
-    fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(del);
-    fireEvent.keyDown(menu, { key: "Escape" });
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    await waitFor(() => expect(document.activeElement).toBe(mark));
+    fireEvent.keyDown(mark, { key: "ArrowDown" });
+    await waitFor(() => expect(document.activeElement).toBe(del));
+    fireEvent.keyDown(del, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
   it("keeps a truthful empty state when the inbox is empty", async () => {

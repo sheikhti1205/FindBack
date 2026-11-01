@@ -7,9 +7,10 @@
  */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PublicUser } from "@findback/shared";
 
 const auth = vi.hoisted(() => ({
-  user: null as { id: string } | null,
+  user: null as PublicUser | null,
   booting: false,
   bootError: null as string | null,
   retryBoot: vi.fn(),
@@ -23,7 +24,8 @@ vi.mock("../auth", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({ ...auth, logout: vi.fn(async () => {}) }),
 }));
-vi.mock("../theme", () => ({
+vi.mock("../theme", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../theme")>(),
   ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useTheme: () => ({ theme: "light", setTheme: vi.fn() }),
 }));
@@ -70,7 +72,7 @@ function renderAt(hash: string) {
 }
 
 beforeEach(() => {
-  auth.user = { id: "u1" };
+  auth.user = { id: "u1", username: "tester", email: "tester@example.test", phone: "+10000000000", avatarUrl: null, emailVerified: true, phoneVerified: false, createdAt: "2026-01-01T00:00:00Z" };
   auth.booting = false;
   auth.bootError = null;
   localStorage.clear();
@@ -126,6 +128,7 @@ describe("QA L: every settings backTo lands on a mounted route", () => {
       expect(document.body.textContent!.length).toBeGreaterThan(0);
     });
     expect(screen.queryByText("Loading FindBack…")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Something went wrong" })).toBeNull();
   });
 });
 
