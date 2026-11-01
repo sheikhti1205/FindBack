@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, X } from "lucide-react";
+import { PostTypeBadge } from "../components/PostTypeBadge";
 import { PostLink } from "../components/PostNavigation";
 import type { PostItem } from "@findback/shared";
 import { useAuth } from "../auth";
@@ -273,8 +274,11 @@ export function SavedReports() {
                       className="shrink-0 text-on-surface-variant"
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[15px] font-medium text-on-surface">
-                        {title}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <PostTypeBadge type={post?.type} testId="saved-report-type" />
+                        <span className="block min-w-0 truncate text-[15px] font-medium text-on-surface">
+                          {title}
+                        </span>
                       </span>
                       <span className="block truncate text-xs text-on-surface-variant">
                         Saved {row.savedAt ? timeAgo(row.savedAt) : "recently"}

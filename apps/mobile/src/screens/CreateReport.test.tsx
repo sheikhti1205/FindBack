@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
@@ -70,6 +70,13 @@ import { todayInputValue } from "../utils/dates";
 import * as photoStore from "../services/photoStore";
 
 import { chooseCategory } from "../test-utils/reportCategory";
+
+/** The discard is destructive, so it asks through the canonical dialog. */
+function confirmDiscardDraft() {
+  const dialog = screen.getByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: /discard draft/i }));
+}
+
 function seedDescription(description: string): void {
   saveDraft({
     type: "LOST",
@@ -136,13 +143,9 @@ describe("CreateReport", () => {
     fireEvent.change(locationInput, { target: { value: "23.810332, 90.412518" } });
     expect(locationInput.value).toBe("23.810332, 90.412518");
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    try {
-      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
-      await waitFor(() => expect(locationInput.value).toBe(""));
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+    confirmDiscardDraft();
+    await waitFor(() => expect(locationInput.value).toBe(""));
   });
 
   it("keeps an exact pin (with its warning) across navigation", async () => {
@@ -367,23 +370,20 @@ describe("CreateReport", () => {
       photoId: "gone",
       photoIds: ["gone"],
     }, "u1");
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    try {
-      render(<CreateReport />);
-      await screen.findByText(/could not be recovered.*photo 1/i);
+    render(<CreateReport />);
+    await screen.findByText(/could not be recovered.*photo 1/i);
 
-      fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
-      expect(confirmSpy).toHaveBeenCalled();
-      await waitFor(() =>
-        expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
-      );
-      // Pruned from the persisted draft; the text survives for the new attempt.
-      await waitFor(() => expect(loadDraft("u1")?.photoIds).toEqual([]));
-      expect(loadDraft("u1")?.title).toBe("Lost phone");
-      expect(screen.queryByText(/could not be recovered/i)).toBeNull();
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("Photo 1");
+    fireEvent.click(within(dialog).getByRole("button", { name: /remove photos/i }));
+    await waitFor(() =>
+      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    // Pruned from the persisted draft; the text survives for the new attempt.
+    await waitFor(() => expect(loadDraft("u1")?.photoIds).toEqual([]));
+    expect(loadDraft("u1")?.title).toBe("Lost phone");
+    expect(screen.queryByText(/could not be recovered/i)).toBeNull();
   });
 
   it("keeps mixed-success conversions when the middle photo fails, then publishes the survivors", async () => {
@@ -411,7 +411,6 @@ describe("CreateReport", () => {
       if (uri === "content://p2") throw new Error("revive failed");
       return imported(uri === "content://p1" ? "one-bytes" : "three-bytes");
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     try {
       render(<CreateReport />);
       // Only the middle slot failed — and it is named, not a bare boolean.
@@ -421,7 +420,7 @@ describe("CreateReport", () => {
       expect(screen.getByRole("img", { name: /photo 2 of 2/i })).toBeTruthy();
 
       fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
-      expect(confirmSpy).toHaveBeenCalled();
+      fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /remove photos/i }));
       await waitFor(() =>
         expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false),
       );
@@ -435,7 +434,6 @@ describe("CreateReport", () => {
       expect(await files[0]!.text()).toBe("one-bytes");
       expect(await files[1]!.text()).toBe("three-bytes");
     } finally {
-      confirmSpy.mockRestore();
       nativeMedia.importNativeImageUri.mockReset();
     }
   });
@@ -455,19 +453,17 @@ describe("CreateReport", () => {
       photoFormat: null,
       photoIds: ["gone"],
     }, "u1");
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    try {
+    {
       render(<CreateReport />);
       await screen.findByText(/could not be recovered/i);
       // No text at all: the old guard returned early and wedged the screen.
       fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
-      expect(confirmSpy).toHaveBeenCalled();
+      expect(screen.getByRole("alertdialog").textContent).toMatch(/discard this report/i);
+      confirmDiscardDraft();
       await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
       // The unavailable slot is gone; only the (pre-existing) empty draft
       // shell remains, which loads as a blank form.
       expect(loadDraft("u1")?.photoIds).toEqual([]);
-    } finally {
-      confirmSpy.mockRestore();
     }
   });
 
@@ -508,20 +504,16 @@ describe("CreateReport", () => {
       photoId: "gone",
       photoIds: ["gone"],
     }, "u1");
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    try {
-      render(<CreateReport />);
-      await screen.findByText(/could not be recovered/i);
-      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+    render(<CreateReport />);
+    await screen.findByText(/could not be recovered/i);
+    expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
 
-      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
-      await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
-      // Recovery gate resolved: a completely new report can be started.
-      expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false);
-      expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("");
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+    confirmDiscardDraft();
+    await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
+    // Recovery gate resolved: a completely new report can be started.
+    expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("");
   });
 
   it("previews converted bytes instead of the original HEIC picker URL", async () => {
@@ -966,13 +958,9 @@ describe("CreateReport", () => {
     pickFile(new File(["abc"], "p.jpg", { type: "image/jpeg" }));
     await screen.findByRole("button", { name: /remove photo/i });
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-    try {
-      fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
-      await waitFor(() => expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull());
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+    confirmDiscardDraft();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /remove photo/i })).toBeNull());
 
     expect(URL.revokeObjectURL).toHaveBeenCalled();
   });

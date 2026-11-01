@@ -66,6 +66,22 @@ function values(): ReportEditorValues {
 afterEach(cleanup);
 
 describe("ReportEditor", () => {
+  it("renders the create screen's editable media slot where the photos belong", () => {
+    render(<ReportEditor values={values()} onChange={() => {}} media={<p>Editable photo intake</p>} />);
+    const media = screen.getByText("Editable photo intake");
+    const title = screen.getByLabelText(/what did you lose/i);
+    // Photos-first: the intake sits above the title.
+    expect(media.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The read-only explanation belongs to editing an existing report.
+    expect(screen.queryByText(/photos can’t be changed/i)).toBeNull();
+  });
+
+  it("renders the details helper directly after the description", () => {
+    render(<ReportEditor values={values()} onChange={() => {}} afterDescription={<p>Fill missing details</p>} />);
+    const description = screen.getByTestId("report-description");
+    expect(description.nextElementSibling?.textContent).toContain("Fill missing details");
+  });
+
   it("makes the real description editor and date trigger read-only while disabled", () => {
     const { container, rerender } = render(<ReportEditor values={values()} onChange={() => {}} disabled />);
     const description = container.querySelector(".tiptap")!;

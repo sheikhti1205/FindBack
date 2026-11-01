@@ -78,7 +78,7 @@ describe("restored Help behaviors (packet 11)", () => {
     expect(screen.queryByTestId("privacy-full-copy")).toBeNull();
     expect(screen.queryByText(/local-first/i)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "More options" }));
-    fireEvent.click(screen.getByRole("button", { name: "Privacy & AI" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Privacy & AI" }));
     const sheet = await screen.findByRole("dialog");
     expect(sheet.textContent).not.toMatch(/local-first|smolvlm|qwen/i);
     fireEvent.click(screen.getByRole("button", { name: "Open Privacy settings" }));

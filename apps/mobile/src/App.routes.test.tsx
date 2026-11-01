@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Outlet } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
@@ -69,7 +70,11 @@ vi.mock("./screens/LocalIntelligence", () => ({ LocalIntelligence: () => <p>Loca
 vi.mock("./screens/DownloadedModels", () => ({ DownloadedModels: () => <p>DownloadedModels screen</p> }));
 vi.mock("./screens/Notifications", () => ({ Notifications: () => <p>Notifications screen</p> }));
 vi.mock("./screens/SharedReport", () => ({ SharedReport: () => <p>SharedReport screen</p> }));
-vi.mock("./screens/Settings", () => ({ Settings: marker("Settings") }));
+// Settings is the route-backed split view: its detail routes render inside
+// it, so the stand-in must keep the outlet like the real screen does.
+vi.mock("./screens/Settings", () => ({
+  Settings: () => <><p>Settings screen</p><Outlet /></>,
+}));
 vi.mock("./screens/AdminBootstrap", () => ({ AdminBootstrap: marker("AdminBootstrap") }));
 vi.mock("./screens/BlockedUsers", () => ({ BlockedUsers: marker("BlockedUsers") }));
 vi.mock("./screens/SafetyReports", () => ({ SafetyReports: marker("SafetyReports") }));
@@ -229,40 +234,51 @@ describe("consumer route map", () => {
 
   it("protects the actual cold hash Edit route on Android back, asking only once per press", async () => {
     signedIn();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderAt("/my/p1/edit");
     const title = await screen.findByLabelText("What did you lose?");
     fireEvent.change(title, { target: { value: "Keep this draft" } });
+
+    // One press asks once, through the canonical dialog rather than a browser prompt.
     act(() => native.back?.());
-    expect(confirm).toHaveBeenCalledTimes(1);
+    await screen.findByRole("alertdialog", { name: "Leave without saving?" });
+    expect(window.location.hash).toBe("#/my/p1/edit");
+
+    // A second press is consumed by the open question, never asked twice.
+    act(() => native.back?.());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(window.location.hash).toBe("#/my/p1/edit");
     expect((title as HTMLInputElement).value).toBe("Keep this draft");
-    confirm.mockReturnValue(true);
+
     act(() => native.back?.());
-    await screen.findByText("Home screen");
-    expect(window.location.hash).toBe("#/");
-    expect(confirm).toHaveBeenCalledTimes(2);
+    const second = await screen.findByRole("alertdialog", { name: "Leave without saving?" });
+    fireEvent.click(within(second).getByRole("button", { name: "Leave without saving" }));
+    // Leaving returns to the list the editor came from, once.
+    await screen.findByText("MyPosts screen");
+    expect(window.location.hash).toBe("#/my");
   });
 
   it("does not redirect a new destination when a save settles during the Edit exit animation", async () => {
     signedIn();
     let resolve!: (value: unknown) => void;
     editorPosts.save.mockReturnValue(new Promise((res) => { resolve = res; }));
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderAt("/my/p1/edit");
     fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Pending save title" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await act(async () => { await router!.navigate("/profile"); resolve({}); });
+    await act(async () => { await router!.navigate("/profile"); });
+    const guard = await screen.findByRole("alertdialog", { name: "Leave without saving?" });
+    await act(async () => { resolve({}); });
+    // The settled save must not win over the destination the user asked for.
+    fireEvent.click(within(guard).getByRole("button", { name: "Leave without saving" }));
     await waitFor(() => expect(window.location.hash).toBe("#/profile"));
     expect(await screen.findByText("Profile screen")).toBeTruthy();
   });
 
   it("keeps a returned editor usable when Back reverses its exit animation", async () => {
     signedIn();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderAt("/my/p1/edit");
     fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Departing title" } });
     await act(async () => { await router!.navigate("/profile"); });
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Leave without saving" }));
     await act(async () => { await router!.navigate(-1); });
     expect(window.location.hash).toBe("#/my/p1/edit");
     const title = await screen.findByLabelText("What did you lose?");
@@ -273,13 +289,15 @@ describe("consumer route map", () => {
 
   it("does not ask the exiting editor to guard a subsequent destination", async () => {
     signedIn();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderAt("/my/p1/edit");
     fireEvent.change(await screen.findByLabelText("What did you lose?"), { target: { value: "Departing title" } });
     await act(async () => { await router!.navigate("/profile"); });
+    // Asked once for the departure…
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Leave without saving" }));
     await act(async () => { await router!.navigate("/my"); });
     expect(window.location.hash).toBe("#/my");
-    expect(confirm).toHaveBeenCalledTimes(1);
+    // …and never again for the destination that follows it.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("renders first-run onboarding for a fresh guest", () => {

@@ -12,6 +12,8 @@ export interface MenuAction {
   icon?: ReactNode;
   disabled?: boolean;
   destructive?: boolean;
+  /** Draw a divider above this action: a visual block boundary, not a group. */
+  separatorBefore?: boolean;
   onAction: () => void;
 }
 export interface MenuGroup {
@@ -25,7 +27,7 @@ export interface MenuGroup {
 
 function actionRows(items: readonly MenuAction[]) {
   return items.flatMap((item, index) => [
-    ...(item.destructive && !items[index - 1]?.destructive && index > 0 ? [<Separator key={`separator-${item.id}`} className="fb-menu-separator" />] : []),
+    ...((item.separatorBefore && index > 0) || (item.destructive && !items[index - 1]?.destructive && index > 0) ? [<Separator key={`separator-${item.id}`} className="fb-menu-separator" />] : []),
     <MenuItem key={item.id} id={item.id} textValue={item.label} isDisabled={item.disabled}
       onAction={item.onAction} className={`fb-menu-item ${item.destructive ? "fb-menu-danger" : ""}`}>
       {item.icon}<span>{item.label}</span>
@@ -72,7 +74,7 @@ export function ActionMenu({ label, items, icon, disabled = false, open: control
       <Menu aria-label={label} className="fb-action-menu">
         {items.flatMap((item, index) => {
           if (!("items" in item)) return [
-            ...(item.destructive && !(items[index - 1] as MenuAction | undefined)?.destructive && index > 0 ? [<Separator key={`separator-${item.id}`} className="fb-menu-separator" />] : []),
+            ...((item.separatorBefore && index > 0) || (item.destructive && !(items[index - 1] as MenuAction | undefined)?.destructive && index > 0) ? [<Separator key={`separator-${item.id}`} className="fb-menu-separator" />] : []),
             ...actionRows([item]),
           ];
           return [<SubmenuTrigger key={item.id}>

@@ -1,4 +1,4 @@
-import type { Category } from "@findback/shared";
+import type { Category, PostType } from "@findback/shared";
 
 /** Bonus applied when the candidate shares the same category as the target. */
 export const CATEGORY_BONUS = 0.15;
@@ -58,6 +58,8 @@ const LOCATION_DECAY_RADIUS_KM = 20;
 /** Safe card projection retained for matching results. */
 export interface MatchCandidate {
   id: string;
+  /** LOST or FOUND: the row states which side of the match this report is. */
+  type: PostType;
   title: string;
   description: string | null;
   category: Category;

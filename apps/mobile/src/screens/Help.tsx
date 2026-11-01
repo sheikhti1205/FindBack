@@ -4,7 +4,8 @@ import { History, MoreVertical } from "lucide-react";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { AssistantLanding } from "../components/assistant/AssistantLanding";
-import { BottomSheet } from "../components/BottomSheet";
+import { ActionMenu } from "../components/ActionMenu";
+import { AdaptiveTaskSurface, ConfirmDialog } from "../components/AdaptiveTaskSurface";
 import { ChatComposer } from "../components/ChatComposer";
 import { ChatTranscript, type TranscriptMessage } from "../components/ChatTranscript";
 import { HistorySheet, type HistoryChatSummary } from "../components/HistorySheet";
@@ -79,8 +80,7 @@ function AccountHelp({ accountId, store, deps }: { accountId: string; store: Cha
   const [controllerPhase, setControllerPhase] = useState<ControllerState["phase"]>("idle");
   const [partial, setPartial] = useState<{ text: string } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuConfirmClear, setMenuConfirmClear] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   // The on-screen keyboard owns the viewport, so the landing compacts
   // (suggestions hide) instead of pushing the composer out of reach.
@@ -327,7 +327,18 @@ function AccountHelp({ accountId, store, deps }: { accountId: string; store: Cha
         <BackButton fallbackTo="/profile" label="Back to profile" />
         <h1 className="min-w-0 flex-1 truncate text-base font-semibold">Chat</h1>
         <button type="button" onClick={() => setHistoryOpen(true)} aria-label="Open chat history" className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs hover:bg-surface-container"><History size={20} aria-hidden /></button>
-        <button type="button" onClick={() => { setMenuConfirmClear(false); setMenuOpen(true); }} aria-label="More options" className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs hover:bg-surface-container"><MoreVertical size={20} aria-hidden /></button>
+        <ActionMenu
+          label="More options"
+          icon={<MoreVertical size={20} aria-hidden />}
+          triggerClassName="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs hover:bg-surface-container"
+          items={[
+            { id: "new", label: "New chat", onAction: () => newChat() },
+            { id: "history", label: "History", onAction: () => setHistoryOpen(true) },
+            { id: "providers", label: "Providers", onAction: () => navigate("/ai-connection") },
+            { id: "privacy", label: "Privacy & AI", onAction: () => setPrivacyOpen(true) },
+            { id: "clear", label: "Clear chat view", destructive: true, onAction: () => setConfirmClear(true) },
+          ]}
+        />
       </div>
     </header>
     <main aria-label="Chat conversation" className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -339,25 +350,27 @@ function AccountHelp({ accountId, store, deps }: { accountId: string; store: Cha
       <div className="shrink-0"><ChatComposer value={input} onChange={setInput} onSend={() => void sendChat(input)} busy={busy} onStop={stopChat} inputId="help-composer-input" inputLabel="Message" placeholder="Message…" modelTitle={modelChipTitle} onOpenModels={() => setModelOpen(true)} modelDisabled={busy} /></div>
     </main>
     <HistorySheet open={historyOpen} onClose={() => setHistoryOpen(false)} chats={visibleChats} activeChatId={activeChatId} searchQuery={historyQuery} onSearchQueryChange={setHistoryQuery} onNew={newChat} onContinue={continueChat} onRename={renameChat} onDelete={deleteChat} onClear={clearAllChats} historyEnabled={store.isHistoryEnabled(accountId)} onToggleHistory={toggleHistory} />
-    <BottomSheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Chat options" description="Chats you keep stay in Chat history while the app is open.">
-      <div className="flex flex-col gap-1">
-        <button type="button" className={rowClass} onClick={() => { newChat(); setMenuOpen(false); }}>New chat</button>
-        <button type="button" className={rowClass} onClick={() => { setMenuOpen(false); setHistoryOpen(true); }}>History</button>
-        <button type="button" className={rowClass} onClick={() => { setMenuOpen(false); navigate("/ai-connection"); }}>Providers</button>
-        <button type="button" className={rowClass} onClick={() => { setMenuOpen(false); setPrivacyOpen(true); }}>Privacy &amp; AI</button>
-        {menuConfirmClear ? <button type="button" className={rowClass} onClick={() => { resetView(); setActiveChatId(null); setTurns([]); setMenuOpen(false); }}>Confirm clear view</button> : <button type="button" className={rowClass} onClick={() => setMenuConfirmClear(true)}>Clear chat view</button>}
-      </div>
-    </BottomSheet>
-    <BottomSheet open={privacyOpen} onClose={() => setPrivacyOpen(false)} title="Privacy & AI" description="How Chat handles your messages.">
+    <ConfirmDialog
+      open={confirmClear}
+      onClose={() => setConfirmClear(false)}
+      title="Clear this chat view?"
+      confirmLabel="Clear view"
+      cancelLabel="Keep it"
+      destructive
+      onConfirm={() => { setConfirmClear(false); resetView(); setActiveChatId(null); setTurns([]); }}
+    >
+      <p>This clears the conversation on this screen. Chats you kept stay in Chat history.</p>
+    </ConfirmDialog>
+    <AdaptiveTaskSurface open={privacyOpen} onClose={() => setPrivacyOpen(false)} title="Privacy & AI" description="How Chat handles your messages.">
       <div className="flex flex-col gap-3 text-sm">
         <p>Your selected provider receives your messages and conversation context when you send. Chat does not run on this device.</p>
         <p>Saved chat history is held in the app&apos;s memory while the app is open, separate for each account, and it is gone when you close the app. Turn history off to keep new messages only on this screen.</p>
         <p>{CLOUD_COST_COPY}</p>
         <button type="button" className={`${rowClass} underline`} onClick={() => { setPrivacyOpen(false); navigate("/settings/privacy"); }}>Open Privacy settings</button>
       </div>
-    </BottomSheet>
-    <BottomSheet open={modelOpen} onClose={() => setModelOpen(false)} title="Choose model" description="Choose a provider and model for new messages.">
+    </AdaptiveTaskSurface>
+    <AdaptiveTaskSurface open={modelOpen} onClose={() => setModelOpen(false)} title="Choose model" description="Choose a provider and model for new messages.">
       <CloudModelPicker accountId={accountId} selected={selected} listModels={listModels} onSelect={(model, title) => { setSelected(model); setSelectedTitle(title); setModelOpen(false); announce(`${title} selected for new messages.`); }} />
-    </BottomSheet>
+    </AdaptiveTaskSurface>
   </div>;
 }

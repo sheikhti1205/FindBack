@@ -7,6 +7,7 @@ import { runMessagingAuthorityAction } from "../services/messaging/runtime";
 import { BLOCKING_EXPLANATION, UNAVAILABLE_SENTENCES, unblockOutcome } from "../utils/safetyCopy";
 import { isMissingServerFunction } from "../utils/safetyService";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
+import { ConfirmDialog } from "./AdaptiveTaskSurface";
 
 export interface BlockControlProps {
   userId: string;
@@ -33,6 +34,9 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className, accou
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // Blocking is destructive and hard to notice afterwards, so it asks through
+  // the canonical alert dialog rather than a browser prompt.
+  const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     let current = true;
     setError(null);
@@ -49,10 +53,6 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className, accou
 
   const act = async () => {
     if (busy || known === null) return;
-    const question = known
-      ? `Unblock ${name}? You can interact again unless they've also blocked you.`
-      : `Block ${name}? ${BLOCKING_EXPLANATION}`;
-    if (!window.confirm(question)) return;
     setBusy(true); setError(null); setMessage(null);
     try {
       let stillHidden = true;
@@ -79,7 +79,7 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className, accou
     } finally { if (alive.current) setBusy(false); }
   };
   return <div className={`min-w-0 break-words ${className ?? ""}`}>
-    <button type="button" onClick={() => void act()} disabled={busy || known === null}
+    <button type="button" onClick={() => setConfirming(true)} disabled={busy || known === null}
       aria-busy={busy || undefined} data-testid="block-control"
       className="inline-flex min-h-[48px] max-w-full items-center justify-center whitespace-normal rounded-m3-md border border-outline px-4 py-2 text-sm font-medium text-on-surface [overflow-wrap:anywhere] hover:bg-surface-container disabled:opacity-50">
       {known === null ? (error ? "Block status unavailable" : "Checking…") : known ? `Unblock ${name}` : `Block ${name}`}
@@ -87,6 +87,18 @@ function ScopedBlockControl({ userId, name, blocked, onChanged, className, accou
     {message && <p role="status" data-testid="block-outcome">{message}</p>}
     {error && <p role="alert" data-testid="block-error">{error}</p>}
     {error && known === null && <button type="button" className="min-h-[44px] px-3" onClick={() => setAttempt((value) => value + 1)}>Retry</button>}
+    <ConfirmDialog
+      open={confirming}
+      onClose={() => setConfirming(false)}
+      title={known ? `Unblock ${name}?` : `Block ${name}?`}
+      confirmLabel={known ? "Unblock" : "Block"}
+      cancelLabel="Cancel"
+      destructive={!known}
+      busy={busy}
+      onConfirm={() => { setConfirming(false); void act(); }}
+    >
+      <p>{known ? "You can interact again unless they've also blocked you." : BLOCKING_EXPLANATION}</p>
+    </ConfirmDialog>
   </div>;
 }
 

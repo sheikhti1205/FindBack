@@ -27,6 +27,7 @@ import { ReportShareButton } from "../components/ReportShareButton";
 import { ReportOverflow } from "../components/ReportOverflow";
 import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
 import { RecoverySheet } from "../components/RecoverySheet";
+import { ConfirmDialog } from "../components/AdaptiveTaskSurface";
 import { PostActionRow } from "../components/PostActionRow";
 import { ReportMatches } from "../components/ReportMatches";
 import { announce } from "../components/LiveRegion";
@@ -235,6 +236,9 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
   const postPresentRef = useRef(false);
   // Track in-flight mutations to disable owner controls
   const [statusPending, setStatusPending] = useState(false);
+  // Destructive owner/moderator actions ask through the canonical dialog.
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [pendingCommentDelete, setPendingCommentDelete] = useState<string | null>(null);
   // Latest comments for realtime comment-reaction patches (the effect below
   // only depends on [id, load], so it reads through this ref).
   const commentsRef = useRef<CommentItem[]>([]);
@@ -757,11 +761,16 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
       announce(message);
       return;
     }
-    // Closed is terminal for the searcher: confirm explicitly.
+    // Closed is terminal for the searcher: ask before writing it.
     if (status === "CLOSED") {
-      const ok = window.confirm("Close this report? It will leave the open search.");
-      if (!ok) return;
+      setConfirmingClose(true);
+      return;
     }
+    await writeStatus(status);
+  }
+
+  async function writeStatus(status: PostStatus) {
+    if (!current) return;
     // Increment sequence token - only the latest request's response will be applied
     const seq = ++statusSeq.current;
     const snap = { postId: current.id, viewer: user?.id };
@@ -891,7 +900,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
           if (!isStaleMutation(snap)) document.getElementById("detail-comments")?.focus({ preventScroll: true });
         });
       }}
-      onDelete={() => { if (window.confirm("Delete this comment?")) void onDeleteComment(c.id); }}
+      onDelete={() => setPendingCommentDelete(c.id)}
     />;
     const threadControls = children.length > 0 && (
       <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -1414,6 +1423,38 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
           onClose={() => setLightbox(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmingClose}
+        onClose={() => setConfirmingClose(false)}
+        title="Close this report?"
+        confirmLabel="Close report"
+        cancelLabel="Keep it open"
+        destructive
+        busy={statusPending}
+        onConfirm={() => {
+          setConfirmingClose(false);
+          void writeStatus("CLOSED");
+        }}
+      >
+        <p>It will leave the open search. You can reopen it from My Reports.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={pendingCommentDelete !== null}
+        onClose={() => setPendingCommentDelete(null)}
+        title="Delete this comment?"
+        confirmLabel="Delete comment"
+        cancelLabel="Keep comment"
+        destructive
+        onConfirm={() => {
+          const commentId = pendingCommentDelete;
+          setPendingCommentDelete(null);
+          if (commentId) void onDeleteComment(commentId);
+        }}
+      >
+        <p>It is removed for everyone. Replies to it stay.</p>
+      </ConfirmDialog>
 
       <div className="h-4" aria-hidden />
     </div>

@@ -147,7 +147,8 @@ describe("CreateReport media motion", () => {
 
     expect(dialog).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /close photo viewer/i }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), { timeout: 3000 });
+    // Only the task surface is left once the viewer closes.
+    await waitFor(() => expect(screen.getAllByRole("dialog")).toHaveLength(1), { timeout: 3000 });
   }, 15000);
 
   it("crossfades the batch status from processing into the ready notice", async () => {

@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useAuth } from "../auth";
-import { BottomSheet } from "./BottomSheet";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { Button } from "./Button";
 import { SelectField, TextAreaField, TextField } from "./Fields";
 import { announce } from "./LiveRegion";
@@ -256,7 +256,7 @@ export function ModerationCaseSheet({
   };
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Review this case" height="full">
+    <AdaptiveTaskSurface open={open} onClose={onClose} title="Review this case" busy={applying}>
       <div className="flex flex-col gap-4 py-2">
         <p className="text-sm text-on-surface-variant">
           {entry.reportCount === 1 ? "1 report" : `${entry.reportCount} reports`} about a{" "}
@@ -409,6 +409,6 @@ export function ModerationCaseSheet({
           )}
         </section>
       </div>
-    </BottomSheet>
+    </AdaptiveTaskSurface>
   );
 }

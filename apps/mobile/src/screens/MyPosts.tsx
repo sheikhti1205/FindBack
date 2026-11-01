@@ -20,6 +20,7 @@ import { invalidateFeedCaches } from "../hooks/feedCache";
 import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
 import { RecoverySheet } from "../components/RecoverySheet";
 import { MatchActivity } from "../components/MatchActivity";
+import { ConfirmDialog } from "../components/AdaptiveTaskSurface";
 
 const MY_CACHE_BASE = "my:reports";
 
@@ -106,6 +107,9 @@ export function MyPosts() {
   const confirmedStatus = useRef(new Map<string, PostStatus>());
   const statusInFlight = useRef(new Map<string, number>());
   const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
+  // The two destructive row actions ask through the canonical alert dialog:
+  // one layer, a real Cancel, Escape/Back handled by the same owner.
+  const [confirmation, setConfirmation] = useState<{ kind: "delete" | "close"; post: PostItem } | null>(null);
 
   // The feed filter carries userId, so the resolved cache key is already
   // user-scoped: `my:reports:<filterKey>`. Passing the base (not a
@@ -253,16 +257,11 @@ export function MyPosts() {
     };
   }, [clearUndoTimer, commitDelete]);
 
-  const requestDelete = useCallback(
+  // The delete itself, once the owner has confirmed it. The undo window starts
+  // here so the countdown never begins behind a dialog the owner is reading.
+  const beginDelete = useCallback(
     (post: PostItem) => {
-      if (!user || pendingDeleteRef.current) {
-        setActionError("Finish or undo the current deletion before deleting another report.");
-        return;
-      }
-      const ok = window.confirm(
-        `Delete “${post.title}”? Once it’s gone it can’t be restored. You’ll have a few seconds to undo.`,
-      );
-      if (!ok) return;
+      if (!user || pendingDeleteRef.current) return;
       setActionError(null);
       setNotice(null);
       clearStatusUndo();
@@ -275,6 +274,17 @@ export function MyPosts() {
       }, DELETE_UNDO_WINDOW_MS);
     },
     [clearStatusUndo, clearUndoTimer, commitDelete, user],
+  );
+
+  const requestDelete = useCallback(
+    (post: PostItem) => {
+      if (!user || pendingDeleteRef.current) {
+        setActionError("Finish or undo the current deletion before deleting another report.");
+        return;
+      }
+      setConfirmation({ kind: "delete", post });
+    },
+    [user],
   );
 
   const undoDelete = useCallback(() => {
@@ -296,39 +306,8 @@ export function MyPosts() {
     else statusInFlight.current.set(postId, left);
   }, []);
 
-  const changeStatus = useCallback(
+  const applyStatus = useCallback(
     (post: PostItem, status: PostStatus) => {
-      if (status === post.status) return;
-      // A recorded recovery is terminal: the server refuses any status change
-      // on a report that already has a recovery row, and reopening it would
-      // leave the recovery describing a report that reads Open. Say so here
-      // instead of spending a round trip on a control that cannot work.
-      if (post.status === "RECOVERED") {
-        const message = "This report is already recorded as recovered.";
-        setActionError(message);
-        announce(message);
-        return;
-      }
-      // Recovered is not a status write: it is the durable recovery
-      // relationship (MC D25), so the owner chooses the helper first and the
-      // server writes the row and the status together. A FOUND report cannot
-      // be "recovered" by this path.
-      if (status === "RECOVERED") {
-        if (post.type !== "LOST") {
-          const message = "Only a lost-item report can be marked recovered.";
-          setActionError(message);
-          announce(message);
-          return;
-        }
-        setRecoveryPost(post);
-        return;
-      }
-      // Closed is terminal for the searcher: confirm explicitly.
-      if (status === "CLOSED") {
-        const ok = window.confirm("Close this report? It will leave the open search.");
-        if (!ok) return;
-      }
-
       const previous = post.status;
       // The row may already show an optimistic status from a queued write.
       // Roll back to the last status the server confirmed, never to that
@@ -383,6 +362,43 @@ export function MyPosts() {
       })();
     },
     [armStatusUndo, beginStatusWrite, clearStatusUndo, endStatusWrite, patchItem, removeItem],
+  );
+
+  const changeStatus = useCallback(
+    (post: PostItem, status: PostStatus) => {
+      if (status === post.status) return;
+      // A recorded recovery is terminal: the server refuses any status change
+      // on a report that already has a recovery row, and reopening it would
+      // leave the recovery describing a report that reads Open. Say so here
+      // instead of spending a round trip on a control that cannot work.
+      if (post.status === "RECOVERED") {
+        const message = "This report is already recorded as recovered.";
+        setActionError(message);
+        announce(message);
+        return;
+      }
+      // Recovered is not a status write: it is the durable recovery
+      // relationship (MC D25), so the owner chooses the helper first and the
+      // server writes the row and the status together. A FOUND report cannot
+      // be "recovered" by this path.
+      if (status === "RECOVERED") {
+        if (post.type !== "LOST") {
+          const message = "Only a lost-item report can be marked recovered.";
+          setActionError(message);
+          announce(message);
+          return;
+        }
+        setRecoveryPost(post);
+        return;
+      }
+      // Closed is terminal for the searcher: ask before writing it.
+      if (status === "CLOSED") {
+        setConfirmation({ kind: "close", post });
+        return;
+      }
+      applyStatus(post, status);
+    },
+    [applyStatus],
   );
 
   const undoStatus = useCallback(() => {
@@ -658,6 +674,28 @@ export function MyPosts() {
           navigate("/settings/returns");
         }}
       />
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        onClose={() => setConfirmation(null)}
+        title={confirmation?.kind === "delete" ? "Delete this report?" : "Close this report?"}
+        confirmLabel={confirmation?.kind === "delete" ? "Delete report" : "Close report"}
+        cancelLabel={confirmation?.kind === "delete" ? "Keep report" : "Keep it open"}
+        destructive={confirmation?.kind === "delete"}
+        onConfirm={() => {
+          const asked = confirmation;
+          setConfirmation(null);
+          if (!asked) return;
+          if (asked.kind === "delete") beginDelete(asked.post);
+          else applyStatus(asked.post, "CLOSED");
+        }}
+      >
+        <p>
+          {confirmation?.kind === "delete"
+            ? `Once it’s gone it can’t be restored. You’ll have a few seconds to undo.`
+            : "It will leave the open search. You can reopen it from My Reports."}
+        </p>
+      </ConfirmDialog>
 
       {pendingDelete && pendingDelete.phase === "pending" && (
         <div

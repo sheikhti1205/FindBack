@@ -265,7 +265,6 @@ describe("PostDetail inline comment threads", () => {
   });
 
   it("confirmed parent deletion drops its thread and refuses stale same-ID resurrection", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const original = [
       makeComment("r1", "rootOne", "first root"),
       makeComment("r1a", "u1", "first root reply a", "r1", 1),
@@ -285,6 +284,7 @@ describe("PostDetail inline comment threads", () => {
     expect(await within(threadScope).findByText("second root reply c")).toBeTruthy();
     // Delete the whole second thread (cascade, existing behavior).
     fireEvent.click(deleteButtonFor("r2"));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /delete comment/i }));
     await waitFor(() => expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "r2"));
     await waitFor(() => expect(screen.queryByText("second root")).toBeNull());
     expect(screen.queryByText("second root reply c")).toBeNull();

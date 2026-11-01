@@ -121,7 +121,7 @@ describe("rankMatches", () => {
 });
 
 describe("consumer reasons (actual ranking bonuses only)", () => {
-  const lost: MatchCandidate = { id: "lost", title: "Umbrella", description: "wood handle", category: "Clothing", eventDate: "2026-09-10", locationLabel: "Library", locationLat: 23.81, locationLng: 90.412, photoUrl: "photo.jpg" };
+  const lost: MatchCandidate = { id: "lost", type: "LOST", title: "Umbrella", description: "wood handle", category: "Clothing", eventDate: "2026-09-10", locationLabel: "Library", locationLat: 23.81, locationLng: 90.412, photoUrl: "photo.jpg" };
   const found = { ...lost, id: "found" };
   it("emits three supported bonuses, never text or visual claims", () => {
     expect(deriveMatchReasons(lost, found).map((r) => r.text)).toEqual(["Within 5 km", "Same event date", "Same category"]);
@@ -152,6 +152,7 @@ describe("consumer reasons (actual ranking bonuses only)", () => {
 describe("text/structured fallback (no embedding model)", () => {
   const lost: MatchCandidate = {
     id: "lost-1",
+    type: "LOST",
     title: "Black umbrella",
     description: "Wooden handle, left in the bus",
     category: "Clothing",

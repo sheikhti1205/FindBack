@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
-import { BottomSheet } from "../components/BottomSheet";
+import { ConfirmDialog } from "../components/AdaptiveTaskSurface";
 import { Button } from "../components/Button";
 import { SettingsGroup, SettingsPage, SettingsRow } from "../components/settings";
 import { getApplicationAi } from "../services/ai/applicationAi";
@@ -169,16 +169,17 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
         {feedback && <p ref={feedbackRef} tabIndex={-1} role="status" className="text-sm text-on-surface-variant">{feedback}</p>}
       </SettingsPage>
     </div>
-    <BottomSheet open={confirmRemove} title={removalKind === "helper" ? "Remove local search helper?" : "Remove older downloads?"} description={removalKind === "helper"
+    <ConfirmDialog open={confirmRemove} title={removalKind === "helper" ? "Remove local search helper?" : "Remove older downloads?"} description={removalKind === "helper"
       ? "Normal search will still work. Smart Search and report text assistance, including category suggestions, will need another download."
-      : "Your local search helper and saved reports stay. This only removes older on-device chat and photo tools."} height="medium" dismissible={!removing} onClose={() => { if (!removingRef.current) setConfirmRemove(false); }}>
+      : "Your local search helper and saved reports stay. This only removes older on-device chat and photo tools."}
+      confirmLabel={removalKind === "helper" ? "Remove helper" : "Remove older downloads"}
+      cancelLabel={removalKind === "helper" ? "Keep helper" : "Keep downloads"}
+      busy={removing}
+      onConfirm={remove}
+      onClose={() => { if (!removingRef.current) setConfirmRemove(false); }}>
       <RemovalFocusReturn completed={removalSucceeded} target={feedbackRef} />
       <p className="text-sm text-on-surface-variant">{removalKind === "helper" ? "This removes the helper's downloaded files and any unfinished download." : "Any unfinished downloads for these older tools are removed too."}</p>
       {error && <p role="alert" className="mt-2 text-sm text-error">{error}</p>}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button variant="outline" disabled={removing} onClick={() => setConfirmRemove(false)}>{removalKind === "helper" ? "Keep helper" : "Keep downloads"}</Button>
-        <Button variant="error" loading={removing} onClick={remove}>{removalKind === "helper" ? "Remove helper" : "Remove older downloads"}</Button>
-      </div>
-    </BottomSheet>
+    </ConfirmDialog>
   </>;
 }

@@ -82,10 +82,11 @@
   .fb-composer-send { grid-column: 2; grid-row: 2; }
 }
 @media (max-width: 767px) {
-  .fb-modal-backdrop:has(.fb-task-panel) { padding: 0; }
-  .fb-task-panel { height: 100%; max-height: 100%; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
-  .fb-task-panel .fb-surface-dialog { height: 100%; }
-  .fb-task-panel .fb-surface-body { flex: 1; }
+  /* Phone: a task or report surface fills the screen. Desktop keeps the dialog. */
+  .fb-modal-backdrop:has(.fb-task-panel), .fb-modal-backdrop:has(.fb-report-panel) { padding: 0; }
+  .fb-task-panel, .fb-report-panel { height: 100%; max-height: 100%; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .fb-task-panel .fb-surface-dialog, .fb-report-panel .fb-surface-dialog { height: 100%; }
+  .fb-task-panel .fb-surface-body, .fb-report-panel .fb-surface-body { flex: 1; }
 }
 /* No spatial entrance travel: effective reduced motion has no hidden animation
    path. Feedback is local background/focus state, not springing whole panels. */

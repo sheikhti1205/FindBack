@@ -5,7 +5,7 @@
  * so this screen must offer that control. The frozen retry-7 suite cannot be
  * edited (byte-frozen), hence a separate focused file for the new affordance.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { publishReportMock, suggestFieldsMock, suggestCategoryMock, nlHelperStateMock, navigateMock, photo, nativeMedia } =
@@ -70,6 +70,13 @@ import { clearDraft, loadDraft, saveDraft } from "../services/reportDraft";
 import { clearPhotoStore } from "../services/photoStore";
 import { todayInputValue } from "../utils/dates";
 import { chooseCategory } from "../test-utils/reportCategory";
+
+/** The discard is destructive, so it asks through the canonical dialog. */
+function confirmDiscardDraft() {
+  const dialog = screen.getByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: /discard draft/i }));
+}
+
 
 const FIELDS_OK = {
   ok: true,
@@ -295,8 +302,8 @@ describe("CreateReport suggestion failure — Manage local tools affordance (MIN
     });
 
     fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
-
-    expect(vi.mocked(window.confirm)).toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog").textContent).toMatch(/discard this report/i);
+    confirmDiscardDraft();
     expect((screen.getByLabelText(/describe the item/i) as HTMLTextAreaElement).value).toBe("");
     await waitFor(() => {
       expect(loadDraft("u1")?.aiSuggestInput ?? "").toBe("");
@@ -378,6 +385,7 @@ describe("CreateReport suggestion lifecycle — round-3 review closures (revisio
       expect(loadDraft("u1")?.aiSuggestInput).toBe("Black umbrella lost yesterday.");
     });
     fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+      confirmDiscardDraft();
     expect((screen.getByLabelText(/describe the item/i) as HTMLTextAreaElement).value).toBe("");
 
     probe.release("not-set-up");
@@ -427,6 +435,7 @@ describe("CreateReport suggestion lifecycle — round-3 review closures (revisio
     await screen.findByTestId("report-suggestion-note-row");
 
     fireEvent.click(screen.getByRole("button", { name: /discard draft/i }));
+      confirmDiscardDraft();
     expect(screen.queryByTestId("report-suggestion-note-row")).toBeNull();
     expect(screen.queryByTestId("report-suggestion-manage-models")).toBeNull();
   });

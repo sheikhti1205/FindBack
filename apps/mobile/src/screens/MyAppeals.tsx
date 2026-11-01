@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextAreaField } from "../components/Fields";
+import { AdaptiveTaskSurface } from "../components/AdaptiveTaskSurface";
 import { announce } from "../components/LiveRegion";
 import { SettingsGroup, SettingsPage, StatusPill } from "../components/settings";
 import { adverseDecisionLabel, appealOutcome, appealSubjectLabel, safetyReviewError } from "../components/AppealCopy";
@@ -74,11 +75,19 @@ function AppealComposer({ subject, cancel, sent }: { subject: AppealSubject; can
     } catch (err) { if (alive.current) setError(safetyReviewError(err, "appeals")); }
     finally { pending.current = false; if (alive.current) setSending(false); }
   };
-  return <SettingsGroup title={adverseDecisionLabel(subject)} description="Explain what we should consider. Sending an appeal does not change the decision until it is reviewed.">
+  // A short focused task, not a block inside the settings page: it asks one
+  // question, keeps the message, and returns focus to the decision it came from.
+  return <AdaptiveTaskSurface
+    open
+    onClose={() => { if (!sending) cancel(); }}
+    busy={sending}
+    title={adverseDecisionLabel(subject)}
+    description="Explain what we should consider. Sending an appeal does not change the decision until it is reviewed."
+  >
     <form ref={form} className="fb-safety-form" onSubmit={event => { event.preventDefault(); void send(); }}>
       <TextAreaField label="Why should we review this?" value={message} maxLength={2000} disabled={sending} onChange={event => setMessage(event.target.value)} hint={`${message.length}/2000 characters`} />
       {error && <p role="alert" className="fb-admin-error">{error}</p>}
       <div className="fb-admin-actions"><Button type="submit" disabled={!message.trim()} loading={sending}>Send appeal</Button><button type="button" className="fb-safety-read-action" disabled={sending} onClick={cancel}>Cancel</button></div>
     </form>
-  </SettingsGroup>;
+  </AdaptiveTaskSurface>;
 }

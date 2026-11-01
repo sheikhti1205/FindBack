@@ -37,6 +37,12 @@ vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: findMock, a
 
 import { PostDetail } from "./PostDetail";
 
+/** Comment deletion asks through the canonical alert dialog. */
+function confirmDeleteComment() {
+  const dialog = screen.getByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: /delete comment/i }));
+}
+
 const basePost = {
   id: "p1",
   userId: "u2",
@@ -152,30 +158,30 @@ describe("PostDetail density (owner wave)", () => {
 
   it("offers self Delete without self Report and respects cancellation", async () => {
     authState.user = { id: "u3", username: "neighbour" };
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     renderDetail();
     fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
     expect(screen.queryByRole("menuitem", { name: "Report comment" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
-    expect(confirm).toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /keep comment/i }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(postsMock.deleteComment).not.toHaveBeenCalled();
     expect(screen.getByText("first comment")).toBeTruthy();
   });
 
   it("lets the report owner delete through the same menu and server write", async () => {
     authState.user = { id: "u2", username: "owner" };
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderDetail();
     fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
     expect(screen.getByRole("menuitem", { name: "Report comment" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    confirmDeleteComment();
     await waitFor(() => expect(screen.queryByText("first comment")).toBeNull());
     expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1");
   });
 
   it("keeps confirmed parent and descendants hidden across clean and stale refetches", async () => {
     authState.user = { id: "u2", username: "owner" };
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const reply = { ...comment, id: "reply", parentId: "c1", body: "deleted reply", author: { id: "u4", username: "helper" } };
     const sentinel = { ...comment, id: "other", body: "unaffected comment" };
     const fresh = { ...comment, id: "new", body: "new comment" };
@@ -190,6 +196,7 @@ describe("PostDetail density (owner wave)", () => {
     expect(postsMock.fetchComments).toHaveBeenCalledTimes(2);
     fireEvent.click(within(screen.getByText("first comment").closest("li")!).getByRole("button", { name: "Actions for comment by neighbour" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    confirmDeleteComment();
     await waitFor(() => expect(postsMock.fetchComments).toHaveBeenCalledTimes(3));
     await waitFor(() => expect(screen.queryByText("deleted reply")).toBeNull());
     await act(async () => { resolvePending(rows); await pending; });
@@ -204,11 +211,11 @@ describe("PostDetail density (owner wave)", () => {
 
   it("retains a comment when the server refuses deletion", async () => {
     authState.user = { id: "u3", username: "neighbour" };
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     postsMock.deleteComment.mockRejectedValue(new Error("offline"));
     renderDetail();
     fireEvent.click(await screen.findByRole("button", { name: "Actions for comment by neighbour" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Delete comment" }));
+    confirmDeleteComment();
     await screen.findByRole("alert");
     expect(screen.getByText("first comment")).toBeTruthy();
   });

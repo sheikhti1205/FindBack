@@ -128,7 +128,6 @@ beforeEach(() => {
   updatePostStatusMock.mockImplementation(async (id: string, status: string) => post(id, status));
   deletePostMock.mockResolvedValue(undefined);
   shareReportMock.mockResolvedValue("Link copied to clipboard.");
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -234,6 +233,15 @@ function openFirstRowMenu() {
   return screen.getByRole("menu");
 }
 
+/**
+ * A destructive row action asks through the canonical alert dialog. Confirm it
+ * by the dialog's own button, never by a browser prompt.
+ */
+function confirmRowAction(name: RegExp) {
+  const dialog = screen.getByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name }));
+}
+
 describe("MyPosts management (owner row actions)", () => {
   it("discovers an incoming proposal without requiring the owner to know which report received it", async () => {
     listMatchesMock.mockResolvedValue([{
@@ -275,10 +283,13 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    const statuses = within(menu).getAllByRole("menuitemradio").map((el) => el.textContent);
+    const statuses = within(menu)
+      .getAllByRole("menuitem")
+      .map((el) => el.textContent ?? "")
+      .filter((text) => /^(Open|Closed)\b/.test(text));
     // MATCHED belongs to the mutual confirmation and RECOVERED to the durable
     // recovery writer; neither is a status the owner can set by picking it.
-    expect(statuses.map((text) => text?.replace("Current", "").trim())).toEqual(["Open", "Closed"]);
+    expect(statuses.map((text) => text.replace("(current)", "").trim())).toEqual(["Open", "Closed"]);
     expect(within(menu).getByRole("menuitem", { name: /record recovery/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /edit details/i })).toBeTruthy();
     expect(within(menu).getByRole("menuitem", { name: /share/i })).toBeTruthy();
@@ -290,7 +301,8 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "CLOSED"));
     // The row is patched where it sits — no refetch, no reorder.
     await waitFor(() =>
@@ -307,7 +319,7 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /^open/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /^open/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toMatch(/already recorded as recovered/i),
@@ -326,7 +338,8 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
 
     // Optimistic: the row changed before the server answered.
     expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
@@ -358,7 +371,8 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
     expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed");
 
@@ -400,11 +414,12 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     let menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /open/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /open/i }));
     expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
 
     // The first write settles successfully while the second is queued; its
@@ -441,7 +456,8 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     fireEvent.click(within(screen.getByTestId("my-posts-status-undo")).getByRole("button", { name: /undo/i }));
@@ -471,7 +487,8 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
     const menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() =>
       expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Closed"),
     );
@@ -498,13 +515,14 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(2));
 
     let menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledTimes(1));
 
     // The second choice is optimistic immediately, but its write must wait
     // for the first so the server's final state is the user's final choice.
     menu = openFirstRowMenu();
-    fireEvent.click(within(menu).getByRole("menuitemradio", { name: /open/i }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /open/i }));
     expect(screen.getAllByTestId("owner-report-status")[0]!.textContent).toContain("Still missing");
     expect(updatePostStatusMock).toHaveBeenCalledTimes(1);
 
@@ -555,6 +573,7 @@ describe("MyPosts management (owner row actions)", () => {
     fireEvent.pointerUp(swipe, { pointerId: 1, pointerType: "touch", clientX: 130, clientY: 100 });
 
     fireEvent.click(screen.getByRole("button", { name: "Mark closed" }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalledWith("p1", "CLOSED"));
   });
 
@@ -567,7 +586,8 @@ describe("MyPosts management (owner row actions)", () => {
     await waitFor(() => expect(recoverySheet.open).toBe(true));
     expect(recoverySheet.post).toMatchObject({ id: "p1", type: "LOST" });
     expect(updatePostStatusMock).not.toHaveBeenCalled();
-    expect(window.confirm).not.toHaveBeenCalled();
+    // Recovery is a relationship, not a destructive confirmation.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /confirm recovery/i }));
     await waitFor(() =>
@@ -642,7 +662,7 @@ describe("MyPosts management (owner row actions)", () => {
     renderMyPosts();
     await waitFor(() => expect(screen.getAllByTestId("owner-report-card")).toHaveLength(1));
     const menu = openFirstRowMenu();
-    expect(within(menu).queryByRole("menuitemradio", { name: /recovered/i })).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /^recovered/i })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: /record recovery/i })).toBeNull();
   });
 
@@ -660,7 +680,7 @@ describe("MyPosts management (owner row actions)", () => {
     vi.useFakeTimers();
     const menu = openFirstRowMenu();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
-    expect(window.confirm).toHaveBeenCalled();
+    confirmRowAction(/delete report/i);
     // Nothing is sent, and the report is still there — it is NOT shown as
     // deleted before the server accepted the delete.
     expect(deletePostMock).not.toHaveBeenCalled();
@@ -684,6 +704,7 @@ describe("MyPosts management (owner row actions)", () => {
     vi.useFakeTimers();
     const menu = openFirstRowMenu();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10);
     });
@@ -702,6 +723,7 @@ describe("MyPosts management (owner row actions)", () => {
     vi.useFakeTimers();
     const menu = openFirstRowMenu();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10);
     });
@@ -717,8 +739,11 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     vi.useFakeTimers();
     fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     fireEvent.click(screen.getAllByRole("button", { name: /manage report/i })[1]!);
     fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: /delete report/i }));
+    // A delete is already scheduled: the second request is refused in words,
+    // so no dialog opens and the first schedule is untouched.
     await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
     expect(deletePostMock.mock.calls).toEqual([["p1"]]);
     expect(screen.getByText("Report p2")).toBeTruthy();
@@ -729,6 +754,7 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     vi.useFakeTimers();
     fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     view.unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
     expect(deletePostMock.mock.calls).toEqual([["p1"]]);
@@ -741,6 +767,7 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     vi.useFakeTimers();
     fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     await act(async () => { await vi.advanceTimersByTimeAsync(DELETE_UNDO_WINDOW_MS + 10); });
     view.unmount();
     await act(async () => { resolve(); });
@@ -752,6 +779,7 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     vi.useFakeTimers();
     fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     act(() => {
       within(screen.getByTestId("my-posts-delete-undo")).getByRole("button", { name: "Undo" }).click();
       view.unmount();
@@ -770,6 +798,7 @@ describe("MyPosts management (owner row actions)", () => {
     </MemoryRouter>);
     await screen.findAllByTestId("owner-report-card");
     fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /delete report/i }));
+    confirmRowAction(/delete report/i);
     fireEvent.click(screen.getByRole("button", { name: /back to profile/i }));
     await screen.findByRole("heading", { name: "Profile" });
     expect((await screen.findByRole("alert")).textContent).toMatch(/report not deleted/i);
@@ -783,7 +812,8 @@ describe("MyPosts management (owner row actions)", () => {
     await screen.findAllByTestId("owner-report-card");
     fireEvent.click(screen.getByRole("radio", { name: "Open" }));
     await waitFor(() => expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ status: "OPEN" }), undefined));
-    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitemradio", { name: /closed/i }));
+    fireEvent.click(within(openFirstRowMenu()).getByRole("menuitem", { name: /closed/i }));
+    confirmRowAction(/close report/i);
     await waitFor(() => expect(updatePostStatusMock).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("Report p1")).toBeNull());
     expect(screen.getByText(/1 report ·/)).toBeTruthy();

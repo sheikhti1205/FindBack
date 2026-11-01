@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import type { PostItem, PostStatus } from "@findback/shared";
 import { OWNER_SELECTABLE_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@findback/shared";
 import { CircleCheck, Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
+import { ActionMenu, type MenuAction } from "./ActionMenu";
 
 /**
  * The owner controls on a My Reports row.
@@ -55,9 +56,6 @@ export function useOwnerReportActions(): OwnerReportActionHandlers | null {
   return useContext(OwnerReportActionsContext);
 }
 
-const MENU_ITEM_CLASS =
-  "flex w-full min-w-0 min-h-[44px] items-center gap-2 rounded-m3-sm px-3 py-1 text-left text-sm font-medium text-on-surface [&>span]:min-w-0 [&>span]:break-words";
-
 function statusLabel(status: PostStatus): string {
   return POST_STATUS_LABELS[status];
 }
@@ -65,77 +63,85 @@ function statusLabel(status: PostStatus): string {
 /**
  * The per-row overflow menu of My Reports.
  *
- * Every action is reachable by tap AND by keyboard: the menu is a real
- * menu with menu items, Escape closes it, the arrow keys move between the
- * items and the focus returns to the trigger when it closes. Swipe is never
- * the only route to an action.
+ * This is the canonical `ActionMenu`: one anchored layer with collision-aware
+ * placement, arrow-key movement, Escape/Back dismissal that returns focus to
+ * the trigger, and a destructive row separated from the rest. Swipe is never
+ * the only route to an action, and the screen still owns every handler.
  */
 export function OwnerReportMenu({ post }: { post: PostItem }) {
   const actions = useOwnerReportActions();
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled),[role="menuitemradio"]:not(:disabled)')?.focus();
-    function onPointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (triggerRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-
   if (!actions) return null;
 
   const pending = actions.pendingDeleteId === post.id;
-
-  function close() {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }
-
-  function run(action: () => void) {
-    setOpen(false);
-    triggerRef.current?.focus();
-    action();
-  }
-
-  function onMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-      return;
-    }
-    if (event.key === "Tab") {
-      // Tab leaves the menu; a non-modal popover must not trap focus.
-      setOpen(false);
-      return;
-    }
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled),[role="menuitemradio"]:not(:disabled)') ?? [],
-    );
-    if (items.length === 0) return;
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      items[event.key === "Home" ? 0 : items.length - 1]?.focus();
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const current = items.indexOf(document.activeElement as HTMLButtonElement);
-    const step = event.key === "ArrowDown" ? 1 : -1;
-    items[(current + step + items.length) % items.length]?.focus();
-  }
-
   const resolved = RESOLVED_STATUSES.includes(post.status);
   const matched = post.status === "MATCHED";
 
+  const items: MenuAction[] = [];
+
+  if (matched && actions.onManageMatch) {
+    items.push({
+      id: "manage-match",
+      label: "Match and handover…",
+      icon: <CircleCheck size={16} aria-hidden />,
+      onAction: () => actions.onManageMatch?.(post),
+    });
+  }
+
+  // The owner-writable statuses stay one tap away. A live match owns the
+  // status, so every entry is disabled rather than offering a write the
+  // server would refuse. The current status says so in words, because a
+  // plain menu item cannot carry radio state.
+  OWNER_SELECTABLE_STATUSES.forEach((status, index) => {
+    items.push({
+      id: `status-${status}`,
+      label: status === post.status ? `${statusLabel(status)} (current)` : statusLabel(status),
+      disabled: matched,
+      separatorBefore: index === 0,
+      onAction: () => actions.onChangeStatus(post, status),
+    });
+  });
+
+  if (actions.onRecordRecovery && post.type === "LOST" && !resolved && !matched) {
+    items.push({
+      id: "recovery",
+      label: "Record recovery…",
+      icon: <CircleCheck size={16} aria-hidden />,
+      onAction: () => actions.onRecordRecovery?.(post),
+    });
+  }
+
+  items.push({
+    id: "edit",
+    label: resolved ? "Edit details (closed reports can’t be edited)" : "Edit details",
+    icon: <Pencil size={16} aria-hidden />,
+    disabled: resolved,
+    separatorBefore: true,
+    onAction: () => actions.onEdit(post),
+  });
+  items.push({
+    id: "share",
+    label: "Share",
+    icon: <Share2 size={16} aria-hidden />,
+    onAction: () => actions.onShare(post),
+  });
+  if (actions.onCopy) {
+    items.push({
+      id: "copy",
+      label: "Copy link",
+      icon: <Copy size={16} aria-hidden />,
+      onAction: () => actions.onCopy?.(post),
+    });
+  }
+  items.push({
+    id: "delete",
+    label: "Delete report",
+    icon: <Trash2 size={16} aria-hidden />,
+    destructive: true,
+    onAction: () => actions.onDelete(post),
+  });
+
   return (
-    <div className="relative shrink-0" onPointerDown={(event) => event.stopPropagation()}>
+    <div className="flex shrink-0 items-center gap-1" onPointerDown={(event) => event.stopPropagation()}>
       {pending && (
         <span
           role="status"
@@ -156,111 +162,12 @@ export function OwnerReportMenu({ post }: { post: PostItem }) {
           )}
         </span>
       )}
-      <button
-        type="button"
-        ref={triggerRef}
-        aria-label={`Manage report: ${post.title}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container"
-      >
-        <MoreVertical size={18} aria-hidden />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label={`Manage ${post.title}`}
-          ref={menuRef}
-          onKeyDown={onMenuKeyDown}
-          className="absolute right-0 z-20 mt-1 flex max-h-[calc(100dvh-5rem)] w-56 max-w-[calc(100vw-2rem)] flex-col gap-0.5 overflow-y-auto rounded-m3-md border border-outline-variant bg-surface p-1 shadow-lg"
-        >
-          {matched && actions.onManageMatch && (
-            <button type="button" role="menuitem"
-              onClick={() => run(() => actions.onManageMatch?.(post))}
-              className={MENU_ITEM_CLASS}>
-              <CircleCheck size={16} aria-hidden />
-              <span className="flex-1">Match and handover…</span>
-            </button>
-          )}
-          <p
-            role="presentation"
-            className="px-3 pt-1 text-xs font-semibold uppercase tracking-wide text-on-surface-variant"
-          >
-            Status
-          </p>
-          {OWNER_SELECTABLE_STATUSES.map((status) => (
-            <button
-              key={status}
-              type="button"
-              role="menuitemradio"
-              aria-checked={status === post.status}
-              disabled={matched}
-              onClick={() => run(() => actions.onChangeStatus(post, status))}
-              className={`${MENU_ITEM_CLASS} disabled:opacity-50`}
-            >
-              <span className="flex-1">{statusLabel(status)}</span>
-              {status === post.status && <span className="text-xs text-on-surface-variant">Current</span>}
-            </button>
-          ))}
-          {actions.onRecordRecovery && post.type === "LOST" && !resolved && !matched && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => run(() => actions.onRecordRecovery?.(post))}
-              className={MENU_ITEM_CLASS}
-            >
-              <CircleCheck size={16} aria-hidden />
-              <span className="flex-1">Record recovery…</span>
-            </button>
-          )}
-          <hr role="separator" className="my-1 border-outline-variant" />
-          <button
-            type="button"
-            role="menuitem"
-            disabled={resolved}
-            onClick={() => run(() => actions.onEdit(post))}
-            className={`${MENU_ITEM_CLASS} disabled:opacity-50`}
-          >
-            <Pencil size={16} aria-hidden />
-            <span className="flex-1">Edit details</span>
-          </button>
-          {resolved && (
-            <p role="presentation" className="px-3 pb-1 text-xs text-on-surface-variant">
-              A recovered or closed report is no longer edited in the app.
-            </p>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => run(() => actions.onShare(post))}
-            className={MENU_ITEM_CLASS}
-          >
-            <Share2 size={16} aria-hidden />
-            <span className="flex-1">Share</span>
-          </button>
-          {actions.onCopy && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => run(() => actions.onCopy?.(post))}
-              className={MENU_ITEM_CLASS}
-            >
-              <Copy size={16} aria-hidden />
-              <span className="flex-1">Copy link</span>
-            </button>
-          )}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => run(() => actions.onDelete(post))}
-            className={`${MENU_ITEM_CLASS} text-error`}
-          >
-            <Trash2 size={16} aria-hidden />
-            <span className="flex-1">Delete report</span>
-          </button>
-        </div>
-      )}
+      <ActionMenu
+        label={`Manage report: ${post.title}`}
+        items={items}
+        icon={<MoreVertical size={18} aria-hidden />}
+        triggerClassName="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container"
+      />
     </div>
   );
 }

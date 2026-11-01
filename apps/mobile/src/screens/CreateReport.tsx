@@ -3,14 +3,10 @@ import { useNavigate } from "react-router";
 import { extractYouTubeId, isReleasedCategory, type Category, type PostType } from "@findback/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
-import { TextField } from "../components/Fields";
-import { Segmented } from "../components/Segmented";
-import { CategoryField } from "../components/CategoryField";
-import { RichTextEditor, tiptapToMarkdown } from "../components/RichTextEditor";
+import { tiptapToMarkdown } from "../components/RichTextEditor";
 import { measureDescription } from "../services/richText";
 import type { Editor } from "@tiptap/react";
-import { LocationPicker, type LocationValue } from "../components/LocationPicker";
-import { YouTubeEmbed } from "../components/YouTubeEmbed";
+import type { LocationValue } from "../components/LocationPicker";
 import { announce } from "../components/LiveRegion";
 import { MAX_REPORT_PHOTOS, publishReport, publishReportWithPhotos } from "../services/posts";
 import { clearDraft, draftGeneration, draftIsMeaningful, loadDraft, saveDraft } from "../services/reportDraft";
@@ -19,10 +15,12 @@ import { friendlyError } from "../utils/friendlyErrors";
 import { isNativeCameraAvailable, normalizeForUpload, type PickedPhoto } from "../services/photo";
 import { chooseNativeImage, chooseNativeImages, importNativeImageUri, importedImageToFile } from "../services/media/nativeMedia";
 import { ACCEPTED_STILL_FORMATS_LABEL, ACCEPTED_STILL_MIME_TYPES, isAcceptedStillMime, UPLOAD_MAX_BYTES } from "../services/media/mediaPolicy";
-import { ReportDatePicker } from "../components/ReportDatePicker";
 import { AnimatePresence, motion } from "framer-motion";
 import { ReportMediaPicker } from "../components/ReportMediaPicker";
 import { MediaViewer } from "../components/MediaViewer";
+import { AdaptiveTaskSurface, ConfirmDialog } from "../components/AdaptiveTaskSurface";
+import { historyDepth } from "../components/backNavigation";
+import { ReportEditor, type ReportEditorErrors, type ReportEditorValues } from "../components/ReportEditor";
 import { fadeVariants, motionDurations, motionEasings } from "../components/uiMotion";
 import { createHashRegistry, formatBatchNotice, processReportBatch } from "../services/media/reportBatch";
 import { computeSha256Hex } from "../services/media/dedupe";
@@ -337,6 +335,8 @@ function ReportForm() {
   const [photoRecoveryReady, setPhotoRecoveryReady] = useState(() => draftPhotoIds(initialDraft).length === 0);
   const restorePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const [editorResetKey, setEditorResetKey] = useState(0);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [confirmRemovePhotos, setConfirmRemovePhotos] = useState(false);
   const [previewPhotoId, setPreviewPhotoId] = useState<string | null>(null);
   const hashRegistryRef = useRef(createHashRegistry());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -773,8 +773,10 @@ function ReportForm() {
    */
   function removeUnavailablePhotos(): void {
     if (failedPhotoIds.length === 0) return;
-    const labels = failedPhotoLabels(failedPhotoIds);
-    if (!window.confirm(`Remove ${labels} and continue with the recovered photos? Your title, description, date and location are kept.`)) return;
+    setConfirmRemovePhotos(true);
+  }
+
+  function applyPhotoPrune(): void {
     for (const id of failedPhotoIds) dropStashedPhoto(id, accountId);
     setFailedPhotoIds([]);
     setPhotoRestoreError(false);
@@ -905,7 +907,14 @@ function ReportForm() {
     };
   }, []);
 
+  // The discard is destructive, so it asks through the canonical dialog inside
+  // this task surface rather than a browser prompt.
   function discardDraft() {
+    if (!draftHasContent()) return;
+    setConfirmDiscard(true);
+  }
+
+  function draftHasContent(): boolean {
     const current = { type, title, description, category, eventDate, location, youtubeUrl, aiSuggestInput };
     // draftIsMeaningful only inspects text: a photo-only draft (including one
     // whose photos failed recovery) is still a draft the user must be able to
@@ -915,8 +924,10 @@ function ReportForm() {
       photos.length > 0 ||
       failedPhotoIds.length > 0 ||
       draftPhotoIds(loadDraft(accountId)).length > 0;
-    if (!draftIsMeaningful(current) && !hasPhotos) return;
-    if (!window.confirm("Discard this report and clear the selected photo?")) return;
+    return draftIsMeaningful(current) || hasPhotos;
+  }
+
+  function clearDraftAndReset() {
     clearDraft(accountId);
     // Round-3 review MINOR-1: the discard is authoritative for in-flight work
     // too. A suggestion still awaiting the device probe is invalidated here, so
@@ -1524,27 +1535,81 @@ function ReportForm() {
       ? Math.min(100, Math.round((uploadProgress.completed / uploadProgress.total) * 100))
       : 0;
 
+  // One shared field implementation. The create screen still owns the state —
+  // drafts, photo recovery and the details helper all depend on it — and the
+  // canonical ReportEditor renders the fields from these values.
+  const editorValues: ReportEditorValues = { type, title, description, category, eventDate, location, youtubeUrl };
+  const editorErrors: ReportEditorErrors = {
+    title: fieldErrors.title,
+    description: fieldErrors.description,
+    category: fieldErrors.category,
+    eventDate: fieldErrors.eventDate,
+    location: fieldErrors.locationLabel,
+    youtubeUrl: fieldErrors.youtubeUrl,
+  };
+  function patchEditor(patch: Partial<ReportEditorValues>) {
+    if (patch.type !== undefined) setType(patch.type);
+    if (patch.title !== undefined) {
+      setTitle(patch.title);
+      if (fieldErrors.title) setFieldErrors((f) => ({ ...f, title: undefined }));
+    }
+    if (patch.description !== undefined) {
+      descriptionLiveRef.current = patch.description;
+      setDescription(patch.description);
+      if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
+    }
+    if (patch.category !== undefined) {
+      setCategory(patch.category);
+      if (fieldErrors.category) setFieldErrors((f) => ({ ...f, category: undefined }));
+    }
+    if (patch.eventDate !== undefined) {
+      setEventDate(patch.eventDate);
+      if (fieldErrors.eventDate) setFieldErrors((f) => ({ ...f, eventDate: undefined }));
+    }
+    if (patch.location !== undefined) {
+      setLocation(patch.location);
+      if (fieldErrors.locationLabel) setFieldErrors((f) => ({ ...f, locationLabel: undefined }));
+    }
+    if (patch.youtubeUrl !== undefined) {
+      setYoutubeUrl(patch.youtubeUrl);
+      if (fieldErrors.youtubeUrl) setFieldErrors((f) => ({ ...f, youtubeUrl: undefined }));
+    }
+  }
+
+  // Leaving the surface never publishes and never discards: the draft is saved
+  // per account, so closing and coming back restores exactly what was typed.
+  function closeSurface() {
+    if (historyDepth() > 0) navigate(-1);
+    else navigate("/", { replace: true });
+  }
+
   return (
-    <form
-      onSubmit={onSubmit}
-      className="flex flex-col gap-5 px-4 py-5"
-      noValidate
-      style={formStyle}
+    // A real compact task: full screen on a phone, a readable dialog when the
+    // window has room. The body scrolls; the draft survives closing it.
+    <AdaptiveTaskSurface
+      open
+      onClose={closeSurface}
+      title="Create report"
+      description={
+        user?.username ? `Posting as @${user.username}. Be specific — details help reunions.` : undefined
+      }
+      width="report"
+      busy={busy}
     >
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Report an item</h1>
-        <p className="text-sm text-on-surface-variant">
-          Posting as @{user?.username}. Be specific — details help reunions.
-        </p>
-        <p
-          className="rounded-m3-sm border border-outline-variant px-3 py-2 text-xs text-on-surface-variant"
-          role="note"
-        >
-          {type === "LOST"
-            ? "Safety tip: post about your own item, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."
-            : "Safety tip: describe what you found and where, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."}
-        </p>
-      </header>
+      <form
+        onSubmit={onSubmit}
+        className="flex flex-col gap-5"
+        noValidate
+        style={formStyle}
+      >
+      <p
+        className="rounded-m3-sm border border-outline-variant px-3 py-2 text-xs text-on-surface-variant"
+        role="note"
+      >
+        {type === "LOST"
+          ? "Safety tip: post about your own item, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."
+          : "Safety tip: describe what you found and where, and blur anything sensitive — addresses, papers, faces or serial numbers — before you add a photo."}
+      </p>
 
       {error && (
         <p className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error" role="alert">
@@ -1596,326 +1661,271 @@ function ReportForm() {
         </div>
       )}
 
-      <Segmented<PostType>
-        ariaLabel="Lost or found"
-        value={type}
-        onChange={setType}
-        options={[
-          { value: "LOST", label: "I lost something" },
-          { value: "FOUND", label: "I found something" },
-        ]}
-      />
-
-      {/* Photo (optional) */}
-      <section className="flex flex-col gap-3">
-        <ReportMediaPicker
-          photos={mediaPickerPhotos}
-          disabled={submitting.current || uncertain || !photoRecoveryReady}
-          onAddCamera={onAddCamera}
-          onAddGallery={() => void onAddGallery()}
-          onRemove={removePhoto}
-          onMove={movePhotoById}
-          onMakeCover={makeCoverPhoto}
-          onPreview={setPreviewPhotoId}
-          // §8: with the keyboard up the photos keep ~40% of the viable area;
-          // omitted otherwise, so the carousel's own bound applies.
-          photoMaxHeightPx={composing ? photoBudgetPx : undefined}
-        />
-        <AnimatePresence mode="popLayout" initial={false}>
-          {pickStatus && (
-            <motion.div
-              key={pickStatus.kind}
-              role="status"
-              aria-live="polite"
-              data-testid="photo-pick-status"
-              data-status={pickStatus.kind}
-              className={`flex items-center gap-2 text-xs ${pickStatus.tone}`}
-              variants={fadeVariants}
-              initial="hidden"
-              animate="visible"
-              exit="hidden"
-              transition={statusCrossfade}
-            >
-              <span>{pickStatus.text}</span>
-              {pickStatus.kind === "processing" && (
-                <Button type="button" variant="text" size="md" onClick={cancelPick}>
-                  Cancel
+      <ReportEditor
+        values={editorValues}
+        onChange={patchEditor}
+        errors={editorErrors}
+        // Fields stay editable while saved photos are still being recovered:
+        // only publishing waits for them (the picker and Publish stay gated).
+        disabled={busy || uncertain}
+        editorRef={descriptionEditorRef}
+        editorKey={editorResetKey}
+        // §8: with the keyboard up this docks to the bottom edge of the visible
+        // area, so the editor AND its formatting rail stay above the IME. It
+        // stays `sticky` — in flow — rather than `fixed`, so nothing around it
+        // reflows when the keyboard opens; the negative margin bleeds the dock's
+        // background to the form's edges without changing the editor's box.
+        descriptionWrapper={(editor) => (
+          <div
+            data-testid="report-description"
+            onFocus={() => setDescriptionFocused(true)}
+            onBlur={() => setDescriptionFocused(false)}
+            className={composing ? "-mx-4 sticky bottom-0 z-10 bg-surface px-4" : undefined}
+          >
+            {editor}
+          </div>
+        )}
+        media={
+          <>
+          {/* Photo (optional) */}
+          <section className="flex flex-col gap-3">
+            <ReportMediaPicker
+              photos={mediaPickerPhotos}
+              disabled={submitting.current || uncertain || !photoRecoveryReady}
+              onAddCamera={onAddCamera}
+              onAddGallery={() => void onAddGallery()}
+              onRemove={removePhoto}
+              onMove={movePhotoById}
+              onMakeCover={makeCoverPhoto}
+              onPreview={setPreviewPhotoId}
+              // §8: with the keyboard up the photos keep ~40% of the viable area;
+              // omitted otherwise, so the carousel's own bound applies.
+              photoMaxHeightPx={composing ? photoBudgetPx : undefined}
+            />
+            <AnimatePresence mode="popLayout" initial={false}>
+              {pickStatus && (
+                <motion.div
+                  key={pickStatus.kind}
+                  role="status"
+                  aria-live="polite"
+                  data-testid="photo-pick-status"
+                  data-status={pickStatus.kind}
+                  className={`flex items-center gap-2 text-xs ${pickStatus.tone}`}
+                  variants={fadeVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="hidden"
+                  transition={statusCrossfade}
+                >
+                  <span>{pickStatus.text}</span>
+                  {pickStatus.kind === "processing" && (
+                    <Button type="button" variant="text" size="md" onClick={cancelPick}>
+                      Cancel
+                    </Button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {photoFileErrors.length > 0 && (
+              <div className="text-xs text-error" role="alert">
+                <p>Some photos couldn&apos;t be added:</p>
+                <ul className="list-disc pl-5">
+                  {photoFileErrors.map((message, index) => (
+                    <li key={`${index}-${message}`}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {failedPicks.length > 0 && (
+              <ul className="flex flex-col gap-2" role="list" aria-label="Photos that couldn't be added">
+                {failedPicks.map((failed) => (
+                  <li
+                    key={failed.key}
+                    className="flex items-start justify-between gap-3 rounded-m3-sm border border-error/40 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-error">Photo {failed.position} couldn&apos;t be added.</p>
+                      <p className="text-xs text-on-surface-variant">{failed.reason}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button type="button" variant="text" size="md" onClick={() => retryFailedPick(failed.key)}>
+                        Retry
+                      </Button>
+                      <Button type="button" variant="text" size="md" onClick={() => dismissFailedPick(failed.key)}>
+                        Remove
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!isNativeCameraAvailable() && (
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                // FBX-003: the picker advertises EXACTLY the accepted set — one
+                // source of truth, so the file dialog and the post-prepare gate
+                // can never disagree about which containers are welcome.
+                accept={ACCEPTED_IMAGE_TYPES.join(",")}
+                className="sr-only"
+                onChange={(e) => {
+                  onPickFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            )}
+          </section>
+          </>
+        }
+        afterDescription={
+          <>
+          {/* §11 narrow helper: fill missing details from a description the person
+              writes here. Additive and reviewable — each suggestion is applied only
+              by an explicit tap on that field, and Keep leaves the form alone. */}
+          <section
+            aria-label="Fill missing details from description"
+            className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3"
+          >
+            <p className="text-sm font-medium">Fill missing details from description</p>
+            <p className="text-sm text-on-surface-variant">
+              Describe the item in your own words. Suggestions appear here one at a time — nothing changes
+              unless you accept it.
+            </p>
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">Describe the item in your own words</span>
+              <textarea
+                value={aiSuggestInput}
+                onChange={(e) => setAiSuggestInput(e.target.value)}
+                placeholder="e.g. Black umbrella lost yesterday near the central market"
+                className={`${inputCls} min-h-[60px]`}
+                rows={2}
+              />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                onClick={() => void aiSuggestRequest()}
+              >
+                {aiSuggestBusy ? "Filling…" : "Fill missing details"}
+              </Button>
+              {aiSuggestBusy && (
+                <Button type="button" variant="text" size="md" onClick={aiSuggestStop}>
+                  Stop
                 </Button>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-        {photoFileErrors.length > 0 && (
-          <div className="text-xs text-error" role="alert">
-            <p>Some photos couldn&apos;t be added:</p>
-            <ul className="list-disc pl-5">
-              {photoFileErrors.map((message, index) => (
-                <li key={`${index}-${message}`}>{message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {failedPicks.length > 0 && (
-          <ul className="flex flex-col gap-2" role="list" aria-label="Photos that couldn't be added">
-            {failedPicks.map((failed) => (
-              <li
-                key={failed.key}
-                className="flex items-start justify-between gap-3 rounded-m3-sm border border-error/40 px-3 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm text-error">Photo {failed.position} couldn&apos;t be added.</p>
-                  <p className="text-xs text-on-surface-variant">{failed.reason}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Button type="button" variant="text" size="md" onClick={() => retryFailedPick(failed.key)}>
-                    Retry
-                  </Button>
-                  <Button type="button" variant="text" size="md" onClick={() => dismissFailedPick(failed.key)}>
-                    Remove
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        {!isNativeCameraAvailable() && (
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            // FBX-003: the picker advertises EXACTLY the accepted set — one
-            // source of truth, so the file dialog and the post-prepare gate
-            // can never disagree about which containers are welcome.
-            accept={ACCEPTED_IMAGE_TYPES.join(",")}
-            className="sr-only"
-            onChange={(e) => {
-              onPickFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        )}
-      </section>
-
-      <TextField
-        label={type === "LOST" ? "What did you lose?" : "What did you find?"}
-        value={title}
-        onChange={(e) => {
-          setTitle(e.target.value);
-          if (fieldErrors.title) setFieldErrors((f) => ({ ...f, title: undefined }));
-        }}
-        placeholder="e.g. Scientific calculator near the Science Faculty"
-        error={fieldErrors.title}
-        required
-        maxLength={TITLE_MAX}
-      />
-
-      {/* §8: with the keyboard up this docks to the bottom edge of the visible
-          area, so the editor AND its formatting rail stay above the IME. It
-          stays `sticky` — in flow — rather than `fixed`, so nothing around it
-          reflows when the keyboard opens; the negative margin bleeds the dock's
-          background to the form's edges without changing the editor's box. */}
-      <div
-        data-testid="report-description"
-        onFocus={() => setDescriptionFocused(true)}
-        onBlur={() => setDescriptionFocused(false)}
-        className={composing ? "-mx-4 sticky bottom-0 z-10 bg-surface px-4" : undefined}
-      >
-        <RichTextEditor
-          key={editorResetKey}
-          label="Description"
-          value={description}
-          onChange={(v) => {
-            descriptionLiveRef.current = v;
-            setDescription(v);
-            if (fieldErrors.description) setFieldErrors((f) => ({ ...f, description: undefined }));
-          }}
-          placeholder="Colour, brand, markings, when and where it happened…"
-          error={fieldErrors.description}
-          required
-          maxLength={DESCRIPTION_MAX}
-          editorRef={descriptionEditorRef}
-        />
-      </div>
-
-      <CategoryField
-        value={category}
-        onChange={(c) => {
-          setCategory(c);
-          if (fieldErrors.category) setFieldErrors((f) => ({ ...f, category: undefined }));
-        }}
-        error={fieldErrors.category}
-      />
-
-      {/* §11 narrow helper: fill missing details from a description the person
-          writes here. Additive and reviewable — each suggestion is applied only
-          by an explicit tap on that field, and Keep leaves the form alone. */}
-      <section
-        aria-label="Fill missing details from description"
-        className="flex flex-col gap-2 rounded-m3-md border border-outline-variant p-3"
-      >
-        <p className="text-sm font-medium">Fill missing details from description</p>
-        <p className="text-sm text-on-surface-variant">
-          Describe the item in your own words. Suggestions appear here one at a time — nothing changes
-          unless you accept it.
-        </p>
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">Describe the item in your own words</span>
-          <textarea
-            value={aiSuggestInput}
-            onChange={(e) => setAiSuggestInput(e.target.value)}
-            placeholder="e.g. Black umbrella lost yesterday near the central market"
-            className={`${inputCls} min-h-[60px]`}
-            rows={2}
-          />
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="md"
-            onClick={() => void aiSuggestRequest()}
-          >
-            {aiSuggestBusy ? "Filling…" : "Fill missing details"}
-          </Button>
-          {aiSuggestBusy && (
-            <Button type="button" variant="text" size="md" onClick={aiSuggestStop}>
-              Stop
-            </Button>
-          )}
-        </div>
-        {aiSuggestError && (
-          <div
-            role="alert"
-            className="flex flex-wrap items-center gap-2 text-sm text-error"
-            data-testid="report-suggestion-note-row"
-          >
-            <span>{aiSuggestError}</span>
-            {aiSuggestManageModels && (
-              // A real link, not a button: the models screen is a destination, so
-              // it keeps link semantics and keyboard activation while navigation
-              // still happens in-app. The href must be the HashRouter-canonical
-              // form (`#/…`) because a hash-less literal does not match any route
-              // this app can serve. Modifier clicks and non-primary buttons are
-              // left alone so the browser's own new-tab/new-window handling wins,
-              // exactly as a router <Link> would do — a <Link> itself is not
-              // usable here because the frozen retry-7 suite mocks `react-router`
-              // with `useNavigate` only.
-              <a
-                href="#/settings/local-intelligence/downloads"
-                data-testid="report-suggestion-manage-models"
-                onClick={(event) => {
-                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
-                    return;
-                  }
-                  event.preventDefault();
-                  navigate("/settings/local-intelligence/downloads");
-                }}
-                className="inline-flex min-h-[48px] items-center justify-center rounded-m3-md border border-outline px-5 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
-              >
-                Manage local tools
-              </a>
-            )}
-          </div>
-        )}
-        {aiFieldDroppedCategory && (
-          <p role="status" className="text-sm text-on-surface-variant">
-            {DROPPED_CATEGORY_NOTE}
-          </p>
-        )}
-        {aiCatDropped && !aiFieldDroppedCategory && (
-          <p role="status" className="text-sm text-on-surface-variant">
-            {DROPPED_CATEGORY_NOTE}
-          </p>
-        )}
-        {aiFieldPatches
-          .filter((patch) => !aiSuggestResolved[`field:${patch.field}`])
-          .map((patch) => {
-            const dateApplicable =
-              patch.field !== "date" ||
-              (isValidCalendarDate(patch.suggestedValue) && !isFutureDate(patch.suggestedValue));
-            return (
+            </div>
+            {aiSuggestError && (
               <div
-                key={`ai-field-${patch.field}`}
-                className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2"
+                role="alert"
+                className="flex flex-wrap items-center gap-2 text-sm text-error"
+                data-testid="report-suggestion-note-row"
               >
-                <p className="text-xs text-on-surface-variant">Suggested {patch.field}</p>
-                <p className="text-sm">{patch.suggestedValue}</p>
+                <span>{aiSuggestError}</span>
+                {aiSuggestManageModels && (
+                  // A real link, not a button: the models screen is a destination, so
+                  // it keeps link semantics and keyboard activation while navigation
+                  // still happens in-app. The href must be the HashRouter-canonical
+                  // form (`#/…`) because a hash-less literal does not match any route
+                  // this app can serve. Modifier clicks and non-primary buttons are
+                  // left alone so the browser's own new-tab/new-window handling wins,
+                  // exactly as a router <Link> would do — a <Link> itself is not
+                  // usable here because the frozen retry-7 suite mocks `react-router`
+                  // with `useNavigate` only.
+                  <a
+                    href="#/settings/local-intelligence/downloads"
+                    data-testid="report-suggestion-manage-models"
+                    onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+                        return;
+                      }
+                      event.preventDefault();
+                      navigate("/settings/local-intelligence/downloads");
+                    }}
+                    className="inline-flex min-h-[48px] items-center justify-center rounded-m3-md border border-outline px-5 text-sm font-medium text-on-surface transition-colors hover:bg-surface-container"
+                  >
+                    Manage local tools
+                  </a>
+                )}
+              </div>
+            )}
+            {aiFieldDroppedCategory && (
+              <p role="status" className="text-sm text-on-surface-variant">
+                {DROPPED_CATEGORY_NOTE}
+              </p>
+            )}
+            {aiCatDropped && !aiFieldDroppedCategory && (
+              <p role="status" className="text-sm text-on-surface-variant">
+                {DROPPED_CATEGORY_NOTE}
+              </p>
+            )}
+            {aiFieldPatches
+              .filter((patch) => !aiSuggestResolved[`field:${patch.field}`])
+              .map((patch) => {
+                const dateApplicable =
+                  patch.field !== "date" ||
+                  (isValidCalendarDate(patch.suggestedValue) && !isFutureDate(patch.suggestedValue));
+                return (
+                  <div
+                    key={`ai-field-${patch.field}`}
+                    className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2"
+                  >
+                    <p className="text-xs text-on-surface-variant">Suggested {patch.field}</p>
+                    <p className="text-sm">{patch.suggestedValue}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="md"
+                        onClick={() => aiSuggestApplyField(patch)}
+                        disabled={!dateApplicable}
+                      >
+                        Use this {patch.field}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="md"
+                        onClick={() => aiSuggestResolve(`field:${patch.field}`)}
+                      >
+                        Keep mine
+                      </Button>
+                    </div>
+                    {!dateApplicable && (
+                      <p className="text-xs text-on-surface-variant">
+                        That date needs a calendar date — pick it in the date field instead.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            {aiCatSuggestion && !aiSuggestResolved.categorySuggestion && (
+              <div className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2">
+                <p className="text-xs text-on-surface-variant">Suggested category</p>
+                <p className="text-sm">{aiCatSuggestion.suggestedCategory}</p>
                 <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="md"
-                    onClick={() => aiSuggestApplyField(patch)}
-                    disabled={!dateApplicable}
-                  >
-                    Use this {patch.field}
+                  <Button type="button" variant="primary" size="md" onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}>
+                    Use this category
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="md"
-                    onClick={() => aiSuggestResolve(`field:${patch.field}`)}
-                  >
+                  <Button type="button" variant="outline" size="md" onClick={() => aiSuggestResolve("categorySuggestion")}>
                     Keep mine
                   </Button>
                 </div>
-                {!dateApplicable && (
-                  <p className="text-xs text-on-surface-variant">
-                    That date needs a calendar date — pick it in the date field instead.
-                  </p>
-                )}
               </div>
-            );
-          })}
-        {aiCatSuggestion && !aiSuggestResolved.categorySuggestion && (
-          <div className="flex flex-col gap-1 rounded-m3-sm border border-outline-variant p-2">
-            <p className="text-xs text-on-surface-variant">Suggested category</p>
-            <p className="text-sm">{aiCatSuggestion.suggestedCategory}</p>
-            <div className="flex gap-2">
-              <Button type="button" variant="primary" size="md" onClick={() => aiSuggestApplyCategory(aiCatSuggestion)}>
-                Use this category
-              </Button>
-              <Button type="button" variant="outline" size="md" onClick={() => aiSuggestResolve("categorySuggestion")}>
-                Keep mine
-              </Button>
-            </div>
-          </div>
-        )}
-        {(aiFieldPatches.length > 0 || aiCatSuggestion) &&
-          aiFieldPatches.every((patch) => aiSuggestResolved[`field:${patch.field}`]) &&
-          (!aiCatSuggestion || aiSuggestResolved.categorySuggestion) && (
-            <p role="status" className="text-xs text-on-surface-variant">
-              That's everything found in that description.
-            </p>
-          )}
-      </section>
-
-      <div className="block">
-        <span id="report-event-date-label" className="mb-1 block text-sm font-medium">
-          {type === "LOST" ? "Date lost" : "Date found"}
-        </span>
-        <ReportDatePicker
-          value={eventDate}
-          expected={type}
-          aria-describedby="report-event-date-label"
-          error={fieldErrors.eventDate}
-          onChange={(next) => {
-            setEventDate(next);
-            if (fieldErrors.eventDate) setFieldErrors((f) => ({ ...f, eventDate: undefined }));
-          }}
-        />
-        {!fieldErrors.eventDate && isFutureDate(eventDate) && (
-          <span className="mt-1 block text-xs text-error">
-            The date can't be in the future.
-          </span>
-        )}
-      </div>
-
-      <LocationPicker value={location} onChange={setLocation} maxLength={LOCATION_LABEL_MAX} />
-      {fieldErrors.locationLabel && (
-        <span className="mt-1 block text-xs text-error">{fieldErrors.locationLabel}</span>
-      )}
-
+            )}
+            {(aiFieldPatches.length > 0 || aiCatSuggestion) &&
+              aiFieldPatches.every((patch) => aiSuggestResolved[`field:${patch.field}`]) &&
+              (!aiCatSuggestion || aiSuggestResolved.categorySuggestion) && (
+                <p role="status" className="text-xs text-on-surface-variant">
+                  That's everything found in that description.
+                </p>
+              )}
+          </section>
+          </>
+        }
+      />
 
       <MediaViewer
         items={photos.map((photo, i) => ({ id: photo.id, src: photo.previewUrl, alt: `Selected photo ${i + 1}` }))}
@@ -1923,30 +1933,6 @@ function ReportForm() {
         onIndexChange={(index) => setPreviewPhotoId(photos[index]?.id ?? null)}
         onClose={() => setPreviewPhotoId(null)}
       />
-
-      {/* Optional external YouTube media */}
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium">YouTube link (optional)</span>
-        <input
-          type="url"
-          value={youtubeUrl}
-          onChange={(e) => {
-            setYoutubeUrl(e.target.value);
-            if (fieldErrors.youtubeUrl) setFieldErrors((f) => ({ ...f, youtubeUrl: undefined }));
-          }}
-          placeholder="https://www.youtube.com/watch?v=…"
-          className={inputCls}
-        />
-      </label>
-      {youtubeUrl.trim() && !extractYouTubeId(youtubeUrl.trim()) && (
-        <p className="text-xs text-error">
-          {fieldErrors.youtubeUrl ?? "That doesn't look like a YouTube link. It won't be attached."}
-        </p>
-      )}
-      {youtubeUrl.trim() && extractYouTubeId(youtubeUrl.trim()) && (
-        <YouTubeEmbed url={youtubeUrl.trim()} />
-      )}
-
       {uploadProgress && (
         <div className="flex flex-col gap-1" role="status" aria-live="polite" data-testid="upload-progress">
           <div className="flex items-center gap-2 text-sm">
@@ -1989,6 +1975,37 @@ function ReportForm() {
       <Button type="button" variant="text" size="md" onClick={discardDraft}>
         Discard draft
       </Button>
-    </form>
+      </form>
+
+      <ConfirmDialog
+        open={confirmRemovePhotos}
+        onClose={() => setConfirmRemovePhotos(false)}
+        title={`Remove ${failedPhotoLabels(failedPhotoIds)}?`}
+        confirmLabel="Remove photos"
+        cancelLabel="Keep them"
+        destructive
+        onConfirm={() => {
+          setConfirmRemovePhotos(false);
+          applyPhotoPrune();
+        }}
+      >
+        <p>You continue with the recovered photos. Your title, description, date and location are kept.</p>
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        title="Discard this report?"
+        confirmLabel="Discard draft"
+        cancelLabel="Keep writing"
+        destructive
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          clearDraftAndReset();
+        }}
+      >
+        <p>The draft and its photos are cleared from this device. Nothing has been published.</p>
+      </ConfirmDialog>
+    </AdaptiveTaskSurface>
   );
 }

@@ -9,7 +9,7 @@ import { ApiError } from "../services/session";
 import { friendlyError } from "../utils/friendlyErrors";
 import { useSafetyLifetime } from "../utils/useSafetyLifetime";
 import { invalidateFeedCaches } from "../hooks/feedCache";
-import { BottomSheet } from "./BottomSheet";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { Button } from "./Button";
 import { PossibleMatches } from "./PossibleMatches";
 import { announce } from "./LiveRegion";
@@ -149,7 +149,7 @@ function ScopedReportMatches({ accountId, post, onChanged }: Props) {
         onClick={() => void load({ at: last.proposedAt, id: last.matchId })}>Load earlier activity</Button>}
     </>}
     {post.status === "OPEN" && <PossibleMatches post={post} onConfirmMatch={owner ? (candidate) => review({ kind: "propose", candidate }) : undefined} />}
-    <BottomSheet open={action !== null} title={title} onClose={() => { if (!sending) setAction(null); }} height="full" dismissible={!sending}>
+    <AdaptiveTaskSurface open={action !== null} title={title} busy={sending} onClose={() => { if (!sending) setAction(null); }}>
       <div className="flex min-w-0 flex-col gap-4">
         <p className="break-words text-sm font-medium">{action?.kind === "propose" ? action.candidate.post.title : action?.match.peerTitle ?? "Other report unavailable"}</p>
         <p className="text-sm text-on-surface-variant">{action?.kind === "propose" ? "Only propose this if you believe the reports describe the same item. The other owner must also agree before either report is marked matched."
@@ -161,6 +161,6 @@ function ScopedReportMatches({ accountId, post, onChanged }: Props) {
         {actionError ? <Button variant="outline" onClick={() => { setAction(null); void load(); }}>Refresh match status</Button>
           : <Button loading={sending} onClick={() => void submit()}>{confirmation}</Button>}
       </div>
-    </BottomSheet>
+    </AdaptiveTaskSurface>
   </div>;
 }

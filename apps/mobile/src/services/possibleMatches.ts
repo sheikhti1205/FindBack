@@ -56,6 +56,7 @@ export interface PossibleMatchesResult {
 function toMatchCandidate(post: PostItem): MatchCandidate {
   return {
     id: post.id,
+    type: post.type,
     title: post.title,
     description: post.description ?? null,
     category: post.category,

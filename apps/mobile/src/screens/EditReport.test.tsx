@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createContext, useContext, useState } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -107,7 +107,6 @@ beforeEach(() => {
   updatePostMock.mockReset();
   fetchPostMock.mockResolvedValue(post());
   updatePostMock.mockResolvedValue(post({ title: "New title" }));
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -142,16 +141,19 @@ describe("EditReport", () => {
     render(<RouterProvider router={router} />);
     await screen.findByLabelText("What did you lose?");
     fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "private draft" } });
-    vi.mocked(window.confirm).mockReturnValue(false);
     const go = () => action === "pop" ? router.navigate(-1) : router.navigate("/my", { replace: action === "replace" });
     await act(async () => { await go(); });
+    // The canonical confirmation, not window.confirm.
+    const confirm = await screen.findByRole("alertdialog");
+    expect(router.state.location.pathname).toBe("/my/p1/edit");
+    fireEvent.click(within(confirm).getByRole("button", { name: /keep editing/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(router.state.location.pathname).toBe("/my/p1/edit");
     expect((screen.getByLabelText("What did you lose?") as HTMLInputElement).value).toBe("private draft");
-    expect(window.confirm).toHaveBeenCalledTimes(1);
-    vi.mocked(window.confirm).mockReturnValue(true);
     await act(async () => { await go(); });
-    expect(screen.getByText("My Reports")).toBeTruthy();
-    expect(window.confirm).toHaveBeenCalledTimes(2);
+    const again = await screen.findByRole("alertdialog");
+    fireEvent.click(within(again).getByRole("button", { name: /leave without saving/i }));
+    await waitFor(() => expect(screen.getByText("My Reports")).toBeTruthy());
     router.dispose();
   });
 
@@ -165,7 +167,7 @@ describe("EditReport", () => {
     fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "Saved title" } });
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     expect(await screen.findByText("My Reports")).toBeTruthy();
-    expect(window.confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     router.dispose();
   });
 
@@ -250,7 +252,11 @@ describe("EditReport", () => {
     const view = replacement === "leave" ? renderEditor() : render(instance());
     await startSave();
     if (replacement === "unmount") view.unmount();
-    else if (replacement === "leave") fireEvent.click(screen.getByRole("button", { name: /discard changes/i }));
+    else if (replacement === "leave") {
+      fireEvent.click(screen.getByRole("button", { name: /discard changes/i }));
+      const confirm = await screen.findByRole("alertdialog");
+      fireEvent.click(within(confirm).getByRole("button", { name: /leave without saving/i }));
+    }
     else {
       if (replacement === "account") authState.user = { id: "u2", username: "bob" };
       fetchPostMock.mockResolvedValue(post({ id: replacement === "report" ? "p2" : "p1", userId: authState.user.id, title: "Current report" }));
@@ -372,9 +378,10 @@ describe("EditReport", () => {
     renderEditor({ postId: "p1" });
     await waitFor(() => expect(screen.getByLabelText("What did you lose?")).toBeTruthy());
     fireEvent.change(screen.getByLabelText("What did you lose?"), { target: { value: "Another title" } });
-    (window.confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
-    fireEvent.click(screen.getByRole("button", { name: /back to my reports/i }));
-    expect(window.confirm).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /discard changes/i }));
+    const confirm = await screen.findByRole("alertdialog");
+    fireEvent.click(within(confirm).getByRole("button", { name: /keep editing/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.queryByText("My Reports")).toBeNull();
   });
 

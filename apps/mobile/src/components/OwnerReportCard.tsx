@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PostItem, PostStatus, PostType } from "@findback/shared";
+import type { PostItem, PostStatus } from "@findback/shared";
 import { POST_STATUS_LABELS } from "@findback/shared";
 import {
   CalendarDays,
@@ -13,6 +13,7 @@ import {
   Heart,
 } from "lucide-react";
 import { PostLink } from "./PostNavigation";
+import { PostTypeBadge } from "./PostTypeBadge";
 import { MediaViewer } from "./MediaViewer";
 import { OwnerReportMenu, useOwnerReportActions } from "./OwnerReportActions";
 import { OwnerStatusSwipe } from "./OwnerStatusSwipe";
@@ -25,21 +26,6 @@ const OWNER_STATUS_CLASS: Record<PostStatus, string> = {
   RECOVERED: "fb-owner-status-recovered",
   CLOSED: "fb-owner-status-closed",
 };
-
-/** Lost/Found semantic badge reusing the home-feed badge primitives
- *  (text + icon, never color-only). */
-function OwnerTypeBadge({ type }: { type: PostType }) {
-  const lost = type === "LOST";
-  return (
-    <span
-      data-testid="owner-report-type"
-      className={`fb-type-badge ${lost ? "fb-type-lost" : "fb-type-found"}`}
-    >
-      {lost ? <CircleAlert size={14} aria-hidden /> : <CircleCheck size={14} aria-hidden />}
-      {lost ? "Lost" : "Found"}
-    </span>
-  );
-}
 
 /** Owner engagement; rating remains on the individual report. */
 function OwnerMetrics({ post }: { post: PostItem }) {
@@ -170,7 +156,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
           className="flex min-w-0 flex-col gap-1.5"
         >
           <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-0.5">
-            <OwnerTypeBadge type={post.type} />
+            <PostTypeBadge type={post.type} testId="owner-report-type" />
             <span
               data-testid="owner-report-time"
               className="shrink-0 whitespace-nowrap text-xs text-on-surface-variant"

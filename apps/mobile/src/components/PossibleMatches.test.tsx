@@ -29,9 +29,10 @@ describe("PossibleMatches", () => {
     expect(screen.getByText(/Central Library/)).toBeTruthy();
     expect(screen.getByText(/not confirmed matches/i)).toBeTruthy();
     expect(screen.queryByText(/probability/i)).toBeNull();
-    // The sixth suggestion is left out by the cap, and the copy says so as a
-    // similarity result rather than as a truncation.
-    expect(screen.getByText(/up to 5 possible matches/i)).toBeTruthy();
+    // The sixth suggestion is left out by the cap. The surface states how many
+    // suggestions there are to review and never exposes the comparison pool or
+    // the display cap as product behaviour.
+    expect(screen.getByText(/5 possible matches to review/i)).toBeTruthy();
   });
 
   it("shows the candidate photo and the reasons without presenting similarity as a percentage", async () => {
@@ -50,13 +51,13 @@ describe("PossibleMatches", () => {
     expect(screen.getByRole("link").getAttribute("href")).toBe("/posts/found-1");
   });
 
-  it("says how many reports were compared and how many looked similar enough", async () => {
+  it("states how many suggestions there are without reporting the comparison pool", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 12, matches: [
       { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    expect(await screen.findByText(/compared 12 recent reports/i)).toBeTruthy();
-    expect(screen.getByText(/1 possible match to review/i)).toBeTruthy();
+    expect(await screen.findByText("1 possible match to review.")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/compared \d+ recent report/i);
   });
 
   it("offers the propose action only when the matching lane supplies a handler", async () => {
@@ -111,9 +112,11 @@ describe("PossibleMatches", () => {
     });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     expect(await screen.findByText("Black umbrella")).toBeTruthy();
-    expect(screen.getByText(/compare wording, category, date and place only/i)).toBeTruthy();
-    // No semantic or visual claim is made for a text-only result.
-    expect(screen.queryByText(/text-similarity suggestions/i)).toBeNull();
+    expect(screen.getByText(/compare the words used/i)).toBeTruthy();
+    // No semantic or visual claim is made for a text-only result, and the
+    // reason is never explained with model/runtime vocabulary.
+    expect(screen.queryByText(/compare what the reports say/i)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/on-device model|text-similarity|embedding/i);
   });
 
   it("does not describe a semantic result as a text-only comparison", async () => {
@@ -127,8 +130,8 @@ describe("PossibleMatches", () => {
     });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
     expect(await screen.findByText("Black umbrella")).toBeTruthy();
-    expect(screen.getByText(/text-similarity suggestions/i)).toBeTruthy();
-    expect(screen.queryByText(/compare wording, category, date and place only/i)).toBeNull();
+    expect(screen.getByText(/compare what the reports say/i)).toBeTruthy();
+    expect(screen.queryByText(/compare the words used/i)).toBeNull();
   });
 
   it("offers a retry when candidate loading fails", async () => {
@@ -148,12 +151,13 @@ describe("PossibleMatches", () => {
     expect(screen.queryByRole("button", { name: /try again/i })).toBeNull();
   });
 
-  it("shows how many recent reports were compared", async () => {
+  it("summarises the suggestions without exposing how many reports were compared", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
       { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    expect(await screen.findByText(/compared 4 recent reports/i)).toBeTruthy();
+    expect(await screen.findByText("1 possible match to review.")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/compared \d+ recent report/i);
   });
 
   it("brings rows in as matching finishes and leaves them steady afterwards", async () => {
@@ -179,14 +183,13 @@ describe("PossibleMatches", () => {
     }
   });
 
-  it("updates the compared count as plain text, never tweening the number", async () => {
+  it("updates the suggestion summary as plain text, never tweening the number", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 4, matches: [
       { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
-    const count = await screen.findByText(/compared 4 recent reports/i);
-    expect(count.textContent).toBe("Compared 4 recent reports. 1 possible match to review. Up to 5 are shown.");
-    // The count line is deliberately untouched by Motion.
+    const count = await screen.findByText("1 possible match to review.");
+    // The summary line is deliberately untouched by Motion.
     expect(count.style.opacity).toBe("");
     expect(count.style.transform).toBe("");
   });
@@ -211,13 +214,59 @@ describe("PossibleMatches", () => {
     expect(document.body.textContent).not.toMatch(/block/i);
   });
 
-  it("says nothing about blocks next to the compared count", async () => {
+  it("says nothing about blocks next to the suggestion summary", async () => {
     findMock.mockResolvedValue({ available: true, candidatesConsidered: 2, matches: [
       { post: { id: "found-1", title: "Black umbrella at library", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
     ] });
     render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
 
-    expect(await screen.findByText(/compared 2 recent reports/i)).toBeTruthy();
+    expect(await screen.findByText("1 possible match to review.")).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/block/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Packet 11-E: a candidate row carries media, the report type, title,
+  // date/place and its reasons, and offers both "View report" and
+  // "Propose match". Dates are formatted for a person, never the stored value.
+  // -------------------------------------------------------------------------
+  it("marks each suggestion with the report type it belongs to", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", type: "FOUND", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const badge = await screen.findByTestId("match-type");
+    expect(badge.textContent).toMatch(/found/i);
+    expect(badge.className).toMatch(/fb-type-found/);
+  });
+
+  it("formats the report date instead of printing the stored value", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: "2026-09-11", locationLabel: null }, score: 0.8, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const time = await screen.findByText(/Sep/);
+    expect(time.tagName).toBe("TIME");
+    expect(time.getAttribute("datetime")).toBe("2026-09-11");
+    expect(screen.queryByText("2026-09-11")).toBeNull();
+  });
+
+  it("offers View report and Propose match on every suggestion", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 1, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: ["Same category"] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} onConfirmMatch={() => {}} /></MemoryRouter>);
+    const view = await screen.findByRole("link", { name: /view report: black umbrella/i });
+    expect(view.getAttribute("href")).toBe("/posts/found-1");
+    expect(screen.getByRole("button", { name: /propose match: black umbrella/i })).toBeTruthy();
+  });
+
+  it("stacks the suggestions as rows instead of a sideways scroller", async () => {
+    findMock.mockResolvedValue({ available: true, candidatesConsidered: 2, matches: [
+      { post: { id: "found-1", title: "Black umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.8, reasons: [] },
+      { post: { id: "found-2", title: "Grey umbrella", category: "Clothing", eventDate: null, locationLabel: null }, score: 0.7, reasons: [] },
+    ] });
+    render(<MemoryRouter><PossibleMatches post={post} /></MemoryRouter>);
+    const list = await screen.findByRole("list", { name: /possible matches/i });
+    expect(list.className).not.toMatch(/fb-scroll-row/);
   });
 });

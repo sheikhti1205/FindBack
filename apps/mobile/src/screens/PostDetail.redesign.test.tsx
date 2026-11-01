@@ -373,7 +373,7 @@ describe("PostDetail redesign (UXN-3)", () => {
       }],
     });
     renderDetail();
-    const disclaimers = await screen.findAllByText(/suggestions, not confirmed matches/i);
+    const disclaimers = await screen.findAllByText(/they are not confirmed matches/i);
     expect(disclaimers).toHaveLength(1);
     expect(disclaimers[0]?.getAttribute("role")).toBe("note");
     expect(screen.queryByRole("contentinfo")).toBeNull();

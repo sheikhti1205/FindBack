@@ -796,10 +796,10 @@ describe("PostDetail threaded replies", () => {
   it("removes a deleted parent's replies locally", async () => {
     renderDetail();
     await screen.findByText("nested reply");
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     postsMock.deleteComment.mockImplementation(async () => { postsMock.fetchComments.mockResolvedValue([]); });
     const menu = await openCommentActions();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /delete comment/i }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /delete comment/i }));
 
     await waitFor(() => expect(postsMock.deleteComment).toHaveBeenCalledWith("p1", "c1"));
     await waitFor(() => {
@@ -1065,9 +1065,13 @@ describe("PostDetail recovery route lifetime", () => {
       new Promise<string>((resolve) => { resolveMark = resolve; }),
     );
 
+    // The recovery task is a real modal: the screen behind it is inert, so the
+    // route change is driven through the router rather than a hidden button.
+    let goP2: () => void = () => {};
     function Nav() {
       const navigate = useNavigate();
-      return <button type="button" onClick={() => navigate("/posts/p2")}>go p2</button>;
+      goP2 = () => navigate("/posts/p2");
+      return null;
     }
 
     render(
@@ -1101,7 +1105,7 @@ describe("PostDetail recovery route lifetime", () => {
       expect.objectContaining({ postId: "p1", helperKind: "OUTSIDE" }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "go p2" }));
+    await act(async () => { goP2(); });
     await screen.findByText("Found p2");
 
     await act(async () => {

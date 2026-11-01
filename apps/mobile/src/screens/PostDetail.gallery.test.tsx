@@ -199,8 +199,7 @@ describe("PostDetail photo gallery (G17)", () => {
 
   it("Closed needs confirmation; Matched belongs to mutual consent, not the status picker", async () => {
     postsMock.fetchPost.mockResolvedValue({ ...basePost, attachments: [] });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
-    try {
+    {
       renderDetail();
       await screen.findByRole("radiogroup", { name: /post status/i });
 
@@ -211,17 +210,18 @@ describe("PostDetail photo gallery (G17)", () => {
       expect(screen.queryByRole("radio", { name: "Recovered" })).toBeNull();
       expect(screen.queryByRole("radio", { name: "Matched" })).toBeNull();
 
-      // Closed is terminal for the searcher: a declined confirm writes nothing.
+      // Closed is terminal for the searcher: declining the canonical dialog
+      // writes nothing.
       fireEvent.click(screen.getByRole("radio", { name: "Closed" }));
-      expect(confirmSpy).toHaveBeenCalled();
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog.textContent).toMatch(/leave the open search/i);
+      fireEvent.click(within(dialog).getByRole("button", { name: /keep it open/i }));
+      expect(screen.queryByRole("alertdialog")).toBeNull();
       expect(postsMock.updatePostStatus).not.toHaveBeenCalled();
 
-      confirmSpy.mockReturnValue(true);
       fireEvent.click(screen.getByRole("radio", { name: "Closed" }));
+      fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /close report/i }));
       await waitFor(() => expect(postsMock.updatePostStatus).toHaveBeenCalledWith("p1", "CLOSED"));
-
-    } finally {
-      confirmSpy.mockRestore();
     }
   });
 });

@@ -3,6 +3,8 @@ import { PostLink } from "./PostNavigation";
 import { motion } from "framer-motion";
 import type { PostItem } from "@findback/shared";
 import { ImageOff, MapPin } from "lucide-react";
+import { formatEventDate } from "../utils/dates";
+import { PostTypeBadge } from "./PostTypeBadge";
 import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
 import { MediaViewer } from "./MediaViewer";
@@ -162,21 +164,17 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
       ? visibleMatches.find((m) => m.post.id === lightboxId && m.post.photoUrl)
       : undefined) ?? null;
 
-  // State the actual count, without suggesting a calibrated quality threshold.
-  const suggestionSummary =
-    visibleMatches.length < MATCH_RESULT_LIMIT
-      ? `${visibleMatches.length} possible match${visibleMatches.length === 1 ? "" : "es"} to review. Up to ${MATCH_RESULT_LIMIT} are shown.`
-      : `Showing up to ${MATCH_RESULT_LIMIT} possible matches.`;
+  // How many suggestions there are to review. The comparison pool size and the
+  // display cap are implementation detail and stay off a consumer surface.
+  const suggestionSummary = `${visibleMatches.length} possible match${visibleMatches.length === 1 ? "" : "es"} to review.`;
 
   return (
     <section className="min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
-      <h2 id="possible-matches-heading" className="mb-3 text-base font-semibold">
+      <h2 id="possible-matches-heading" className="mb-1 text-base font-semibold">
         Possible matches
       </h2>
-      <p className="mb-3 text-xs text-on-surface-variant">
-        Compared {result.candidatesConsidered} recent report{result.candidatesConsidered === 1 ? "" : "s"}. {suggestionSummary}
-      </p>
-      <ul className="fb-scroll-row flex gap-3" role="list">
+      <p className="mb-3 text-xs text-on-surface-variant">{suggestionSummary}</p>
+      <ul className="flex flex-col gap-2" role="list" aria-label="Possible matches">
         {visibleMatches.map((match, index) => (
           <motion.li
             key={match.post.id}
@@ -188,68 +186,75 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
               ease: motionEasings.out,
               delay: index * motionStagger,
             }}
-            className="flex min-w-0 max-w-full flex-[0_0_clamp(9rem,42%,12rem)] flex-col"
+            className="min-w-0"
           >
-            <div className="flex h-full flex-col gap-2 rounded-m3-md border border-outline-variant bg-surface p-2 transition-colors hover:border-on-surface-variant active:bg-surface-container">
-              {match.post.photoUrl ? (
-                <button
-                  type="button"
-                  onClick={() => setLightboxId(match.post.id)}
-                  aria-label={`Open photo for ${match.post.title} fullscreen`}
-                  className="block w-full"
-                >
+            <div className="flex min-w-0 gap-3 rounded-m3-md border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant">
+              <div className="w-20 shrink-0 sm:w-24">
+                {match.post.photoUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setLightboxId(match.post.id)}
+                    aria-label={`Open photo for ${match.post.title} fullscreen`}
+                    className="block w-full"
+                  >
+                    <MatchPhoto post={match.post} />
+                  </button>
+                ) : (
                   <MatchPhoto post={match.post} />
-                </button>
-              ) : (
-                <MatchPhoto post={match.post} />
-              )}
-              <PostLink
-                to={`/posts/${match.post.id}`}
-                className="flex min-w-0 flex-1 flex-col gap-2"
-              >
-              <h3 className="line-clamp-2 break-words text-sm font-semibold text-on-surface">{match.post.title}</h3>
-              <div className="flex flex-col gap-1 text-xs text-on-surface-variant">
-                <span className="self-start rounded-full border border-outline px-2 py-0.5 font-medium">
-                  {match.post.category}
-                </span>
-                {match.post.eventDate && (
-                  <time dateTime={match.post.eventDate}>
-                    {match.post.eventDate}
-                  </time>
-                )}
-                {match.post.locationLabel && (
-                  <span className="flex items-start gap-1"><MapPin size={14} aria-hidden className="shrink-0" /><span className="line-clamp-2 break-words">{match.post.locationLabel}</span></span>
                 )}
               </div>
-              {match.reasons.length > 0 && (
-                <div className="flex flex-col gap-0.5">
-                  <p className="text-xs font-medium text-on-surface-variant">Why it might match</p>
-                  <ul className="list-disc pl-3 text-xs leading-snug text-on-surface-variant">
-                    {match.reasons.map((reason) => (
-                      <li key={reason} className="break-words">{reason}</li>
-                    ))}
-                  </ul>
+              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <PostTypeBadge type={match.post.type} testId="match-type" />
+                  <span className="text-xs text-on-surface-variant">{match.post.category}</span>
                 </div>
-              )}
-              </PostLink>
-              {onConfirmMatch && (
-                <button
-                  type="button"
-                  onClick={() => onConfirmMatch(match)}
-                   aria-label={`Propose match: ${match.post.title}`}
-                  className="min-h-[40px] w-full rounded-m3-sm border border-outline-variant px-2 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
-                >
-                   Propose match
-                </button>
-              )}
+                <h3 className="line-clamp-2 break-words text-sm font-semibold text-on-surface">{match.post.title}</h3>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+                  {match.post.eventDate && (
+                    <time dateTime={match.post.eventDate}>{formatEventDate(match.post.eventDate)}</time>
+                  )}
+                  {match.post.locationLabel && (
+                    <span className="flex min-w-0 items-start gap-1"><MapPin size={14} aria-hidden className="shrink-0" /><span className="line-clamp-2 break-words">{match.post.locationLabel}</span></span>
+                  )}
+                </div>
+                {match.reasons.length > 0 && (
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-xs font-medium text-on-surface-variant">Why it might match</p>
+                    <ul className="list-disc pl-3 text-xs leading-snug text-on-surface-variant">
+                      {match.reasons.map((reason) => (
+                        <li key={reason} className="break-words">{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <PostLink
+                    to={`/posts/${match.post.id}`}
+                    aria-label={`View report: ${match.post.title}`}
+                    className="flex min-h-[44px] items-center rounded-m3-sm border border-outline-variant px-3 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
+                  >
+                    View report
+                  </PostLink>
+                  {onConfirmMatch && (
+                    <button
+                      type="button"
+                      onClick={() => onConfirmMatch(match)}
+                      aria-label={`Propose match: ${match.post.title}`}
+                      className="min-h-[44px] rounded-m3-sm border border-outline-variant px-3 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
+                    >
+                      Propose match
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </motion.li>
         ))}
       </ul>
       <p className="mt-3 text-xs text-on-surface-variant" role="note">
         {result.mode === "text"
-          ? "These suggestions compare wording, category, date and place only — the on-device model isn’t available. They are not confirmed matches."
-          : "These are text-similarity suggestions, not confirmed matches."}
+          ? "Suggestions compare the words used, plus category, date and place. They are not confirmed matches."
+          : "Suggestions compare what the reports say, plus category, date and place. They are not confirmed matches."}
       </p>
       {!onConfirmMatch && (
         <p className="mt-1 text-xs text-on-surface-variant">

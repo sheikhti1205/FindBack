@@ -16,7 +16,7 @@ import { PossibleMatches } from "./PossibleMatches";
 const post = { id: "lost-shared", type: "LOST", status: "OPEN", title: "Umbrella", description: "Wooden handle" } as PostItem;
 function result(title: string): PossibleMatchesResult {
   return { available: true, candidatesConsidered: 1, mode: "semantic", matches: [{
-    post: { id: title, title, description: null, category: "Clothing", eventDate: null,
+    post: { id: title, type: "FOUND", title, description: null, category: "Clothing", eventDate: null,
       locationLabel: null, locationLat: null, locationLng: null, photoUrl: null },
     score: 0.8, reasons: [],
   }] };

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { BlockControl } from "./BlockControl";
 import { ApiError } from "../services/session";
 const mocks = vi.hoisted(() => ({ list: vi.fn(), block: vi.fn(), unblock: vi.fn(), mutual: vi.fn(), viewer: "me" }));
@@ -11,19 +11,27 @@ beforeEach(() => {
   vi.clearAllMocks(); mocks.viewer = "me";
   mocks.list.mockResolvedValue([]); mocks.block.mockResolvedValue(undefined);
   mocks.unblock.mockResolvedValue({ stillHidden: true });
-  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 const props = { userId: "sam", name: "Sam" };
+
+/** Blocking asks through the canonical alert dialog, never window.confirm. */
+function confirmBlock(label: "Block" | "Unblock") {
+  const dialog = screen.getByRole("alertdialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: label }));
+}
 
 it("uses outgoing membership even if incoming-only mutual blocking exists", async () => {
   mocks.mutual.mockResolvedValue(true);
   render(<BlockControl {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Block Sam" }));
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog.textContent).toMatch(/Public reports and comments remain behind a warning/);
+  expect(dialog.textContent).toMatch(/option to reveal them/);
+  expect(mocks.block).not.toHaveBeenCalled();
+  confirmBlock("Block");
   expect(await screen.findByText("You blocked Sam. You can't interact with each other, but public content can still be revealed.")).toBeTruthy();
   expect(mocks.block).toHaveBeenCalledWith("sam");
   expect(mocks.mutual).not.toHaveBeenCalled();
-  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("Public reports and comments remain behind a warning"));
-  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("option to reveal them"));
 });
 
 it.each([true, false])("unblock clears outgoing state regardless of stillHidden=%s", async (stillHidden) => {
@@ -31,6 +39,7 @@ it.each([true, false])("unblock clears outgoing state regardless of stillHidden=
   const onChanged = vi.fn();
   render(<BlockControl {...props} blocked onChanged={onChanged} />);
   fireEvent.click(screen.getByRole("button", { name: "Unblock Sam" }));
+  confirmBlock("Unblock");
   expect(await screen.findByRole("button", { name: "Block Sam" })).toBeTruthy();
   expect(screen.getByTestId("block-outcome").textContent).toBe("You've unblocked Sam. You can interact again unless they've also blocked you.");
   expect(onChanged).toHaveBeenCalledWith({ blocked: false, stillHidden });
@@ -50,6 +59,7 @@ it("does not claim a block when write is unavailable", async () => {
   mocks.block.mockRejectedValue(new ApiError("missing", 500, "PGRST202"));
   render(<BlockControl {...props} />);
   fireEvent.click(await screen.findByRole("button", { name: "Block Sam" }));
+  confirmBlock("Block");
   expect((await screen.findByRole("alert")).textContent).toMatch(/not available in this build/i);
   expect(screen.queryByTestId("block-outcome")).toBeNull();
 });
@@ -74,6 +84,7 @@ it.each(["account", "target"])("suppresses stale mutation state, callbacks and a
   const onChanged = vi.fn();
   const { rerender } = render(<BlockControl {...props} onChanged={onChanged} />);
   fireEvent.click(await screen.findByRole("button", { name: "Block Sam" }));
+  confirmBlock("Block");
   if (kind === "account") mocks.viewer = "other";
   rerender(<BlockControl {...(kind === "target" ? { userId: "lee", name: "Lee" } : props)} onChanged={onChanged} />);
   await screen.findByRole("button", { name: kind === "target" ? "Block Lee" : "Block Sam" });

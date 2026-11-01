@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useBlocker, useNavigate, useParams, type BlockerFunction } from "react-router";
 import { RESOLVED_STATUSES, type PostItem } from "@findback/shared";
-import { ArrowLeft } from "lucide-react";
 import { useIsPresent } from "framer-motion";
+import { AdaptiveTaskSurface, ConfirmDialog } from "../components/AdaptiveTaskSurface";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { announce } from "../components/LiveRegion";
@@ -35,9 +35,9 @@ export interface EditReportProps {
 /**
  * What a user loses when they leave with unsaved edits.
  *
- * The repo's confirmation idiom is `window.confirm` (the same one the
- * create flow and the report detail use), so this screen uses it too rather
- * than inventing a parallel dialog.
+ * The screen asks with the canonical `ConfirmDialog`, so leaving a dirty
+ * draft is one accessible alert dialog with a real Cancel, not a browser
+ * prompt that cannot be styled, announced or reached from a task surface.
  */
 export const UNSAVED_CHANGES_MESSAGE =
   "You have unsaved changes to this report. Leave without saving them?";
@@ -186,26 +186,38 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
   );
   dirtyRef.current = dirty;
 
-  const askToLeave = useCallback((): boolean => {
-    if (!dirtyRef.current) return true;
-    return window.confirm(UNSAVED_CHANGES_MESSAGE);
-  }, []);
-
-  // One guard for shell links, deep-link navigation, header/discard and POP.
-  // Native back still lets topmost dialogs consume it first; when it reaches
-  // router navigation this blocker asks exactly once, like browser Back.
+  // One guard for shell links, deep-link navigation, the surface's own Close,
+  // the discard button and POP. Native back still lets topmost dialogs consume
+  // it first; when it reaches router navigation this blocker asks exactly once.
   const blocker = useBlocker(useCallback<BlockerFunction>(({ currentLocation, nextLocation }) => {
-    // Search/state changes do not unmount this report's draft. Confirm before
-    // admitting a route departure, and fence pending writes synchronously:
-    // AnimatePresence keeps the departing editor mounted during its exit.
+    // Search/state changes do not unmount this report's draft. The departure
+    // is admitted only by the confirmation below.
     if (!activeRef.current || !dirtyRef.current || currentLocation.pathname === nextLocation.pathname) return false;
-    if (!askToLeave()) return true;
-    activeRef.current = false;
-    return false;
-  }, [askToLeave]));
-  useEffect(() => {
+    return true;
+  }, []));
+
+  // The canonical confirmation, not `window.confirm`: it keeps the surface's
+  // own layering, focus handling and Back consumption.
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const leaving = confirmLeave || blocker.state === "blocked";
+  // A save that settles while the leave question is open must not redirect the
+  // user: their chosen destination is the one that wins.
+  const departurePending = useRef(false);
+  departurePending.current = leaving;
+
+  const stayHere = useCallback(() => {
     if (blocker.state === "blocked") blocker.reset();
+    setConfirmLeave(false);
   }, [blocker]);
+
+  const leaveWithoutSaving = useCallback(() => {
+    // Fence pending writes synchronously: AnimatePresence keeps the departing
+    // editor mounted during its exit.
+    activeRef.current = false;
+    setConfirmLeave(false);
+    if (blocker.state === "blocked") blocker.proceed();
+    else navigate("/my");
+  }, [blocker, navigate]);
 
   // Leaving the page entirely (tab close, app exit) asks as well.
   useEffect(() => {
@@ -250,7 +262,7 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
       dirtyRef.current = false;
       setSaved(true);
       announce("Report updated.");
-      navigate("/my");
+      if (!departurePending.current) navigate("/my");
     } catch (err) {
       if (!activeRef.current) return;
       // The server's own refusal is shown as it is. The edits stay on screen:
@@ -272,6 +284,10 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
   }, [post, values, userId, navigate]);
 
   const leave = useCallback(() => {
+    if (dirtyRef.current) {
+      setConfirmLeave(true);
+      return;
+    }
     navigate("/my");
   }, [navigate]);
 
@@ -298,23 +314,15 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
   const isResolved = RESOLVED_STATUSES.includes(post.status);
 
   return (
-    <div className="flex min-h-full flex-col gap-4 px-4 py-5" data-testid="edit-report">
-      <header className="sticky top-0 z-20 -mx-4 flex shrink-0 items-center gap-2 bg-surface px-4">
-        <button
-          type="button"
-          onClick={leave}
-          aria-label="Back to My Reports"
-          className="flex min-h-[48px] min-w-[48px] items-center justify-center rounded-m3-xs text-on-surface hover:bg-surface-container"
-        >
-          <ArrowLeft size={20} aria-hidden />
-        </button>
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">Edit report</h1>
-          <p className="text-sm text-on-surface-variant">
-            {saved ? "Saved." : "Change the details of your report."}
-          </p>
-        </div>
-      </header>
+    <AdaptiveTaskSurface
+      open
+      onClose={leave}
+      title="Edit report"
+      description={saved ? "Saved." : "Change the details of your report."}
+      width="report"
+      busy={saving}
+    >
+    <div className="flex flex-col gap-4" data-testid="edit-report">
 
       {!isOwner && (
         <p role="alert" className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
@@ -366,5 +374,18 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
         </form>
       )}
     </div>
+
+    <ConfirmDialog
+      open={leaving}
+      onClose={stayHere}
+      onConfirm={leaveWithoutSaving}
+      title="Leave without saving?"
+      confirmLabel="Leave without saving"
+      cancelLabel="Keep editing"
+      destructive
+    >
+      <p>{UNSAVED_CHANGES_MESSAGE}</p>
+    </ConfirmDialog>
+    </AdaptiveTaskSurface>
   );
 }

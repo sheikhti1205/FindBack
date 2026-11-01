@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { extractYouTubeId } from "@findback/shared";
 import { isValidPostYouTubeUrl } from "../utils/youtubeUrl";
+import { isFutureDate } from "../utils/dates";
 import type { Attachment, Category, PostItem, PostType } from "@findback/shared";
 import type { Editor } from "@tiptap/react";
 import { TextField } from "./Fields";
@@ -70,6 +71,31 @@ export interface ReportEditorProps {
   publishedLocation?: LocationValue;
   /** Disable every control (a save is in flight). */
   disabled?: boolean;
+  /**
+   * Editable media intake for a NEW report, rendered where the photos belong
+   * (photos-first). Omitted when editing: the update RPC writes metadata only,
+   * so a stored report shows its photos read-only and says so.
+   */
+  media?: ReactNode;
+  /**
+   * Optional slot directly after the description — the create screen's
+   * "fill missing details" helper reads the description it follows.
+   */
+  afterDescription?: ReactNode;
+  /**
+   * Optional wrapper around the description editor. The create screen uses it
+   * to dock the editor above the on-screen keyboard while composing; the
+   * editor itself stays the same component.
+   */
+  descriptionWrapper?: (editor: ReactNode) => ReactNode;
+  /** Remount the rich-text editor (draft discard / publish reset). */
+  editorKey?: string | number;
+  /**
+   * Optional handle on the live editor. The create screen reads the stored
+   * Markdown straight from the document at publish time, so a formatting-only
+   * change cannot be lost between the last `onChange` and the submit.
+   */
+  editorRef?: RefObject<Editor | null>;
 }
 
 /** The values a stored report hydrates into. */
@@ -239,8 +265,14 @@ export function ReportEditor({
   photos = [],
   disabled = false,
   publishedLocation,
+  media,
+  afterDescription,
+  descriptionWrapper,
+  editorKey,
+  editorRef: externalEditorRef,
 }: ReportEditorProps) {
-  const editorRef = useRef<Editor | null>(null);
+  const ownEditorRef = useRef<Editor | null>(null);
+  const editorRef = externalEditorRef ?? ownEditorRef;
   const draftYoutubeUrl = values.youtubeUrl.trim();
   const youtubeId = isValidPostYouTubeUrl(draftYoutubeUrl) ? extractYouTubeId(draftYoutubeUrl) : null;
 
@@ -258,7 +290,7 @@ export function ReportEditor({
         ]}
       />
 
-      <ReadOnlyPhotos photos={photos} title={values.title} />
+      {media ?? <ReadOnlyPhotos photos={photos} title={values.title} />}
 
       <TextField
         label={values.type === "LOST" ? "What did you lose?" : "What did you find?"}
@@ -271,19 +303,39 @@ export function ReportEditor({
         disabled={disabled}
       />
 
-      <div data-testid="report-description">
-        <RichTextEditor
-          disabled={disabled}
-          label="Description"
-          value={values.description}
-          onChange={(description) => onChange({ description })}
-          placeholder="Colour, brand, markings, when and where it happened…"
-          error={errors.description}
-          required
-          maxLength={REPORT_DESCRIPTION_MAX}
-          editorRef={editorRef}
-        />
-      </div>
+      {descriptionWrapper ? (
+        descriptionWrapper(
+          <RichTextEditor
+            key={editorKey}
+            disabled={disabled}
+            label="Description"
+            value={values.description}
+            onChange={(description) => onChange({ description })}
+            placeholder="Colour, brand, markings, when and where it happened…"
+            error={errors.description}
+            required
+            maxLength={REPORT_DESCRIPTION_MAX}
+            editorRef={editorRef}
+          />,
+        )
+      ) : (
+        <div data-testid="report-description">
+          <RichTextEditor
+            key={editorKey}
+            disabled={disabled}
+            label="Description"
+            value={values.description}
+            onChange={(description) => onChange({ description })}
+            placeholder="Colour, brand, markings, when and where it happened…"
+            error={errors.description}
+            required
+            maxLength={REPORT_DESCRIPTION_MAX}
+            editorRef={editorRef}
+          />
+        </div>
+      )}
+
+      {afterDescription}
 
       <CategoryField
         disabled={disabled}
@@ -304,6 +356,9 @@ export function ReportEditor({
           error={errors.eventDate}
           onChange={(eventDate) => onChange({ eventDate })}
         />
+        {!errors.eventDate && values.eventDate && isFutureDate(values.eventDate) && (
+          <span className="mt-1 block text-xs text-error">The date can't be in the future.</span>
+        )}
       </div>
 
       <LocationPicker
@@ -339,6 +394,13 @@ export function ReportEditor({
         hint="Clear this field to remove the video when you save."
         disabled={disabled}
       />
+      {/* Say it while they type, not only on save: the link is optional, so a
+          value that cannot be attached should not look accepted. */}
+      {draftYoutubeUrl && !youtubeId && !errors.youtubeUrl && (
+        <span className="mt-1 block text-xs text-error">
+          That doesn&apos;t look like a YouTube link. It won&apos;t be added to the report.
+        </span>
+      )}
       {youtubeId && (
         <div className="flex flex-col gap-1">
           <YouTubeEmbed url={draftYoutubeUrl} />

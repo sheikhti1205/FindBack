@@ -160,10 +160,12 @@ describe("report composer keyboard mode (§8)", () => {
     expect(slideBox().style.maxHeight).toBe(`${Math.round(KEYBOARD_HEIGHT * 0.4)}px`);
     // In flow, not fixed: the fields around the editor never reflow, and the
     // composer never scrolls the page itself.
-    expect(dock.parentElement).toBe(form);
+    // In flow inside the same form — the shared editor adds no portal or layer.
+    expect(dock.closest("form")).toBe(form);
     expect(dock.className).not.toContain("fixed");
-    // No hard modal appears, and the photo controls stay usable while typing.
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // Typing never stacks another modal on the task surface, and the photo
+    // controls stay usable while typing.
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect((screen.getByLabelText("Take photo") as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByTestId("report-media-picker").className).not.toContain("sticky");
     expect(screen.getByTestId("report-photo-track")).toBeTruthy();

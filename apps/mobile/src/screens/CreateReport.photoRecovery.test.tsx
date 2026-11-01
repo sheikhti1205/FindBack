@@ -9,7 +9,7 @@
  * comes back, the unrecoverable slots are named with actions, and a restore
  * with nothing outstanding leaves the form usable.
  */
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { reviveMock, photo, nativeMedia } = vi.hoisted(() => ({
@@ -86,6 +86,36 @@ describe("a mount restore that fails outright (§20)", () => {
     expect(screen.getByRole("button", { name: /remove unavailable and continue/i })).toBeTruthy();
     // Publish stays gated — but visibly, with the way out on screen.
     expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asks before pruning the unrecoverable slots, and keeps them when declined", async () => {
+    reviveMock.mockRejectedValue(new Error("revive bridge failed"));
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({
+        type: "FOUND",
+        title: "Phone",
+        photoIds: ["p1"],
+        photoRefs: [{ id: "p1", nativeUri: "content://gone" }],
+      }),
+    );
+
+    render(<CreateReport />);
+    await act(async () => {});
+
+    fireEvent.click(await screen.findByRole("button", { name: /remove unavailable and continue/i }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("Photo 1");
+    // Declining keeps the draft exactly as it was, still gated.
+    fireEvent.click(within(dialog).getByRole("button", { name: /keep them/i }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByText(/could not be recovered/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /remove unavailable and continue/i }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /remove photos/i }));
+    await waitFor(() => expect(screen.queryByText(/could not be recovered/i)).toBeNull());
+    expect((screen.getByRole("button", { name: /publish/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("opens the form when a failed restore has nothing outstanding to recover", async () => {

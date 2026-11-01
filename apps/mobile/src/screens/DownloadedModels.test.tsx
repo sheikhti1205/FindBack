@@ -63,19 +63,19 @@ describe("Downloaded models", () => {
     expect(offsets).toEqual([0, 1024]);
     expect(service.manager.statusOf(descriptor.modelId)?.checksumVerified).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Remove local search helper" }));
-    const dialog = screen.getByRole("dialog", { name: "Remove local search helper?" });
+    const dialog = screen.getByRole("alertdialog", { name: "Remove local search helper?" });
     expect(screen.getByRole("heading", { level: 1, hidden: true }).closest("[inert]")).toBeTruthy();
     expect(within(dialog).getByText(/normal search will still work/i)).toBeTruthy();
     expect(within(dialog).getByText(/report text assistance/i)).toBeTruthy();
     expect(removed).toEqual([]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Keep helper" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Remove local search helper" }));
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove helper" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove helper" }));
     await screen.findByText("Not downloaded");
     expect(removed.length).toBeGreaterThan(0);
     expect(service.matchingBackend).toBe("use");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(document.activeElement).toBe(screen.getByText("Local search helper removed. Normal search is still available."));
   });
   it("groups assets without fabricating storage totals or removable built-in files", async () => {
@@ -105,10 +105,10 @@ describe("Downloaded models", () => {
     render(<MemoryRouter><DownloadedModels service={service} /></MemoryRouter>);
     const remove = await screen.findByRole("button", { name: "Remove local search helper" });
     fireEvent.click(remove);
-    const dialog = screen.getByRole("dialog", { name: "Remove local search helper?" });
+    const dialog = screen.getByRole("alertdialog", { name: "Remove local search helper?" });
     expect(within(dialog).getByText(/unfinished download/i)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove helper" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(files.size).toBe(0);
   });
   it("keeps the removal action reachable when the model store cannot be read", async () => {
@@ -136,12 +136,12 @@ describe("Downloaded models", () => {
     render(<MemoryRouter><DownloadedModels service={service} /></MemoryRouter>);
     const trigger = await screen.findByRole("button", { name: "Remove local search helper" });
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove helper" }));
     expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "This tool is in use. Try again when it has finished.");
     // The sheet stays open with the honest reason, and a second attempt works.
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove helper" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(await screen.findByText(/local search helper removed/i)).toBeTruthy();
     expect(remove).toHaveBeenCalledTimes(2);
   });
@@ -208,13 +208,13 @@ describe("Downloaded models", () => {
     render(<MemoryRouter><DownloadedModels service={service} /></MemoryRouter>);
     const trigger = await screen.findByRole("button", { name: "Remove local search helper" });
     fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove helper" }));
     expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "This tool is in use. Try again when it has finished.");
     expect(remove).toHaveBeenCalledTimes(1);
     expect(service.manager.statusOf(descriptor.modelId)?.download).toBe("failed");
     expect(screen.queryByText(/local search helper removed/i)).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });

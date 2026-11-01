@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { PostItem, SearchedProfile } from "@findback/shared";
-import { BottomSheet } from "./BottomSheet";
+import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { Button } from "./Button";
 import { TextField } from "./Fields";
 import { UserAvatar } from "./UserAvatar";
@@ -172,12 +172,7 @@ export function RecoverySheet({
 
   if (eligibilityRefusal) {
     return (
-      <BottomSheet
-        open={open}
-        onClose={onClose}
-        title="Mark recovered"
-        height="medium"
-      >
+      <AdaptiveTaskSurface open={open} onClose={onClose} title="Mark recovered">
         <div className="flex flex-col gap-3 py-2">
           <p role="alert" data-testid="recovery-error" className="text-sm text-error">
             {eligibilityRefusal}
@@ -186,7 +181,7 @@ export function RecoverySheet({
             Close
           </Button>
         </div>
-      </BottomSheet>
+      </AdaptiveTaskSurface>
     );
   }
 
@@ -239,12 +234,12 @@ export function RecoverySheet({
   }
 
   return (
-    <BottomSheet
+    <AdaptiveTaskSurface
       open={open}
       onClose={onClose}
       title="Mark recovered"
       description={`Tell us who returned “${targetPost.title}”.`}
-      height="large"
+      busy={sending}
     >
       {receipt ? (
         <div className="flex flex-col gap-3 py-2" data-testid="recovery-receipt">
@@ -382,7 +377,7 @@ export function RecoverySheet({
           </Button>
         </div>
       )}
-    </BottomSheet>
+    </AdaptiveTaskSurface>
   );
 }
 
