@@ -20,6 +20,20 @@ import org.junit.Test;
 
 /** Runs the actual native validator; no Android database/runtime claim. */
 public class MessagingSqliteStatementTest {
+    @Test public void dataEpochRefusesOutstandingAccountLeaseBeforeTouchingFiles() throws Exception {
+        Field ownersField = FindbackMessagingSqlitePlugin.class.getDeclaredField("accountOwners");
+        ownersField.setAccessible(true);
+        @SuppressWarnings("unchecked") Map<String, Object> owners = (Map<String, Object>) ownersField.get(null);
+        String account = "00000000-0000-4000-8000-0000000000e8";
+        Object owner = new Object();
+        owners.put(account, owner);
+        try {
+            // Null context is intentional:no platform/file operation may be
+            // reached while any old/recreated plugin still owns a database.
+            assertThrows(IllegalStateException.class, () -> FindbackMessagingSqlitePlugin.resetForDataEpoch(null));
+            assertEquals(owner, owners.get(account));
+        } finally { owners.remove(account, owner); }
+    }
     private static final class RecordedCall extends PluginCall {
         String rejectedCode;
         final CountDownLatch rejected = new CountDownLatch(1);

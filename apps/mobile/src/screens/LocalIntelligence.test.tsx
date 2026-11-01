@@ -29,7 +29,7 @@ describe("Local intelligence", () => {
     const service = new ApplicationAiService({ android: false });
     const download = vi.spyOn(service, "download");
     render(<MemoryRouter><LocalIntelligence service={service} /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Local intelligence", level: 1 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Local tools", level: 1 })).toBeTruthy();
     expect(await screen.findByText("Downloads need the Android app.")).toBeTruthy();
     expect(screen.getByText(/normal search works without this helper/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Downloaded models" }).getAttribute("href")).toBe("/settings/local-intelligence/downloads");

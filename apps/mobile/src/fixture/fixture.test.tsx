@@ -7,6 +7,9 @@ import { cardWidthAt, rootPxFor } from "./sections/FeedLayoutFixtures";
 import { masonryListPaddingRem } from "../test-utils/masonryListClass";
 import { ALL_VARIANTS, LARGE_TEXT_PERCENT, STANDARD_TEXT_PERCENT } from "./FixtureSection";
 import { NAV_VARIANTS } from "./sections/NavigationFixtures";
+
+// Static fixture cards have no signed-in account or live auth/session owner.
+vi.mock("../auth", () => ({ useAuth: () => ({ user: null }) }));
 import {
   APPEARANCE_EVENT,
   APPEARANCE_STORAGE_KEY,

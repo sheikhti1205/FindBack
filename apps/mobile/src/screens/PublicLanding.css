@@ -1,0 +1,24 @@
+.fb-public-landing { min-height: 100vh; min-height: 100dvh; padding: 1.25rem; color: var(--fb-on-surface); background: var(--fb-surface); }
+.fb-landing-canvas { max-width: 72rem; margin: auto; }
+.fb-landing-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1.25rem; }
+.fb-landing-wordmark { font-size: 1.5rem; font-weight: 750; letter-spacing: -.06em; }
+.fb-landing-wordmark span { color: var(--fb-primary); }
+.fb-landing-signin { display: inline-flex; align-items: center; min-height: 44px; padding: .5rem 1rem; font-weight: 550; color: var(--fb-link); }
+.fb-landing-hero { display: grid; align-items: center; gap: 2.5rem; padding: 2.5rem 0 3rem; }
+.fb-landing-eyebrow { color: var(--fb-on-surface-variant); font-size: .875rem; margin: 0 0 1rem; }
+.fb-landing-invitation h1 { font-size: clamp(2.75rem,6.5vw,5rem); font-weight: 730; letter-spacing: -.06em; line-height: 1.04; margin: 0; }
+.fb-landing-invitation h1 span { color: var(--fb-primary); }
+/* Route-arrival focus is on a non-interactive heading, not an action outline. */
+.fb-landing-invitation h1[tabindex="-1"]:focus { outline: none; }
+.fb-landing-description { max-width: 30rem; margin: 1.5rem 0; font-size: 1.0625rem; line-height: 1.6; color: var(--fb-on-surface-variant); }
+.fb-landing-cta { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: .75rem 1.25rem; border-radius: 2rem; background: var(--fb-primary); color: var(--fb-on-primary); font-size: .9375rem; font-weight: 600; text-align: center; }
+.fb-public-landing a:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: 4px; }
+.fb-public-landing a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.fb-landing-details { display: grid; gap: 2rem; padding: 2rem 0; border-top: 1px solid var(--fb-outline-variant); }
+.fb-landing-step { display: block; margin-bottom: .75rem; font-size: .8125rem; color: var(--fb-on-surface-variant); }
+.fb-landing-details h2 { margin: 0; font-size: 1.125rem; line-height: 1.35; font-weight: 650; }
+.fb-landing-details p { margin: .75rem 0 0; line-height: 1.65; color: var(--fb-on-surface-variant); }
+.fb-landing-close { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; padding: 2.5rem 0; border-top: 1px solid var(--fb-outline-variant); }
+.fb-landing-close h2 { margin: 0; max-width: 24rem; font-size: 1.75rem; letter-spacing: -.035em; line-height: 1.2; font-weight: 650; }
+.fb-landing-footer { padding: 1rem 0; border-top: 1px solid var(--fb-outline-variant); color: var(--fb-on-surface-variant); font-size: .8125rem; line-height: 1.6; }
+@media (min-width: 840px) { .fb-public-landing { padding: 1.5rem 2.5rem; } .fb-landing-hero { grid-template-columns: 1fr 1fr; gap: 3rem; padding: 4rem 0 5rem; } .fb-landing-details { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 2.5rem; padding-block: 3rem; } }

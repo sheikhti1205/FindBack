@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteCursor;
 import android.database.sqlite.SQLiteQuery;
 import android.database.sqlite.SQLiteStatement;
 import android.util.Base64;
+import com.findback.app.DataEpochFiles;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -109,6 +110,16 @@ public class FindbackMessagingSqlitePlugin extends Plugin {
     // Process-wide: a replacement plugin must not reopen a file still owned by
     // its predecessor's pending teardown. A failed close retains its lease.
     private static final Map<String, Object> accountOwners = new ConcurrentHashMap<>();
+    /** Cold-launch only. Refuse to erase a database leased by ANY plugin instance. */
+    public static void resetForDataEpoch(Context context) throws Exception {
+        synchronized (accountOwners) {
+            if (!accountOwners.isEmpty()) throw new IllegalStateException("Messaging storage is in use");
+            DataEpochFiles.clearContents(new File(context.getNoBackupFilesDir(), DATABASE_DIRECTORY));
+            if (!context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()) {
+                throw new IllegalStateException("Messaging reset incomplete");
+            }
+        }
+    }
     private final SecureRandom random = new SecureRandom();
     private volatile boolean destroyed;
 
@@ -240,9 +251,11 @@ public class FindbackMessagingSqlitePlugin extends Plugin {
             return;
         }
         Object owner = new Object();
-        if (accountOwners.putIfAbsent(accountId, owner) != null) {
-            call.reject(MESSAGE_ALREADY_OPEN, CODE_ALREADY_OPEN);
-            return;
+        synchronized (accountOwners) {
+            if (accountOwners.putIfAbsent(accountId, owner) != null) {
+                call.reject(MESSAGE_ALREADY_OPEN, CODE_ALREADY_OPEN);
+                return;
+            }
         }
         boolean queued = runOnLane(call, () -> {
             Handle handle = null;

@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PostActionRow } from "./PostActionRow";
 import { ReportShareButton } from "./ReportShareButton";
 import { widthBand } from "./responsive";
+import { colorSystemCss } from "../appearance";
 
 afterEach(cleanup);
 
 /** The house action token the row's controls sit on (index.css). */
-const indexCss = readFileSync("src/index.css", "utf8");
+const indexCss = colorSystemCss() + "\n" + readFileSync("src/index.css", "utf8");
 /** The row's own scoped stylesheet. */
 const rowCss = readFileSync("src/components/PostActionRow.css", "utf8");
 /** The stylesheet without its comments — the contract is about declarations. */

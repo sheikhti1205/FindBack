@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseReportLink, reportLink } from "./reportLinks";
+import { parseReportLink, reportLink, sharePreviewLink } from "./reportLinks";
 
 const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
 afterEach(() => vi.unstubAllEnvs());
 
 describe("external report link contract", () => {
+  it("uses same-domain server HTML for new shares while retaining legacy links and focus allowlists", () => {
+    vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", origin);
+    expect(sharePreviewLink(id)).toBe(`${origin}/api/share/${id}`);
+    for(const base of [`${origin}/r/${id}`,sharePreviewLink(id)]) {
+      expect(parseReportLink(`${base}?focus=comments&comment=${id}`,origin)?.route).toBe(`/posts/${id}?comment=${id}#detail-comments`);
+      expect(parseReportLink(`${base}?next=evil`,origin)).toBeNull();
+      expect(parseReportLink(`${base}/extra`,origin)).toBeNull();
+    }
+  });
   it("shares the canonical HTTPS origin even inside the localhost WebView", () => {
     vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", origin);
     expect(reportLink(id)).toBe(`${origin}/r/${id}`);

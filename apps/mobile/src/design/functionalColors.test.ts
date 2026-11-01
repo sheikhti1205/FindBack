@@ -2,6 +2,7 @@
 // Every entry carries light+dark ramps; chip ink-on-bg and text-on-surface
 // must meet AA on neutral surfaces (incl. true black #000000 for dark).
 import { describe, expect, it } from "vitest";
+import { COLOR_SYSTEM } from "./colorSystem";
 import {
   FUNCTIONAL_COLORS,
   MENTION_FUNCTIONAL_ID,
@@ -24,8 +25,12 @@ function contrast(a: string, b: string): number {
   return (hi! + 0.05) / (lo! + 0.05);
 }
 
-const LIGHT_SURFACES = ["#ffffff", "#f8f9fa", "#e9ecef"] as const;
-const DARK_SURFACES = ["#212529", "#343a40", "#000000"] as const;
+const surfaces = (mode: "light" | "dark" | "amoled") => {
+  const n = COLOR_SYSTEM.neutrals[mode];
+  return [n.surface, n.low, n.container, n.high];
+};
+const LIGHT_SURFACES = surfaces("light");
+const DARK_SURFACES = [...surfaces("dark"), ...surfaces("amoled")];
 
 const DIRECTIVE_IDS: readonly FunctionalColorId[] = [
   "brand",

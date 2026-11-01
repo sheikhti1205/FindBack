@@ -34,6 +34,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(FindbackNotificationsPlugin.class);
         registerPlugin(FindbackMediaPlugin.class);
         registerPlugin(FindbackMessagingSqlitePlugin.class);
+        registerPlugin(SystemColorsPlugin.class);
+        registerPlugin(DataEpochPlugin.class);
         super.onCreate(savedInstanceState);
         if (savedInstanceState != null && savedInstanceState.getBundle("findbackMediaRequest") != null) {
             mediaPlugin().restoreMediaRequestState(savedInstanceState.getBundle("findbackMediaRequest"));

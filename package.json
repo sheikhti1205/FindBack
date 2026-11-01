@@ -1,21 +1,19 @@
 {
   "name": "findback",
   "private": true,
-  "version": "0.12.0-beta.1",
+  "version": "0.13.0-beta.1",
   "description": "FindBack — a local-first lost-and-found network for reporting, matching and recovering lost items.",
   "workspaces": [
     "apps/mobile",
-    "services/api",
     "packages/shared"
   ],
   "scripts": {
     "prepare": "npm run build -w packages/shared",
-    "dev:api": "npm run dev -w services/api",
     "dev:mobile": "npm run dev -w apps/mobile",
-    "build": "npm run build -w packages/shared && npm run build -w services/api && npm run build -w apps/mobile",
-    "typecheck": "npm run build -w packages/shared && npm run typecheck -w services/api && npm run typecheck -w apps/mobile",
+    "build": "npm run build -w packages/shared && npm run build -w apps/mobile",
+    "typecheck": "npm run build -w packages/shared && npm run typecheck -w apps/mobile",
     "lint": "eslint .",
-    "test": "npm run build -w packages/shared && npm run test -w services/api && npm run test -w apps/mobile",
+    "test": "npm run build -w packages/shared && npm run test -w apps/mobile",
     "cap:add:android": "npm run cap:add:android -w apps/mobile",
     "apk": "node scripts/build-apk.mjs",
     "scan:secrets": "node scripts/scan-secrets.mjs",
@@ -33,8 +31,7 @@
   },
   "type": "module",
   "overrides": {
-    "uuid": "^11.1.1",
-    "@graphql-tools/utils": "12.0.2"
+    "uuid": "^11.1.1"
   },
   "dependencies": {
     "@supabase/server": "^1.6.0"

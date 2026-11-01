@@ -43,11 +43,8 @@ test-evidence/
 supabase/.temp/
 
 # Uploaded/dev runtime files (served locally by the dev API)
-services/api/data/
-services/api/uploads/
 
 # local test databases
-services/api/data-test/
 
 # Generated / downloaded model artifacts (never commit weights)
 apps/mobile/android/app/src/main/assets/models/
@@ -60,3 +57,12 @@ tmp-*.mjs
 .playwright-mcp/
 .serena/
 .superpowers/
+
+# Generated same-domain read-only share function + public configuration
+apps/share-preview-dist/
+
+# Retired local demo data may exist on developer machines. Never expose or
+# commit those files; this is not an active API workspace/runtime declaration.
+services/api/data/
+services/api/uploads/
+services/api/data-test/

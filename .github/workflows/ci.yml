@@ -58,7 +58,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Build shared package (types for api/mobile)
+      - name: Build shared package (client schemas and contracts)
         run: npm run build -w @findback/shared
       - name: Typecheck all workspaces
         run: npm run typecheck
@@ -80,19 +80,17 @@ jobs:
         run: node scripts/completion-gate.mjs
       - name: Keyless map provider gate (no Google Maps/Places, MapLibre pin intact)
         run: node scripts/check-map-provider.mjs
-      - name: API tests
-        run: npm test -w @findback/api
       - name: Mobile tests
-        run: npm test -w @findback/mobile
+        run: npm test -w @findback/mobile -- --maxWorkers=2
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Gates the release-script regressions (fingerprint parse order, ABI
         # completeness, full-SHA provenance, SemVer publish type) so an
         # unverified release path can never reach a tag. Also the commit-message
         # checker (range + enforcement baseline). Local tools are covered by
         # behavioral mobile tests plus the retained native/package gate below.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/beta-claims.test.mjs scripts/completion-gate.test.mjs scripts/check-security-baseline.test.mjs scripts/check-map-provider.test.mjs scripts/check-map-config.test.mjs scripts/docker-build-context.test.mjs scripts/ci-test-runtime.test.mjs scripts/public-screenshots.test.mjs
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-commit-messages.test.mjs scripts/beta-claims.test.mjs scripts/completion-gate.test.mjs scripts/check-security-baseline.test.mjs scripts/check-map-provider.test.mjs scripts/check-map-config.test.mjs scripts/legacy-api-retirement.test.mjs scripts/ci-test-runtime.test.mjs scripts/public-screenshots.test.mjs
       - name: Sharing and server credential config tests
-        run: node --test scripts/check-share-config.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs scripts/check-google-config.test.mjs scripts/check-signeddev-config.test.mjs scripts/check-web-association.test.mjs scripts/check-push-config.test.mjs scripts/deploy-required-edge-functions.test.mjs scripts/check-edge-parity.test.mjs scripts/check-sentry-release-parity.test.mjs
+        run: node --test scripts/check-share-config.test.mjs scripts/share-preview.test.mjs scripts/prepare-share-preview.test.mjs scripts/check-mobile-build-config.test.mjs scripts/sync-fcm-secrets.test.mjs scripts/check-google-config.test.mjs scripts/check-signeddev-config.test.mjs scripts/check-web-association.test.mjs scripts/check-push-config.test.mjs scripts/deploy-required-edge-functions.test.mjs scripts/check-edge-parity.test.mjs scripts/check-sentry-release-parity.test.mjs
       - name: Retained native ownership and packaging policy
         run: |
           node scripts/check-native-retirement.mjs
@@ -107,11 +105,16 @@ jobs:
         # Heavy step: keep it off pull requests so PR feedback stays fast, while
         # every main push still proves the configured build and bundle URL/key.
         if: github.event_name != 'pull_request'
-        run: npm run build -w @findback/mobile
+        run: |
+          test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
+          node scripts/check-mobile-build-config.mjs --preflight
+          npm run build -w @findback/mobile
+          node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
 
   phone-verification-sql:
     name: Phone verification SQL behavior
@@ -197,7 +200,7 @@ jobs:
         # SELECT/WITH probes must return exactly one row: errors AND empty
         # assertions are fatal. Fixtures run once in one session and roll back.
         # Platform stubs are local-only, not hosted or JWT acceptance evidence.
-        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql --probe supabase/tests/verify_notification_helper_regressions.sql --probe supabase/tests/verify_cf050_upgrade.sql --probe supabase/tests/verify_standing_time.sql --probe supabase/tests/verify_public_probation.sql --probe supabase/tests/verify_reply_token_standing.sql
+        run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022160000_match_candidates_reader.sql --probe supabase/tests/verify_product_fit_match_candidates.sql --probe supabase/tests/verify_product_fit_shared_preview.sql --probe supabase/tests/verify_product_fit_role_acceptance.sql --probe supabase/tests/verify_notification_helper_regressions.sql --probe supabase/tests/verify_cf050_upgrade.sql --probe supabase/tests/verify_standing_time.sql --probe supabase/tests/verify_public_probation.sql --probe supabase/tests/verify_reply_token_standing.sql
       - name: Standing UTC-day rollover under real actor-lock waits
         run: node --test --test-concurrency=1 scripts/standing-time.engine.test.mjs
 
@@ -429,76 +432,3 @@ jobs:
           if-no-files-found: error
           # Short: this is a manual device-verification artifact, not a release.
           retention-days: 3
-
-  docker:
-    name: Docker build & health check
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-      VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
-      SENTRY_TRACES_RAW: ${{ vars.VITE_SENTRY_TRACES_SAMPLE_RATE }}
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      # Same deterministic release shape as the android/release/web lanes;
-      # canonical owner apps/mobile/src/services/monitoring/release.ts.
-      - name: Compute Sentry release identity (docker)
-        run: |
-          VERSION=$(node -p "require('./apps/mobile/package.json').version")
-          SHA=$(git rev-parse --short=12 HEAD)
-          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
-          export SENTRY_RELEASE
-          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
-      - name: Resolve Sentry traces sample rate (docker, default 0.1, fail closed)
-        run: |
-          RATE="${SENTRY_TRACES_RAW:-0.1}"
-          export SENTRY_RATE="$RATE"
-          node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
-          echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
-      - name: Build image
-        run: |
-          test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE --build-arg VITE_SENTRY_RELEASE --build-arg VITE_SENTRY_DIST=docker-reference -t findback:ci .
-      - name: Verify Supabase URL in packaged web shell
-        run: |
-          docker run --rm --env VITE_SUPABASE_URL --env VITE_SENTRY_DSN --entrypoint node findback:ci -e '
-            const fs = require("node:fs");
-            const dir = "/app/apps/mobile/dist/assets";
-            const js = fs.readdirSync(dir).filter((name) => name.endsWith(".js"));
-            if (!js.length || !js.some((name) => fs.readFileSync(`${dir}/${name}`, "utf8").includes(process.env.VITE_SUPABASE_URL))) {
-              throw new Error("Supabase URL missing from Docker web shell");
-            }
-            console.log("Docker web shell carries Supabase URL");
-            const dsn = (process.env.VITE_SENTRY_DSN || "").trim();
-            if (dsn) {
-              const host = new URL(dsn).hostname;
-              if (!js.some((name) => fs.readFileSync(`${dir}/${name}`, "utf8").includes(host))) {
-                throw new Error("Sentry DSN host missing from Docker web shell");
-              }
-              console.log("Docker web shell carries Sentry DSN host");
-            } else {
-              console.log("VITE_SENTRY_DSN empty — Sentry assert skipped (local empty-safe path)");
-            }
-          '
-      - name: Run container
-        run: docker run -d --name findback-ci -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:ci
-      - name: Wait for health
-        run: |
-          for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:4000/health >/dev/null; then
-              echo "container healthy"
-              curl -fsS http://localhost:4000/health
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "container did not become healthy"
-          exit 1
-      - name: Container logs
-        if: always()
-        run: docker logs findback-ci

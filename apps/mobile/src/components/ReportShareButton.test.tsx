@@ -15,7 +15,7 @@ import { consumeBackIntercept } from "./backNavigation";
 
 const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
-const url = `${origin}/r/${id}`;
+const url = `${origin}/api/share/${id}`;
 
 function stubNavigator({ share, writeText }: { share?: unknown; writeText?: unknown } = {}) {
   vi.stubGlobal("navigator", {
@@ -151,7 +151,7 @@ describe("ReportShareButton", () => {
 
       choose("Share report");
 
-      await waitFor(() => expect(share).toHaveBeenCalledWith({ title: "Lost keys", url }));
+      await waitFor(() => expect(share).toHaveBeenCalledWith({ title: "FindBack report", url }));
       await waitFor(() => expect(heard).toContain("Link shared."));
     } finally {
       stop();
@@ -168,7 +168,7 @@ describe("ReportShareButton", () => {
 
       choose("Share report");
 
-      await waitFor(() => expect(native).toHaveBeenCalledWith({ title: "Lost keys", url }));
+      await waitFor(() => expect(native).toHaveBeenCalledWith({ title: "FindBack report", url }));
       await waitFor(() => expect(heard).toContain("Link shared."));
     } finally {
       stop();

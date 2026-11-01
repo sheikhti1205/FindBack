@@ -33,70 +33,33 @@
  *   `--fb-fc-*`) and never follow the accent.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ACCENT_OPTIONS, DEFAULT_ACCENT, COLOR_SYSTEM, colorTokensFor, accentTokensFor, type AccentId } from "./design/colorSystem";
+import { getSystemColorsSnapshot, subscribeSystemColors, systemColorsSupported } from "./services/systemColors";
+export { ACCENT_OPTIONS, accentTokensFor, type AccentId, type AccentOption } from "./design/colorSystem";
 
 export const APPEARANCE_STORAGE_KEY = "findback.appearance.v1";
 
 /** Window event fired on every save so other tabs/mounts re-apply. */
 export const APPEARANCE_EVENT = "findback:appearance";
 
-export type AccentId = "emerald" | "blue" | "violet" | "rose" | "amber" | "teal" | "mono" | "indigo" | "cyan" | "lime" | "orange" | "pink";
-
-export interface AccentOption {
-  id: AccentId;
-  label: string;
-  /** Accent surface, applied as `--fb-accent`. */
-  swatch: string;
-  /** Label/icon color used on top of the swatch, applied as `--fb-accent-ink`. */
-  onAccent: string;
-  darkSwatch: string;
-  darkOnAccent: string;
-  container: string;
-  darkContainer: string;
-}
-
-/** Curated set — twelve swatches; every swatch keeps AA vs its onAccent. */
-export const ACCENT_OPTIONS: readonly AccentOption[] = [
-  { id: "emerald", label: "Emerald", swatch: "#256c4a", onAccent: "#ffffff", darkSwatch: "#82d5aa", darkOnAccent: "#00391e", container: "#e1f2e8", darkContainer: "#153c29" },
-  { id: "blue", label: "Blue", swatch: "#3568d4", onAccent: "#ffffff", darkSwatch: "#adc7ff", darkOnAccent: "#082b60", container: "#e8eeff", darkContainer: "#1c355c" },
-  { id: "violet", label: "Violet", swatch: "#7355b7", onAccent: "#ffffff", darkSwatch: "#cfbdff", darkOnAccent: "#2e1a61", container: "#f0eaff", darkContainer: "#38285c" },
-  { id: "rose", label: "Rose", swatch: "#a34763", onAccent: "#ffffff", darkSwatch: "#ffb2c4", darkOnAccent: "#5b112b", container: "#fbe8ef", darkContainer: "#51283a" },
-  { id: "amber", label: "Amber", swatch: "#7a5700", onAccent: "#ffffff", darkSwatch: "#e9c46a", darkOnAccent: "#3d2d00", container: "#f8edce", darkContainer: "#46391c" },
-  { id: "teal", label: "Teal", swatch: "#006a6a", onAccent: "#ffffff", darkSwatch: "#7bd8d8", darkOnAccent: "#003838", container: "#ddf2f1", darkContainer: "#153c3c" },
-  { id: "mono", label: "Mono", swatch: "#212529", onAccent: "#ffffff", darkSwatch: "#e9ecef", darkOnAccent: "#212529", container: "#e9ecef", darkContainer: "#343a40" },
-  { id: "indigo", label: "Indigo", swatch: "#4350b8", onAccent: "#ffffff", darkSwatch: "#b9c0ff", darkOnAccent: "#1a215e", container: "#e8ebff", darkContainer: "#232a5e" },
-  { id: "cyan", label: "Cyan", swatch: "#0b6b8a", onAccent: "#ffffff", darkSwatch: "#8ed4ea", darkOnAccent: "#003544", container: "#ddf2fa", darkContainer: "#0f3542" },
-  { id: "lime", label: "Lime", swatch: "#4e6a00", onAccent: "#ffffff", darkSwatch: "#c2d879", darkOnAccent: "#2a3800", container: "#eaf2c8", darkContainer: "#2f3d0a" },
-  { id: "orange", label: "Orange", swatch: "#924500", onAccent: "#ffffff", darkSwatch: "#ffb87a", darkOnAccent: "#4a2400", container: "#ffead4", darkContainer: "#4a2a10" },
-  { id: "pink", label: "Pink", swatch: "#94366d", onAccent: "#ffffff", darkSwatch: "#ffaed6", darkOnAccent: "#51092f", container: "#fbe3ef", darkContainer: "#4c1a35" },
-];
 
 /** Accepts old IDs only at the persistence boundary; UI always uses new IDs. */
 export function migrateAccent(value: unknown): AccentId {
   if (isAccentId(value)) return value;
-  const legacy: Record<string, AccentId> = { ink: "mono", green: "emerald", plum: "violet", clay: "rose" };
+  const legacy: Record<string, AccentId> = { ink: "mono", green: "emerald", plum: "violet", clay: "rose",
+    amber: "orange", cyan: "teal", lime: "emerald", pink: "rose" };
   return typeof value === "string" && Object.hasOwn(legacy, value)
     ? legacy[value]!
     : DEFAULT_APPEARANCE.accent;
 }
 
-/** True-black (`.amoled`) reuses the dark accent tokens; only surfaces differ. */
-export function accentTokensFor(id: AccentId, mode: "light" | "dark") {  const accent = ACCENT_OPTIONS.find((a) => a.id === id) ?? ACCENT_OPTIONS.find((a) => a.id === DEFAULT_APPEARANCE.accent) ?? ACCENT_OPTIONS[0]!;
-  const dark = mode === "dark";
-  return {
-    primary: dark ? accent.darkSwatch : accent.swatch,
-    onPrimary: dark ? accent.darkOnAccent : accent.onAccent,
-    primaryContainer: dark ? accent.darkContainer : accent.container,
-    onPrimaryContainer: dark ? accent.darkSwatch : accent.darkOnAccent,
-    link: dark ? accent.darkSwatch : accent.darkOnAccent,
-  };
-}
 
 /**
  * W5: the ONLY inline CSS vars `applyAppearance` may write for the accent.
  * Semantic/functional vars (`--fb-status-*`, `--fb-reaction-*`,
  * `--fb-mention`, `--fb-fc-*`, `--fb-lost-*`, `--fb-found-*`) are owned by
- * `index.css` per mode and must never appear here — that is what keeps the
+ * the canonical color-system stylesheet per mode, never by accent application — this keeps the
  * user's arbitrary accent from recoloring semantic states.
  */
 export const ACCENT_OWNED_CSS_VARS = [
@@ -157,18 +120,23 @@ export type NavLayout = "bottom" | "rail";
 
 export interface AppearanceSettings {
   accent: AccentId;
+  accentSource: "preset" | "system";
   textScale: TextScaleId;
   reduceMotion: ReduceMotionOverride;
   highQualityPhoto: boolean;
   navLayout: NavLayout;
+  /** Device-local acknowledgement, never an account preference. */
+  navLayoutChosen: boolean;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
-  accent: "mono",
+  accent: DEFAULT_ACCENT,
+  accentSource: "preset",
   textScale: "standard",
   reduceMotion: "system",
   highQualityPhoto: false,
   navLayout: "bottom",
+  navLayoutChosen: false,
 };
 
 function isAccentId(value: unknown): value is AccentId {
@@ -194,10 +162,15 @@ export function migrateAppearance(value: unknown): AppearanceSettings {
     : {};
   return {
     accent: migrateAccent(parsed.accent),
+    accentSource: parsed.accentSource === "system" ? "system" : "preset",
     textScale: isTextScaleId(parsed.textScale) ? parsed.textScale : DEFAULT_APPEARANCE.textScale,
     reduceMotion: isReduceMotionOverride(parsed.reduceMotion) ? parsed.reduceMotion : DEFAULT_APPEARANCE.reduceMotion,
     highQualityPhoto: typeof parsed.highQualityPhoto === "boolean" ? parsed.highQualityPhoto : DEFAULT_APPEARANCE.highQualityPhoto,
     navLayout: isNavLayout(parsed.navLayout) ? parsed.navLayout : DEFAULT_APPEARANCE.navLayout,
+    // Existing saved layouts remain intentional. New writes carry an explicit
+    // false until the reader chooses; unrelated accent edits cannot dismiss setup.
+    navLayoutChosen: typeof parsed.navLayoutChosen === "boolean" ? parsed.navLayoutChosen
+      : parsed.navLayoutChosen === undefined && isNavLayout(parsed.navLayout),
   };
 }
 
@@ -273,6 +246,7 @@ export function motionConfigValueFor(
  */
 export function applyAppearance(settings: AppearanceSettings): void {
   if (typeof document === "undefined") return;
+  installColorSystem();
   const root = document.documentElement;
   const accent =
     ACCENT_OPTIONS.find((a) => a.id === settings.accent) ??
@@ -281,7 +255,9 @@ export function applyAppearance(settings: AppearanceSettings): void {
     TEXT_SCALE_OPTIONS.find((t) => t.id === settings.textScale) ??
     TEXT_SCALE_OPTIONS.find((t) => t.id === DEFAULT_APPEARANCE.textScale)!;
   for (const mode of ["light", "dark"] as const) {
-    const tokens = accentTokensFor(accent.id, mode);
+    const tokens = settings.accentSource === "system"
+      ? getSystemColorsSnapshot().palette?.[mode] ?? accentTokensFor(DEFAULT_ACCENT, mode)
+      : accentTokensFor(accent.id, mode);
     root.style.setProperty(`--fb-primary-${mode}`, tokens.primary);
     root.style.setProperty(`--fb-on-primary-${mode}`, tokens.onPrimary);
     root.style.setProperty(`--fb-primary-container-${mode}`, tokens.primaryContainer);
@@ -291,9 +267,30 @@ export function applyAppearance(settings: AppearanceSettings): void {
   root.style.setProperty("--fb-accent", "var(--fb-primary)");
   root.style.setProperty("--fb-accent-ink", "var(--fb-on-primary)");
   root.dataset.accent = accent.id;
+  root.dataset.accentSource = settings.accentSource;
   root.style.fontSize = `${scale.percent}%`;
   root.dataset.reduceMotionOverride = settings.reduceMotion;
   root.classList.toggle("fb-reduce-motion", resolveReduceMotion(settings.reduceMotion));
+}
+
+/** Serialize canonical values once. Runtime classes are resolved ONLY by theme. */
+export function colorSystemCss(): string {
+  return (["light", "dark", "amoled"] as const).map((mode) => {
+    const selector = mode === "light" ? ":root" : `.${mode}`;
+    return `${selector} {\n${Object.entries(colorTokensFor(mode)).map(([key, value]) => `  ${key}: ${value};`).join("\n")}\n}`;
+  }).join("\n") + `\n:root:not([data-theme]) { --fb-surface: ${COLOR_SYSTEM.neutrals.amoled.surface}; color-scheme: dark; }`;
+}
+
+function installColorSystem(): void {
+  if (document.getElementById("findback-color-system")) return;
+  const style = document.createElement("style");
+  style.id = "findback-color-system";
+  style.textContent = colorSystemCss();
+  document.head.append(style);
+}
+
+export function useSystemColorsSupported(): boolean {
+  return useSyncExternalStore(subscribeSystemColors, systemColorsSupported, () => false);
 }
 
 /** Encode qualities mirroring `services/image.ts` (standard) plus a high tier. */

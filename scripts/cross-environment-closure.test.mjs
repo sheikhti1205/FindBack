@@ -17,13 +17,13 @@ function clone() {
   return JSON.parse(JSON.stringify(CLOSURE));
 }
 
-test("shipped closure is valid: exact 18 rows, allowed verdicts, evidence present", () => {
+test("shipped closure is valid: exact 17 retained rows, allowed verdicts, evidence present", () => {
   const { problems } = checkClosure(CLOSURE, OPEN);
   assert.deepEqual(problems, []);
 });
 
-test("the row set is exactly the 18 owner rows", () => {
-  assert.equal(ROWS.length, 18);
+test("the row set is exactly the 17 retained owner rows", () => {
+  assert.equal(ROWS.length, 17);
   assert.deepEqual(Object.keys(CLOSURE.rows).sort(), [...ROWS].sort());
 });
 
@@ -133,9 +133,9 @@ test("markdown renders one row per lane", () => {
   assert.equal(md.split("\n").length, ROWS.length + 2);
 });
 
-test("json emits all 18 rows", () => {
+test("json emits all 17 retained rows", () => {
   const parsed = JSON.parse(closureToJson());
-  assert.equal(parsed.rows.length, 18);
+  assert.equal(parsed.rows.length, 17);
   assert.equal(parsed.baselineSha, CLOSURE.baselineSha);
 });
 

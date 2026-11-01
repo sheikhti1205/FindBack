@@ -24,6 +24,7 @@ import { ReportPreviewProvider } from "../components/CommentReportPreviews";
 import { CommentComposer } from "../components/CommentComposer";
 import { commentMediaProvenance, parseCommentBody } from "../services/commentBodyMedia";
 import { ReportShareButton } from "../components/ReportShareButton";
+import { ReportSharingSettings } from "../components/ReportSharingSettings";
 import { ReportOverflow } from "../components/ReportOverflow";
 import { CommentSafetyMenu } from "../components/CommentSafetyMenu";
 import { RecoverySheet } from "../components/RecoverySheet";
@@ -1182,6 +1183,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
             >
               <Pencil size={16} aria-hidden /> Edit details
             </Link>
+            <ReportSharingSettings key={post.id} postId={post.id} disabled={ownerControlsDisabled} />
           </section>
         )}
 

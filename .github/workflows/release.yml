@@ -117,7 +117,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: npm ci
-      - name: Build shared package (types for api/mobile)
+      - name: Build shared package (client schemas and contracts)
         run: npm run build -w @findback/shared
       - name: Typecheck all workspaces
         run: npm run typecheck
@@ -133,14 +133,12 @@ jobs:
           npm audit --omit=dev --audit-level=high
       - name: Keyless map provider gate (no Google Maps/Places, MapLibre pin intact)
         run: node scripts/check-map-provider.mjs
-      - name: API tests
-        run: npm test -w @findback/api
       - name: Mobile tests
         run: npm test -w @findback/mobile
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Same suites CI gates; enforced here too so a tag build cannot sign
         # with a verifier that has drifted from the ABI/signing contract.
-        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-map-provider.test.mjs
+        run: node --test scripts/verify-release-apks.test.mjs scripts/generate-release-manifest.test.mjs scripts/derive-publish-type.test.mjs scripts/check-map-provider.test.mjs scripts/legacy-api-retirement.test.mjs
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
       - name: Restore Firebase Android client configuration
@@ -167,40 +165,6 @@ jobs:
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug
       - name: Assert client config in gate APK
         run: node scripts/check-mobile-build-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk && node scripts/check-klipy-config.mjs --apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
-      # Same deterministic release shape as the signed-build lane (mirrors
-      # ci.yml's docker job): the reference image must bake the SAME release
-      # identity so its config assert path matches instead of WARNING.
-      - name: Compute Sentry release identity (gate docker)
-        run: |
-          VERSION=$(node -p "require('./apps/mobile/package.json').version")
-          SHA=$(git rev-parse --short=12 HEAD)
-          SENTRY_RELEASE="findback-mobile@${VERSION}+${SHA}"
-          export SENTRY_RELEASE
-          echo "SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          echo "VITE_SENTRY_RELEASE=${SENTRY_RELEASE}" >> "$GITHUB_ENV"
-          node -e 'const r=process.env.SENTRY_RELEASE; if(!/^findback-mobile@\d+\.\d+\.\d+[-+0-9A-Za-z.]*\+[0-9a-f]{12}$/i.test(r)){console.error(`bad release identity: ${r}`);process.exit(1)} console.log(`release identity OK: ${r}`)'
-      - name: Docker build & health check
-        run: |
-          # The Dockerfile's build stage runs `vite build` for apps/mobile, which
-          # enforces the same fail-closed Supabase/Sentry preflight as every other
-          # path. Without these build args the container build dies on the
-          # preflight (unlike CI's docker job, which passes them). Values come
-          # from the job env below; never hardcoded here.
-          docker build --build-arg VITE_SUPABASE_URL --build-arg VITE_SUPABASE_PUBLISHABLE_KEY --build-arg VITE_PUBLIC_SHARE_ORIGIN --build-arg VITE_SENTRY_DSN --build-arg VITE_SENTRY_ENVIRONMENT=production --build-arg VITE_SENTRY_RELEASE --build-arg VITE_SENTRY_DIST=docker-reference -t findback:release-gate .
-          docker run -d --name findback-gate -p 4000:4000 -e JWT_SECRET=ci-not-a-secret findback:release-gate
-          for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:4000/health >/dev/null; then
-              echo "container healthy"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "container did not become healthy"
-          docker logs findback-gate || true
-          exit 1
-      - name: Container logs
-        if: always()
-        run: docker logs findback-gate 2>/dev/null || true
 
   signed-build:
     name: Signed APKs + AAB (+ manifest)

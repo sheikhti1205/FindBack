@@ -191,7 +191,7 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
     route: "/settings/returns",
     description: "Account",
     icon: RotateCcw,
-    iconTone: "privacy",
+    iconTone: "success",
   },
   {
     id: "appeals", title: "Your appeals", keywords: "appeal decision warning restriction review outcome moderation",

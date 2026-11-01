@@ -14,7 +14,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const LANES = ["LOCAL", "CI", "RELEASE", "WEB", "DOCKER", "LIVE"];
+const LANES = ["LOCAL", "CI", "RELEASE", "WEB", "LIVE"];
 const STATUSES = ["IMPLEMENTED", "CONFIG_REQUIRED", "READY_RUNTIME", "NOT_APPLICABLE"];
 
 const I = "IMPLEMENTED";
@@ -31,17 +31,17 @@ export const MATRIX = [
     id: "google-auth-web-oauth",
     label: "Google login — web OAuth (runtime)",
     webCapability: true,
-    cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, DOCKER: N, LIVE: N },
+    cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, LIVE: N },
     notes:
       "Google login IS a web product feature (capability rule). The web OAuth path is IMPLEMENTED in source this wave (signInWithOAuth → /auth/callback bridge → shared resolver); it stays CONFIG_REQUIRED until the Supabase Google provider carries the web client + the redirect URL allowlist.",
     justification:
-      "DOCKER/LIVE N/A because the Docker reference shell forwards no Google client and OAuth is a client capability, not a live FindBack service.",
+      "LIVE N/A because OAuth is a client capability, not a live FindBack service.",
   },
   {
     id: "klipy",
     label: "KLIPY GIF/sticker picker",
     webCapability: true,
-    cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, DOCKER: C, LIVE: N },
+    cells: { LOCAL: C, CI: C, RELEASE: C, WEB: C, LIVE: N },
     notes:
       "KLIPY IS a web product feature because web has comments. Adapter live-VALIDATED with a real key; VITE_KLIPY_API_KEY now flows to web.yml/release.yml from a repo secret — the secret must be set or the picker hides.",
     justification:
@@ -51,23 +51,23 @@ export const MATRIX = [
     id: "sentry-release-dist",
     label: "Sentry release/dist identity",
     webCapability: true,
-    cells: { LOCAL: I, CI: I, RELEASE: I, WEB: I, DOCKER: I, LIVE: N },
+    cells: { LOCAL: I, CI: I, RELEASE: I, WEB: I, LIVE: N },
     notes: "ONE scheme findback-mobile@<version>+<short12> (exactly-12); per-lane closed dist; parity gate.",
     justification: "LIVE N/A because release identity is a build-time string, not a live service.",
   },
   {
     id: "map-native",
     label: "MAPLIBRE_NATIVE",
-    cells: { LOCAL: I, CI: I, RELEASE: I, WEB: N, DOCKER: N, LIVE: N },
+    cells: { LOCAL: I, CI: I, RELEASE: I, WEB: N, LIVE: N },
     notes: "Native final, keyless, no Google-Maps fallback.",
     justification:
-      "WEB/DOCKER/LIVE N/A because MapLibre Native is an Android native library; web renders with its own renderer (WEB_MAP_RENDERER row).",
+      "WEB/LIVE N/A because MapLibre Native is an Android native library; web renders with its own renderer (WEB_MAP_RENDERER row).",
   },
   {
     id: "map-web-renderer",
     label: "WEB_MAP_RENDERER",
     webCapability: true,
-    cells: { LOCAL: I, CI: I, RELEASE: N, WEB: I, DOCKER: I, LIVE: N },
+    cells: { LOCAL: I, CI: I, RELEASE: N, WEB: I, LIVE: N },
     notes: "The web picker DOES render a map: keyless 3×3 OSM raster tile grid with zoom.",
     justification:
       "RELEASE N/A because the shipped Android APK uses the native renderer; LIVE N/A because tile rendering is a client capability.",

@@ -11,6 +11,7 @@ import { COMPACT_MAX_PX } from "./responsive";
 import { readFileSync } from "node:fs";
 
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "shell-reader" } }) }));
+vi.mock("./RoleOfferNotice", () => ({ RoleOfferNotice: () => null }));
 
 afterEach(() => { cleanup(); resetBackInterceptors(); document.body.style.overflow = ""; });
 
@@ -325,6 +326,17 @@ describe("Shell adaptive navigation (owner ruling 4(e))", () => {
     localStorage.clear();
     vi.unstubAllGlobals();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: initialWidth });
+  });
+
+  it("first wide navigation choice closes setup, updates the one nav and preserves keyboard focus", async () => {
+    localStorage.clear(); setWidth(1200); stubMatchMedia(true);
+    renderShell("/");
+    const choice = screen.getByRole("button", { name: "Side rail" });
+    choice.focus(); fireEvent.click(choice);
+    expect(screen.queryByRole("region", { name: "Choose your navigation" })).toBeNull();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    expect(nav.getAttribute("data-layout")).toBe("rail");
+    await waitFor(() => expect(document.activeElement).toBe(within(nav).getByRole("link", { name: "Home" })));
   });
 
   it.each([320, 500, COMPACT_MAX_PX - 1])(

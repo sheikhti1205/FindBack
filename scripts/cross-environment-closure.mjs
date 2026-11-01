@@ -7,7 +7,7 @@
 // "is this lane actually closed yet", using ONLY the owner verdict vocabulary.
 //
 // Hard rules enforced mechanically (fail closed):
-//   - the row set is EXACTLY the 18 owner rows (no extras, no omissions);
+//   - the row set is EXACTLY the 17 retained rows (retired Docker lane removed);
 //   - every verdict is one of the allowed set;
 //   - PASS requires a committed evidence artifact that exists, is non-empty,
 //     and records a `baselineSha` reachable from HEAD (anti-staleness);
@@ -43,7 +43,7 @@ export const VERDICTS = [
   "FAIL",
 ];
 
-/** The 18 owner rows, in owner order. */
+/** The retained owner rows, in owner order; no retired reference container. */
 export const ROWS = [
   "REPO_IMPLEMENTATION",
   "LIVE_DATABASE",
@@ -52,7 +52,6 @@ export const ROWS = [
   "SENTRY_CI",
   "SENTRY_RELEASE",
   "SENTRY_WEB",
-  "SENTRY_DOCKER",
   "GOOGLE_BUILD_CONFIG",
   "GOOGLE_RUNTIME",
   "FCM_CLIENT",
@@ -116,11 +115,6 @@ export const CLOSURE = {
       verdict: "READY_FOR_RUNTIME_PROOF",
       proofCommand: "node scripts/sentry-cross-lane-proof.mjs --asset apps/mobile/dist",
       detail: "Web lane carries the same contract; needs DSN + upload + event.",
-    },
-    SENTRY_DOCKER: {
-      verdict: "READY_FOR_RUNTIME_PROOF",
-      proofCommand: "node scripts/sentry-cross-lane-proof.mjs",
-      detail: "Docker reference lane carries the same contract; needs DSN + event.",
     },
     GOOGLE_BUILD_CONFIG: {
       verdict: "PASS",

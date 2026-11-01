@@ -1,4 +1,12 @@
-# FindBack — Reporting Guide
+# Historical course reporting — retired runtime
+
+The Node activity JSON/CSV endpoint and `report-activity.mjs` CLI described below
+were retired by Product Fit Reset. These examples are an archival course record,
+not a supported service, login path or current setup instruction. Current product
+reporting/moderation lives in the role-gated same-app staff console and Supabase.
+See [legacy API retirement](../LEGACY_API_RETIREMENT.md).
+
+# FindBack — Reporting Guide (historical)
 
 This document describes how to produce reports from FindBack data for the course's
 "Crystal Reports" style requirement.

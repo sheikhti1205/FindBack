@@ -22,8 +22,6 @@ const SCANNED = [
   ".github/workflows/release.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/web.yml",
-  "Dockerfile",
-  "docker-compose.yml",
   "scripts/build-context.mjs",
   "scripts/build-apk.mjs",
   "scripts/check-sentry-config.mjs",
@@ -67,9 +65,12 @@ test("fails closed on every tampered contract", () => {
     ["missing upload dist", (d) => writeFileSync(join(d, ".github/workflows/web.yml"),
       readFileSync(".github/workflows/web.yml", "utf8").replace("--dist web-production", "--dist erased")),
       /upload --dist web-production missing/],
-    ["token gains VITE_ prefix", (d) => writeFileSync(join(d, "Dockerfile"),
-      `${readFileSync("Dockerfile", "utf8")}\n# VITE_SENTRY_AUTH_TOKEN must never exist\n`),
+    ["token gains VITE_ prefix", (d) => writeFileSync(join(d, "apps/mobile/vite.config.ts"),
+      `${readFileSync("apps/mobile/vite.config.ts", "utf8")}\n// VITE_SENTRY_AUTH_TOKEN must never exist\n`),
       /VITE_ prefix/],
+    ["workflow trace fallback drift", (d) => writeFileSync(join(d, ".github/workflows/web.yml"),
+      readFileSync(".github/workflows/web.yml", "utf8").replace('${SENTRY_TRACES_RAW:-0.1}', '${SENTRY_TRACES_RAW:-1}')),
+      /trace-rate fallback/],
   ];
   for (const [name, tamper, pattern] of cases) {
     const dir = fixtureRoot(tamper);

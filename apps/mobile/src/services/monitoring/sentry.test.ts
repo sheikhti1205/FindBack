@@ -33,7 +33,7 @@ describe("resolveSentryDist", () => {
     expect(resolveSentryDist("android-signeddev")).toBe("android-signeddev");
     expect(resolveSentryDist("android-release")).toBe("android-release");
     expect(resolveSentryDist("web-production")).toBe("web-production");
-    expect(resolveSentryDist("docker-reference")).toBe("docker-reference");
+    expect(resolveSentryDist("docker-reference")).toBeUndefined(); // retired reference lane
   });
 
   it("returns undefined for unknown/empty/absent input (never a placeholder)", () => {

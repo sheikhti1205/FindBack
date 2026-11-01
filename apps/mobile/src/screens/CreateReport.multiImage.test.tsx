@@ -121,6 +121,7 @@ describe("CreateReport multi-image", () => {
         expect.objectContaining({ title: "Lost phone" }),
         file,
         expect.any(String),
+        expect.any(Function),
       ),
     );
     expect(publishReportWithPhotosMock).not.toHaveBeenCalled();

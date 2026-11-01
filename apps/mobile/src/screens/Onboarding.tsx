@@ -18,6 +18,7 @@ import { motion, type PanInfo } from "framer-motion";
 import { useShouldReduceMotion, motionDurations, motionEasings, motionSprings } from "../components/uiMotion";
 import { OnboardingArt, type OnboardingArtKind } from "../components/onboarding/OnboardingArt";
 import { completeOnboarding } from "../services/onboarding";
+import { RecoveryDemo } from "../components/onboarding/RecoveryDemo";
 import "./Onboarding.css";
 
 export interface OnboardingPage {
@@ -28,7 +29,7 @@ export interface OnboardingPage {
 
 export const ONBOARDING_PAGES: readonly OnboardingPage[] = [
   {
-    title: "Lose less. Find faster.",
+    title: "Report it. Match it. Return it.",
     body: "Report a lost or found item and keep every update in one place.",
     art: "hero",
   },
@@ -39,13 +40,13 @@ export const ONBOARDING_PAGES: readonly OnboardingPage[] = [
   },
   {
     title: "Useful matches. Privacy first.",
-    body: "FindBack compares report details while keeping sensitive account information out of public browsing.",
+    body: "Browse nearby reports and compare possible matches. A suggestion is a starting point, not a guarantee.",
     art: "match",
   },
   {
-    title: "Set it up your way.",
-    body: "Choose your theme, notifications and optional AI tools whenever you want.",
-    art: "setup",
+    title: "Bring it back, together.",
+    body: "Contact each other, confirm the details and agree a safe handover. Then mark the item recovered.",
+    art: "recover",
   },
 ] as const;
 
@@ -130,7 +131,7 @@ export function Onboarding({ onComplete, initialPage = 0 }: OnboardingProps) {
           }
           className="fb-onboarding-page"
         >
-          <OnboardingArt kind={current.art} reduced={reduced} />
+          {page === 0 ? <RecoveryDemo /> : <OnboardingArt kind={current.art} reduced={reduced} />}
           <h1 className="fb-onboarding-title">{current.title}</h1>
           <p className="fb-onboarding-body">{current.body}</p>
         </motion.div>

@@ -54,6 +54,11 @@ test("the shipped AndroidManifest satisfies the App-Links contract", () => {
   assert.equal(checkAppLinksManifest(validManifest()), null);
 });
 
+test("new public preview URLs are explicitly associated, never a blanket /api allowance", () => {
+  assert.match(validManifest(), /android:pathPrefix="\/api\/share\/"/);
+  assert.equal(checkAppLinksManifest(validManifest().replace('android:pathPrefix="/api/share/"','android:pathPrefix="/api/"'))?.includes('allowlisted'),true);
+});
+
 test("the App-Links contract rejects a host that could drift from the share config", () => {
   const hardcoded = validManifest().replaceAll("${findbackShareHost}", "findback.test");
   assert.match(String(checkAppLinksManifest(hardcoded)), /placeholder/);

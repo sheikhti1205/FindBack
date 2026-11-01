@@ -16,6 +16,7 @@ import {
   Backpack,
   Bell,
   Check,
+  HeartHandshake,
   Contrast,
   FileText,
   ImagePlus,
@@ -33,7 +34,7 @@ import {
 import { ACCENT_OPTIONS } from "../../appearance";
 import { motionDurations, motionEasings, motionSprings } from "../uiMotion";
 
-export type OnboardingArtKind = "hero" | "report" | "match" | "setup";
+export type OnboardingArtKind = "hero" | "report" | "match" | "setup" | "recover";
 
 const ACCENT_PREVIEW_IDS = ["emerald", "blue", "violet"] as const;
 
@@ -311,6 +312,10 @@ export function OnboardingArt({ kind, reduced }: { kind: OnboardingArtKind; redu
       {kind === "report" && <ReportArt reduced={reduced} />}
       {kind === "match" && <MatchArt reduced={reduced} />}
       {kind === "setup" && <SetupArt reduced={reduced} />}
+      {kind === "recover" && <div className="fb-ob-recovery">
+        <HeartHandshake size={72} strokeWidth={1.25} />
+        <span className="fb-ob-recovery-label"><Check size={18} />Recovered</span>
+      </div>}
     </motion.div>
   );
 }

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
+import { colorSystemCss } from "../appearance";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   backdropTransition,
@@ -136,15 +137,15 @@ const REQUIRED_TOKENS = [
   "--skeleton-highlight",
 ] as const;
 
-function themeSegments(css: string): { root: string; dark: string; media: string } {
+function themeSegments(css: string): { root: string; dark: string; amoled: string } {
   const darkAt = css.indexOf(".dark {");
-  const mediaAt = css.indexOf("@media (prefers-color-scheme: dark)");
+  const amoledAt = css.indexOf(".amoled {");
   expect(darkAt).toBeGreaterThan(-1);
-  expect(mediaAt).toBeGreaterThan(darkAt);
+  expect(amoledAt).toBeGreaterThan(darkAt);
   return {
     root: css.slice(0, darkAt),
-    dark: css.slice(darkAt, mediaAt),
-    media: css.slice(mediaAt),
+    dark: css.slice(darkAt, amoledAt),
+    amoled: css.slice(amoledAt),
   };
 }
 
@@ -168,14 +169,15 @@ function contrast(a: string, b: string): number {
   return (hi! + 0.05) / (lo! + 0.05);
 }
 
-describe("motion CSS tokens (index.css light + dark + media query)", () => {
-  const css = readFileSync("src/index.css", "utf8");
+describe("motion CSS tokens (canonical light + dark + AMOLED)", () => {
+  const css = colorSystemCss() + "\n" + readFileSync("src/index.css", "utf8");
   const segments = themeSegments(css);
 
-  it.each(REQUIRED_TOKENS)("defines %s in :root, .dark, and the media query", (token) => {
+  it.each(REQUIRED_TOKENS)("defines %s in :root, .dark, and .amoled without a competing OS palette", (token) => {
     expect(declaration(segments.root, token)).not.toBeNull();
     expect(declaration(segments.dark, token)).not.toBeNull();
-    expect(declaration(segments.media, token)).not.toBeNull();
+    expect(declaration(segments.amoled, token)).not.toBeNull();
+    expect(css).not.toContain("@media (prefers-color-scheme: dark)");
   });
 
   it("keeps primary-action AA contrast in both themes", () => {

@@ -112,6 +112,10 @@ describe("summary helpers", () => {
     expect(appearanceSummary("system", "blue")).toBe("System · Blue");
   });
 
+  it("summarizes the selected System colors source rather than the retained last preset", () => {
+    expect(appearanceSummary("dark", "emerald", "system")).toBe("Dark · System colors");
+  });
+
   it("composes the account value from live verification flags", () => {
     expect(accountSummary({ emailVerified: true, phoneVerified: true })).toBe("Verified");
     expect(accountSummary({ emailVerified: true, phoneVerified: false })).toBe("Partially verified");
@@ -427,6 +431,15 @@ describe("the staff console entry", () => {
     renderSettings();
     const row = await screen.findByRole("link", { name: /team & permissions/i });
     expect(row.getAttribute("href")).toBe("/settings/team");
+  });
+
+  it("refreshes server authority after explicit role acceptance without a page reload", async () => {
+    renderSettings();
+    await waitFor(() => expect(mockFetchMyRole).toHaveBeenCalled());
+    expect(screen.queryByRole("link", { name: /team & permissions/i })).toBeNull();
+    mockFetchMyRole.mockResolvedValue({role:"ADMIN",isAdmin:true,capabilities:[]});
+    fireEvent(window, new Event("findback:role-changed"));
+    expect(await screen.findByRole("link", { name: /team & permissions/i })).toBeTruthy();
   });
 
   it("is hidden from a moderator, whose destinations are admin-only", async () => {

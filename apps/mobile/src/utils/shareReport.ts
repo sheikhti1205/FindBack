@@ -1,9 +1,9 @@
 import { Capacitor } from "@capacitor/core";
-import { reportLink } from "./reportLinks";
+import { sharePreviewLink } from "./reportLinks";
 
 /** Canonical public URL, without feed filters or a comments anchor. */
 export function reportUrl(postId: string): string {
-  return reportLink(postId);
+  return sharePreviewLink(postId);
 }
 
 /** How the native system sheet behaved. */
@@ -69,8 +69,11 @@ async function writeToClipboard(text: string): Promise<boolean> {
  * Cancellation is not a failure; a failed sheet is not a dismissal. The
  * returned sentence is the consumer-facing outcome and is announced as-is.
  */
-export async function shareReport(postId: string, title: string): Promise<string> {
+export async function shareReport(postId: string, _title: string): Promise<string> {
   const url = reportUrl(postId);
+  // The report's raw title may contain contact/address details. The server
+  // supplies safe item-specific metadata; system share payloads stay generic.
+  const title = "FindBack report";
   const native =
     nativeShareOverride ?? (Capacitor.isNativePlatform() ? shareThroughNativeSheet : null);
   if (native) {

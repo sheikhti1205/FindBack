@@ -28,6 +28,9 @@
   color: var(--fb-on-surface-variant, inherit);
 }
 
+.fb-ob-recovery { display: flex; flex-direction: column; align-items: center; gap: 1.5rem; padding: 2.5rem; color: var(--fb-on-surface-variant); }
+.fb-ob-recovery-label { display: inline-flex; align-items: center; gap: .5rem; border-radius: 2rem; padding: .625rem .875rem; background: var(--fb-status-recovered-bg); color: var(--fb-status-recovered-ink); font-weight: 600; }
+
 .fb-onboarding-pager {
   display: flex;
   flex: 1 1 auto;

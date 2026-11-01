@@ -11,16 +11,26 @@ afterEach(() => {
 });
 
 describe("consumer appearance migration", () => {
+  it("distinguishes untouched device navigation from explicit legacy and current choices", () => {
+    expect(appearance.loadAppearance().navLayoutChosen).toBe(false);
+    expect(appearance.migrateAppearance({ navLayout: "rail" })).toMatchObject({ navLayout: "rail", navLayoutChosen: true });
+    expect(appearance.migrateAppearance({ navLayout: "bottom" })).toMatchObject({ navLayout: "bottom", navLayoutChosen: true });
+    expect(appearance.migrateAppearance({ navLayout: "drawer" }).navLayoutChosen).toBe(false);
+    expect(appearance.migrateAppearance({ ...appearance.DEFAULT_APPEARANCE, navLayoutChosen: false }).navLayoutChosen).toBe(false);
+    expect(appearance.migrateAppearance({ navLayout: "rail", navLayoutChosen: "yes" }).navLayoutChosen).toBe(false);
+  });
   it.each([
     ["ink", "mono"], ["green", "emerald"], ["plum", "violet"],
-    ["clay", "rose"], ["blue", "blue"],
+    ["clay", "rose"], ["blue", "blue"], ["mono", "mono"],
+    ["amber", "orange"], ["cyan", "teal"], ["lime", "emerald"], ["pink", "rose"],
   ])("migrates %s to %s without resetting other preferences", (old, next) => {
     localStorage.setItem(appearance.APPEARANCE_STORAGE_KEY, JSON.stringify({
       accent: old, textScale: "xlarge", reduceMotion: "reduce", highQualityPhoto: true,
     }));
     expect(appearance.loadAppearance()).toEqual({
-      accent: next, textScale: "xlarge", reduceMotion: "reduce", highQualityPhoto: true,
+      accent: next, accentSource: "preset", textScale: "xlarge", reduceMotion: "reduce", highQualityPhoto: true,
       navLayout: "bottom",
+      navLayoutChosen: false,
     });
   });
 
@@ -29,14 +39,15 @@ describe("consumer appearance migration", () => {
     expect(appearance.loadAppearance()).toEqual(appearance.DEFAULT_APPEARANCE);
   });
 
-  it("offers exactly the twelve approved accents, default included and unique", () => {
+  it("offers eight curated accents with FindBack Blue as the fresh default", () => {
     const ids = appearance.ACCENT_OPTIONS.map((a) => a.id);
     expect(ids).toEqual([
-      "emerald", "blue", "violet", "rose", "amber", "teal", "mono",
-      "indigo", "cyan", "lime", "orange", "pink",
+      "blue", "indigo", "violet", "emerald", "teal", "rose", "orange", "mono",
     ]);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain(appearance.DEFAULT_APPEARANCE.accent);
+    expect(appearance.DEFAULT_APPEARANCE.accent).toBe("blue");
+    expect(appearance.ACCENT_OPTIONS[0]?.label).toBe("FindBack Blue");
   });
 
   it("emits light and dark pairs for each accent so a theme switch cannot leave stale colors", () => {

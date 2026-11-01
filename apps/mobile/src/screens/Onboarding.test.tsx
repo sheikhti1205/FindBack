@@ -33,9 +33,20 @@ function goToLastPage() {
 }
 
 describe("Onboarding first run", () => {
+  it("shares the truthful recovery example and explains discovery, contact and handover", () => {
+    render(<Onboarding />);
+    expect(screen.getByRole("figure", { name: /example recovery journey/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
+    expect(screen.getByRole("list", { name: /report to recovery/i }).textContent).toMatch(/Report.*Discover.*Match.*Contact.*Recover/s);
+    fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
+    expect(screen.getByText(/browse nearby reports.*possible matches/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
+    expect(screen.getByText(/contact.*handover.*recovered/i)).toBeTruthy();
+  });
   it("fresh launch shows the first page with progress announced", () => {
     render(<Onboarding />);
-    expect(screen.getByRole("heading", { level: 1, name: /lose less\. find faster\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
     expect(
       screen.getByText(/report a lost or found item and keep every update in one place\./i),
     ).toBeTruthy();
@@ -64,9 +75,9 @@ describe("Onboarding first run", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
-    expect(screen.getByRole("heading", { level: 1, name: /set it up your way\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: /bring it back, together\./i })).toBeTruthy();
     expect(
-      screen.getByText(/choose your theme, notifications and optional ai tools whenever you want\./i),
+      screen.getByText(/contact each other.*safe handover.*recovered/i),
     ).toBeTruthy();
   });
 
@@ -120,7 +131,7 @@ describe("Onboarding first run", () => {
   });
 
   it("decorative illustrations stay hidden from assistive tech", () => {
-    render(<Onboarding />);
+    render(<Onboarding initialPage={1} />);
     const art = document.querySelector("[data-onboarding-art]");
     expect(art).toBeTruthy();
     expect(art?.getAttribute("aria-hidden")).toBe("true");
@@ -139,7 +150,7 @@ describe("Onboarding first run", () => {
     expect(screen.getByRole("heading", { level: 1, name: /report in seconds\./i })).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole("region", { name: /onboarding/i }), { key: "ArrowLeft" });
-    expect(screen.getByRole("heading", { level: 1, name: /lose less\. find faster\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
   });
 
   it("does not overflow horizontally at Extra-large text", () => {
@@ -154,7 +165,7 @@ describe("Onboarding first run", () => {
     render(<Onboarding />);
     const root = screen.getByRole("region", { name: /onboarding/i });
     expect(root.getAttribute("data-motion")).toBe("static");
-    const art = document.querySelector("[data-onboarding-art]");
+    const art = screen.getByRole("figure", { name: /example recovery journey/i });
     expect(art?.getAttribute("data-motion")).toBe("static");
   });
 

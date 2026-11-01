@@ -127,6 +127,7 @@ describe("CreateReport immediate submit", () => {
         expect.objectContaining({ description: finalMarkdown }),
         null,
         expect.any(String),
+        expect.any(Function),
       ),
     );
   });

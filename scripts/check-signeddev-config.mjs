@@ -48,7 +48,7 @@ export const STAGED_PUBLIC_DIR = resolve(
  *
  * @returns {string | null} error message, or null when the contract holds
  */
-export const APPLINK_PATH_PREFIXES = ["/r/", "/recovery", "/auth/callback"];
+export const APPLINK_PATH_PREFIXES = ["/r/", "/api/share/", "/recovery", "/auth/callback"];
 
 export function checkAppLinksManifest(xml) {
   if (typeof xml !== "string" || xml.length === 0) return "AndroidManifest is empty";
@@ -68,7 +68,7 @@ export function checkAppLinksManifest(xml) {
     }
     const pathPrefix = /android:pathPrefix="([^"]*)"/.exec(dataTag)?.[1];
     if (!pathPrefix || !APPLINK_PATH_PREFIXES.includes(pathPrefix)) {
-      return "App-Links data element must use an allowlisted pathPrefix (/r/, /recovery, /auth/callback)";
+      return "App-Links data element must use an allowlisted pathPrefix (/r/, /api/share/, /recovery, /auth/callback)";
     }
     prefixes.add(pathPrefix);
   }

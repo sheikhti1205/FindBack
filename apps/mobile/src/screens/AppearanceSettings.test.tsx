@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("AppearanceSettings", () => {
-  it("renders one heading, three theme options, and twelve accent options as native radios", () => {
+  it("renders one heading, three theme options, and eight curated accents as native radios", () => {
     renderScreen();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: "Appearance" })).toBeTruthy();
@@ -39,9 +39,10 @@ describe("AppearanceSettings", () => {
       expect(screen.getByRole("radio", { name: new RegExp(`^${name}`) })).toBeTruthy();
     }
     expect(screen.queryByRole("radio", { name: /^AMOLED/ })).toBeNull();
-    for (const name of ["Emerald", "Blue", "Violet", "Rose", "Amber", "Teal", "Mono", "Indigo", "Cyan", "Lime", "Orange", "Pink"]) {
+    for (const name of ["FindBack Blue", "Indigo", "Violet", "Emerald", "Teal", "Rose", "Orange", "Mono"]) {
       expect(screen.getByRole("radio", { name })).toBeTruthy();
     }
+    for (const name of ["Amber", "Cyan", "Lime", "Pink"]) expect(screen.queryByRole("radio", { name })).toBeNull();
   });
 
   it("theme selection applies and persists immediately in the stable object format", () => {
@@ -84,6 +85,18 @@ describe("AppearanceSettings", () => {
     const stored = JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY) ?? "{}");
     expect(stored.accent).toBe("violet");
     expect(document.documentElement.dataset.accent).toBe("violet");
+  });
+
+  it("web never offers a pretend wallpaper-color switch", () => {
+    renderScreen();
+    expect(screen.queryByRole("switch", { name: "System colors" })).toBeNull();
+    expect(screen.getByText(/system colors.*android 12/i)).toBeTruthy();
+  });
+
+  it("an explicit Navigation setting acknowledges this device choice", () => {
+    renderScreen();
+    act(() => screen.getByRole("radio", { name: /Side rail/ }).click());
+    expect(JSON.parse(localStorage.getItem(APPEARANCE_STORAGE_KEY)!)).toMatchObject({ navLayout: "rail", navLayoutChosen: true });
   });
 
   it("live preview reflects the current theme and accent selection", () => {

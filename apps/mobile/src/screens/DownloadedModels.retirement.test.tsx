@@ -55,7 +55,7 @@ async function openCleanup() {
   const trigger = await screen.findByRole("button", { name: "Remove older downloads" });
   trigger.focus(); // fireEvent.click does not perform the browser's focus default.
   fireEvent.click(trigger);
-  return screen.getByRole("dialog", { name: "Remove older downloads?" });
+  return screen.getByRole("alertdialog", { name: "Remove older downloads?" });
 }
 
 it("does not advertise obsolete models or cleanup on a clean installation", async () => {
@@ -74,12 +74,12 @@ it("removes old installed and partial downloads only after consent, preserving t
   expect(within(dialog).getByText(/search helper.*stay/i)).toBeTruthy();
   expect(f.removed).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Keep downloads" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Remove older downloads" }));
   expect(f.removed).toEqual([]);
   const confirmed = await openCleanup();
   fireEvent.click(within(confirmed).getByRole("button", { name: "Remove older downloads" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   const result = screen.getByText("Older downloads removed. Your local search helper is unchanged.");
   expect(document.activeElement).toBe(result);
   expect(f.service.manager.statusOf(QWEN_TEXT_DESCRIPTOR.modelId)?.download).toBe("not-installed");
@@ -99,9 +99,9 @@ it("does not duplicate or dismiss an in-flight cleanup", async () => {
   const confirm = within(dialog).getByRole("button", { name: "Remove older downloads" });
   fireEvent.click(confirm); fireEvent.click(confirm); fireEvent.keyDown(document, { key: "Escape" });
   expect(remove).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
   await act(async () => { release(); await held; });
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });
 
 it("keeps partial cleanup retryable without leaking native errors or removing the helper", async () => {
@@ -120,7 +120,7 @@ it("keeps partial cleanup retryable without leaking native errors or removing th
   expect(f.service.manager.statusOf(SMOL_VISION_DESCRIPTOR.modelId)?.download).toBe("not-installed");
   fail = false;
   fireEvent.click(within(dialog).getByRole("button", { name: "Remove older downloads" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(f.service.manager.statusOf(NEEDLE_DESCRIPTOR.modelId)?.checksumVerified).toBe(true);
   expect(f.unloadNeedle).not.toHaveBeenCalled();
 });

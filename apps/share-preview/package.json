@@ -1,0 +1,7 @@
+{
+  "name": "findback-share-preview",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "engines": { "node": ">=22" }
+}

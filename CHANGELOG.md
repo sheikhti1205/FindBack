@@ -5,7 +5,23 @@ described in [docs/history/VERSION_HISTORY.md](docs/history/VERSION_HISTORY.md).
 track real evolution and do not imply a stable release. The per-commit mapping is in
 [docs/history/VERSION_HISTORY.csv](docs/history/VERSION_HISTORY.csv).
 
-## 0.12.0-beta.1 — product coherence (source checkpoint)
+## 0.13.0-beta.1 — product fit reset (beta checkpoint)
+
+- Relevance-aware server candidate retrieval before the bounded pool; retained
+  local Needle/USE ranking and useful web matching.
+- Canonical colour roles, FindBack Blue default, graphite/light/AMOLED surfaces,
+  optional Android12+ System colours and per-device wide navigation choice.
+- Truthful recovery journey, sanitized same-domain anonymous report previews,
+  explicit privileged role acceptance and launch-gated one-time local reset.
+- Retired the unused legacy Node API/reference containers; optional BYOK Chat
+  and the existing recovery/private-messaging owners remain.
+- Authorized live reset removed10Auth accounts,83product rows,18Storage objects
+  and3old sign-in flows;53public tables/four buckets/configuration preserved.
+  Only intended2bootstrap email offers and1pending invitation were retained.
+- Beta/source checkpoint, not a GitHub Release or native/account acceptance.
+  See [verification and limitations](docs/releases/PRODUCT_FIT_RESET_2026-11-02.md).
+
+## 0.12.0-beta.1 — product coherence (historical source checkpoint)
 
 - Unified phone/desktop navigation, adaptive split views, anchored actions,
   task/confirmation surfaces and a shared zoomable photo viewer.
@@ -18,8 +34,9 @@ track real evolution and do not imply a stable release. The per-commit mapping i
 - Repaired content erasure/exact replay, report-preview revocation, account-bound
   publication and stale editor continuations. Ambiguous already-erased legacy
   send identities fail closed rather than falsely acknowledging changed content.
-- Local source/fixture acceptance only. Four new migrations remain **LIVE-PENDING**;
-  nothing is deployed or released by this version change. Real-account/browser,
+- Local source/fixture acceptance only. The four migrations were subsequently
+  observed hosted at the Product Fit Reset baseline; the old LIVE-PENDING label
+  is superseded. No release was created by that version change. Real-account/browser,
   physical Android, Sentry and owner phone-photo corpus acceptance remain unpassed.
   See [source checkpoint](docs/releases/M7_P_SOURCE_CLOSURE_2026-11-01.md).
 

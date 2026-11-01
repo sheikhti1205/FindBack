@@ -3,7 +3,7 @@ import { findPossibleMatches, resolveMatchingBackend } from "./possibleMatches";
 import type { PostItem } from "@findback/shared";
 
 const { fetchMatchCandidates } = vi.hoisted(() => ({ fetchMatchCandidates: vi.fn() }));
-vi.mock("./posts", () => ({ MATCH_CANDIDATE_LIMIT: 20, fetchMatchCandidates }));
+vi.mock("./posts", async (importOriginal) => ({ ...await importOriginal<typeof import("./posts")>(), fetchMatchCandidates }));
 
 const target = { id: "lost-1", type: "LOST", status: "OPEN", title: "black umbrella", description: "wooden handle", category: "Clothing", eventDate: null, locationLabel: null, latitude: null, longitude: null } as never;
 
@@ -75,15 +75,13 @@ describe("findPossibleMatches", () => {
     });
   });
 
-  it("caps the candidate pool at 20, the spec pool", async () => {
-    const candidates = Array.from({ length: 25 }, (_, i) => rawPost(`c${i}`));
-    // The embedder is called with 21 texts (1 target + 20 capped candidates) and
-    // must answer with exactly 21 vectors — surplus vectors are not a valid payload.
-    const vectors = Array.from({ length: 21 }, () => [1, 0]);
+  it("retains the relevance pool beyond twenty but never embeds more than eighty candidates", async () => {
+    const candidates = Array.from({ length: 100 }, (_, i) => rawPost(`c${i}`));
+    const vectors = Array.from({ length: 81 }, () => [1, 0]);
     const embed = vi.fn().mockResolvedValue(vectors);
     const result = await findPossibleMatches(target, { fetchCandidates: vi.fn().mockResolvedValue(candidates), embed });
-    expect(result.candidatesConsidered).toBe(20);
-    expect(embed.mock.calls[0]![0]).toHaveLength(21);
+    expect(result.candidatesConsidered).toBe(80);
+    expect(embed.mock.calls[0]![0]).toHaveLength(81);
   });
 
   it("asks the reader for the pool itself, and never for a wider window", async () => {
@@ -94,7 +92,7 @@ describe("findPossibleMatches", () => {
     // compared.
     fetchMatchCandidates.mockResolvedValue([]);
     await findPossibleMatches(target, { embed: async () => [[1, 0]] });
-    expect(fetchMatchCandidates).toHaveBeenCalledWith("lost-1", 20);
+    expect(fetchMatchCandidates).toHaveBeenCalledWith("lost-1", 80);
   });
 
   it("never asks the reader for anything about a block", async () => {
@@ -105,7 +103,7 @@ describe("findPossibleMatches", () => {
     const args = fetchMatchCandidates.mock.calls[0]!;
     expect(args).toHaveLength(2);
     expect(args[0]).toBe("lost-1");
-    expect(args[1]).toBe(20);
+    expect(args[1]).toBe(80);
     expect(JSON.stringify(args)).not.toContain("block");
   });
 
@@ -150,6 +148,15 @@ describe("findPossibleMatches", () => {
     expect(result.candidatesConsidered).toBe(2);
     expect(result.matches.map((match) => match.post.id)).toEqual(["same-item"]);
     expect(result.matches[0]!.reasons).toContain("Similar wording");
+  });
+
+  it("web text ranking can recover an eligible true match past the former twenty-row client cutoff", async () => {
+    const candidates = Array.from({ length: 40 }, (_, i) => rawPost(`noise-${i}`, { title: "gym card", description: "laminated paper", category: "Documents & IDs" }));
+    candidates.push(rawPost("older-true-match", { title: "black umbrella", description: "wooden handle" }));
+    const result = await findPossibleMatches(target, { fetchCandidates: async () => candidates, embed: async () => { throw new Error("web has no native embedder"); } });
+    expect(result.mode).toBe("text");
+    expect(result.candidatesConsidered).toBe(41);
+    expect(result.matches.map((m) => m.post.id)).toEqual(["older-true-match"]);
   });
 
   it("does not claim a semantic comparison when the embedder succeeded", async () => {

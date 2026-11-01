@@ -104,8 +104,7 @@ export function resolveSentryEnvironment(
  * INVARIANT: the SDK `dist` below must match the `--dist` values the
  * CI/release/web sourcemap uploads use (`android-debug`,
  * `android-release`, `web-production`); the closed map additionally covers
- * `android-signeddev` (signed-dev APK lane) and `docker-reference`
- * (reference web image). Unknown/empty input resolves to `undefined` (SDK
+ * `android-signeddev` (signed-dev APK lane). Unknown/empty input resolves to `undefined` (SDK
  * default) — never a placeholder — so a misconfigured env cannot mint a
  * dist that can never match an upload.
  */
@@ -114,7 +113,6 @@ const SENTRY_DIST_VALUES = [
   "android-signeddev",
   "android-release",
   "web-production",
-  "docker-reference",
 ] as const;
 
 export type SentryDist = (typeof SENTRY_DIST_VALUES)[number];

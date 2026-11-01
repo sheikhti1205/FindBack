@@ -6,7 +6,7 @@ import {
   renderMarkdown,
 } from "./cross-environment-matrix.mjs";
 
-const LANES = ["LOCAL", "CI", "RELEASE", "WEB", "DOCKER", "LIVE"];
+const LANES = ["LOCAL", "CI", "RELEASE", "WEB", "LIVE"];
 
 test("the shipped matrix satisfies every invariant", () => {
   assert.deepEqual(checkMatrixInvariants(), []);
@@ -63,6 +63,6 @@ test("every row declares all lanes and renders a markdown row", () => {
     for (const lane of LANES) assert.ok(row.cells[lane], `${row.id}.${lane}`);
   }
   const md = renderMarkdown();
-  assert.match(md, /\| Area \| LOCAL \| CI \| RELEASE \| WEB \| DOCKER \| LIVE \| Notes \|/);
+  assert.match(md, /\| Area \| LOCAL \| CI \| RELEASE \| WEB \| LIVE \| Notes \|/);
   assert.equal(md.split("\n").length, MATRIX.length + 2);
 });

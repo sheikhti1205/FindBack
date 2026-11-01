@@ -275,7 +275,7 @@ describe("CreateReport", () => {
     const file = new File(["abc"], "p.jpg", { type: "image/jpeg" });
     pickFile(file);
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
-    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Lost phone" }), file, expect.any(String)));
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Lost phone" }), file, expect.any(String), expect.any(Function)));
   });
 
   it("keeps the selected photo when publish fails", async () => {
@@ -545,7 +545,7 @@ describe("CreateReport", () => {
     fireEvent.change(screen.getByLabelText(/what did you lose/i), { target: { value: "Lost keys" } });
     await chooseCategory("Keys");
     fireEvent.submit(screen.getByRole("button", { name: /publish/i }).closest("form")!);
-    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null, expect.any(String)));
+    await waitFor(() => expect(publishReportMock).toHaveBeenCalledWith(expect.objectContaining({ category: "Keys" }), null, expect.any(String), expect.any(Function)));
   });
 
   it("keeps the photo uploadable across navigation (draft restore)", async () => {
@@ -571,6 +571,7 @@ describe("CreateReport", () => {
         expect.objectContaining({ title: "Lost phone" }),
         expect.any(File),
         expect.any(String),
+        expect.any(Function),
       ),
     );
   });
@@ -895,6 +896,7 @@ describe("CreateReport", () => {
         expect.objectContaining({ category: "Phones & Tablets" }),
         null,
         expect.any(String),
+        expect.any(Function),
       ),
     );
   });

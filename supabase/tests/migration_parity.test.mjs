@@ -737,6 +737,7 @@ const CLIENT_EXECUTE_ROLES = ["public", "authenticated"];
 // catalog (has_function_privilege), not copied from a partially parsed chain.
 const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "complete_social_profile",
+  "findback_accept_role_offer",
   "findback_ack_chat_media_delivery",
   "findback_add_comment_client",
   "findback_add_comment_with_attachments",
@@ -780,6 +781,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_my_recoveries",
   "findback_my_reports",
   "findback_my_role",
+  "findback_my_role_offer",
   "findback_notification_count_client",
   "findback_post_is_match_linked",
   "findback_post_limit",
@@ -789,6 +791,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_react_comment_client",
   "findback_register_device_token_client",
   "findback_reputation_tier",
+  "findback_report_sharing",
   "findback_reserve_chat_media",
   "findback_resolve_appeal",
   "findback_restore_notifications_client",
@@ -802,6 +805,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_save_post_client",
   "findback_search_profiles_client",
   "findback_set_notification_preferences_client",
+  "findback_shared_report_preview",
   "findback_staff_appeal",
   "findback_staff_appeals",
   "findback_staff_feedback",

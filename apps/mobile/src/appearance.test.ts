@@ -27,13 +27,15 @@ afterEach(() => {
 });
 
 describe("appearance settings module (AI-011 Quick Appearance)", () => {
-  it("exposes defaults: mono accent, standard scale, system motion, standard photo, bottom bar", () => {
+  it("exposes defaults: FindBack Blue, standard scale, system motion, standard photo, bottom bar", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
-      accent: "mono",
+      accent: "blue",
+      accentSource: "preset",
       textScale: "standard",
       reduceMotion: "system",
       highQualityPhoto: false,
       navLayout: "bottom",
+      navLayoutChosen: false,
     });
   });
 
@@ -74,10 +76,12 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
     try {
       const next: AppearanceSettings = {
         accent: "blue",
+        accentSource: "preset",
         textScale: "large",
         reduceMotion: "reduce",
         highQualityPhoto: true,
         navLayout: "rail",
+        navLayoutChosen: true,
       };
       saveAppearance(next);
       expect(loadAppearance()).toEqual(next);
@@ -108,10 +112,12 @@ describe("appearance settings module (AI-011 Quick Appearance)", () => {
   it("applyAppearance sets accent CSS vars, root scale, and motion markers", () => {
     applyAppearance({
       accent: "blue",
+      accentSource: "preset",
       textScale: "large",
       reduceMotion: "reduce",
       highQualityPhoto: false,
       navLayout: "bottom",
+      navLayoutChosen: false,
     });
     const root = document.documentElement;
     const swatch = ACCENT_OPTIONS.find((a) => a.id === "blue")!.swatch;
@@ -192,8 +198,8 @@ describe("appearance accent scope (W5: accent never recolors semantics)", () => 
     }
   });
 
-  it("keeps mono valid and the new-install default untouched", () => {
-    expect(DEFAULT_APPEARANCE.accent).toBe("mono");
+  it("keeps Mono selectable without overriding the FindBack Blue fresh default", () => {
+    expect(DEFAULT_APPEARANCE.accent).toBe("blue");
     expect(ACCENT_OPTIONS.some((a) => a.id === "mono")).toBe(true);
   });
 });

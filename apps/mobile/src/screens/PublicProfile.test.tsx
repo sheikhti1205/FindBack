@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
@@ -88,7 +88,8 @@ beforeEach(() => {
 describe("PublicProfile", () => {
   it("reports the loaded user through the profile overflow and canonical sheet", async () => {
     renderRoute();
-    fireEvent.click(await screen.findByRole("button", { name: "More profile actions" }));
+    const header = within(await screen.findByRole("region", { name: "Public profile" }));
+    fireEvent.click(header.getByRole("button", { name: "More profile actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Report user" }));
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));
@@ -103,12 +104,12 @@ describe("PublicProfile", () => {
     authState.user = null;
     const view = renderRoute();
     await screen.findByText("Owner Name");
-    expect(screen.queryByRole("button", { name: "More profile actions" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Public profile" })).queryByRole("button", { name: "More profile actions" })).toBeNull();
     view.unmount();
     authState.user = { id: "u2" };
     renderRoute();
     await screen.findByText("Owner Name");
-    expect(screen.queryByRole("button", { name: "More profile actions" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Public profile" })).queryByRole("button", { name: "More profile actions" })).toBeNull();
   });
   it("loads the profile by the route handle", async () => {
     renderRoute("owner");

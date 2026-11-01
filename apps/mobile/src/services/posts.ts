@@ -69,8 +69,8 @@ const CLIENT_FEED_RPC = "findback_query_posts_client";
  */
 export const NEARBY_FEED_RPC = "findback_query_posts_nearby_client";
 
-/** On-device matching pool: min(OPEN opposite-type, 20) per spec. */
-export const MATCH_CANDIDATE_LIMIT = 20;
+/** Relevance-selected open opposite-type pool; display cap stays independent. */
+export const MATCH_CANDIDATE_LIMIT = 80;
 
 interface PostCursor {
   createdAt: string;
@@ -763,17 +763,17 @@ export async function fetchMyPosts(): Promise<FeedPage> {
 }
 
 /**
- * Candidate pool for on-device possible-matches: the most recent OPEN
+ * Relevance-selected pool for on-device possible-matches: OPEN
  * opposite-type reports FOR A TARGET REPORT.
  *
- * THE SERVER DOES THE FILTERING. `findback_match_candidates_client` reads the
+ * THE SERVER DOES THE FILTERING. `findback_match_candidates_v2` reads the
  * target from the visible view — so the client cannot lie about the target's
  * type to widen the pool — and EXCLUDES a candidate whose author the reader
  * is blocked with in its WHERE clause. Nothing about a block is projected
  * back to the client, so there is no client-side exclusion to run here and no
  * block copy on the candidate surface.
  *
- * The limit is the pool the reader keeps; the server clamps it to 1..20 as
+ * The limit is the pool the reader keeps; the server clamps it to 1..80 as
  * well, and the client keeps its own cap so an over-long response can never
  * widen the pool.
  */
@@ -781,12 +781,15 @@ export async function fetchMatchCandidates(
   targetId: string,
   limit: number = MATCH_CANDIDATE_LIMIT,
 ): Promise<PostItem[]> {
-  const { data, error } = await getSupabase().rpc("findback_match_candidates_client", {
+  const boundedLimit = Number.isFinite(limit)
+    ? Math.min(MATCH_CANDIDATE_LIMIT, Math.max(1, Math.floor(limit)))
+    : MATCH_CANDIDATE_LIMIT;
+  const { data, error } = await getSupabase().rpc("findback_match_candidates_v2", {
     p_target_id: targetId,
-    p_limit: limit,
+    p_limit: boundedLimit,
   });
   if (error) throw new ApiError(error.message, 400);
-  return ((data ?? []) as ClientPostRow[]).slice(0, limit).map(mapClientPost);
+  return ((data ?? []) as ClientPostRow[]).slice(0, boundedLimit).map(mapClientPost);
 }
 
 /**

@@ -34,6 +34,16 @@ public final class OpenRouterKeyPlugin extends Plugin {
     private static final String STORE = "findback.openrouter.credentials";
     private static final String ALIAS = "findback.openrouter.key.v1";
 
+    /** Population reset:delete ciphertext and its master alias,never decrypt/read keys. */
+    static void resetForDataEpoch(Context context) throws Exception {
+        if (!context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().commit()) {
+            throw new IllegalStateException("Credential reset incomplete");
+        }
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS);
+    }
+
     private SharedPreferences prefs() {
         return getContext().getSharedPreferences(STORE, Context.MODE_PRIVATE);
     }

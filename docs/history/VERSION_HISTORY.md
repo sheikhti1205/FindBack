@@ -28,8 +28,9 @@ derived line (`product_version`) corrects only labels that are not supportable:
 | — → `0.11.0-beta.2` (r0894–r0895) | functional beta freeze |
 
 Latest reconstructed interval: **0.11.0-beta.2** (through r0895). Current source
-version: **0.12.0-beta.1**, the later M7-P source checkpoint described in
-[its closure record](../releases/M7_P_SOURCE_CLOSURE_2026-11-01.md). The CSV above
+version: **0.13.0-beta.1**, the Product Fit Reset checkpoint described in
+[its record](../releases/PRODUCT_FIT_RESET_2026-11-02.md), following M7-P
+**0.12.0-beta.1**. The CSV above
 remains the original reconstruction, not a fabricated per-commit extension or a
 claim that the new version was published.
 

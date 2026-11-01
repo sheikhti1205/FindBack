@@ -174,7 +174,7 @@ def build_story():
     parts = [Paragraph("FindBack — Entity Relationship Diagram", H1)]
     parts.append(Paragraph(
         "Schema source of truth: supabase/migrations/20260912000000_init.sql "
-        "(Supabase PostgreSQL); local/test mirror services/api/src/db/sqliteAdapter.ts. "
+        "(Supabase PostgreSQL); legacy course diagram, not a current schema inventory. "
         "Mermaid source in docs/erd/ERD.md.",
         BODY,
     ))

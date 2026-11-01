@@ -19,6 +19,15 @@ object ChatPushState {
     private const val LIMIT = 512
     private var storageReady = true
 
+    /** One-time population reset shares the delivery/bind monitor. No old tap or
+     * background wake can recreate a bound account during/after this clear. */
+    @JvmStatic @Synchronized fun resetForDataEpoch(context: Context) {
+        storageReady = false
+        NotificationManagerCompat.from(context).cancelAll()
+        check(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().commit())
+        storageReady = true
+    }
+
     private fun load(context: Context): JSONObject = JSONObject(
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("state", "{}") ?: "{}")
 

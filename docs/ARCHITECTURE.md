@@ -1,13 +1,16 @@
 # Architecture
 
-FindBack is a monorepo: one React/Capacitor client, one Node API, a shared package,
-and a Supabase backend (Postgres, row-level security, Edge Functions, storage).
+FindBack is a monorepo: one React/Capacitor client, a shared validation package,
+and one Supabase backend (Postgres, row-level security, Edge Functions, storage).
+The course-era Node/Express/GraphQL API and its reference container were retired
+after source/workflow non-use proof. Git retains their history, not an active
+second backend or demo-auth path.
 
 ```
 apps/mobile/          React + Capacitor client (Android primary, web build for links/review)
-services/api/         Node/Express + GraphQL API (local and non-Supabase deployments)
+apps/share-preview/   Read-only same-domain Azure HTTP share renderer
 packages/shared/      Shared schemas, validation and constants
-supabase/migrations/  Ordered SQL migrations (immutable once applied; new M7-P files are LIVE-PENDING)
+supabase/migrations/  Ordered SQL migrations (immutable once applied)
 supabase/functions/   Deno Edge Functions (AI help, chat media, push, cleanup, trust)
 docs/                 Product, architecture, history and acceptance documentation
 scripts/              Build, verification and release tooling
@@ -23,16 +26,24 @@ scripts/              Build, verification and release tooling
 - Local state and durable data live in IndexedDB on web and SQLite on Android. The
   chat store, outbox and restore paths are shared code so both targets behave the
   same way.
-- AI runs on-device where claimed (Smart Search, match suggestions, report-photo
-  analysis via LiteRT/MediaPipe). Cloud AI Chat is a separate surface that uses the
-  user's own provider key and is not relayed by a FindBack server.
+- On-device Needle/USE retain Smart Search, structured text tools and stage-two
+  matching. No retired local-generative/photo-analysis runtime is reintroduced.
+  Optional cloud AI Chat is a separate secondary surface using the user's own
+  provider key, not a FindBack server relay.
+- Startup waits for the one-time data epoch before importing auth, AI, messaging
+  or other persisted owners. Native cleanup and the web marker commit last;
+  failure stops startup rather than restoring deleted-account history.
 
-## API
+## Public share renderer
 
-- `services/api` exposes REST and GraphQL over the same domain model, with JWT auth,
-  request validation (Zod) and rate/abuse middleware.
-- It is the deployment path for environments that do not use Supabase directly; the
-  app's production path is Supabase + Edge Functions.
+- Existing `findbackapp.social` Azure Static Web Apps hosting serves a small
+  dependency-free HTTP renderer at `/api/share/:id`. Legacy `/r/:id` links remain.
+- HTML/social metadata and SPA JSON use one minimal public SQL projection, not
+  full authenticated reports. No free-form contact/location text or photos are
+  copied; revocation, moderation and deletion are enforced on fresh requests.
+- Publishable configuration only, no visitor credential forwarding, no-store,
+  fixed upstream RPC, bounded response/deadline and fail-closed metadata. This is
+  not a replacement product API. Deployment/live acceptance is tracked separately.
 
 ## Backend (Supabase)
 
@@ -52,8 +63,9 @@ scripts/              Build, verification and release tooling
    ownership, validation, visibility and staged-media references. Leaving before
    dispatch cancels publication; an uncertain dispatched result retains uploads
    and prevents blind retry.
-3. Matching suggestions are computed from report attributes; on-device suggestions
-   never leave the phone.
+3. The invoker/RLS v2 candidate RPC scores category/text/date/location before its
+   bounded80 pool. Existing local Needle/USE/visual ranking remains stage two;
+   web retains a non-native baseline. Local embeddings are not sent to this RPC.
 4. Recovery is confirmed by the current owner of the report; the rating is created
    only from a real recovery.
 
@@ -75,7 +87,10 @@ scripts/              Build, verification and release tooling
    fail closed; reconstructable legacy payloads are backfilled before erasure.
 
 M7-P people search, mute, context/location and forward integrity repair migrations
-are verified against a disposable local chain, **not yet applied to hosted**.
+were observed hosted at the Product Fit Reset baseline. Product Fit Reset adds
+matching-v2, sanitized public preview and explicit privileged role acceptance.
+Hosted application/readback and publication state are recorded in the
+[current checkpoint](releases/PRODUCT_FIT_RESET_2026-11-02.md).
 Local render/source acceptance does not establish native, real-account or live
 service acceptance. No Edge Function deployment accompanies a source commit.
 
@@ -83,6 +98,9 @@ service acceptance. No Edge Function deployment accompanies a source commit.
 
 - Roles (moderator/admin) are checked server-side for every staff action; the UI
   merely hides what the caller cannot do.
+- A confirmed email offer is not an assigned role. Normal account setup precedes
+  explicit acceptance under the server's role/deletion lock; signup attachment
+  triggers are removed. Replaced/revoked/stale offers cannot confer privilege.
 - Moderation, appeals and feedback write durable audit records.
 - Account deletion removes the account, reports and photos, and deliberately retains
   limited safety records (reported-content evidence, appeal/moderation/audit) for a
@@ -91,6 +109,7 @@ service acceptance. No Edge Function deployment accompanies a source commit.
 ## Where to look next
 
 - Setup and checks: [DEVELOPMENT.md](DEVELOPMENT.md)
+- Legacy retirement boundary: [LEGACY_API_RETIREMENT.md](LEGACY_API_RETIREMENT.md)
 - Version history: [history/VERSION_HISTORY.md](history/VERSION_HISTORY.md)
 - Freeze record: [releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md](releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md)
 - Data model: [erd/](erd/)

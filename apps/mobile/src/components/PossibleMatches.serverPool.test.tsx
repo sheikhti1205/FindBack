@@ -5,7 +5,7 @@ import { findPossibleMatches } from "../services/possibleMatches";
 
 /** Ownership moved from the interim client block flag to the server reader.
  * Real block/own-row/type/status/limit tests now execute in
- * supabase/tests/verify_20261022160000_match_candidates_reader.sql B1-B9.
+   * supabase/tests/verify_product_fit_match_candidates.sql R0-R14.
  * These tests deliberately claim only the consumer's returned-pool contract;
  * an injected pool cannot stand in for proving the database's exclusion. */
 const target = {
@@ -65,13 +65,13 @@ describe("Possible Matches — server-owned candidate pool", () => {
     expect(embed).not.toHaveBeenCalled();
   });
 
-  it("caps an injected pool at twenty and never embeds beyond it", async () => {
+  it("caps an injected relevance pool at eighty and never embeds beyond it", async () => {
     const embed = embedder();
     const result = await findPossibleMatches(target, {
-      fetchCandidates: async () => Array.from({ length: 25 }, (_, i) => candidate(`found-${i}`)), embed,
+      fetchCandidates: async () => Array.from({ length: 100 }, (_, i) => candidate(`found-${i}`)), embed,
     });
-    expect(result.candidatesConsidered).toBe(20);
-    expect(embed.mock.calls[0]![0]).toHaveLength(21);
-    expect(embed.mock.calls[0]![0].join(" | ")).not.toContain("umbrella found-20");
+    expect(result.candidatesConsidered).toBe(80);
+    expect(embed.mock.calls[0]![0]).toHaveLength(81);
+    expect(embed.mock.calls[0]![0].join(" | ")).not.toContain("umbrella found-80");
   });
 });

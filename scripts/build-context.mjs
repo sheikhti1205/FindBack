@@ -16,7 +16,7 @@
  *   `findback-mobile` (default) or `findback-web`. Mirrors
  *   apps/mobile/src/services/monitoring/release.ts (shape owned there).
  * - Sentry dist: exactly one of android-debug | android-signeddev |
- *   android-release | web-production | docker-reference.
+ *   android-release | web-production.
  * - Trace rate: a number in [0, 1]. Empty means the code-conservative
  *   default 0.1 — never 1.0 in code; 1.0 arrives only via env/repo-variable
  *   (see docs/runbooks/sentry-max-logging.md). NaN and out-of-range REJECT
@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 export const SENTRY_DEFAULT_TRACES_SAMPLE_RATE = 0.1;
 /**
  * THE single Sentry release namespace. Every lane (local variants, CI,
- * release, web, docker-reference) mints `findback-mobile@<version>+<short12>`;
+ * release, web) mints `findback-mobile@<version>+<short12>`;
  * lanes differ by dist, never by namespace. A second namespace MUST NOT be
  * introduced — web uses dist `web-production` under this same namespace.
  */
@@ -45,7 +45,6 @@ export const SENTRY_DIST_VALUES = Object.freeze([
   "android-signeddev",
   "android-release",
   "web-production",
-  "docker-reference",
 ]);
 
 const HERE = dirname(fileURLToPath(import.meta.url));

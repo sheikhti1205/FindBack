@@ -3,7 +3,7 @@
  * check-sentry-release-parity.mjs — ONE Sentry release/dist contract, proven
  * mechanically (CLOSEOUT-8). Static, read-only, no network: it imports the
  * canonical script modules and regex-scans the lanes that cannot be imported
- * (TypeScript, YAML, Dockerfile), then asserts they all agree on:
+ * (TypeScript, YAML), then asserts they all agree on:
  *
  *   1. release mint sameness (build-context vs build-apk produce the IDENTICAL
  *      string for the same inputs — the exact string the SDK embeds and the
@@ -12,7 +12,7 @@
  *   3. single namespace (no findback-web@ mint outside this file's own docs);
  *   4. closed dist set sameness (build-context set vs build-apk variant map);
  *   5. sentry-cli pin sameness (build-apk pin vs every workflow upload);
- *   6. trace-rate default 0.1 (code default + Dockerfile + compose fallback);
+ *   6. trace-rate default 0.1 (code default + shipped workflow fallbacks);
  *   7. upload-token hygiene (no VITE_SENTRY_AUTH_TOKEN in build surfaces).
  *
  * `checkParity(root)` is exported for tests (inject a fixture root for red
@@ -95,8 +95,6 @@ export function checkParity(root = REPO_ROOT) {
       ".github/workflows/release.yml",
       ".github/workflows/ci.yml",
       ".github/workflows/web.yml",
-      "Dockerfile",
-      "docker-compose.yml",
       "apps/mobile/vite.config.ts",
       ...walkTs(join(root, "apps/mobile/src")).map((p) => p.slice(root.length + 1)),
     ];
@@ -121,7 +119,6 @@ export function checkParity(root = REPO_ROOT) {
     ]) {
       if (!read(file).includes(`--dist ${dist}`)) fail(file, `upload --dist ${dist} missing`);
     }
-    if (!read("Dockerfile").includes('VITE_SENTRY_DIST="docker-reference"')) fail("Dockerfile:38", "docker-reference default missing");
   }
 
   // 5. CLI pin sameness.
@@ -139,15 +136,14 @@ export function checkParity(root = REPO_ROOT) {
   // 6. Trace-rate default 0.1.
   {
     if (SENTRY_DEFAULT_TRACES_SAMPLE_RATE !== 0.1) fail("scripts/build-context.mjs:34", "code default drifted from 0.1");
-    if (!read("Dockerfile").includes('ARG VITE_SENTRY_TRACES_SAMPLE_RATE="0.1"')) fail("Dockerfile:36", "docker default drifted from 0.1");
-    if (!read("docker-compose.yml").includes("0.1")) fail("docker-compose.yml", "compose fallback drifted from 0.1");
+    for (const [wf, variable] of [["ci.yml", "SENTRY_TRACES_RAW"], ["web.yml", "SENTRY_TRACES_RAW"], ["release.yml", "VITE_SENTRY_TRACES_SAMPLE_RATE"]]) {
+      if (!read(`.github/workflows/${wf}`).includes(`\${${variable}:-0.1}`)) fail(`.github/workflows/${wf}`, "trace-rate fallback drifted from 0.1");
+    }
   }
 
   // 7. Upload-token hygiene (never a VITE_ name in build surfaces).
   {
     const surfaces = [
-      "Dockerfile",
-      "docker-compose.yml",
       "apps/mobile/vite.config.ts",
       "scripts/build-context.mjs",
       "scripts/build-apk.mjs",

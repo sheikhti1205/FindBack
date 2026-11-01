@@ -9,8 +9,9 @@
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/.well-known/*", "/assets/*", "/*.{png,jpg,jpeg,webp,svg,ico,json,txt,map}"]
+    "exclude": ["/.well-known/*", "/api/*", "/assets/*", "/*.{png,jpg,jpeg,webp,svg,ico,json,txt,map}"]
   },
+  "platform": {"apiRuntime": "node:22"},
   "mimeTypes": {".json": "application/json"},
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",

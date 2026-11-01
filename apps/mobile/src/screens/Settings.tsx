@@ -69,8 +69,8 @@ const MOTION_LABELS: Record<ReduceMotionOverride, string> = {
 };
 
 /** Live theme + accent, e.g. `Dark · Emerald`. */
-export function appearanceSummary(theme: Theme, accent: AccentId): string {
-  const accentLabel = ACCENT_OPTIONS.find((option) => option.id === accent)?.label ?? accent;
+export function appearanceSummary(theme: Theme, accent: AccentId, source: "preset" | "system" = "preset"): string {
+  const accentLabel = source === "system" ? "System colors" : ACCENT_OPTIONS.find((option) => option.id === accent)?.label ?? accent;
   return `${THEME_LABELS[theme]} · ${accentLabel}`;
 }
 
@@ -155,6 +155,14 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   const [roleSnapshot, setRoleSnapshot] = useState<{ userId: string; role: MyRole } | null>(null);
   // Hide previous-account authority on the first render, before effects run.
   const staffRole = roleSnapshot?.userId === user?.id ? roleSnapshot?.role : null;
+  const [roleRevision, setRoleRevision] = useState(0);
+
+  useEffect(() => {
+    // roles.ts emits this only after a server-confirmed explicit acceptance.
+    const refresh = () => setRoleRevision(value => value + 1);
+    window.addEventListener("findback:role-changed", refresh);
+    return () => window.removeEventListener("findback:role-changed", refresh);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +178,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, roleRevision]);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,7 +247,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               title="Recovered items"
               description="Returned items, ratings and your standing."
               icon={RotateCcw}
-              iconTone="privacy"
+              iconTone="success"
               route="/settings/returns"
             />
             <SettingsRow
@@ -255,7 +263,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               title="Appearance"
               icon={Palette}
               iconTone="appearance"
-              value={appearanceSummary(theme, settings.accent)}
+              value={appearanceSummary(theme, settings.accent, settings.accentSource)}
               route="/settings/appearance"
             />
             <SettingsRow

@@ -21,6 +21,11 @@ export function reportLink(postId: string): string {
   return `${publicShareOrigin()}/r/${encodeURIComponent(postId)}`;
 }
 
+/** New externally shared links carry server-rendered, privacy-safe metadata. */
+export function sharePreviewLink(postId: string): string {
+  return `${publicShareOrigin()}/api/share/${encodeURIComponent(postId)}`;
+}
+
 /** The same allowlisted contract is used for browser entry, App Links and push taps. */
 export function parseReportLink(input: string, origin?: string): ReportLink | null {
   try {
@@ -30,7 +35,7 @@ export function parseReportLink(input: string, origin?: string): ReportLink | nu
     if (url.protocol !== "https:" || url.origin !== expected || url.username || url.password || url.hash) return null;
     // Reject URL normalization tricks rather than accepting their normalized result.
     if (input.split("?")[0] !== `${expected}${url.pathname}`) return null;
-    const match = /^\/r\/([^/]+)$/.exec(url.pathname);
+    const match = /^\/(?:r|api\/share)\/([^/]+)$/.exec(url.pathname);
     if (!match || !UUID.test(match[1]!)) return null;
     for (const key of url.searchParams.keys()) {
       if (!["focus", "comment"].includes(key) || url.searchParams.getAll(key).length !== 1) return null;

@@ -76,7 +76,7 @@ describe("DetailHeroGallery continuous paging", () => {
       <DetailHeroGallery postId="p1" title="Lost camera" images={IMAGES} onOpenLightbox={onOpen} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /open photo 1 of 3 fullscreen/i }));
-    expect(onOpen).toHaveBeenCalledWith(0, expect.any(Object));
+    expect(onOpen).toHaveBeenCalledWith(0);
 
     // A press that travels is a page gesture, never an open.
     const slide = screen.getAllByTestId("detail-hero-slide")[1]!;

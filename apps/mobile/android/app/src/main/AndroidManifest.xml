@@ -54,6 +54,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="${findbackShareHost}" android:pathPrefix="/r/" />
+                <data android:scheme="https" android:host="${findbackShareHost}" android:pathPrefix="/api/share/" />
                 <!-- X4: the same share host also carries the password-recovery
                      landing and the browser OAuth callback so an App Link can
                      enter those flows directly. Same scheme/host; allowlisted

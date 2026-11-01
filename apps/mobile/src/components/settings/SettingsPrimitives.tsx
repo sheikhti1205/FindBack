@@ -7,11 +7,11 @@ import { density } from "../../design/density";
 import { BackButton } from "../BackButton";
 import "./settings.css";
 
-const CATEGORY_TONES = {
-  account: "blue", appearance: "lavender", accessibility: "teal", media: "amber",
-  notifications: "coral", ai: "violet", privacy: "green", help: "sky", about: "neutral",
-} as const;
-export type SettingIconTone = keyof typeof CATEGORY_TONES | typeof CATEGORY_TONES[keyof typeof CATEGORY_TONES];
+// Legacy category/tone names are accepted at the boundary but render neutral.
+// Only an explicit meaningful status may color a settings glyph.
+export type SettingIconTone = "neutral" | "brand" | "success" | "warning" | "danger"
+  | "account" | "appearance" | "accessibility" | "media" | "notifications" | "ai" | "privacy" | "help" | "about"
+  | "blue" | "lavender" | "teal" | "amber" | "coral" | "violet" | "green" | "sky";
 
 export interface SettingIconTileProps {
   icon: LucideIcon;
@@ -20,7 +20,7 @@ export interface SettingIconTileProps {
 }
 /** Decorative category glyph; its row title carries the accessible meaning. */
 export function SettingIconTile({ icon: Icon, tone = "neutral", className = "" }: SettingIconTileProps) {
-  const color = tone in CATEGORY_TONES ? CATEGORY_TONES[tone as keyof typeof CATEGORY_TONES] : tone;
+  const color = tone === "brand" || tone === "success" || tone === "warning" || tone === "danger" ? tone : "neutral";
   return <span aria-hidden="true" data-tone={color} className={`fb-setting-icon ${className}`}><Icon size={density.iconSize} aria-hidden="true" /></span>;
 }
 
@@ -97,7 +97,7 @@ export function SettingsRow({ title, description, icon, iconTone, value, badge, 
   const id = useId();
   const describedBy = [description && `${id}-description`, value != null && `${id}-value`, badge != null && `${id}-badge`].filter(Boolean).join(" ") || undefined;
   const content = <>
-    {icon && <SettingIconTile icon={icon} tone={iconTone} />}
+    {icon && <SettingIconTile icon={icon} tone={destructive ? "danger" : iconTone} />}
     <span className="fb-settings-row-copy">
       <span id={`${id}-title`} className="fb-settings-row-title">{title}</span>
       {description && <span id={`${id}-description`} className="fb-settings-row-description">{description}</span>}

@@ -1,5 +1,12 @@
 # Production config matrix (SYNC-18)
 
+Product Fit Reset note: the Node API/reference Docker runtime was retired.
+Dockerfile source anchors below refer to that historical contract, not an active
+build/deployment path. Current executable checks target Android, web and the
+read-only same-domain preview renderer; see [architecture](../ARCHITECTURE.md)
+and [development](../DEVELOPMENT.md). Line-number anchors are era-specific;
+scripts/workflow source and fresh verification govern current acceptance.
+
 Single document against config drift. Names + classification only — no values,
 no placeholders that look like values. Presence/shapes only.
 

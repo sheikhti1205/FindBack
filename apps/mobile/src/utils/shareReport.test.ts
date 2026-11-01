@@ -12,7 +12,7 @@ import {
 
 const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
-const url = `${origin}/r/${id}`;
+const url = `${origin}/api/share/${id}`;
 
 function stubNavigator({ share, writeText }: { share?: unknown; writeText?: unknown } = {}) {
   vi.stubGlobal("navigator", {
@@ -39,7 +39,7 @@ describe("shareReport", () => {
 
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
 
-    expect(share).toHaveBeenCalledWith({ title: "Lost keys", url });
+    expect(share).toHaveBeenCalledWith({ title: "FindBack report", url });
   });
 
   it("treats a user-dismissed sheet as a cancellation, not a failure", async () => {
@@ -95,7 +95,7 @@ describe("shareReport on a device (native system sheet)", () => {
     vi.mocked(Share.share).mockResolvedValue({ activityType: "test-target" });
     stubNavigator();
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
-    expect(Share.share).toHaveBeenCalledWith({ title: "Lost keys", url });
+    expect(Share.share).toHaveBeenCalledWith({ title: "FindBack report", url });
   });
 
   it("recognizes the installed Android plugin's cancellation error without copying", async () => {
@@ -113,7 +113,7 @@ describe("shareReport on a device (native system sheet)", () => {
 
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
 
-    expect(native).toHaveBeenCalledWith({ title: "Lost keys", url });
+    expect(native).toHaveBeenCalledWith({ title: "FindBack report", url });
   });
 
   it("reports a dismissed native sheet as a cancellation and copies nothing", async () => {

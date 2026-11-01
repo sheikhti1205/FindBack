@@ -1,4 +1,10 @@
-# Cross-environment manifest (CLOSEOUT)
+# Historical cross-environment manifest (CLOSEOUT)
+
+The baseline, versions, queues and Docker column below are historical evidence,
+not current acceptance or setup. Product Fit Reset retired the Node API and its
+reference container. The current capability generator has five lanes and no
+Docker lane. See [retirement](../LEGACY_API_RETIREMENT.md) and
+[architecture](../ARCHITECTURE.md); do not execute old live-apply queues below.
 
 Source revision: `77c037a` (`origin/main` at edit time, or newer after this wave's commit; tree clean at write time).
 Mobile version: `1.0.0` (versionCode derived from git history at build;

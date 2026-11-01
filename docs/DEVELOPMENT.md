@@ -1,14 +1,14 @@
 # Development guide
 
-FindBack is a monorepo with a React/Capacitor client, a Node API, a shared package and
-a Supabase backend. This page is the practical setup and check reference; the design is
+FindBack is a monorepo with a React/Capacitor client, a shared package and one
+Supabase backend. This page is the practical setup and check reference; the design is
 in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements
 
 - Node.js 24.5+ and npm for development and the full test suite. Messaging tests
   use native `navigator.locks` / `node:worker_threads.locks`; Node 22 remains the
-  API/container build baseline but cannot run those lock-dependent tests.
+  public-preview Azure runtime baseline but cannot run those lock-dependent tests.
 - A Supabase project (or the local Supabase CLI stack) for anything that touches the
   backend
 - For Android builds: JDK 21, Android SDK with the pinned NDK, and a signed release
@@ -31,7 +31,6 @@ Copy `.env.example` to `.env` and fill in your own values. `.env` files are igno
 
 ```bash
 npm run dev:mobile   # client dev server (web shell)
-npm run dev:api      # local Node API
 ```
 
 The Android app is the same web build wrapped by Capacitor. `npm run apk` builds a
@@ -42,9 +41,9 @@ Never use a `sb_secret_*` or service-role key in a client build.
 ## Checks
 
 ```bash
-npm run typecheck    # shared build + API and mobile typecheck
+npm run typecheck    # shared build + mobile typecheck
 npm run lint         # eslint over the repo
-npm test             # shared build + API tests + mobile tests
+npm test             # shared build + mobile and retained shared/SQL contract tests
 npm run scan:secrets # repository secret scan
 ```
 
@@ -65,7 +64,7 @@ SQL behaviour suites need a real PostgreSQL instance; CI provides one. See
 
 ```
 apps/mobile/          React + Capacitor client (Android primary)
-services/api/         Node/Express + GraphQL API
+apps/share-preview/   read-only same-domain Azure share HTML/JSON renderer
 packages/shared/      shared schemas, validation, constants
 supabase/migrations/  applied SQL migrations (immutable once applied)
 supabase/functions/   Deno Edge Functions
@@ -84,7 +83,8 @@ docs/                 product, architecture, history and acceptance docs
 ## Tests
 
 - Mobile and shared code: Vitest, colocated `*.test.ts(x)` files.
-- API: Vitest under `services/api`.
+- Unique shared validation and static SQL regression contracts formerly under the
+  retired API: `apps/mobile/src/contracts/`, included in the mobile Vitest lane.
 - SQL behaviour: real PostgreSQL probes in `supabase/tests/`.
 - Edge Functions: Deno tests under `supabase/functions/**`.
 
@@ -96,4 +96,5 @@ CI; they are tracked as external gates and are never claimed from a host test.
 - Product/status: [README](../README.md), [ROADMAP](../ROADMAP.md)
 - Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Version history: [history/VERSION_HISTORY.md](history/VERSION_HISTORY.md)
+- Legacy API retirement: [LEGACY_API_RETIREMENT.md](LEGACY_API_RETIREMENT.md)
 - Course-era material: [course/](course/)

@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ACCENT_OPTIONS, DEFAULT_APPEARANCE, accentTokensFor } from "./appearance";
+import { ACCENT_OPTIONS, DEFAULT_APPEARANCE, accentTokensFor, colorSystemCss } from "./appearance";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Button } from "./components/Button";
+import { COLOR_SYSTEM } from "./design/colorSystem";
 
-const css = readFileSync("src/index.css", "utf8");
+function surfacesFor(mode: "light" | "dark" | "amoled") {
+  const n = COLOR_SYSTEM.neutrals[mode];
+  return [n.surface, n.low, n.container, n.high];
+}
+
+const css = colorSystemCss() + "\n" + readFileSync("src/index.css", "utf8");
 function block(selector: string) {
   return css.slice(css.indexOf(`${selector} {`)).split("}")[0]!;
 }
@@ -52,10 +58,10 @@ describe("Soft Utility semantic palette", () => {
   it("keeps AMOLED truly black with distinct tonal elevation and no system override", () => {
     const amoled = block(".amoled");
     expect(token(amoled, "--fb-surface")).toBe("#000000");
-    expect(token(amoled, "--fb-surface-container-low")).toBe("#212529");
-    expect(token(amoled, "--fb-surface-container")).toBe("#343a40");
-    expect(token(amoled, "--fb-surface-container-high")).toBe("#495057");
-    expect(css).toContain(":root:not(.light):not(.amoled)");
+    expect(token(amoled, "--fb-surface-container-low")).toBe("#202124");
+    expect(token(amoled, "--fb-surface-container")).toBe("#26272b");
+    expect(token(amoled, "--fb-surface-container-high")).toBe("#2d2f34");
+    expect(css).not.toContain(":root:not(.light):not(.amoled)");
     expect(css).toMatch(/html,\s*body,\s*#root\s*\{[^}]*background: var\(--fb-surface\)/);
   });
 
@@ -117,7 +123,7 @@ describe("Soft Utility semantic palette", () => {
 });
 
 describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, errors)", () => {
-  const css = readFileSync("src/index.css", "utf8");
+  const css = colorSystemCss() + "\n" + readFileSync("src/index.css", "utf8");
   const settingsCss = readFileSync("src/components/settings/settings.css", "utf8");
   function blockIn(source: string, selector: string) {
     const start = source.indexOf(`${selector} {`);
@@ -156,17 +162,16 @@ describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, 
     const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
     return (hi! + 0.05) / (lo! + 0.05);
   }
-  // AMOLED keeps .dark alongside .amoled, so its semantic text tokens resolve
-  // from the .dark rule (the .amoled block only redefines surfaces).
+  // The canonical generated stylesheet emits the complete mode projection.
   const themeSource: Record<"light" | "dark" | "amoled", string> = {
     light: blockIn(css, ":root"),
     dark: blockIn(css, ".dark"),
-    amoled: blockIn(css, ".dark"),
+    amoled: blockIn(css, ".amoled"),
   };
   const themeSurfaces: Record<"light" | "dark" | "amoled", string[]> = {
-    light: ["#f8f9fa", "#ffffff", "#e9ecef", "#dee2e6"],
-    dark: ["#212529", "#343a40", "#343a40", "#495057"],
-    amoled: ["#000000", "#212529", "#343a40", "#495057"],
+    light: surfacesFor("light"),
+    dark: surfacesFor("dark"),
+    amoled: surfacesFor("amoled"),
   };
 
   it.each(["light", "dark", "amoled"] as const)("%s: error/warning/success text meets AA on every surface", (mode) => {
@@ -194,18 +199,18 @@ describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, 
     expect(contrastLocal(tokenIn(source, "--fb-warning"), container)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it.each(["light", "dark"] as const)("%s: category icon tiles keep AA ink on their own tile", (mode) => {
-    // Selectors are `.fb-setting-icon[data-tone="x"]` (+ `.dark` prefix in dark).
-    for (const tone of ["blue", "lavender", "teal", "amber", "coral", "violet", "green", "sky", "neutral"]) {
-      const selector = mode === "light"
-        ? `.fb-setting-icon[data-tone="${tone}"]`
-        : `.dark .fb-setting-icon[data-tone="${tone}"]`;
-      const rule = blockIn(settingsCss, selector);
-      expect(
-        contrastLocal(tokenIn(rule, "--fb-icon-ink"), tokenIn(rule, "--fb-icon-bg")),
-        tone,
-      ).toBeGreaterThanOrEqual(4.5);
+  it.each(["light", "dark", "amoled"] as const)("%s: neutral and meaningful semantic glyphs keep AA on their actual token-driven tile", (mode) => {
+    const base = blockIn(settingsCss, ".fb-setting-icon");
+    for (const tone of ["neutral", "brand", "success", "warning", "danger"]) {
+      const override = tone === "neutral" ? "" : blockIn(settingsCss, `.fb-setting-icon[data-tone="${tone}"]`);
+      const value = (name: string) => {
+        const raw = override.match(new RegExp(`${name}\\s*:\\s*([^;]+);`))?.[1]?.trim() ?? tokenIn(base, name);
+        const ref = raw.match(/^var\((--[\w-]+)\)$/)![1]!;
+        return resolveToken(themeSource[mode], ref);
+      };
+      expect(contrastLocal(value("--fb-icon-ink"), value("--fb-icon-bg")), tone).toBeGreaterThanOrEqual(4.5);
     }
+    expect(base).not.toMatch(/#[\da-f]{3,8}\b/i);
   });
 
   it.each(["light", "dark", "amoled"] as const)("%s: switch track/thumb UI contrast meets 3:1", (mode) => {
@@ -226,7 +231,7 @@ describe("QA I — new consumer-UI token pairings (StatusPill, icons, switches, 
 });
 
 describe("neutral structural palette (v0.9.0-beta.1)", () => {
-  const css = readFileSync("src/index.css", "utf8");
+  const css = colorSystemCss() + "\n" + readFileSync("src/index.css", "utf8");
   function blockOf(selector: string) {
     const start = css.indexOf(`${selector} {`);
     expect(start, selector).toBeGreaterThanOrEqual(0);
@@ -283,12 +288,11 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
     }
   });
 
-  it("defaults the accent to mono while keeping all twelve options", () => {
-    expect(DEFAULT_APPEARANCE.accent).toBe("mono");
+  it("defaults to FindBack Blue with eight curated choices including Mono", () => {
+    expect(DEFAULT_APPEARANCE.accent).toBe("blue");
     const ids = ACCENT_OPTIONS.map((a) => a.id);
     expect(ids).toEqual([
-      "emerald", "blue", "violet", "rose", "amber", "teal", "mono",
-      "indigo", "cyan", "lime", "orange", "pink",
+      "blue", "indigo", "violet", "emerald", "teal", "rose", "orange", "mono",
     ]);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -319,8 +323,8 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
   it("keeps W5 reaction/mention accents legible on neutral surfaces incl. true black", () => {
     const light = blockOf(":root");
     const dark = blockOf(".dark");
-    const lightSurfaces = ["#ffffff", "#f8f9fa", "#e9ecef"];
-    const darkSurfaces = ["#212529", "#343a40", "#000000"];
+    const lightSurfaces = surfacesFor("light");
+    const darkSurfaces = [...surfacesFor("dark"), ...surfacesFor("amoled")];
     for (const name of ["--fb-reaction-love", "--fb-reaction-helpful", "--fb-reaction-support", "--fb-reaction-wow", "--fb-mention"]) {
       for (const surface of lightSurfaces) {
         expect(contrast(token(light, name), surface), `light ${name} on ${surface}`).toBeGreaterThanOrEqual(4.5);

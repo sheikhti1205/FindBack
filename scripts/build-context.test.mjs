@@ -137,10 +137,10 @@ describe("sentryRelease (pinned namespace@version+short12 shape)", () => {
 });
 
 describe("resolveSentryDist (closed lane mapping)", () => {
-  it("accepts exactly the five pinned lanes", () => {
+  it("accepts exactly the four retained lanes", () => {
     assert.deepEqual(
       [...SENTRY_DIST_VALUES],
-      ["android-debug", "android-signeddev", "android-release", "web-production", "docker-reference"],
+      ["android-debug", "android-signeddev", "android-release", "web-production"],
     );
     for (const dist of SENTRY_DIST_VALUES) {
       assert.deepEqual(resolveSentryDist(dist), { ok: true, dist });

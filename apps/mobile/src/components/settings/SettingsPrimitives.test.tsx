@@ -98,7 +98,7 @@ describe("settings foundation semantics", () => {
     expect(dark.name).toBe("theme");
     fireEvent.click(dark);
     expect(theme).toHaveBeenCalledWith("dark");
-    fireEvent.click(screen.getByRole("radio", { name: "Blue" }));
+    fireEvent.click(screen.getByRole("radio", { name: "FindBack Blue" }));
     expect(accent).toHaveBeenCalledWith("blue");
     expect(screen.getByRole("radio", { name: "Emerald" }).getAttribute("name")).toBe("accent");
   });
@@ -142,6 +142,16 @@ describe("settings foundation semantics", () => {
     expect(svg?.getAttribute("height")).toBe(String(density.iconSize));
     expect(density.iconSize).toBeGreaterThanOrEqual(20);
     expect(density.iconSize).toBeLessThanOrEqual(22);
+  });
+
+  it.each(["account", "appearance", "accessibility", "media", "notifications", "ai", "privacy", "help", "about", "blue", "lavender", "teal", "amber", "coral", "violet", "green", "sky"] as const)("ordinary category %s is neutral, not rainbow decoration", (tone) => {
+    render(<SettingIconTile icon={Palette} tone={tone} />);
+    expect(document.querySelector(".fb-setting-icon")?.getAttribute("data-tone")).toBe("neutral");
+  });
+
+  it("uses a destructive semantic glyph only when the row is actually destructive", () => {
+    render(<SettingsRow title="Delete account" icon={Palette} destructive onClick={() => {}} />);
+    expect(screen.getByRole("button", { name: "Delete account" }).querySelector(".fb-setting-icon")?.getAttribute("data-tone")).toBe("danger");
   });
 
   it("keeps every row a single native keyboard-focusable target", () => {

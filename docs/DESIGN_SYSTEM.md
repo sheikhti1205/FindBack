@@ -1,8 +1,9 @@
 # Adaptive UI ownership
 
-M7-P, source version `0.12.0-beta.1`. This describes current source, not hosted or
-native acceptance. The [source checkpoint](releases/M7_P_SOURCE_CLOSURE_2026-11-01.md)
-records verification boundaries.
+Product Fit Reset, source version `0.13.0-beta.1`. This describes current source,
+not native or real-account acceptance. The previous
+[M7-P checkpoint](releases/M7_P_SOURCE_CLOSURE_2026-11-01.md) remains historical;
+see [Product Fit Reset](releases/PRODUCT_FIT_RESET_2026-11-02.md) for current limits.
 
 ## Principles
 
@@ -11,12 +12,30 @@ separators and whitespace rather than cards around every group. Semantic colour
 communicates Lost/Found, status or safety, not decoration. Consumer screens do not
 expose runtime/model IDs or diagnostics outside Advanced/Diagnostics.
 
-Phone bottom navigation becomes a compact icon rail on wider windows. Reading
+Phones always use bottom navigation. First wide use offers a per-device rail or
+bottom choice (pointer/touch-aware recommendation), also editable in Appearance. Reading
 columns remain bounded; Chats and Settings use available width for separate panes.
 Large text reflows rather than shrinking targets or hiding actions. Appearance
 owns light/dark/true-black and motion preferences across all surfaces.
 
 ## Canonical owners (`apps/mobile/src/`)
+
+### Colour, appearance and startup
+
+- `design/colorSystem.ts` owns palette values and role projection: FindBack Blue
+  default, eight curated accents, graphite dark, calm light and true-black AMOLED.
+  Lost/Found/Matched/Recovered/Warning/Danger remain fixed semantic roles.
+- `appearance.ts` owns persistence, legacy preset migration and CSS installation;
+  `theme.tsx` resolves runtime mode. CSS consumes tokens, not a second palette.
+- `services/systemColors.ts` and Android `SystemColorsPlugin` read device-local
+  Android12+ accents only after opt-in. Contrast validation, timeout/lifecycle
+  refresh and preset fallback are shared; web does not fake wallpaper colours.
+- `main.tsx` waits for `services/dataEpoch.ts` before importing `startApp.tsx`.
+  Epoch `product-fit-2026-11-01` clears old account/product caches, drafts and
+  outboxes once. Native SQLite/files/preferences/keys/push cleanup must confirm
+  before a commit-last marker; failure offers retry without launching owners.
+- `RoleOfferNotice.tsx` offers explicit consent after ordinary setup. Privilege
+  comes only from the confirmed server acceptance, never signup or a UI flag.
 
 | Concern | Owner / contract |
 | --- | --- |

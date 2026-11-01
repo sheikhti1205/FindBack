@@ -118,7 +118,7 @@ export async function findPossibleMatches(
 
   // O5 (CF-050) — the exclusion is the SERVER's, and it is total.
   //
-  // `findback_match_candidates_client` excludes a candidate whose author the
+  // `findback_match_candidates_v2` excludes a candidate whose author the
   // reader is blocked with in its WHERE clause, so a blocked counterpart is
   // never returned and never compared, let alone suggested. No block bit is
   // projected to the client, the candidate type is not widened, and the

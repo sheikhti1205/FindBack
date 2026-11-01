@@ -11,6 +11,8 @@ import type { NavLayout } from "../appearance";
 import { RouteTransition } from "./RouteTransition";
 import { requestHistorySuppression } from "./backNavigation";
 import { TopUtilities } from "./TopUtilities";
+import { NavigationSetup } from "./NavigationSetup";
+import { RoleOfferNotice } from "./RoleOfferNotice";
 import {
   fadeUpVariants,
   fadeVariants,
@@ -118,6 +120,8 @@ export function Shell() {
           }`}
         >
           <div className="flex h-full min-h-0 flex-col">
+            {showNav && <NavigationSetup />}
+            {showNav && <RoleOfferNotice />}
             {showNav && pathname !== "/" && <div className="fb-utility-bar"><TopUtilities /></div>}
             <div className="min-h-0 flex-1"><RouteTransition /></div>
           </div>

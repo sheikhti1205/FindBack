@@ -99,6 +99,48 @@ export interface MyRole {
   capabilities: string[];
 }
 
+export interface RoleOffer {
+  token: string;
+  role: AdminRole;
+  capabilities: string[];
+}
+
+const OFFER_TOKEN = /^(?:bootstrap:[0-9a-f-]{36}|[0-9a-f-]{36}:[0-9a-f]{32})$/i;
+
+/** Discovery is not consent and cannot mutate authority. */
+export async function fetchMyRoleOffer(): Promise<RoleOffer | null> {
+  try {
+    const { data, error } = await getSupabase().rpc("findback_my_role_offer", {});
+    if (error) throw error;
+    if (data === null) return null;
+    const row = data as Partial<RoleOffer>;
+    const role = knownRole(row?.role);
+    if (!role || typeof row.token !== "string" || !OFFER_TOKEN.test(row.token) ||
+      (row.token.startsWith("bootstrap:") && role !== "ADMIN") ||
+      !Array.isArray(row.capabilities) || row.capabilities.some(c =>
+        typeof c !== "string" || !(ALL_CAPABILITIES as readonly string[]).includes(c) ||
+        (role === "MODERATOR" && (ADMIN_ONLY_CAPABILITIES as readonly string[]).includes(c)))) {
+      throw new Error("Invalid offer");
+    }
+    return { token: row.token, role, capabilities: [...new Set(row.capabilities)] };
+  } catch {
+    throw new ApiError("Could not check your role offer.", 503, "ROLE_OFFER_UNAVAILABLE");
+  }
+}
+
+/** Only a deliberate current-offer mutation may confer privileges. */
+export async function acceptRoleOffer(token: string): Promise<void> {
+  try {
+    if (!OFFER_TOKEN.test(token)) throw new Error("Invalid offer");
+    const { data, error } = await getSupabase().rpc("findback_accept_role_offer", { p_token: token });
+    if (error || data !== true) throw new Error("Unconfirmed acceptance");
+    // Existing staff discovery must refresh even when acceptance occurs in Settings.
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("findback:role-changed"));
+  } catch {
+    throw new ApiError("Could not accept this role offer.", 503, "ROLE_ACCEPT_UNCONFIRMED");
+  }
+}
+
 /** One member of the team. */
 export interface RoleAssignment {
   userId: string;
@@ -273,8 +315,8 @@ export async function listRoleInvitations(): Promise<RoleInvitation[]> {
  * Assign a role by email.
  *
  * The person does not need an account yet: the server keeps the grant as an
- * invitation and attaches it when they sign up. The caller gets back which of
- * the two happened, so the console can say the truth.
+ * invitation until the verified person explicitly accepts. Existing accounts
+ * also receive an offer; a grant request no longer silently assigns authority.
  */
 export async function grantRole(
   email: string,

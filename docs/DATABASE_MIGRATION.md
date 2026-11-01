@@ -1,4 +1,13 @@
-# Database
+# Historical transition record — not current setup
+
+This document preserves the course-era Node/SQLite → Supabase migration narrative.
+Its Node provider files, local demo/seed commands and two-backend architecture
+were retired by Product Fit Reset. Do not follow those commands as current setup.
+See [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md) and
+[LEGACY_API_RETIREMENT.md](LEGACY_API_RETIREMENT.md). Applied SQL history remains
+immutable; the historical paths below are not current runtime dependencies.
+
+# Database (historical)
 
 FindBack has exactly two persistence paths, and they never mix.
 

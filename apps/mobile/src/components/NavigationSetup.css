@@ -1,0 +1,15 @@
+.fb-navigation-setup {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-height: 48dvh;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--fb-outline-variant);
+  background: var(--fb-surface-container-low);
+  color: var(--fb-on-surface);
+}
+.fb-navigation-setup h2 { margin: 0; font-size: 1.125rem; font-weight: 650; }
+.fb-navigation-setup p { margin: .375rem 0 .75rem; line-height: 1.5; color: var(--fb-on-surface-variant); }
+.fb-navigation-choices { display: flex; flex-wrap: wrap; gap: .625rem; }
+.fb-navigation-choices button { max-width: 100%; text-align: start; }
+.fb-navigation-setup .fb-navigation-recommendation { margin: .625rem 0 0; font-size: .8125rem; }

@@ -3,6 +3,7 @@ import {
   type ReactNode,
 } from "react";
 import { APPEARANCE_EVENT, APPEARANCE_STORAGE_KEY, applyAppearance, loadAppearance, migrateAppearance } from "./appearance";
+import { refreshSystemColors, startSystemColorUpdates, subscribeSystemColors } from "./services/systemColors";
 
 export type Theme = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark" | "amoled";
@@ -145,9 +146,24 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = subscribeSystemColors(() => applyAppearance(appearance.current));
+    const stop = startSystemColorUpdates();
+    return () => { unsubscribe(); stop(); };
+  }, []);
+
+  // Lifecycle startup already performs the launch read; only subsequent mode
+  // changes need another one. Keep listener registration stable across themes.
+  const lastColorTheme = useRef(setting);
+  useEffect(() => {
+    const previous = lastColorTheme.current;
+    lastColorTheme.current = setting;
+    if (previous.theme !== setting.theme || previous.trueBlackDark !== setting.trueBlackDark) void refreshSystemColors();
+  }, [setting]);
+
+  useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
     const color = window.matchMedia("(prefers-color-scheme: dark)");
-    const sync = () => applyTheme(current.current, color.matches);
+    const sync = () => { applyTheme(current.current, color.matches); void refreshSystemColors(); };
     color.addEventListener("change", sync);
     return () => color.removeEventListener("change", sync);
   }, []);

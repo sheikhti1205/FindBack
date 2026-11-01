@@ -205,9 +205,9 @@ describe("fetchMatchCandidates", () => {
 
     const items = await fetchMatchCandidates("p-target");
 
-    expect(clientMock.rpc).toHaveBeenCalledWith("findback_match_candidates_client", {
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_match_candidates_v2", {
       p_target_id: "p-target",
-      p_limit: 20,
+      p_limit: 80,
     });
     // The client names the target and the pool size. It never names a type:
     // the reader works the opposite type out itself, from the target it can
@@ -228,11 +228,25 @@ describe("fetchMatchCandidates", () => {
     );
   });
 
-  it("caps an over-long server response at 20", async () => {
-    const rows = Array.from({ length: 25 }, (_, i) => row({ id: `c${i}` }));
+  it("compares beyond twenty while bounding an over-long relevance pool at eighty", async () => {
+    const rows = Array.from({ length: 100 }, (_, i) => row({ id: `c${i}` }));
     clientMock.rpc.mockResolvedValue({ data: rows, error: null });
 
-    expect(await fetchMatchCandidates("p-target")).toHaveLength(20);
+    const candidates = await fetchMatchCandidates("p-target");
+    expect(candidates).toHaveLength(80);
+    expect(candidates[79]?.id).toBe("c79");
+  });
+
+  it.each([[999, 80], [-1, 1], [0, 1], [2.9, 2], [Number.NaN, 80]])("normalizes caller limit %s to bounded %s", async (requested, bounded) => {
+    clientMock.rpc.mockResolvedValue({ data: Array.from({ length: 100 }, (_, i) => row({ id: `c${i}` })), error: null });
+    expect(await fetchMatchCandidates("p-target", requested)).toHaveLength(bounded);
+    expect(clientMock.rpc).toHaveBeenCalledWith("findback_match_candidates_v2", { p_target_id: "p-target", p_limit: bounded });
+  });
+
+  it("does not regress to newest-first matching when the versioned reader is unavailable", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { message: "function unavailable" } });
+    await expect(fetchMatchCandidates("p-target")).rejects.toThrow("function unavailable");
+    expect(clientMock.rpc).toHaveBeenCalledTimes(1);
   });
 });
 

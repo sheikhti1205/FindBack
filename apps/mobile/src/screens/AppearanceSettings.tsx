@@ -1,4 +1,4 @@
-import { ACCENT_OPTIONS, useAppearance } from "../appearance";
+import { ACCENT_OPTIONS, useAppearance, useSystemColorsSupported } from "../appearance";
 import { useTheme, type Theme } from "../theme";
 import {
   AccentSwatch,
@@ -29,9 +29,10 @@ const THEME_LABELS: Record<Theme, string> = {
 export function AppearanceSettings() {
   const { theme, trueBlackDark, setTheme, setTrueBlackDark } = useTheme();
   const { settings, update } = useAppearance();
-  const accentLabel =
-    ACCENT_OPTIONS.find((option) => option.id === settings.accent)?.label ??
-    ACCENT_OPTIONS[0]!.label;
+  const systemColorsSupported = useSystemColorsSupported();
+  const accentLabel = settings.accentSource === "system"
+    ? systemColorsSupported ? "System colors" : "FindBack Blue"
+    : ACCENT_OPTIONS.find((option) => option.id === settings.accent)?.label ?? ACCENT_OPTIONS[0]!.label;
   // Light can never resolve dark, so the modifier is irrelevant (and hidden).
   const trueBlackRelevant = theme !== "light";
   const previewLabel = trueBlackRelevant && trueBlackDark ? "True black" : THEME_LABELS[theme];
@@ -78,8 +79,16 @@ export function AppearanceSettings() {
 
       <SettingsGroup
         title="Accent"
-        description="Used for buttons, selections, and highlights. Status colors, reactions, and mention links keep their own meaning and never follow the accent."
+        description={`Used for buttons, selections, and highlights. Status colors, reactions, and mention links keep their own meaning and never follow the accent.${systemColorsSupported ? "" : " System colors are available on supported Android 12+ devices."}`}
       >
+        {systemColorsSupported ? (
+          <PreferenceSwitchRow
+            title="System colors"
+            description="Follow your device’s wallpaper colors. Choose a color below to use a preset instead."
+            checked={settings.accentSource === "system"}
+            onChange={(checked) => update({ accentSource: checked ? "system" : "preset" })}
+          />
+        ) : null}
         <fieldset className="fb-choice-fieldset">
           <legend className="sr-only">Accent</legend>
           <div className="fb-accent-grid">
@@ -88,8 +97,8 @@ export function AppearanceSettings() {
                 key={option.id}
                 name="appearance-accent"
                 accent={option.id}
-                checked={settings.accent === option.id}
-                onChange={(accent) => update({ accent })}
+                checked={settings.accentSource === "preset" && settings.accent === option.id}
+                onChange={(accent) => update({ accent, accentSource: "preset" })}
               />
             ))}
           </div>
@@ -111,7 +120,7 @@ export function AppearanceSettings() {
               title="Bottom bar"
               description="Along the bottom edge, within thumb reach."
               checked={settings.navLayout === "bottom"}
-              onChange={() => update({ navLayout: "bottom" })}
+              onChange={() => update({ navLayout: "bottom", navLayoutChosen: true })}
             />
             <PreferenceRadioRow
               name="appearance-nav-layout"
@@ -119,7 +128,7 @@ export function AppearanceSettings() {
               title="Side rail"
               description="Down the left edge, on wider screens."
               checked={settings.navLayout === "rail"}
-              onChange={() => update({ navLayout: "rail" })}
+              onChange={() => update({ navLayout: "rail", navLayoutChosen: true })}
             />
           </div>
         </fieldset>
@@ -134,7 +143,7 @@ export function AppearanceSettings() {
           aria-label={`Preview of ${previewLabel} theme with ${accentLabel} accent`}
           data-theme={theme}
           data-true-black={trueBlackDark ? "true" : undefined}
-          data-accent={settings.accent}
+          data-accent={settings.accentSource === "system" ? "system" : settings.accent}
           className="fb-appearance-preview"
         >
           <span aria-hidden="true" className="fb-appearance-preview-row">
