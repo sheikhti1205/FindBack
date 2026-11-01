@@ -1,5 +1,12 @@
 # FindBack — Agent Rules (always loaded)
 
+## Proportional execution — owner order 2026-11-02
+
+**Do the fucking task. Do not manufacture complexity and waste the owner's tokens.**
+- Execute straightforward authorized work simply; no repeated architecture questions, speculative blockers, test programmes, research detours, or agent/review pipelines.
+- Do not reconfirm existing authorization. Respect explicit "no more tests" / "just execute" directions; retain only essential safety checks and direct outcome verification.
+- Keep communication concise. Report a genuine safety/access blocker once; protect secrets and never claim unverified success. Planning and documentation are not substitutes for execution.
+
 ## IMMUTABLE RULE: main branch ONLY — never create another branch (owner order 2026-10-06)
 
 - All work happens on `main`. Local commits are allowed; push coherent accepted units, subject to the migration gate below. No feature branches, no release branches, no side branches — for any reason, no exceptions.

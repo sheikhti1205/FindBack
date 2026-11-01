@@ -1,0 +1,27 @@
+name: Execute authorized fresh start
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: findback-product-reset
+  cancel-in-progress: false
+jobs:
+  reset:
+    if: github.repository == 'sheikhti1205/FindBack' && github.ref == 'refs/heads/main' && github.actor == 'sheikhti1205' && github.triggering_actor == 'sheikhti1205'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: backend
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22'
+      - name: Delete authorized population through database and Storage/Auth APIs
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: node scripts/product-fit-reset-execute.mjs
