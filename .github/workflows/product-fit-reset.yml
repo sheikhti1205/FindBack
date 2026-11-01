@@ -1,0 +1,48 @@
+# Read-only capability probe. No destructive mode or automatic transition exists.
+# The existing backend environment has no approval/branch protection policy.
+# Owner approved workflow-only context guards; do not call it protected.
+name: Product reset preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: findback-product-reset
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: backend
+    steps:
+      - name: Refuse unexpected dispatch context
+        env:
+          EVENT: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          test "$EVENT" = workflow_dispatch
+          test "$REPOSITORY" = sheikhti1205/FindBack
+          test "$REF" = refs/heads/main
+          test "$ACTOR" = sheikhti1205
+          test "$TRIGGERING_ACTOR" = sheikhti1205
+      - name: Check out exact dispatch source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Read-only capability and aggregate probe
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: node scripts/product-fit-reset-preflight.mjs
