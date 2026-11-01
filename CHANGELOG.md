@@ -5,6 +5,24 @@ described in [docs/history/VERSION_HISTORY.md](docs/history/VERSION_HISTORY.md).
 track real evolution and do not imply a stable release. The per-commit mapping is in
 [docs/history/VERSION_HISTORY.csv](docs/history/VERSION_HISTORY.csv).
 
+## 0.12.0-beta.1 — product coherence (source checkpoint)
+
+- Unified phone/desktop navigation, adaptive split views, anchored actions,
+  task/confirmation surfaces and a shared zoomable photo viewer.
+- Compact reports/comments, contextual desktop report details, shared Create/Edit
+  editor, clearer matching/recovery and Settings/Profile organization.
+- Reports/People discovery, notification quick view, canonical Chats with request
+  flows, mute, personal Archive, report context and explicit static location.
+- Removed retired local-generative runtime/lab tooling while retaining on-device
+  Smart Search, Needle/USE matching, upgrade cleanup and separate optional cloud Chat.
+- Repaired content erasure/exact replay, report-preview revocation, account-bound
+  publication and stale editor continuations. Ambiguous already-erased legacy
+  send identities fail closed rather than falsely acknowledging changed content.
+- Local source/fixture acceptance only. Four new migrations remain **LIVE-PENDING**;
+  nothing is deployed or released by this version change. Real-account/browser,
+  physical Android, Sentry and owner phone-photo corpus acceptance remain unpassed.
+  See [source checkpoint](docs/releases/M7_P_SOURCE_CLOSURE_2026-11-01.md).
+
 ## 0.11.0-beta.2 — functional freeze
 
 - Functional freeze recorded in

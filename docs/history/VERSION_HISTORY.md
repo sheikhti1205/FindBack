@@ -27,7 +27,11 @@ derived line (`product_version`) corrects only labels that are not supportable:
 | `2.0.0-beta.1` → `0.11.0-beta.1` (r0679–r0893) | skipped the unreleased 1.0 line |
 | — → `0.11.0-beta.2` (r0894–r0895) | functional beta freeze |
 
-Current derived version: **0.11.0-beta.2**.
+Latest reconstructed interval: **0.11.0-beta.2** (through r0895). Current source
+version: **0.12.0-beta.1**, the later M7-P source checkpoint described in
+[its closure record](../releases/M7_P_SOURCE_CLOSURE_2026-11-01.md). The CSV above
+remains the original reconstruction, not a fabricated per-commit extension or a
+claim that the new version was published.
 
 ## Intervals
 

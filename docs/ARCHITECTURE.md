@@ -7,7 +7,7 @@ and a Supabase backend (Postgres, row-level security, Edge Functions, storage).
 apps/mobile/          React + Capacitor client (Android primary, web build for links/review)
 services/api/         Node/Express + GraphQL API (local and non-Supabase deployments)
 packages/shared/      Shared schemas, validation and constants
-supabase/migrations/  121 applied SQL migrations (immutable once applied)
+supabase/migrations/  Ordered SQL migrations (immutable once applied; new M7-P files are LIVE-PENDING)
 supabase/functions/   Deno Edge Functions (AI help, chat media, push, cleanup, trust)
 docs/                 Product, architecture, history and acceptance documentation
 scripts/              Build, verification and release tooling
@@ -16,6 +16,8 @@ scripts/              Build, verification and release tooling
 ## Client
 
 - React + TypeScript, Vite, React Router, React Aria Components, Tailwind.
+- Shared adaptive shell/overlay/composer/identity owners and one MediaViewer;
+  see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) for component and route ownership.
 - Capacitor wraps the same web build for Android; native plugins cover camera,
   geolocation, push, share, app launcher and browser.
 - Local state and durable data live in IndexedDB on web and SQLite on Android. The
@@ -45,8 +47,11 @@ scripts/              Build, verification and release tooling
 
 ## Data flow: a report
 
-1. The client writes the report locally first, then syncs it.
-2. The server validates ownership, visibility and media references.
+1. The client retains a local draft and stages prepared photos before publication.
+2. An account-bound RPC delegates to the canonical create owner; the server checks
+   ownership, validation, visibility and staged-media references. Leaving before
+   dispatch cancels publication; an uncertain dispatched result retains uploads
+   and prevents blind retry.
 3. Matching suggestions are computed from report attributes; on-device suggestions
    never leave the phone.
 4. Recovery is confirmed by the current owner of the report; the rating is created
@@ -60,6 +65,19 @@ scripts/              Build, verification and release tooling
 4. Delivery is acknowledged only after local persistence, so a lost ACK does not
    duplicate or drop messages.
 5. Push notifications wake the app; they do not carry message text.
+6. Report-linked subjects resolve authorization live and revoke loaded previews on
+   local safety/report invalidation. Static location is explicit and connected-only,
+   not tracking. Per-user mute syncs; Archive reuses personal hide semantics.
+7. A separate versioned exact-payload identity makes accepted sends replayable
+   without retaining their erased body, report reference or coordinates. The
+   historical body digest still authenticates bounded moderation evidence from
+   durable recipient history. Unreconstructable already-erased legacy identities
+   fail closed; reconstructable legacy payloads are backfilled before erasure.
+
+M7-P people search, mute, context/location and forward integrity repair migrations
+are verified against a disposable local chain, **not yet applied to hosted**.
+Local render/source acceptance does not establish native, real-account or live
+service acceptance. No Edge Function deployment accompanies a source commit.
 
 ## Trust boundary
 
