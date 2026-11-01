@@ -354,7 +354,8 @@ begin
 end;
 $$;
 
--- B7. The last admin cannot be revoked, and cannot be demoted.
+-- B7. The last admin cannot be revoked. A demotion offer changes no authority;
+-- explicit acceptance must refuse the last-admin demotion atomically.
 do $$
 begin
   perform public.findback_role_revoke('admin_one@example.com');
@@ -365,15 +366,29 @@ exception
 end;
 $$;
 
+reset role;
+insert into auth.users(id,email,email_confirmed_at)
+values('00000000-0000-0000-0000-000000000003','admin_one@example.com',now());
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000003', true);
+select public.findback_role_grant('admin_one@example.com', 'MODERATOR', array['reports_review']);
 do $$
 begin
-  perform public.findback_role_grant('admin_one@example.com', 'MODERATOR', array['reports_review']);
+  if not public.findback_has_role('ADMIN') or public.findback_my_role_offer()->>'role' is distinct from 'MODERATOR' then
+    raise exception 'B7b FAILED: proposal changed authority or was not discoverable';
+  end if;
+  perform public.findback_accept_role_offer(public.findback_my_role_offer()->>'token');
   raise exception 'B7b FAILED: the last admin was demoted';
 exception
   when insufficient_privilege then
     raise notice 'B7b ok: the last admin cannot be demoted';
 end;
 $$;
+do $$begin
+  if not public.findback_has_role('ADMIN') or public.findback_my_role_offer()->>'role' is distinct from 'MODERATOR' then
+    raise exception 'B7b FAILED: refused acceptance consumed offer or authority';
+  end if;
+end$$;
 
 -- B8. The one-time claim is refused for an address outside the allowlist.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', true);
@@ -388,8 +403,8 @@ exception
 end;
 $$;
 
--- B9. A pending invitation is consumed on a VERIFIED path, with exactly the
---     invited capability set.
+-- B9. Verified Auth + normal setup do not consume an invitation. Explicit
+-- acceptance creates exactly the invited capability set.
 reset role;
 select set_config('request.jwt.claim.sub', '', true);
 
@@ -402,7 +417,9 @@ values (
   '2026-10-22T00:00:00.000Z'
 );
 
--- The verified profile row appears: the invitation must be consumed now.
+insert into auth.users(id,email,email_confirmed_at)
+values('00000000-0000-0000-0000-000000000004','invitee_one@example.com',now());
+-- A completed profile alone must never assign privilege.
 insert into public.users (id, username, email, phone, password_hash, email_verified, phone_verified, avatar_url, created_at, updated_at)
 values (
   '00000000-0000-0000-0000-000000000004',
@@ -417,6 +434,18 @@ values (
   '2026-10-22T00:00:00.000Z'
 )
 on conflict (id) do nothing;
+
+do $$begin
+ if exists(select 1 from public.user_roles where user_id='00000000-0000-0000-0000-000000000004')
+  or not exists(select 1 from public.role_invitations where email='invitee_one@example.com' and accepted_at is null and revoked_at is null) then
+  raise exception 'B9 FAILED: signup consumed the invitation or assigned privilege';
+ end if;
+end$$;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-0000-0000-000000000004',true);
+select public.findback_accept_role_offer(public.findback_my_role_offer()->>'token');
+reset role;
+select set_config('request.jwt.claim.sub','',true);
 
 do $$
 declare

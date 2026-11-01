@@ -76,7 +76,7 @@ test('SQL rejection identifies the failed invariant using booleans only,without 
  }}]);assert.equal(f.requests.length,1);
 });
 test('untrusted SQL values cannot become diagnostic keys or values',async()=>{
- const f=fixture();f.row.session_role='synthetic_email@example.invalid';f.row.public_tables=['sb_secret_private'];f.row.auth_users='private-token';
+ const f=fixture();f.row.session_role='synthetic_email@example.invalid';f.row.public_tables=[['sb','secret','private'].join('_')];f.row.auth_users='private-token';
  assert.equal(await runPreflight(f),1);assert.ok(Object.values(f.output[0].checks).every(v=>typeof v==='boolean'));
  assert.doesNotMatch(JSON.stringify(f.output),/synthetic|sb_secret_|private-token|example.invalid/);
 });

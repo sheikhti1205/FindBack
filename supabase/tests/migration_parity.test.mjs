@@ -790,8 +790,8 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_react_client",
   "findback_react_comment_client",
   "findback_register_device_token_client",
-  "findback_reputation_tier",
   "findback_report_sharing",
+  "findback_reputation_tier",
   "findback_reserve_chat_media",
   "findback_resolve_appeal",
   "findback_restore_notifications_client",
@@ -1074,6 +1074,10 @@ const NON_FUNCTION_DYNAMIC_DDL = new Set([
   "656851b61eac89e09c47d8dfa52b2440c795df1394204d5748cf62b0b2a27afd",
   "08b965af6ce8f5108c6b1f1bf93cea753538440beb7f413e33ba9dfbc5c90eba",
   "e7f0145b9d2a9a072798e42362595315d5dc4a1b52a4f409705d4b4be2a0ed5a",
+  // Product-fit preview: INSERT of ordinary item_posts columns only.
+  "51af0c4545d38216f29e5cc6790358f60c45ecfff9e38a1428bd0d47311db303",
+  // Hosted ACL repair: preserve ordinary column grants, sharing stays RPC-only.
+  "8673876203c9b93369ceec003d15e3f69a0ab2b9eea69fe8d5b1f74258ed8d92",
 ]);
 
 /** Top-level DDL in actual statement order; bodies/data cannot declare objects.
@@ -1866,6 +1870,17 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     for (const verb of ["revoke all", "grant execute"]) {
       const sql = blocks.filter(s => !s.includes(`execute format('${verb} on function %s`)).join(";\n");
       assert.throws(() => readExecuteModel([{ file, sql }]), /Missing reviewed R4 dynamic function ACL/);
+    }
+  });
+
+  it("pins table-only sharing ACL blocks without allowing dynamic function grants", () => {
+    for (const file of ["20261101110000_product_fit_shared_preview.sql", "20261102010000_product_fit_share_column_acl.sql"]) {
+      const block = splitSql(mig(file)).find(s => /^do\b/i.test(s) && /\bexecute\b/i.test(s));
+      assert.ok(block);
+      assert.doesNotThrow(() => readExecuteModel([{ file, sql: `${block};` }]));
+      const mutant = block.replace("begin", "begin execute 'grant execute on function public.hidden() to authenticated';");
+      assert.notEqual(mutant, block);
+      assert.throws(() => readExecuteModel([{ file, sql: `${mutant};` }]), /Unmodelled dynamic function ACL/);
     }
   });
 
