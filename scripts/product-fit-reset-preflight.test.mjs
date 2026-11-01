@@ -68,6 +68,17 @@ for(const status of [302,401,403,429,500]){
 test('rejects malformed JSON without exposing the API body',async()=>{const f=fixture();f.override=()=>new Response('synthetic private SQL error');assert.equal(await runPreflight(f),1);assert.equal(f.output[0].error,'RESPONSE_REJECTED');assert.doesNotMatch(JSON.stringify(f.output),/private|SQL error/);});
 test('sanitizes network exception including credentials and PII',async()=>{const f=fixture();f.override=()=>{throw Error('synthetic_email@example.invalid '+f.env.SUPABASE_SECRET_KEY);};assert.equal(await runPreflight(f),1);assert.equal(f.output[0].error,'REQUEST_FAILED');assert.doesNotMatch(JSON.stringify(f.output),/synthetic|sb_secret_|example.invalid/);});
 test('rejects additional SQL rows and nonboolean capability responses',async()=>{const f=fixture();f.override=()=>Response.json([f.row,f.row]);assert.equal(await runPreflight(f),1);assert.equal(f.output[0].error,'SQL_CONTRACT_REJECTED');});
+test('SQL rejection identifies the failed invariant using booleans only,without relaxing it',async()=>{
+ const f=fixture();f.row.transaction_read_only='off';assert.equal(await runPreflight(f),1);
+ assert.deepEqual(f.output,[{status:'failed',destructive_ready:false,error:'SQL_CONTRACT_REJECTED',checks:{
+  session_role:true,effective_role:true,selected_role:true,transaction_read_only:false,public_tables:true,counts:true,bucket_count:true,versioning_flag:true,role_flag:true,
+ }}]);assert.equal(f.requests.length,1);
+});
+test('untrusted SQL values cannot become diagnostic keys or values',async()=>{
+ const f=fixture();f.row.session_role='synthetic_email@example.invalid';f.row.public_tables=['sb_secret_private'];f.row.auth_users='private-token';
+ assert.equal(await runPreflight(f),1);assert.ok(Object.values(f.output[0].checks).every(v=>typeof v==='boolean'));
+ assert.doesNotMatch(JSON.stringify(f.output),/synthetic|sb_secret_|private-token|example.invalid/);
+});
 for(const mutate of [f=>f.buckets.push({id:'unexpected',public:false}),f=>f.buckets[0].public=false,f=>f.buckets[0].id=f.buckets[1].id]){
  test('refuses unexpected,duplicate or privacy-drifted Storage bucket inventory',async()=>{const f=fixture();mutate(f);assert.equal(await runPreflight(f),1);assert.equal(f.output[0].error,'STORAGE_CONTRACT_REJECTED');});
 }

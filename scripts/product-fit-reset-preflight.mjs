@@ -31,7 +31,7 @@ const SQL=`select session_user as session_role,current_user as effective_role,
   and not exists(select 1 from pg_catalog.pg_trigger where not tgisinternal and tgname in ('on_role_invitation_auth_user_created','on_role_invitation_auth_user_confirmed','on_role_invitation_profile_created')))
  as role_acceptance_present`;
 
-class Rejected extends Error {constructor(code){super(code);this.code=code;}}
+class Rejected extends Error {constructor(code,checks){super(code);this.code=code;this.checks=checks;}}
 const requireContract=(ok,code)=>{if(!ok)throw new Rejected(code);};
 const count=n=>Number.isSafeInteger(n)&&n>=0;
 function validContext(env,headSha){
@@ -44,9 +44,13 @@ function validContext(env,headSha){
 function validateSql(body){
  requireContract(Array.isArray(body)&&body.length===1&&body[0]&&typeof body[0]==='object','SQL_CONTRACT_REJECTED');
  const row=body[0];
- requireContract(row.session_role==='postgres'&&row.effective_role==='postgres'&&row.selected_role==='none'&&row.transaction_read_only==='on','SQL_CONTRACT_REJECTED');
- requireContract(Array.isArray(row.public_tables)&&row.public_tables.length===TABLES.length&&[...row.public_tables].sort().every((name,i)=>name===TABLES[i]),'SQL_CONTRACT_REJECTED');
- requireContract(COUNTS.every(key=>count(row[key]))&&row.storage_buckets===4&&typeof row.versioning_disabled==='boolean'&&typeof row.role_acceptance_present==='boolean','SQL_CONTRACT_REJECTED');
+ // Fixed keys/boolean comparisons only:diagnose refusals without relaying SQL values.
+ const checks={session_role:row.session_role==='postgres',effective_role:row.effective_role==='postgres',
+  selected_role:row.selected_role==='none',transaction_read_only:row.transaction_read_only==='on',
+  public_tables:Array.isArray(row.public_tables)&&row.public_tables.length===TABLES.length&&[...row.public_tables].sort().every((name,i)=>name===TABLES[i]),
+  counts:COUNTS.every(key=>count(row[key])),bucket_count:row.storage_buckets===4,
+  versioning_flag:typeof row.versioning_disabled==='boolean',role_flag:typeof row.role_acceptance_present==='boolean'};
+ if(!Object.values(checks).every(Boolean))throw new Rejected('SQL_CONTRACT_REJECTED',checks);
  return row;
 }
 async function json(response){try{return await response.json();}catch{throw new Rejected('RESPONSE_REJECTED');}}
@@ -84,7 +88,8 @@ export async function runPreflight({env,headSha,fetchImpl=fetch,emit=report=>con
   });return 0;
  }catch(error){
   // Never serialize exceptions,API bodies,headers,environment or stack traces.
-  emit({status:'failed',destructive_ready:false,error:error instanceof Rejected?error.code:'REQUEST_FAILED'});return 1;
+  emit({status:'failed',destructive_ready:false,error:error instanceof Rejected?error.code:'REQUEST_FAILED',
+   ...error instanceof Rejected&&error.checks?{checks:error.checks}:{}});return 1;
  }
 }
 
