@@ -8,13 +8,13 @@ const SHA='a'.repeat(40),REF='nfjhpigbsyyoaaktfaev';
 const TABLES=`users item_posts attachments comments reactions ratings verification_challenges uploads notifications device_tokens notification_preferences push_reply_tokens comment_reactions comment_attachments comment_media_cleanup_queue account_deletion_fences user_blocks post_saves user_roles user_role_capabilities admin_audit_log content_reports account_sanctions appeals successful_returns return_ratings feedback moderation_case_decisions moderation_case_audits public_action_admissions report_matches chat_conversations chat_messages chat_devices chat_mailbox appeal_notifications match_confirmations match_handovers chat_message_audience chat_state_events chat_state_audience chat_external_wakes chat_external_wake_devices chat_media_attachments chat_media_cleanup_queue chat_media_report_sources chat_media_report_evidence chat_media_delivery_receipts report_match_occupancy chat_member_state chat_preferences bootstrap_admins role_invitations`.split(' ');
 function fixture(){
  const f={env:{GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REPOSITORY:'sheikhti1205/FindBack',GITHUB_REF:'refs/heads/main',GITHUB_ACTOR:'sheikhti1205',GITHUB_TRIGGERING_ACTOR:'sheikhti1205',GITHUB_SHA:SHA,GITHUB_WORKFLOW_REF:'sheikhti1205/FindBack/.github/workflows/product-fit-reset.yml@refs/heads/main',SUPABASE_ACCESS_TOKEN:'synthetic_access_token',SUPABASE_SECRET_KEY:'sb_secret_'+'synthetic_project_key'},headSha:SHA,
-  row:{session_role:'postgres',effective_role:'postgres',selected_role:'none',transaction_read_only:'on',public_tables:TABLES,auth_users:10,profiles:10,reports:6,messages:9,assigned_roles:2,bootstrap_offers:1,pending_offers:1,storage_objects:18,storage_buckets:4,versioning_disabled:true,versioned_objects:0,archived_objects:0,delete_markers:0,multipart_uploads:0,multipart_parts:0,role_acceptance_present:false},
+  row:{session_role:'supabase_read_only_user',effective_role:'supabase_read_only_user',selected_role:'none',transaction_read_only:'on',public_tables:TABLES,auth_users:10,profiles:10,reports:6,messages:9,assigned_roles:2,bootstrap_offers:1,pending_offers:1,storage_objects:18,storage_buckets:4,versioning_disabled:true,versioned_objects:0,archived_objects:0,delete_markers:0,multipart_uploads:0,multipart_parts:0,role_acceptance_present:false},
   buckets:[{id:'findback-images',public:true},{id:'findback-comment-media',public:true},{id:'findback-chat-media',public:false},{id:'findback-chat-moderation-evidence',public:false}],
   version:'1.84.25',authHeader:'10',authReads:0,requests:[],output:[],override:undefined};
  f.fetchImpl=async(url,options)=>{
   f.requests.push({url,options});
   const override=await f.override?.(url,options);if(override)return override;
-  if(url==='https://api.supabase.com/v1/projects/'+REF+'/database/query')return Response.json([f.row]);
+  if(url==='https://api.supabase.com/v1/projects/'+REF+'/database/query/read-only')return Response.json([f.row]);
   if(url===`https://${REF}.supabase.co/auth/v1/admin/users?page=1&per_page=1`){
    const r=new Response('synthetic private account metadata',{headers:f.authHeader===null?{}:{'X-Total-Count':f.authHeader}});
    r.json=r.text=async()=>{f.authReads++;throw Error('Auth body must not be decoded');};f.authResponse=r;return r;
@@ -29,13 +29,14 @@ test('preflight observes only read-only capability and reports no destructive re
  const f=fixture();assert.equal(await runPreflight(f),0);assert.equal(f.authReads,0);assert.equal(f.authResponse.bodyUsed,true);assert.equal(f.output.length,1);
  const r=f.output[0];assert.equal(r.status,'capabilities_observed');assert.equal(r.destructive_ready,false);assert.equal(r.source_sha,SHA);
  assert.deepEqual(r.counts,{public_tables:53,auth_users:10,profiles:10,reports:6,messages:9,assigned_roles:2,bootstrap_offers:1,pending_offers:1,storage_objects:18,storage_buckets:4,versioned_objects:0,archived_objects:0,delete_markers:0,multipart_uploads:0,multipart_parts:0});
- assert.deepEqual(r.gates,['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','STORAGE_DRAIN_UNVERIFIED','ROLE_ACCEPTANCE_NOT_APPLIED']);
+ assert.deepEqual(r.gates,['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','MAINTENANCE_IDENTITY_UNVERIFIED','STORAGE_DRAIN_UNVERIFIED','ROLE_ACCEPTANCE_NOT_APPLIED']);
  assert.deepEqual(r.capabilities,{management_sql:true,auth_admin_list:true,storage_bucket_list:true});
  assert.equal(f.requests.length,4);
  for(const {url,options} of f.requests){
   assert.equal(options.redirect,'error');assert.ok(options.signal);assert.equal(options.signal.aborted,false);
   if(url.startsWith('https://api.supabase.com/')){
-   assert.equal(options.method,'POST');const body=JSON.parse(options.body);assert.equal(body.read_only,true);assert.equal(typeof body.query,'string');assert.match(body.query,/^select\s/i);
+   assert.equal(url,`https://api.supabase.com/v1/projects/${REF}/database/query/read-only`);
+   assert.equal(options.method,'POST');const body=JSON.parse(options.body);assert.deepEqual(Object.keys(body),['query']);assert.equal(typeof body.query,'string');assert.match(body.query,/^select\s/i);
    assert.doesNotMatch(body.query,/\b(?:insert|update|delete|truncate|alter|drop|create|set)\b/i);
    assert.equal(options.headers.Authorization,'Bearer '+f.env.SUPABASE_ACCESS_TOKEN);assert.equal(options.headers.apikey,undefined);
   }else{assert.equal(options.method,'GET');assert.equal(options.headers.apikey,f.env.SUPABASE_SECRET_KEY);assert.equal(options.headers.Authorization,undefined);assert.equal(options.body,undefined);}
@@ -44,7 +45,7 @@ test('preflight observes only read-only capability and reports no destructive re
 });
 test('a present role prerequisite still cannot enable deletion or establish upload drain',async()=>{
  const f=fixture();f.row.role_acceptance_present=true;assert.equal(await runPreflight(f),0);
- assert.equal(f.output[0].destructive_ready,false);assert.deepEqual(f.output[0].gates,['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','STORAGE_DRAIN_UNVERIFIED']);
+ assert.equal(f.output[0].destructive_ready,false);assert.deepEqual(f.output[0].gates,['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','MAINTENANCE_IDENTITY_UNVERIFIED','STORAGE_DRAIN_UNVERIFIED']);
 });
 for(const [key,value] of Object.entries({GITHUB_ACTIONS:'false',GITHUB_EVENT_NAME:'push',GITHUB_REPOSITORY:'other/repo',GITHUB_REF:'refs/heads/other',GITHUB_ACTOR:'other',GITHUB_TRIGGERING_ACTOR:'other',GITHUB_SHA:'not-a-sha',GITHUB_WORKFLOW_REF:'other-workflow'})){
  test(`rejects ${key} before accessing credentials or network`,async()=>{
@@ -56,7 +57,7 @@ test('rejects a checkout that differs from the dispatched source',async()=>{cons
 for(const [key,value] of [['SUPABASE_ACCESS_TOKEN',''],['SUPABASE_SECRET_KEY',''],['SUPABASE_SECRET_KEY','sb_publishable_not_admin'],['SUPABASE_SECRET_KEY','sb_secret_ with whitespace']]){
  test(`refuses unavailable or wrong-kind ${key}`,async()=>{const f=fixture();f.env[key]=value;assert.equal(await runPreflight(f),1);assert.equal(f.requests.length,0);assert.equal(f.output[0].error,'CREDENTIALS_UNAVAILABLE');});
 }
-for(const [key,value] of [['session_role','authenticator'],['effective_role','service_role'],['selected_role','authenticated'],['transaction_read_only','off'],['public_tables',[...TABLES,'unexpected']],['storage_buckets',5],['auth_users',-1],['profiles',1.5],['role_acceptance_present','true']]){
+for(const [key,value] of [['session_role','authenticator'],['effective_role','service_role'],['session_role','postgres'],['effective_role','postgres'],['selected_role','authenticated'],['transaction_read_only','off'],['public_tables',[...TABLES,'unexpected']],['storage_buckets',5],['auth_users',-1],['profiles',1.5],['role_acceptance_present','true']]){
  test(`fails closed on SQL ${key} drift`,async()=>{const f=fixture();f.row[key]=value;assert.equal(await runPreflight(f),1);assert.equal(f.output[0].error,'SQL_CONTRACT_REJECTED');assert.equal(f.requests.length,1);});
 }
 for(const header of [null,'','ten','-1','10.5','9']){

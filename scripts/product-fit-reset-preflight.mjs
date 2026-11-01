@@ -45,7 +45,7 @@ function validateSql(body){
  requireContract(Array.isArray(body)&&body.length===1&&body[0]&&typeof body[0]==='object','SQL_CONTRACT_REJECTED');
  const row=body[0];
  // Fixed keys/boolean comparisons only:diagnose refusals without relaying SQL values.
- const checks={session_role:row.session_role==='postgres',effective_role:row.effective_role==='postgres',
+ const checks={session_role:row.session_role==='supabase_read_only_user',effective_role:row.effective_role==='supabase_read_only_user',
   selected_role:row.selected_role==='none',transaction_read_only:row.transaction_read_only==='on',
   public_tables:Array.isArray(row.public_tables)&&row.public_tables.length===TABLES.length&&[...row.public_tables].sort().every((name,i)=>name===TABLES[i]),
   counts:COUNTS.every(key=>count(row[key])),bucket_count:row.storage_buckets===4,
@@ -67,8 +67,8 @@ export async function runPreflight({env,headSha,fetchImpl=fetch,emit=report=>con
    if(!response.ok){await response.body?.cancel();throw new Rejected('HTTP_REJECTED');}
    return response;
   };
-  const row=validateSql(await json(await request(`https://api.supabase.com/v1/projects/${PROJECT}/database/query`,{
-   method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({query:SQL,read_only:true}),
+  const row=validateSql(await json(await request(`https://api.supabase.com/v1/projects/${PROJECT}/database/query/read-only`,{
+   method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({query:SQL}),
   })));
   const headers={apikey:key};
   const auth=await request(`https://${PROJECT}.supabase.co/auth/v1/admin/users?page=1&per_page=1`,{method:'GET',headers});
@@ -84,7 +84,7 @@ export async function runPreflight({env,headSha,fetchImpl=fetch,emit=report=>con
    counts:{public_tables:53,...Object.fromEntries(COUNTS.map(name=>[name,row[name]]))},
    capabilities:{management_sql:true,auth_admin_list:true,storage_bucket_list:true},
    prerequisites:{role_acceptance_present:row.role_acceptance_present,storage_version:version,storage_versioning_disabled:row.versioning_disabled,storage_drain_verified:false},
-   gates:['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','STORAGE_DRAIN_UNVERIFIED',...row.role_acceptance_present?[]:['ROLE_ACCEPTANCE_NOT_APPLIED']],
+   gates:['DESTRUCTIVE_COMMAND_NOT_IMPLEMENTED','MAINTENANCE_IDENTITY_UNVERIFIED','STORAGE_DRAIN_UNVERIFIED',...row.role_acceptance_present?[]:['ROLE_ACCEPTANCE_NOT_APPLIED']],
   });return 0;
  }catch(error){
   // Never serialize exceptions,API bodies,headers,environment or stack traces.
