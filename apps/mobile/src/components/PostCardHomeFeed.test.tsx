@@ -207,8 +207,8 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /share report/i }));
     await waitFor(() => expect(share).toHaveBeenCalledWith({
-      title: "Golden Retriever near Riverside Park",
-      url: "https://findback.test/r/p1",
+      title: "FindBack report",
+      url: "https://findback.test/api/share/p1",
     }));
   });
 
@@ -222,7 +222,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /share report/i }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
-      "https://findback.test/r/p1",
+      "https://findback.test/api/share/p1",
     ));
     // A dismissal is not a failure: the sheet's own AbortError must not fall
     // back to the clipboard, so the retry opens the menu again.

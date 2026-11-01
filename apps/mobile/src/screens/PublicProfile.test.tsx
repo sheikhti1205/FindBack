@@ -89,7 +89,9 @@ describe("PublicProfile", () => {
   it("reports the loaded user through the profile overflow and canonical sheet", async () => {
     renderRoute();
     const header = within(await screen.findByRole("region", { name: "Public profile" }));
-    fireEvent.click(header.getByRole("button", { name: "More profile actions" }));
+    // The profile header and embedded peer-contact card compose the same
+    // canonical safety owner; exercise the header's first overflow here.
+    fireEvent.click(header.getAllByRole("button", { name: "More profile actions" })[0]!);
     fireEvent.click(screen.getByRole("menuitem", { name: "Report user" }));
     fireEvent.click(screen.getByRole("radio", { name: /harassment/i }));
     fireEvent.click(screen.getByRole("button", { name: "Send report" }));

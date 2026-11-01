@@ -755,6 +755,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_chat_exchange",
   "findback_chat_receipt_observe",
   "findback_chat_receipt_view",
+  "findback_chat_set_muted",
   "findback_confirm_match",
   "findback_delete_comment_client",
   "findback_delete_notifications_client",
@@ -803,6 +804,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_role_revoke",
   "findback_role_set_capabilities",
   "findback_save_post_client",
+  "findback_search_people",
   "findback_search_profiles_client",
   "findback_set_notification_preferences_client",
   "findback_shared_report_preview",
@@ -1315,9 +1317,8 @@ function stripSqlNoise(text) {
 /**
  * Parenthesis depth at every character.
  *
- * Depth is the scope: `from public.comments c` inside a subquery binds `c` for
- * that subquery only, so one alias can legitimately name two tables in two
- * scopes of one statement (REVIEW-M1-ACL-CLOSURE A3).
+ * Depth orders nested scopes. Alias resolution also needs enclosing bounds:
+ * sibling subqueries have equal depth but cannot share each other's aliases.
  */
 function scopeDepths(text) {
   const depths = new Array(text.length + 1).fill(0);
@@ -1331,6 +1332,18 @@ function scopeDepths(text) {
   return depths;
 }
 
+function scopeBounds(text) {
+  const root = { start: 0, end: text.length };
+  const stack = [root];
+  const bounds = [];
+  for (let i = 0; i < text.length; i++) {
+    bounds[i] = stack[stack.length - 1];
+    if (text[i] === "(") stack.push({ start: i + 1, end: text.length });
+    else if (text[i] === ")" && stack.length > 1) stack.pop().end = i;
+  }
+  return bounds;
+}
+
 /**
  * Table/alias bindings for ONE statement, with the scope each was bound in.
  *
@@ -1340,6 +1353,7 @@ function scopeDepths(text) {
  */
 function bindingsForStatement(statement, columns) {
   const depths = scopeDepths(statement);
+  const bounds = scopeBounds(statement);
   const binds = [];
   const reads = [];
   const targets = [];
@@ -1356,9 +1370,9 @@ function bindingsForStatement(statement, columns) {
       if (!parsed) continue;
       const table = parsed[1];
       if (!columns.has(table)) continue; // a CTE, a set-returning function, a variable
-      binds.push({ name: table, table, depth, source: fromSource });
+      binds.push({ name: table, table, depth, scope: bounds[m.index], source: fromSource });
       if (parsed[2] && !ALIAS_STOP_WORDS.has(parsed[2])) {
-        binds.push({ name: parsed[2], table, depth, source: fromSource });
+        binds.push({ name: parsed[2], table, depth, scope: bounds[m.index], source: fromSource });
       }
       (fromSource ? reads : targets).push({ table, depth });
     }
@@ -1367,10 +1381,12 @@ function bindingsForStatement(statement, columns) {
 }
 
 /** Tables a name refers to in the innermost scope at or around `depth`. */
-function resolveBinding(binds, name, depth) {
+function resolveBinding(binds, name, depth, position) {
   for (let d = depth; d >= 0; d--) {
     const tables = new Set();
-    for (const bind of binds) if (bind.depth === d && bind.name === name) tables.add(bind.table);
+    for (const bind of binds) {
+      if (bind.depth === d && bind.name === name && position >= bind.scope.start && position < bind.scope.end) tables.add(bind.table);
+    }
     if (tables.size > 0) return tables;
   }
   return null;
@@ -1602,7 +1618,7 @@ function findReaderGrantGaps(migrations) {
       // every column of that table, so the star IS a demand for all of them.
       for (const m of statement.matchAll(/([a-z0-9_]+)\s*\.\s*\*/g)) {
         const owner = m[1];
-        const viaBinding = resolveBinding(binds, owner, depths[m.index]);
+        const viaBinding = resolveBinding(binds, owner, depths[m.index], m.index);
         if (viaBinding) for (const table of viaBinding) requireAll(table);
         else if (columns.has(owner)) requireAll(owner);
       }
@@ -1636,7 +1652,7 @@ function findReaderGrantGaps(migrations) {
       while ((ref = refs.exec(statement)) !== null) {
         const owner = ref[1];
         const column = ref[2];
-        const viaBinding = resolveBinding(binds, owner, depths[ref.index]);
+        const viaBinding = resolveBinding(binds, owner, depths[ref.index], ref.index);
         if (viaBinding) for (const table of viaBinding) requireColumn(table, column);
         else if (columns.has(owner)) requireColumn(owner, column);
         refs.lastIndex = ref.index + 1; // overlapping: public.t.col has two pairs
@@ -2089,6 +2105,20 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     // `c.depth` is the outer comments scope; the inner `c` is reactions and only
     // its id is read, so reactions must not be charged for depth/created_at.
     assert.deepEqual(findReaderGrantGaps(scoped), [{ table: "comments", missing: ["depth"] }]);
+  });
+
+  it("does not merge aliases in sibling subqueries, but retains correlated reads", () => {
+    const schema = { file: "a.sql", sql: `
+      create table public.reactions (id text, user_id text);
+      create table public.ratings (id text, score integer);
+      grant select (id) on public.reactions to authenticated;
+      grant select (id,score) on public.ratings to authenticated;` };
+    const reader = { file: "b.sql", sql: `create function public.sibling_reader() returns void language sql security invoker as $$
+      select (select avg(r.score) from public.ratings r),
+        (select r.user_id from public.reactions r where exists (select 1 where r.id is not null));
+      $$;` };
+    assert.deepEqual(findReaderGrantGaps([schema, reader]), [{ table: "reactions", missing: ["user_id"] }]);
+    assert.deepEqual(findReaderGrantGaps([{ ...schema, sql: schema.sql + " grant select(user_id) on public.reactions to authenticated;" }, reader]), []);
   });
 
   it("registers a reader whose body uses a tagged, mixed-case dollar quote (B1)", () => {
