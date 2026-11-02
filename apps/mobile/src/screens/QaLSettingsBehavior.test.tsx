@@ -6,7 +6,7 @@
  * index is run against packet matrices/settings_search_index.csv; live
  * summaries must be truthful; every backTo must land on a mounted route.
  */
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -353,10 +353,12 @@ describe("QA L: W4 root groups moved rows without orphaning destinations", () =>
   it("nests moved rows under the Advanced, Legal and Help & about disclosures", () => {
     renderSettingsRoot();
     const more = screen.getByRole("region", { name: "More" });
-    // Three nested groups: Advanced (uploads/troubleshooting), Legal, Help &
-    // about. The expectation said two and had been red on main since the Legal
-    // group landed; the href assertions below were already the real contract.
-    expect(more.querySelectorAll("details.fb-settings-nested")).toHaveLength(3);
+    // Three top-level disclosures; Troubleshooting is nested within Advanced.
+    const topLevel = [...more.querySelectorAll("details.fb-settings-nested")]
+      .filter((group) => !group.parentElement?.closest("details"));
+    expect(topLevel).toHaveLength(3);
+    const diagnostics = within(more).getByRole("link", { name: "Diagnostics", hidden: true });
+    expect(diagnostics.closest("details")?.querySelector("summary")?.textContent).toBe("Troubleshooting");
     const hrefs = Array.from(document.querySelectorAll("a[href]")).map((a) =>
       (a as HTMLAnchorElement).getAttribute("href"),
     );

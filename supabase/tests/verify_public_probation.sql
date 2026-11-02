@@ -154,14 +154,14 @@ update public.public_action_admissions set admitted_at = admitted_at - interval 
  where user_id='00000000-0000-4000-9200-000000000002';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
-select public.findback_react_client('pb-target','LOVE') as first_reaction;
+select public.findback_react_client('pb-target','LIKE') as first_reaction;
 reset role;
 select 'PB8a an added reaction spends one admission' as probe
 where (select count(*) from public.public_action_admissions
         where user_id='00000000-0000-4000-9200-000000000002' and action_kind='POST_REACTION')=1;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
-select public.findback_react_client('pb-target','LOVE') as same_kind;
+select public.findback_react_client('pb-target','LIKE') as same_kind;
 select public.findback_react_client('pb-target',null) as removed_kind;
 reset role;
 select 'PB8b a same-kind no-op and a removal spend nothing' as probe
@@ -171,7 +171,9 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
 do $$
 begin
-  perform public.findback_react_client('pb-target','SUPPORT');
+  -- The preceding removal means LIKE is a fresh write, not a no-op. New
+  -- non-LIKE kinds are invalid, so cannot exercise the admission clock.
+  perform public.findback_react_client('pb-target','LIKE');
   raise exception 'PB8c FAILED: a changed reaction was admitted inside the window' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_COOLDOWN%' then
@@ -183,8 +185,8 @@ end $$;
 reset role;
 update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
  where user_id='00000000-0000-4000-9200-000000000002';
-select public.findback_react_comment_client('pb-target-comment','HELPFUL') as first_comment_reaction;
-select public.findback_react_comment_client('pb-target-comment','HELPFUL') as same_comment_reaction;
+select public.findback_react_comment_client('pb-target-comment','LIKE') as first_comment_reaction;
+select public.findback_react_comment_client('pb-target-comment','LIKE') as same_comment_reaction;
 reset role;
 select 'PB9 a comment reaction is covered once, with no-op exempt' as probe
 where (select count(*) from public.public_action_admissions
@@ -365,7 +367,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000001'
 do $$
 declare r record;
 begin
-  select * into r from public.findback_react_client('pb-hidden','LOVE');
+  select * into r from public.findback_react_client('pb-hidden','LIKE');
   raise exception 'PB13e FAILED: a stranger reacted to a hidden post' using errcode='0A000';
 exception when others then
   if sqlerrm like 'PB13e%' then raise; end if;

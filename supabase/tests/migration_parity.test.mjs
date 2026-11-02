@@ -281,7 +281,7 @@ describe("comment-media cleanup lease/ack redesign (20261013020000)", () => {
     assert.ok(consumer().includes("CLEANUP_BUCKET"), "bucket constant");
     assert.ok(consumer().includes("findback-comment-media"), "sweeps the comment-media bucket");
     assert.ok(consumer().includes("remove([key])"), "per-key remove (bad-key isolation)");
-    assert.ok(consumer().includes("x-cleanup-secret"), "cron-secret header gate");
+    assert.ok(/withSupabase(?:<[^>]+>)?\(\s*\{\s*auth:\s*["']secret["']/.test(consumer()), "canonical secret-only HTTP gate");
     assert.ok(!consumer().includes("getUser"), "never resolves a user session (internal only)");
   });
 
@@ -749,7 +749,10 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_bootstrap_claim_status",
   "findback_can",
   "findback_can_read_comment",
+  "findback_can_read_comment_object",
   "findback_can_read_post",
+  "findback_can_read_report_object",
+  "findback_can_upload_comment_object",
   "findback_cancel_match",
   "findback_change_post_status_client",
   "findback_chat_exchange",
@@ -762,6 +765,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_delete_comment_client",
   "findback_delete_notifications_client",
   "findback_delete_post_client",
+  "findback_discard_comment_media",
   "findback_discard_staged_upload",
   "findback_feed_reaction_state_client",
   "findback_fetch_chat_media_delivery",
@@ -803,6 +807,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_report_sharing",
   "findback_reputation_tier",
   "findback_reserve_chat_media",
+  "findback_reserve_comment_media",
   "findback_resolve_appeal",
   "findback_restore_notifications_client",
   "findback_return_ratings",

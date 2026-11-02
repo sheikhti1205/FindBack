@@ -26,6 +26,11 @@ const { postsMock, findMock, authState } = vi.hoisted(() => ({
 }));
 
 vi.mock("../services/posts", () => postsMock);
+vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({
+  auth: { getSession: async () => ({ data: { session: authState.user ? { user: { id: authState.user.id } } : null } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
+  storage: { from: () => ({ createSignedUrl: async () => ({ data: { signedUrl: "https://signed.test/comment.jpg" }, error: null }) }) },
+}) }));
 vi.mock("../services/realtime", () => ({
   joinPostRoom: vi.fn(),
   leavePostRoom: vi.fn(),

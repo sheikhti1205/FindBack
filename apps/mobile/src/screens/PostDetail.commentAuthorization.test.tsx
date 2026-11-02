@@ -9,6 +9,13 @@ const { posts, viewer, handlers, report } = vi.hoisted(() => ({
   handlers: new Map<string, (p: Record<string, unknown>) => void>(), report: vi.fn(),
 }));
 vi.mock("../services/posts", () => posts);
+// Keep the real private-media resolver while replacing its authenticated SDK
+// boundary. This suite tests comment-list revocation, not hosted OAuth/Storage.
+vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({
+  auth: { getSession: async () => ({ data: { session: { user: { id: viewer.user.id } } } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) },
+  storage: { from: () => ({ createSignedUrl: async () => ({ data: { signedUrl: "https://signed.test/comment.jpg" }, error: null }) }) },
+}) }));
 vi.mock("../auth", () => ({ useAuth: () => viewer }));
 vi.mock("../services/possibleMatches", () => ({ findPossibleMatches: async () => ({ available: true, candidatesConsidered: 0, matches: [] }), applyMatchesEngineToRuntime: () => true }));
 vi.mock("../services/realtime", () => ({ joinPostRoom: vi.fn(), leavePostRoom: vi.fn(),
