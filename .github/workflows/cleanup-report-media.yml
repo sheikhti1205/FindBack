@@ -1,0 +1,69 @@
+# FindBack — report-media cleanup scheduler (P11).
+#
+# Every 15 minutes, call the `cleanup-report-media` Edge Function to drain the
+# orphaned bytes of deleted report photos. It claims a bounded batch from
+# `report_media_cleanup_queue` (lease/ack, see
+# supabase/migrations/20261102120000_p11_authority_closure.sql), removes each
+# object from the private `findback-report-media` bucket, acks only the
+# successes, and purges abandoned staging uploads older than the 24h grace.
+# Failures stay queued for the next stale-lease reclaim, so nothing is lost.
+#
+# The function is internal-only: it accepts EITHER a service-role bearer OR the
+# `x-cleanup-secret` header matching the function env `CLEANUP_CRON_SECRET`.
+# This lane reuses the existing `CLEANUP_CRON_SECRET` secret and
+# `SUPABASE_PROJECT_REF` variable — names only, the value is never echoed, and
+# the workflow is a no-op until they are provisioned.
+#
+# Trigger: schedule + manual dispatch ONLY. Never on push/tag — a code push
+# must not sweep production Storage.
+
+name: Cleanup report media
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_batches:
+        description: "Bounded batch ceiling (1-10) per invocation."
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: findback-cleanup-report-media
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MAX_BATCHES: "10"
+    steps:
+      - name: Sweep orphaned report media
+        env:
+          CLEANUP_CRON_SECRET: ${{ secrets.CLEANUP_CRON_SECRET }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          INPUT_MAX_BATCHES: ${{ github.event.inputs.max_batches }}
+        run: |
+          if [ -z "$CLEANUP_CRON_SECRET" ]; then
+            echo "CLEANUP_CRON_SECRET is not provisioned; skipping sweep."
+            exit 0
+          fi
+          if [ -z "$PROJECT_REF" ]; then
+            echo "SUPABASE_PROJECT_REF is not set; skipping sweep."
+            exit 0
+          fi
+          BATCH="${INPUT_MAX_BATCHES:-$MAX_BATCHES}"
+          case "$BATCH" in ''|*[!0-9]*) BATCH="$MAX_BATCHES" ;; esac
+          [ "$BATCH" -lt 1 ] && BATCH=1
+          [ "$BATCH" -gt "$MAX_BATCHES" ] && BATCH="$MAX_BATCHES"
+          echo "sweeping up to ${BATCH} batch(es) (bounded)"
+          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-report-media" \
+            -H "x-cleanup-secret: ${CLEANUP_CRON_SECRET}" \
+            -H "content-type: application/json" \
+            -d "{\"max_batches\": ${BATCH}}" \
+            --retry 2 --retry-all-errors --max-time 60

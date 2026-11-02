@@ -3,6 +3,7 @@ import { PostLink } from "./PostNavigation";
 import { MapPin } from "lucide-react";
 import { StatusChip } from "./StatusChip";
 import { useReportPreview } from "../hooks/useReportPreview";
+import { useMediaUrl } from "../services/media/privateMedia";
 
 /**
  * One report reference, rendered inline.
@@ -35,6 +36,15 @@ export const REPORT_UNAVAILABLE: ReactNode = (
 export function ReportReferenceCard({ postId }: { postId: string | null }) {
   const state = useReportPreview(postId);
   const [coverFailed, setCoverFailed] = useState(false);
+  // Photos only (report publishes are photo-only); a non-image first descriptor
+  // must not turn the box into a broken-image glyph. `fileUrl` may be a private
+  // Storage key, so it resolves to a signed URL when one is available.
+  const coverValue =
+    state.status === "ready"
+      ? state.post.attachments.find((attachment) => attachment.mimeType.startsWith("image/"))?.fileUrl
+      : undefined;
+  const resolvedCover = useMediaUrl(coverValue);
+  const cover = coverFailed ? undefined : resolvedCover;
 
   if (state.status === "unavailable") return REPORT_UNAVAILABLE;
 
@@ -73,11 +83,6 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
   }
 
   const { post } = state;
-  // Photos only (report publishes are photo-only); a non-image first descriptor
-  // must not turn the box into a broken-image glyph.
-  const cover = coverFailed
-    ? undefined
-    : post.attachments.find((attachment) => attachment.mimeType.startsWith("image/"))?.fileUrl;
   return (
     <PostLink
       to={`/posts/${post.id}`}

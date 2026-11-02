@@ -11,6 +11,7 @@ import { RichTextEditor } from "./RichTextEditor";
 import { ReportDatePicker } from "./ReportDatePicker";
 import { LocationPicker, type LocationValue } from "./LocationPicker";
 import { MediaViewer } from "./MediaViewer";
+import { peekMediaUrl, useMediaUrl } from "../services/media/privateMedia";
 import { YouTubeEmbed } from "./YouTubeEmbed";
 import { ImageOff } from "lucide-react";
 
@@ -210,24 +211,39 @@ export function validateReportEditorValues(values: ReportEditorValues): ReportEd
  * from the editor. The line below says exactly that, rather than showing
  * dead controls that look like they work.
  */
+function ReadOnlyPhoto({ photo, title, index, total, onOpen }: { photo: Attachment; title: string; index: number; total: number; onOpen: () => void }) {
+  // Private report media: `fileUrl` may be a Storage key resolved to a
+  // short-lived signed URL; legacy absolute URLs pass through unchanged.
+  const src = useMediaUrl(photo.fileUrl);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Open photo ${index + 1} of ${total} fullscreen`}
+      className="block h-20 w-20 overflow-hidden rounded-m3-sm border border-outline-variant"
+    >
+      <img src={src} alt={`Photo for ${title}`} className="h-full w-full object-cover" />
+    </button>
+  );
+}
+
 function ReadOnlyPhotos({ photos, title }: { photos: readonly Attachment[]; title: string }) {
   const images = photos.filter((photo) => photo.mimeType.startsWith("image/"));
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   if (images.length === 0) return null;
-  const lightboxPhotos = images.map((photo, i) => ({ id: photo.id, src: photo.fileUrl, width: photo.width, height: photo.height, alt: `Photo ${i + 1} for ${title}`, title }));
+  const lightboxPhotos = images.map((photo, i) => ({ id: photo.id, src: peekMediaUrl(photo.fileUrl) ?? photo.fileUrl, width: photo.width, height: photo.height, alt: `Photo ${i + 1} for ${title}`, title }));
   return (
     <section className="flex flex-col gap-2" data-testid="report-editor-photos">
       <div className="flex flex-wrap gap-2">
         {images.map((photo, index) => (
-          <button
+          <ReadOnlyPhoto
             key={photo.id}
-            type="button"
-            onClick={() => setOpenIndex(index)}
-            aria-label={`Open photo ${index + 1} of ${images.length} fullscreen`}
-            className="block h-20 w-20 overflow-hidden rounded-m3-sm border border-outline-variant"
-          >
-            <img src={photo.fileUrl} alt={`Photo for ${title}`} className="h-full w-full object-cover" />
-          </button>
+            photo={photo}
+            title={title}
+            index={index}
+            total={images.length}
+            onOpen={() => setOpenIndex(index)}
+          />
         ))}
       </div>
       <p className="flex items-start gap-1.5 text-xs text-on-surface-variant" data-testid="report-editor-photos-note">

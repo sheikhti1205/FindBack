@@ -20,6 +20,7 @@ import { UserIdentityTrigger } from "../components/UserIdentityTrigger";
 import { BlockControl } from "../components/BlockControl";
 import { ReportSheet } from "../components/ReportSheet";
 import { MediaViewer, type MediaViewerItem } from "../components/MediaViewer";
+import { useMediaUrl } from "../services/media/privateMedia";
 import { announce } from "../components/LiveRegion";
 import { PreferenceSwitchRow } from "../components/settings/SettingsPrimitives";
 import { fetchAccountLabels } from "../services/accountLabels";
@@ -88,15 +89,19 @@ function ReportContextSession({ reportId, preview }: { reportId: string; preview
       window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", onVisible);
     };
   }, [reportId]);
+  const firstImageUrl =
+    state.status === "ready"
+      ? state.post?.attachments?.find((attachment) => attachment.mimeType.startsWith("image/"))?.fileUrl
+      : undefined;
+  const firstImageSrc = useMediaUrl(firstImageUrl);
   if (preview && state.status !== "ready") return <span className="fb-chat-row-context">{state.status === "loading" ? "Loading report…" : "Report unavailable"}</span>;
   if (state.status === "loading") return <p className="fb-chat-context fb-chat-secondary">Loading report…</p>;
   if (state.status === "unavailable") return <p className="fb-chat-context fb-chat-secondary" data-chat-report="unavailable">
     Report unavailable</p>;
   const post = state.post!;
   if (preview) return <span className="fb-chat-row-context" dir="auto">{post.type === "LOST" ? "Lost" : "Found"} report · {post.title}</span>;
-  const firstImage = post.attachments?.find(attachment => attachment.mimeType.startsWith("image/"));
   return <Link className="fb-chat-context fb-chat-report-card" to={`/posts/${encodeURIComponent(reportId)}`} data-chat-report={reportId}>
-    {firstImage && <img src={firstImage.fileUrl} alt={post.title} loading="lazy" />}
+    {firstImageSrc && <img src={firstImageSrc} alt={post.title} loading="lazy" />}
     <span className="fb-chat-report-copy">
       <span className="fb-chat-secondary">{post.type === "LOST" ? "Lost" : "Found"} report</span>
       <strong dir="auto">{post.title}</strong>

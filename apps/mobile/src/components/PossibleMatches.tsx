@@ -8,6 +8,7 @@ import { PostTypeBadge } from "./PostTypeBadge";
 import { useAuth } from "../auth";
 import { EmptyState, Spinner } from "./PostCard";
 import { MediaViewer } from "./MediaViewer";
+import { peekMediaUrl, useMediaUrl } from "../services/media/privateMedia";
 import { loadAiPreferences } from "../services/ai/aiPreferences";
 import { applyMatchesEngineToRuntime, findPossibleMatches, type PossibleMatchesResult } from "../services/possibleMatches";
 import { listItemVariants, motionDurations, motionEasings, motionStagger } from "./uiMotion";
@@ -29,8 +30,9 @@ export interface PossibleMatchesProps {
 
 function MatchPhoto({ post }: { post: MatchCandidate }) {
   const [failed, setFailed] = useState(false);
+  const src = useMediaUrl(post.photoUrl);
   return post.photoUrl && !failed ? (
-    <img src={post.photoUrl} alt={`Photo for ${post.title}`} loading="lazy" onError={() => setFailed(true)} className="aspect-[4/3] w-full rounded-m3-sm object-cover" />
+    <img src={src} alt={`Photo for ${post.title}`} loading="lazy" onError={() => setFailed(true)} className="aspect-[4/3] w-full rounded-m3-sm object-cover" />
   ) : (
     <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-m3-sm bg-surface-container text-xs text-on-surface-variant">
       <ImageOff size={18} aria-hidden />{failed ? "Photo unavailable" : "No photo"}
@@ -263,7 +265,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
       )}
       {lightboxMatch?.post.photoUrl && (
         <MediaViewer
-          items={[{ id: lightboxMatch.post.id, src: lightboxMatch.post.photoUrl, alt: `Photo for ${lightboxMatch.post.title}`, title: lightboxMatch.post.title }]}
+          items={[{ id: lightboxMatch.post.id, src: peekMediaUrl(lightboxMatch.post.photoUrl) ?? lightboxMatch.post.photoUrl, alt: `Photo for ${lightboxMatch.post.title}`, title: lightboxMatch.post.title }]}
           index={0}
           onClose={() => setLightboxId(null)}
         />

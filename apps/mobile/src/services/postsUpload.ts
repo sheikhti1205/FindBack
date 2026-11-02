@@ -24,7 +24,15 @@ export interface StoredUpload {
   height: number;
 }
 
+/** Profile/avatar objects. Public: a profile picture is profile-public. */
 export const IMAGES_BUCKET = "findback-images";
+
+/**
+ * Report photos (P11). Private: Storage only signs an object while the caller
+ * can currently read the owning report, so a hidden/deleted report's photo
+ * stops being served. New attachment rows carry the Storage key, not a URL.
+ */
+export const REPORT_MEDIA_BUCKET = "findback-report-media";
 
 /**
  * Hand control back the moment `signal` aborts.
@@ -92,7 +100,7 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
 
   const uploadStart = Date.now();
   const request = supabase.storage
-    .from(IMAGES_BUCKET)
+    .from(REPORT_MEDIA_BUCKET)
     .upload(objectKey, normalized.blob, {
       contentType: normalized.mimeType,
       upsert: false,
@@ -111,11 +119,11 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
       // hazard `removeStagedUpload` documents.
       void request.then((late) => {
         if (late.error) return undefined;
-        return supabase.storage.from(IMAGES_BUCKET).remove([objectKey]).then(
+        return supabase.storage.from(REPORT_MEDIA_BUCKET).remove([objectKey]).then(
           (removed) => {
             if (removed.error) {
               diag("posts.upload.abandoned_cleanup_error", {
-                bucket: IMAGES_BUCKET,
+                bucket: REPORT_MEDIA_BUCKET,
                 objectKey,
                 message: removed.error.message,
               }, { traceId });
@@ -123,7 +131,7 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
           },
           (err: unknown) => {
             diag("posts.upload.abandoned_cleanup_error", {
-              bucket: IMAGES_BUCKET,
+              bucket: REPORT_MEDIA_BUCKET,
               objectKey,
               message: err instanceof Error ? err.message : String(err),
             }, { traceId });
@@ -134,7 +142,7 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
         // that is not initialised). Without this the voided chain would reject
         // unhandled — the same hazard the `{ error }` handling above closes.
         diag("posts.upload.abandoned_cleanup_error", {
-          bucket: IMAGES_BUCKET,
+          bucket: REPORT_MEDIA_BUCKET,
           objectKey,
           message: err instanceof Error ? err.message : String(err),
         }, { traceId });
@@ -145,7 +153,7 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
   const uploadMs = Date.now() - uploadStart;
   if (uploadError) {
     diag("posts.upload.storage_error", {
-      bucket: IMAGES_BUCKET,
+      bucket: REPORT_MEDIA_BUCKET,
       objectKey,
       message: uploadError.message,
       ms: uploadMs,
@@ -153,7 +161,9 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
     throw new ApiError(uploadError.message || "Upload failed", 502);
   }
 
-  const fileUrl = supabase.storage.from(IMAGES_BUCKET).getPublicUrl(objectKey).data.publicUrl;
+  // No public URL exists for this bucket. The stored value IS the object key;
+  // readers resolve a short-lived signed URL (services/media/privateMedia).
+  const fileUrl = objectKey;
   const fileName = safeFileName(file.name);
   // The display hint is staged only when it is a complete, vouchable pair. A
   // size outside the hint ceiling (a large animated GIF is passed through
@@ -162,27 +172,29 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
   // falls back to a default one.
   const displaySize = displaySizeOrNull(normalized);
   const stageStart = Date.now();
-  const { error: stageError } = await supabase.from("uploads").insert({
-    id,
-    user_id: userData.user.id,
-    file_name: fileName,
-    mime_type: normalized.mimeType,
-    file_size: normalized.blob.size,
-    file_url: fileUrl,
-    created_at: new Date().toISOString(),
-    ...(displaySize ? { width: displaySize.width, height: displaySize.height } : {}),
+  // The server derives and verifies the object key from this upload id and the
+  // declared type, then confirms the bytes exist in the private bucket. The
+  // client never supplies a URL, an owner, or a key of its choosing.
+  const { error: stageError } = await supabase.rpc("findback_stage_upload", {
+    p_id: id,
+    p_object_key: objectKey,
+    p_file_name: fileName,
+    p_mime_type: normalized.mimeType,
+    p_file_size: normalized.blob.size,
+    p_width: displaySize?.width ?? null,
+    p_height: displaySize?.height ?? null,
   });
   const stageMs = Date.now() - stageStart;
   if (stageError) {
     diag("posts.upload.stage_error", {
-      table: "uploads",
+      rpc: "findback_stage_upload",
       message: stageError.message,
       ms: stageMs,
     }, { traceId });
-    const { error: rollbackError } = await supabase.storage.from(IMAGES_BUCKET).remove([objectKey]);
+    const { error: rollbackError } = await supabase.storage.from(REPORT_MEDIA_BUCKET).remove([objectKey]);
     if (rollbackError) {
       diag("posts.upload.rollback_error", {
-        bucket: IMAGES_BUCKET,
+        bucket: REPORT_MEDIA_BUCKET,
         objectKey,
         message: rollbackError.message,
       }, { traceId });
@@ -221,40 +233,47 @@ export async function uploadImage(file: File, traceId?: string, signal?: AbortSi
 
 export async function removeStagedUpload(stored: StoredUpload, traceId?: string): Promise<void> {
   const supabase = getSupabase();
-  // Supabase reports operation failures in { error }, it does not always
-  // throw — ignoring it orphans the Storage object while the staging row
-  // disappears, so both results are checked.
+  // Discard first: the RPC deletes the staging row and enqueues the exact object
+  // key for the service worker, so the bytes are swept even when this process
+  // dies before it can remove them.
+  //
+  // A failure here is diagnosed and swallowed on purpose. Every caller is on an
+  // error or cancel path, and the queued sweep plus the stale-staging purge are
+  // the real guarantee; throwing would replace the publish error the person
+  // needs to read with a cleanup error they cannot act on.
+  const discardStart = Date.now();
+  const { error: discardError } = await supabase.rpc("findback_discard_staged_upload", {
+    p_id: stored.id,
+  });
+  const discardMs = Date.now() - discardStart;
+  if (discardError) {
+    diag("posts.upload.remove_stage_error", {
+      rpc: "findback_discard_staged_upload",
+      id: stored.id,
+      message: discardError.message,
+      ms: discardMs,
+    }, { traceId });
+  }
+  // Fast path: free the bytes now. The queue can only do it on its next run, and
+  // a failure here is already covered by that queued work.
   const removeStart = Date.now();
   const { error: removeError } = await supabase.storage
-    .from(IMAGES_BUCKET)
+    .from(REPORT_MEDIA_BUCKET)
     .remove([stored.objectKey]);
   const removeMs = Date.now() - removeStart;
   if (removeError) {
-    diag("posts.upload.remove_storage_error", {
-      bucket: IMAGES_BUCKET,
+    diag("posts.upload.remove_deferred", {
+      bucket: REPORT_MEDIA_BUCKET,
       objectKey: stored.objectKey,
       message: removeError.message,
       ms: removeMs,
     }, { traceId });
-    throw new ApiError(removeError.message || "Could not remove the uploaded photo", 502);
-  }
-  const deleteStart = Date.now();
-  const { error: deleteError } = await supabase.from("uploads").delete().eq("id", stored.id);
-  const deleteMs = Date.now() - deleteStart;
-  if (deleteError) {
-    diag("posts.upload.remove_stage_error", {
-      table: "uploads",
-      id: stored.id,
-      message: deleteError.message,
-      ms: deleteMs,
-    }, { traceId });
-    throw new ApiError(deleteError.message || "Could not remove the staged upload", 500);
   }
   diag("posts.upload.remove_success", {
     id: stored.id,
     objectKey: stored.objectKey,
+    discardMs,
     removeMs,
-    deleteMs,
   }, { traceId });
 }
 

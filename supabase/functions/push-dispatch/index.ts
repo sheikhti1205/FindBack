@@ -20,6 +20,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateReplyToken, hashToken, REPLY_TOKEN_TTL_MS } from "../_shared/replyTokens.ts";
 import { runDispatchLanes, type LaneResponse } from "../_shared/dispatchLanes.ts";
+import {
+  drainChatWakes,
+  getChatAccessToken,
+  sendFcm,
+  type ChatClaim,
+} from "../_shared/chatWake.ts";
 
 /**
  * Service-role client factory. Lane helpers take `AdminClient` — the exact
@@ -296,13 +302,7 @@ export function isAuthorized(header: string | null, secret: string | undefined):
 }
 
 /** True when FCM says this token can never succeed and should be removed. */
-export function shouldPruneToken(status: number, body: string): boolean {
-  if (status === 404) return true;
-  if (status !== 400) return false;
-  return /UNREGISTERED|INVALID_ARGUMENT|registration-token-not-registered|requested entity was not found/i.test(
-    body,
-  );
-}
+export { shouldPruneToken } from "../_shared/chatWake.ts";
 
 /**
  * The configuration this function needs to send anything. Names only: a value
@@ -336,169 +336,17 @@ export function configurationFailure(missing: string[]): Response {
   );
 }
 
-async function getAccessToken(serviceAccount: {
-  client_email: string;
-  private_key: string;
-  token_uri?: string;
-}, signal?: AbortSignal): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claims = base64Url(
-    JSON.stringify({
-      iss: serviceAccount.client_email,
-      scope: FCM_SCOPE,
-      aud: serviceAccount.token_uri ?? GOOGLE_TOKEN_URL,
-      iat: now,
-      exp: now + 3600,
-    }),
-  );
-  const signature = await signRs256(`${header}.${claims}`, serviceAccount.private_key);
-  const assertion = `${header}.${claims}.${signature}`;
-  const response = await fetch(serviceAccount.token_uri ?? GOOGLE_TOKEN_URL, {
-    method: "POST",
-    signal,
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }),
-  });
-  if (!response.ok) throw new Error("oauth token exchange failed");
-  const payload = (await response.json()) as { access_token?: string };
-  if (!payload.access_token) throw new Error("oauth token missing");
-  return payload.access_token;
-}
-
-function base64Url(input: string): string {
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** RS256-sign `data` with a PKCS#8 PEM private key using WebCrypto (no npm dep). */
-async function signRs256(data: string, pem: string): Promise<string> {
-  // Drop the PEM armor lines, then all whitespace, leaving base64 DER.
-  const der = pem
-    .split("\n")
-    .filter((line) => !line.includes("-----"))
-    .join("")
-    .replace(/\s+/g, "");
-  const raw = Uint8Array.from(atob(der), (char) => char.charCodeAt(0));
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    raw,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(data)),
-  );
-  let binary = "";
-  for (const byte of signature) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-interface SendResult {
-  ok: boolean;
-  prune: boolean;
-  status: number;
-}
-
-async function sendMessage(
-  projectId: string,
-  accessToken: string,
-  message: Record<string, unknown>,
-  signal?: AbortSignal,
-): Promise<SendResult> {
-  const response = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
-    method: "POST",
-    signal,
-    headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
-  if (response.ok) return { ok: true, prune: false, status: response.status };
-  const body = await response.text();
-  return { ok: false, prune: shouldPruneToken(response.status, body), status: response.status };
-}
-
-export interface ChatWakeDelivery {
-  wakeId: string;
-  recipientId: string;
-  conversationId: string;
-  kind: "CHAT_REQUEST" | "CHAT_CONNECTED";
-  token: string;
-}
-
-/** Data-only, content-free; a stable wake ID supports collapse/native dedupe. */
-export function buildChatFcmMessage(delivery: ChatWakeDelivery): Record<string, unknown> {
-  return {
-    token: delivery.token,
-    data: { type: delivery.kind, recipientId: delivery.recipientId,
-      conversationId: delivery.conversationId, notificationId: delivery.wakeId },
-    android: { priority: "normal", ttl: "86400s", collapse_key: delivery.wakeId },
-  };
-}
-
-interface ChatClaim { wake_id: string; device_id: string; claim_token: string }
-
-async function dispatchChatWakes(admin: AdminClient, projectId: string, senderJson: string) {
-  let accessToken: string | null = null;
-  let claimed = 0;
-  let sent = 0;
-  let failed = 0;
-  // Claim immediately before work: a large sequential batch must not let
-  // later devices' leases expire while earlier network calls are in flight.
-  for (let i = 0; i < BATCH_LIMIT; i += 1) {
-    const { data, error } = await admin.rpc("findback_claim_chat_external_wakes", { p_limit: 1 });
+/**
+ * The scheduler's claim scope: any due wake. Delivery, disposition and token
+ * pruning live in `_shared/chatWake.ts`, shared with the `chat-wake` function
+ * so both paths cannot drift.
+ */
+function dispatchChatWakes(admin: AdminClient, projectId: string, senderJson: string) {
+  return drainChatWakes(admin, projectId, senderJson, async (limit) => {
+    const { data, error } = await admin.rpc("findback_claim_chat_external_wakes", { p_limit: limit });
     if (error || !Array.isArray(data)) throw new Error("Chat wake claim unavailable");
-    if (data.length === 0) break;
-    const claim = data[0] as ChatClaim;
-    claimed += 1;
-    let disposition: "SENT" | "SUPPRESSED" | "INVALID" | "RETRY" = "RETRY";
-    let delivery: ChatWakeDelivery | null = null;
-    try {
-      const result = await admin.rpc("findback_chat_external_wake_delivery", {
-        p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token,
-      });
-      if (result.error) throw new Error("Chat wake eligibility unavailable");
-      if (result.data === null) disposition = "SUPPRESSED";
-      else {
-        const value = result.data as Record<string, unknown>;
-        if (value.wakeId !== claim.wake_id || typeof value.recipientId !== "string"
-          || typeof value.conversationId !== "string" || typeof value.token !== "string"
-          || (value.kind !== "CHAT_REQUEST" && value.kind !== "CHAT_CONNECTED")) {
-          throw new Error("Invalid chat wake delivery");
-        }
-        delivery = value as unknown as ChatWakeDelivery;
-        accessToken ??= await getAccessToken(JSON.parse(senderJson), AbortSignal.timeout(30_000));
-        // Recheck after OAuth, immediately before each device send.
-        const recheck = await admin.rpc("findback_chat_external_wake_delivery", {
-          p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token,
-        });
-        if (recheck.error) throw new Error("Chat wake eligibility unavailable");
-        if (recheck.data === null) disposition = "SUPPRESSED";
-        else if (JSON.stringify(recheck.data) !== JSON.stringify(value)) throw new Error("Chat wake changed");
-        else {
-          const result = await sendMessage(projectId, accessToken, buildChatFcmMessage(delivery), AbortSignal.timeout(30_000));
-          disposition = result.ok ? "SENT" : result.prune ? "INVALID" : "RETRY";
-          if (result.ok) sent += 1;
-          else failed += 1;
-        }
-      }
-    } catch { failed += 1; }
-    const finish = await admin.rpc("findback_finish_chat_external_wake", {
-      p_wake_id: claim.wake_id, p_device_id: claim.device_id, p_claim_token: claim.claim_token, p_result: disposition,
-    });
-    if (finish.error || finish.data !== true) throw new Error("Chat wake disposition unavailable");
-    if (disposition === "INVALID" && delivery) {
-      // Never prune a token that has changed owner since the eligibility check.
-      await admin.from("device_tokens").delete().eq("id", claim.device_id)
-        .eq("user_id", delivery.recipientId).eq("token", delivery.token);
-    }
-  }
-  return { claimed, sent, failed };
+    return data as ChatClaim[];
+  }, BATCH_LIMIT);
 }
 
 /**
@@ -569,7 +417,7 @@ async function dispatchReportLane(
 
   let accessToken = "";
   try {
-    accessToken = await getAccessToken(JSON.parse(senderJson));
+    accessToken = await getChatAccessToken(JSON.parse(senderJson));
   } catch {
     console.error("push-dispatch: FIREBASE_SERVICE_ACCOUNT_JSON is invalid or FCM authentication failed. No notifications were sent.");
     return { status: 502, body: { error: "fcm auth failed", scanned: notifications.length, sent: 0 } };
@@ -623,7 +471,7 @@ async function dispatchReportLane(
       outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
       continue;
     }
-    const result = await sendMessage(
+    const result = await sendFcm(
       projectId,
       accessToken,
       buildFcmMessage(delivery, origin, replyTokens.get(delivery.notificationId)),

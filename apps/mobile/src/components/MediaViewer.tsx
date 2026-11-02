@@ -1,4 +1,4 @@
-import { createContext, Fragment, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Lightbox, { createModule, MODULE_NO_SCROLL, useController, useLightboxState, type ComponentProps, type Plugin, type SlideImage, type ZoomRef } from "yet-another-react-lightbox";
 import { FocusScope } from "react-aria/FocusScope";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
@@ -6,6 +6,7 @@ import Fullscreen from "yet-another-react-lightbox/plugins/fullscreen";
 import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
 import { ImageOff, RotateCcw } from "lucide-react";
 import { OverlayStackBridge, useOverlayDepth } from "./overlayFoundation";
+import { isPrivateMediaKey, peekMediaUrl, resolveMediaUrl } from "../services/media/privateMedia";
 import { useShouldReduceMotion } from "./uiMotion";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
@@ -77,12 +78,32 @@ function OpenMediaViewer({ items, index, onIndexChange, onClose }: MediaViewerPr
   const reduced = useShouldReduceMotion();
   const depth = useOverlayDepth();
   const [chromeHidden, setChromeHidden] = useState(false);
+  // Private report media: a slide source may be a Storage key. The grid that
+  // opened this viewer usually resolved it already (`peek`), and anything still
+  // unsigned is signed here, so a lightbox never renders a bare object key.
+  const [signedSrcs, setSignedSrcs] = useState<Record<string, string>>({});
+  const srcKey = items.map((item) => item.src).join("\u0000");
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => {
+    const keys = [...new Set(itemsRef.current.map((item) => item.src).filter(isPrivateMediaKey))];
+    const missing = keys.filter((key) => !peekMediaUrl(key));
+    if (missing.length === 0) return;
+    let live = true;
+    void Promise.all(missing.map(async (key) => [key, await resolveMediaUrl(key)] as const)).then((pairs) => {
+      if (!live) return;
+      const next: Record<string, string> = {};
+      for (const [key, url] of pairs) if (url) next[key] = url;
+      if (Object.keys(next).length > 0) setSignedSrcs((prev) => ({ ...prev, ...next }));
+    });
+    return () => { live = false; };
+  }, [srcKey]);
   const slides = useMemo<SlideImage[]>(() => items.map((item) => ({
-    src: item.src, alt: item.alt, title: item.title ?? undefined,
+    src: peekMediaUrl(item.src) ?? signedSrcs[item.src] ?? item.src, alt: item.alt, title: item.title ?? undefined,
     thumbnail: item.thumbnailSrc ?? undefined,
     width: item.width && item.width > 0 ? item.width : undefined,
     height: item.height && item.height > 0 ? item.height : undefined,
-  })), [items]);
+  })), [items, signedSrcs]);
   return <Lightbox open close={onClose} slides={slides} index={index}
     plugins={plugins}
     className={`fb-media-viewer${chromeHidden ? " fb-viewer-chrome-hidden" : ""}`}

@@ -757,9 +757,13 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_chat_receipt_view",
   "findback_chat_set_muted",
   "findback_confirm_match",
+  "findback_create_post_client",
+  "findback_create_post_client_multi",
   "findback_delete_comment_client",
   "findback_delete_notifications_client",
   "findback_delete_post_client",
+  "findback_discard_staged_upload",
+  "findback_feed_reaction_state_client",
   "findback_fetch_chat_media_delivery",
   "findback_get_notification_preferences_client",
   "findback_handover_match",
@@ -771,6 +775,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_mark_notifications_read_client",
   "findback_mark_notifications_unread_client",
   "findback_mark_recovered",
+  "findback_match_candidates_v2",
   "findback_moderation_queue",
   "findback_moderation_target",
   "findback_my_appeal_subjects",
@@ -786,7 +791,10 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_notification_count_client",
   "findback_post_is_match_linked",
   "findback_post_limit",
+  "findback_post_social_state_client",
   "findback_propose_match",
+  "findback_query_posts_client",
+  "findback_query_posts_nearby_client",
   "findback_rate_return",
   "findback_react_client",
   "findback_react_comment_client",
@@ -812,6 +820,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_staff_appeals",
   "findback_staff_feedback",
   "findback_staff_feedback_detail",
+  "findback_stage_upload",
   "findback_standing",
   "findback_submit_appeal",
   "findback_submit_feedback",
@@ -820,6 +829,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_unblock_user",
   "findback_unregister_device_token_client",
   "findback_unsave_post_client",
+  "findback_update_post_client",
   "is_username_available",
   "phone_change_eligibility",
   "public_profile_by_username",
@@ -2499,9 +2509,12 @@ describe("media read grants + dims bound repair (20261015163718)", () => {
   });
 
   it("grants the exact column set of each table, and nothing else", () => {
-    // Read the columns from the whole chain (a migration that only grants does not
-    // declare them), then assert this file's grant is exhaustive for each table.
-    const chain = ls().map((file) => ({ file, sql: mig(file) }));
+    // Read the columns from the chain AS OF THIS FILE (a migration that only
+    // grants does not declare them), then assert this file's grant is exhaustive
+    // for each table. Later migrations may add columns to the same tables - P11
+    // added `uploads.object_key` - and this file cannot have granted a column
+    // that did not exist yet, so the whole chain would be the wrong comparison.
+    const chain = ls().filter((file) => file <= REPAIR).map((file) => ({ file, sql: mig(file) }));
     const { columns } = readGrantModel(chain);
     const repairOnly = readGrantModel([{ file: REPAIR, sql: mig(REPAIR) }]);
     for (const table of CLIENT_READ_MEDIA_TABLES) {

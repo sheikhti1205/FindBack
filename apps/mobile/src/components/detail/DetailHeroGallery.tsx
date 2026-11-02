@@ -7,6 +7,7 @@ import {
   sharedMediaLayoutId,
 } from "../PostCardContent";
 import { usePagerTap, useSnapPager } from "../photoPager";
+import { useMediaUrl } from "../../services/media/privateMedia";
 
 export interface DetailHeroImage {
   fileUrl: string;
@@ -122,6 +123,7 @@ export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: Det
 function HeroImage({ fileUrl, alt, sharedId }: { fileUrl: string; alt: string; sharedId?: string }) {
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const src = useMediaUrl(fileUrl);
   const shared = sharedId ? { layoutId: sharedId, "data-shared-media": sharedId } : {};
   if (failed) {
     return (
@@ -133,7 +135,7 @@ function HeroImage({ fileUrl, alt, sharedId }: { fileUrl: string; alt: string; s
   }
   return (
     <motion.img
-      src={fileUrl}
+      src={src}
       alt={alt}
       loading={loaded ? undefined : "lazy"}
       draggable={false}

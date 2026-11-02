@@ -3,6 +3,7 @@ import type { PostItem } from "@findback/shared";
 import { motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
 import { displaySizeOrNull } from "../services/media/displayDimensions";
+import { peekMediaUrl, useMediaUrl } from "../services/media/privateMedia";
 import { MASONRY_FALLBACK_RATIO, masonryAspectRatio } from "./masonryLayout";
 import { HomeFeedLoveButton } from "./HomeFeedLoveButton";
 import { PostActionRow } from "./PostActionRow";
@@ -22,6 +23,7 @@ function FeedImage({ url, alt, variant, postId, enableSharedMedia = false }: {
   url: string; alt: string; variant: "frame" | "thumb"; postId: string; enableSharedMedia?: boolean;
 }) {
   const [state, setState] = useState<ImageState>("loading");
+  const src = useMediaUrl(url);
   const sharedId = enableSharedMedia ? sharedMediaLayoutId(postId) : undefined;
   const transition = { duration: motionDurations.fast, ease: motionEasings.inOut };
   return <motion.span className={variant === "thumb" ? "fb-thumb" : "fb-img-frame"}
@@ -31,7 +33,7 @@ function FeedImage({ url, alt, variant, postId, enableSharedMedia = false }: {
     {state === "failed" ? <motion.span className="fb-img-fallback" role="img" aria-label="Photo unavailable"
       variants={fadeVariants} initial="hidden" animate="visible" transition={transition}>
       <ImageOff size={16} aria-hidden />Photo unavailable
-    </motion.span> : <motion.img src={url} alt={alt} loading="lazy" initial={{ opacity: 0 }}
+    </motion.span> : <motion.img src={src} alt={alt} loading="lazy" initial={{ opacity: 0 }}
       animate={{ opacity: state === "loaded" ? 1 : 0 }} transition={transition}
       onLoad={() => setState("loaded")} onError={() => setState("failed")} />}
   </motion.span>;
@@ -59,12 +61,13 @@ function MasonryPreview({ post, onOpen, enableSharedMedia }: {
   const [naturalRatio, setNaturalRatio] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
   if (!first) return null;
+  const src = useMediaUrl(first.fileUrl);
   const sharedId = enableSharedMedia ? sharedMediaLayoutId(post.id) : undefined;
   return <button type="button" data-testid="masonry-media"
     aria-label={metrics.imageCount > 1 ? `Photo 1 of ${metrics.imageCount} for ${post.title}` : `Photo for ${post.title}`}
     onClick={() => onOpen(0)} className="fb-post-photo fb-masonry-media relative block w-full overflow-hidden"
     style={{ aspectRatio: `${naturalRatio ?? metrics.mediaRatio}` }}>
-    {!failed && <motion.img src={first.fileUrl} alt="" loading="lazy" className="h-full w-full object-cover"
+    {!failed && <motion.img src={src} alt="" loading="lazy" className="h-full w-full object-cover"
       {...(sharedId ? { layoutId: sharedId, "data-shared-media": sharedId, transition: sharedElementTransition } : {})}
       onLoad={(event) => {
         const el = event.currentTarget;
@@ -101,7 +104,7 @@ export function PostCardContent({ post, layout = "classic", enableSharedMedia = 
 }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const photos = post.attachments.filter(a => a.mimeType.startsWith("image/")).map((a, i) => ({
-    id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title,
+    id: a.id, src: peekMediaUrl(a.fileUrl) ?? a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title,
   }));
   const dense = layout === "compact" || layout === "masonry";
   const titleClassName = layout === "editorial" ? "fb-editorial-title" : layout === "masonry" ? "fb-masonry-title line-clamp-2" : layout === "compact" ? "text-sm font-bold leading-snug line-clamp-2" : "fb-feed-title line-clamp-2";

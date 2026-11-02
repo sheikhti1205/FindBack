@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
 import { fadeVariants, motionDurations, motionEasings } from "./uiMotion";
 import { usePagerTap, useSnapPager } from "./photoPager";
+import { useMediaUrl } from "../services/media/privateMedia";
 
 export interface FeedCarouselImage {
   id: string;
@@ -147,6 +148,9 @@ function windowedDots(active: number, total: number): Array<number | "gap"> {
 
 function CarouselImage({ image, sharedId }: { image: FeedCarouselImage; sharedId?: string }) {
   const [state, setState] = useState<ImageState>("loading");
+  // Private report media: `fileUrl` may be a Storage key; resolve it to a
+  // short-lived signed URL. Legacy absolute URLs pass through unchanged.
+  const src = useMediaUrl(image.fileUrl);
   const shared = sharedId ? { layoutId: sharedId, "data-shared-media": sharedId } : {};
   const frameStyle = { width: "100%", height: "100%" } as const;
   if (state === "failed") {
@@ -182,7 +186,7 @@ function CarouselImage({ image, sharedId }: { image: FeedCarouselImage; sharedId
       {...shared}
     >
       <motion.img
-        src={image.fileUrl}
+        src={src}
         alt={image.alt}
         loading="lazy"
         draggable={false}

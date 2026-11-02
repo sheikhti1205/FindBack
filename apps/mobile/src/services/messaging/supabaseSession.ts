@@ -3,6 +3,7 @@ import type { MessagingHistory, MessagingScope } from "./history";
 import { createMessagingSession } from "./session";
 import { createMediaTransport } from "./mediaTransport";
 import { uuid } from "./validation";
+import { kickChatWake } from "./chatWake";
 
 /** Shares the caller's lifetime; does not create another session or scheduler. */
 export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal) {
@@ -35,6 +36,10 @@ export function createSupabaseMessagingSession(scope: MessagingScope, history: M
           });
     const { data, error } = await request.abortSignal(signal);
     if (error) throw new Error("Chat could not sync. Try again.");
+    // The message is accepted server-side: wake the recipient's devices now
+    // instead of waiting for the scheduled dispatch lane. Never awaited and
+    // never allowed to fail this send.
+    if (action === "SEND" && typeof args.messageId === "string") kickChatWake(accountId, args.messageId);
     return data;
   }, createSupabaseMediaTransport);
 }

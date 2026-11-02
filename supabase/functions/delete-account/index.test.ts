@@ -154,6 +154,8 @@ Deno.test("happy path sweeps every owned namespace, then profile row, then auth 
     "list:findback-comment-media:u1/:0",
     "remove:findback-comment-media:u1/c1.jpg",
     "list:findback-comment-media:u1/:0",
+    // Empty private report-media namespace: one list, no remove.
+    "list:findback-report-media:u1/:0",
     "users.delete:id=u1",
     "auth.deleteUser:u1",
   ]);
@@ -322,6 +324,7 @@ Deno.test("registry covers every known user-bytes namespace with uid-scoped trai
     "findback-images :: probe-uid/",
     "findback-images :: avatars/probe-uid/",
     "findback-comment-media :: probe-uid/",
+    "findback-report-media :: probe-uid/",
   ]);
   // Coverage rule part 2: no entry may sweep (or miss) another account.
   for (const namespace of OWNED_STORAGE_NAMESPACES) {

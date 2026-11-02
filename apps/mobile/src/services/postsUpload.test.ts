@@ -1,22 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { uploadImage, uploadPhotos } from "./posts";
+import { removeStagedUpload, uploadImage, uploadPhotos } from "./posts";
 
-const { clientMock, uploadMock, removeMock, insertMock, normalizeMock, diagMock } = vi.hoisted(() => {
+const { clientMock, uploadMock, removeMock, rpcMock, normalizeMock, diagMock } = vi.hoisted(() => {
   const diagMock = vi.fn();
   const uploadMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
   const removeMock = vi.fn(async () => ({ error: null as { message?: string } | null }));
-  const insertMock = vi.fn(async (_payload: Record<string, unknown>) => ({
+  // P11: staging is a server RPC that verifies the object and derives its key,
+  // so there is no direct `uploads` insert left to mock.
+  const rpcMock = vi.fn(async (_name: string, _args: Record<string, unknown>) => ({
     error: null as { message?: string } | null,
   }));
-  const storageApi = {
-    upload: uploadMock,
-    remove: removeMock,
-    getPublicUrl: vi.fn(() => ({ data: { publicUrl: "https://cdn.test/findback-images/u/x.jpg" } })),
-  };
+  const storageApi = { upload: uploadMock, remove: removeMock };
   const clientMock = {
     auth: { getUser: vi.fn() },
     storage: { from: vi.fn(() => storageApi) },
-    from: vi.fn(() => ({ insert: insertMock })),
+    rpc: rpcMock,
   };
   const normalizeMock = vi.fn(async () => ({
     blob: new Blob(["normalized"], { type: "image/jpeg" }),
@@ -24,7 +22,7 @@ const { clientMock, uploadMock, removeMock, insertMock, normalizeMock, diagMock 
     width: 100,
     height: 100,
   }));
-  return { clientMock, uploadMock, removeMock, insertMock, normalizeMock, diagMock };
+  return { clientMock, uploadMock, removeMock, rpcMock, normalizeMock, diagMock };
 });
 
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
@@ -34,13 +32,13 @@ vi.mock("./diag", () => ({ diag: diagMock }));
 beforeEach(() => {
   uploadMock.mockClear();
   removeMock.mockClear();
-  insertMock.mockClear();
+  rpcMock.mockClear();
   normalizeMock.mockClear();
   diagMock.mockClear();
   clientMock.auth.getUser.mockReset();
   clientMock.auth.getUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
   uploadMock.mockResolvedValue({ error: null });
-  insertMock.mockResolvedValue({ error: null });
+  rpcMock.mockResolvedValue({ error: null });
 });
 
 describe("uploadImage", () => {
@@ -55,24 +53,27 @@ describe("uploadImage", () => {
       expect.any(Blob),
       { contentType: "image/jpeg", upsert: false },
     );
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        user_id: "user-1",
-        file_name: "photo.jpg",
-        mime_type: "image/jpeg",
-        file_url: "https://cdn.test/findback-images/u/x.jpg",
-      }),
-    );
+    expect(rpcMock).toHaveBeenCalledWith("findback_stage_upload", {
+      p_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      p_object_key: expect.stringMatching(/^user-1\/[0-9a-f-]{36}\.jpg$/),
+      p_file_name: "photo.jpg",
+      p_mime_type: "image/jpeg",
+      p_file_size: 10,
+      p_width: 100,
+      p_height: 100,
+    });
     expect(stored).toMatchObject({
       fileName: "photo.jpg",
       mimeType: "image/jpeg",
       fileSize: 10,
+      // No public URL exists any more: the stored value is the object key.
+      fileUrl: expect.stringMatching(/^user-1\/[0-9a-f-]{36}\.jpg$/),
       objectKey: expect.stringMatching(/^user-1\/[0-9a-f-]{36}\.jpg$/),
     });
   });
 
-  it("removes the exact object when staging the uploads row fails", async () => {
-    insertMock.mockResolvedValue({ error: { message: "rls denied" } });
+  it("removes the exact object when staging the upload fails", async () => {
+    rpcMock.mockResolvedValue({ error: { message: "rls denied" } });
 
     await expect(uploadImage(new File(["raw"], "p.png", { type: "image/png" }))).rejects.toThrow(
       "rls denied",
@@ -103,8 +104,9 @@ describe("uploadImage", () => {
 
     // The feed lays out a natural-ratio grid from these values, so they must be
     // the dimensions of the blob that was actually stored — not the raw file's.
-    expect(insertMock).toHaveBeenCalledWith(
-      expect.objectContaining({ width: 1234, height: 987 }),
+    expect(rpcMock).toHaveBeenCalledWith(
+      "findback_stage_upload",
+      expect.objectContaining({ p_width: 1234, p_height: 987 }),
     );
     expect(stored).toMatchObject({ width: 1234, height: 987 });
   });
@@ -123,12 +125,12 @@ describe("uploadImage", () => {
 
     await uploadImage(new File(["raw"], "poster.gif", { type: "image/gif" }));
 
-    const payload = insertMock.mock.calls[0]![0] as Record<string, unknown>;
-    expect(payload.width).toBeUndefined();
-    expect(payload.height).toBeUndefined();
+    const payload = rpcMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(payload.p_width).toBeNull();
+    expect(payload.p_height).toBeNull();
     // Everything the publish path actually needs is still staged.
-    expect(payload.id).toBeTruthy();
-    expect(payload.file_url).toBeTruthy();
+    expect(payload.p_id).toBeTruthy();
+    expect(payload.p_object_key).toBeTruthy();
   });
 
   it("stages no hint when the measured pair is half-known", async () => {
@@ -141,9 +143,9 @@ describe("uploadImage", () => {
 
     await uploadImage(new File(["raw"], "half.jpg", { type: "image/jpeg" }));
 
-    const payload = insertMock.mock.calls[0]![0] as Record<string, unknown>;
-    expect(payload.width).toBeUndefined();
-    expect(payload.height).toBeUndefined();
+    const payload = rpcMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(payload.p_width).toBeNull();
+    expect(payload.p_height).toBeNull();
   });
 });
 
@@ -162,7 +164,7 @@ describe("upload cancellation", () => {
 
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     // Nothing was staged, so no row can claim an object that never landed.
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   it("removes the object when an abandoned upload lands after the abort", async () => {
@@ -178,7 +180,7 @@ describe("upload cancellation", () => {
     // The request could not actually be cancelled; it finishes now.
     resolveUpload?.({ error: null });
     await vi.waitFor(() => expect(removeMock).toHaveBeenCalledWith([expect.stringMatching(/^user-1\//)]));
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
   });
 
   it("stops the batch at the file in flight and removes what it already staged", async () => {
@@ -228,7 +230,58 @@ describe("storage failure", () => {
       message: "quota exceeded",
       status: 502,
     });
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeStagedUpload", () => {
+  const stored = {
+    id: "stage-1",
+    fileName: "photo.jpg",
+    mimeType: "image/jpeg",
+    fileSize: 10,
+    width: 100,
+    height: 100,
+    fileUrl: "user-1/key.jpg",
+    objectKey: "user-1/key.jpg",
+  };
+
+  it("discards the staging row, then removes the exact object", async () => {
+    await removeStagedUpload(stored, "trace-1");
+
+    expect(rpcMock).toHaveBeenCalledWith("findback_discard_staged_upload", { p_id: "stage-1" });
+    expect(removeMock).toHaveBeenCalledWith(["user-1/key.jpg"]);
+  });
+
+  it("diagnoses a discard failure instead of throwing over the publish error", async () => {
+    // Every caller is already on an error or cancel path. Throwing here would
+    // replace the publish error the person needs to read with a cleanup error
+    // they cannot act on; the queued sweep plus the stale-staging purge are the
+    // real guarantee that the bytes go away.
+    rpcMock.mockResolvedValue({ error: { message: "network down" } });
+
+    await expect(removeStagedUpload(stored, "trace-2")).resolves.toBeUndefined();
+
+    expect(diagMock).toHaveBeenCalledWith(
+      "posts.upload.remove_stage_error",
+      expect.objectContaining({ rpc: "findback_discard_staged_upload", id: "stage-1" }),
+      { traceId: "trace-2" },
+    );
+    // The fast path is still attempted, so a transient RPC failure does not also
+    // skip the immediate byte removal.
+    expect(removeMock).toHaveBeenCalledWith(["user-1/key.jpg"]);
+  });
+
+  it("diagnoses a Storage removal failure instead of throwing", async () => {
+    removeMock.mockResolvedValue({ error: { message: "not found" } });
+
+    await expect(removeStagedUpload(stored)).resolves.toBeUndefined();
+
+    expect(diagMock).toHaveBeenCalledWith(
+      "posts.upload.remove_deferred",
+      expect.objectContaining({ objectKey: "user-1/key.jpg" }),
+      { traceId: undefined },
+    );
   });
 });
 

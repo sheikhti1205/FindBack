@@ -1,4 +1,4 @@
-# FindBack — manual backend deploy (migrations + ai-help Edge Function).
+# FindBack — manual backend deploy (migrations + Edge Functions).
 #
 # Kept separate from both CI and the app release pipeline on purpose: backend
 # mutations are explicit, one at a time, with live verification after each.
@@ -35,6 +35,14 @@ on:
         description: "Deploy the cleanup-comment-media Edge Function"
         type: boolean
         default: true
+      deploy_cleanup_report_media:
+        description: "Deploy the cleanup-report-media Edge Function (P11 migrations required)"
+        type: boolean
+        default: true
+      deploy_chat_wake:
+        description: "Deploy the chat-wake Edge Function (P11 migrations required)"
+        type: boolean
+        default: true
       deploy_chat_media:
         description: "Deploy the chat-media gateway Edge Function"
         type: boolean
@@ -57,7 +65,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Migrations + ai-help
+    name: Migrations + Edge Functions
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: backend
@@ -77,6 +85,10 @@ jobs:
         run: |
           supabase link --project-ref "$PROJECT_REF"
           supabase db push
+      # ai-help is retained: the consumer app makes no call to it, but it is the
+      # optional BYOK cloud assistant and its retirement means deleting a live
+      # function plus the whole capabilities mirror. That is an owner decision,
+      # reported in P11 rather than taken here.
       - name: Deploy ai-help
         if: inputs.deploy_ai_help
         run: |
@@ -104,6 +116,25 @@ jobs:
           # x-cleanup-secret check, so the gateway JWT check is redundant.
           # Deploy only after migration 20261013020000 (cleanup lease) is live.
           supabase functions deploy cleanup-comment-media --no-verify-jwt
+      - name: Deploy cleanup-report-media
+        if: inputs.deploy_cleanup_report_media
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # Internal sweeper only: the function enforces its own service-role /
+          # x-cleanup-secret check. Deploy only after
+          # 20261102120000_p11_authority_closure (queue + purge RPCs) is live.
+          # Do not force-uninstall or vacuum; queued keys stay until storage
+          # removal succeeds.
+          supabase functions deploy cleanup-report-media --no-verify-jwt
+      - name: Deploy chat-wake
+        if: inputs.deploy_chat_wake
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          # The function verifies the caller's user JWT itself and then asks the
+          # database whether that account sent the message; the gateway JWT
+          # check would only duplicate that. Deploy only after
+          # 20261102120000_p11_authority_closure (message-scoped claim) is live.
+          supabase functions deploy chat-wake --no-verify-jwt
       # NOTE: delete-account is intentionally NOT deployed by this workflow.
       # No delete-account pattern exists here or elsewhere in CI; it deploys
       # separately, owner-side, after explicit auth review.

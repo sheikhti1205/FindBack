@@ -10,9 +10,10 @@
  *
  * Purge order (each step scoped to the JWT uid):
  *   1. every owned storage namespace (OWNED_STORAGE_NAMESPACES: legacy
- *      report photos under `findback-images/<uid>/`, avatars under
+ *      legacy report photos under `findback-images/<uid>/`, avatars under
  *      `findback-images/avatars/<uid>/`, comment attachments under
- *      `findback-comment-media/<uid>/`) — offset-0-until-empty sweep with
+ *      `findback-comment-media/<uid>/`, current report photos under
+ *      `findback-report-media/<uid>/`) — offset-0-until-empty sweep with
  *      a no-progress stall guard;
  *   2. `public.users` row — every user-owned table references it
  *      `on delete cascade` (item_posts, comments, reactions, ratings,
@@ -84,6 +85,10 @@ export const OWNED_STORAGE_NAMESPACES: readonly {
   { bucket: "findback-images", prefixFor: (uid: string) => `${uid}/` },
   { bucket: "findback-images", prefixFor: (uid: string) => `avatars/${uid}/` },
   { bucket: "findback-comment-media", prefixFor: (uid: string) => `${uid}/` },
+  // P11: report photos moved to a private bucket that Storage signs only while
+  // the caller can read the owning report. Deletion still sweeps the namespace
+  // directly, and the queued report-media sweep covers any object this misses.
+  { bucket: "findback-report-media", prefixFor: (uid: string) => `${uid}/` },
 ];
 
 export interface TableAdmin {

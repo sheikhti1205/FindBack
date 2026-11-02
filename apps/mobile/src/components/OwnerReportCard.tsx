@@ -15,6 +15,7 @@ import {
 import { PostLink } from "./PostNavigation";
 import { PostTypeBadge } from "./PostTypeBadge";
 import { MediaViewer } from "./MediaViewer";
+import { peekMediaUrl, useMediaUrl } from "../services/media/privateMedia";
 import { OwnerReportMenu, useOwnerReportActions } from "./OwnerReportActions";
 import { OwnerStatusSwipe } from "./OwnerStatusSwipe";
 import { formatEventDate, timeAgo } from "../utils/dates";
@@ -61,6 +62,7 @@ function nextOwnerStatus(post: PostItem): { status: PostStatus; label: string } 
 
 function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
   const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
+  const src = useMediaUrl(fileUrl);
   if (state === "failed") {
     return (
       <span className="fb-owner-img" data-state="failed" data-testid="owner-report-image">
@@ -74,7 +76,7 @@ function OwnerImage({ post, fileUrl }: { post: PostItem; fileUrl: string }) {
   return (
     <span className="fb-owner-img" data-state={state} data-testid="owner-report-image">
       <img
-        src={fileUrl}
+        src={src}
         alt={`Photo for ${post.title}`}
         loading="lazy"
         className="block h-full w-full object-cover"
@@ -115,7 +117,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   // content detail link, never inside it — a button nested in a link is
   // invalid DOM (see PostCard home-feed). All testids/classes are unchanged.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
+  const lightboxPhotos = images.map((a, i) => ({ id: a.id, src: peekMediaUrl(a.fileUrl) ?? a.fileUrl, width: a.width, height: a.height, alt: `Photo ${i + 1} for ${post.title}`, title: post.title }));
   const lastIndex = lightboxPhotos.length - 1;
 
   const card = (
