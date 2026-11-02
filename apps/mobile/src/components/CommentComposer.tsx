@@ -202,7 +202,7 @@ function klipyTileAspect(item: KlipyItem): string {
 }
 
 export function CommentComposer({
-  postId: _postId,
+  postId,
   replyToUsername = null,
   currentUser = null,
   participants,
@@ -332,6 +332,7 @@ export function CommentComposer({
     patchAttachment(entry.id, { status: "uploading", progress: 0, error: undefined });
     try {
       const { remoteUrl, objectKey } = await uploadCommentAttachment(entry, file, {
+        postId,
         onProgress: (p) => {
           const ratio = p.total > 0 ? Math.min(1, p.loaded / p.total) : 0;
           patchAttachment(entry.id, { progress: ratio });

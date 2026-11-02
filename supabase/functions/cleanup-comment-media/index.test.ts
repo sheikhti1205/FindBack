@@ -185,6 +185,7 @@ Deno.test("success path: claim, per-key remove, ack of exactly the removed keys"
   const res = await handleCleanup(clients, "Bearer svc-key", null, ENV);
   assertEquals(res.status, 200);
   assertEquals(res.body, {
+    purgedStaging: 0,
     claimed: 2,
     removed: 2,
     acked: 2,
@@ -312,6 +313,7 @@ Deno.test("batch cap and invocation bound: claim limit capped, loop bounded", as
   const res = await handleCleanup(clients, "Bearer svc-key", null, ENV, { maxBatches: 2 });
   assertEquals(res.status, 200);
   assertEquals(res.body.batches, 2);
+  assertEquals(res.body.complete, false, "reaching the ceiling is not proof of an empty queue");
   assertEquals(res.body.claimed, 2 * CLAIM_BATCH_SIZE);
   const claimLimits = calls.filter((c) => c.startsWith("claim:")).map((c) => Number(c.slice("claim:".length)));
   assert(claimLimits.every((n) => n === CLAIM_BATCH_SIZE), `claim limits: ${claimLimits.join(",")}`);
@@ -319,10 +321,31 @@ Deno.test("batch cap and invocation bound: claim limit capped, loop bounded", as
   assertEquals(MAX_BATCHES_PER_INVOCATION, 10);
 });
 
+Deno.test("invalid batch limits cannot start queue or Storage operations", async () => {
+  for (const maxBatches of [0, -1, 11, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const { clients, calls } = fakeClients({ keys: ["u1/a.jpg"] });
+    const response = await handleCleanup(clients, "Bearer svc-key", null, ENV, { maxBatches });
+    assertEquals(response.status, 400);
+    assertEquals(calls, []);
+  }
+});
+
+Deno.test("abandoned staging is purged before claim, purge failure never starts deletion", async () => {
+  const { clients, calls } = fakeClients();
+  const withPurge = { ...clients, purgeStaging: async () => { calls.push("purge"); return { purged: 3, error: null }; } };
+  const response = await handleCleanup(withPurge, "Bearer svc-key", null, ENV);
+  assertEquals(response.body.purgedStaging, 3);
+  assertEquals(calls[0], "purge");
+  const f = fakeClients();
+  const broken = { ...f.clients, purgeStaging: async () => ({ purged: 0, error: { message: "unavailable" } }) };
+  assertEquals((await handleCleanup(broken, "Bearer svc-key", null, ENV)).status, 502);
+  assertEquals(f.calls, []);
+});
+
 Deno.test("response carries counts and keys only — never user content", async () => {
   const { clients } = fakeClients({ keys: ["u1/a.jpg"], failKeys: new Set(["u1/a.jpg"]) });
   const res = await handleCleanup(clients, "Bearer svc-key", null, ENV);
   const body = JSON.stringify(res.body);
   assert(!body.includes("comment"), "response must not echo comment content");
-  assertEquals(Object.keys(res.body).sort(), ["acked", "batches", "claimed", "complete", "failedKeys", "removed"]);
+  assertEquals(Object.keys(res.body).sort(), ["acked", "batches", "claimed", "complete", "failedKeys", "purgedStaging", "removed"]);
 });

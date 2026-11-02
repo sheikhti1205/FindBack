@@ -7,23 +7,14 @@
 # each Storage object, and acks only the successes — failures stay queued for
 # the next stale-lease reclaim, so nothing is ever lost.
 #
-# The function is internal-only: it accepts EITHER a service-role bearer OR the
-# `x-cleanup-secret` header matching the function env `CLEANUP_CRON_SECRET`.
-# This lane uses the shared secret, stored BOTH here (GitHub secret
-# `CLEANUP_CRON_SECRET`) and in the function environment. Names only — the
-# value is never echoed, and the workflow is a no-op until it is provisioned.
+# The canonical server wrapper accepts the backend secret API key in apikey.
+# Missing configuration and incomplete maintenance fail red; no silent no-op.
+# The worker also purges bounded abandoned reservations before claiming.
 #
 # Trigger: schedule + manual dispatch ONLY. Never on push/tag — a code push
 # must not sweep production Storage.
 #
-# NOTE (billing): while GitHub Actions billing is blocked the scheduler stays
-# runtime-disabled — scheduled workflows do not fire and the runner never
-# starts. The file is committed so the supported path is in-repo and ready the
-# moment billing is restored; until then the sweep simply does not run.
-#
-# Required repo configuration (owner actions):
-#   Secrets:   CLEANUP_CRON_SECRET (shared with the function env of the same name)
-#   Variables: SUPABASE_PROJECT_REF
+# Backend environment: SUPABASE_SECRET_KEY and SUPABASE_PROJECT_REF (names only).
 #
 # Validated by scripts/check-cleanup-scheduler.mjs (structural rules).
 
@@ -52,34 +43,42 @@ jobs:
   sweep:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment: backend
     env:
       # Hard ceiling mirroring the function's MAX_BATCHES_PER_INVOCATION (10).
       MAX_BATCHES: "10"
     steps:
       - name: Sweep orphaned comment media
         env:
-          CLEANUP_CRON_SECRET: ${{ secrets.CLEANUP_CRON_SECRET }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || vars.SUPABASE_PROJECT_REF }}
           INPUT_MAX_BATCHES: ${{ github.event.inputs.max_batches }}
         run: |
-          # No-op until the owner provisions the secret + project ref.
-          if [ -z "$CLEANUP_CRON_SECRET" ]; then
-            echo "CLEANUP_CRON_SECRET is not provisioned; skipping sweep."
-            exit 0
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::SUPABASE_SECRET_KEY unavailable; cleanup did NOT run."
+            exit 1
           fi
           if [ -z "$PROJECT_REF" ]; then
-            echo "SUPABASE_PROJECT_REF is not set; skipping sweep."
-            exit 0
+            echo "::error::SUPABASE_PROJECT_REF unavailable; cleanup did NOT run."
+            exit 1
           fi
           # Bound the batch: numeric only, clamped to 1..MAX_BATCHES so a manual
           # dispatch can never request an unbounded (or zero) run.
           BATCH="${INPUT_MAX_BATCHES:-$MAX_BATCHES}"
           case "$BATCH" in ''|*[!0-9]*) BATCH="$MAX_BATCHES" ;; esac
+          [ "${#BATCH}" -gt 2 ] && BATCH="$MAX_BATCHES"
           [ "$BATCH" -lt 1 ] && BATCH=1
           [ "$BATCH" -gt "$MAX_BATCHES" ] && BATCH="$MAX_BATCHES"
           echo "sweeping up to ${BATCH} batch(es) (bounded)"
-          curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-comment-media" \
-            -H "x-cleanup-secret: ${CLEANUP_CRON_SECRET}" \
+          RESULT="$(mktemp)"
+          trap 'rm -f "$RESULT"' EXIT
+          curl -fsS -o "$RESULT" -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-comment-media" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
             -H "content-type: application/json" \
             -d "{\"max_batches\": ${BATCH}}" \
             --retry 2 --retry-all-errors --max-time 60
+          jq -e '.complete == true and (.failedKeys | length == 0)' "$RESULT" >/dev/null || {
+            echo "::error::Comment-media maintenance incomplete; tasks remain queued for retry."
+            exit 1
+          }
+          jq '{purgedStaging, claimed, removed, acked, batches, complete}' "$RESULT"

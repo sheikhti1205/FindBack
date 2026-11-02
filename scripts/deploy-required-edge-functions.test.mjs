@@ -52,19 +52,21 @@ describe("deploy-required-edge-functions plan", () => {
     assert.equal(byName["cleanup-comment-media"], false);
   });
 
-  it("gates cleanup-comment-media on 20261013020000 and delete-account on the 20261014010000 fence", () => {
+  it("gates comment cleanup on its current pending-status migration, not the retired lease-only flag", () => {
     const none = buildDeploymentPlan({}).map((f) => f.name);
     assert.ok(!none.includes("cleanup-comment-media"), "cleanup gated off without the lease migration");
     assert.ok(!none.includes("delete-account"), "delete-account gated off without the fence migration");
     const cleanupOnly = buildDeploymentPlan({ cleanupMigrationsLive: true }).map((f) => f.name);
-    assert.ok(cleanupOnly.includes("cleanup-comment-media"), "cleanup included once its migration is live");
+    assert.ok(!cleanupOnly.includes("cleanup-comment-media"), "legacy lease-only acknowledgement cannot deploy the new worker");
     assert.ok(!cleanupOnly.includes("delete-account"), "delete-account still gated by the fence migration, not the cleanup one");
-    const both = buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] }).map((f) => f.name);
+    const both = buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261102210000", "20261102220000", "20261014010000"] }).map((f) => f.name);
     assert.ok(both.includes("cleanup-comment-media"), "cleanup included");
     assert.ok(both.includes("delete-account"), "delete-account included once the fence migration is live");
     const fenceOnly = buildDeploymentPlan({ liveMigrations: ["20261014010000"] }).map((f) => f.name);
     assert.ok(fenceOnly.includes("delete-account"), "fence migration alone unblocks delete-account");
     assert.ok(!fenceOnly.includes("cleanup-comment-media"), "cleanup still gated by its own migration");
+    const old = buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261102210000"] }).map((f) => f.name);
+    assert.ok(!old.includes("cleanup-comment-media"), "private staging without pending RPC is insufficient");
   });
 
   it("every gated step names a migration that a repository migration file provides", () => {
@@ -105,7 +107,7 @@ describe("deploy-required-edge-functions plan", () => {
   });
 
   it("renders a names-only plan and states delete-account is included JWT-verify ON", () => {
-    const report = formatPlan(buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] }));
+    const report = formatPlan(buildDeploymentPlan({ liveMigrations: ["20261102220000", "20261014010000"] }));
     for (const name of ["reply-comment", "push-dispatch", "cleanup-comment-media", "delete-account"]) {
       assert.ok(report.includes(name));
     }

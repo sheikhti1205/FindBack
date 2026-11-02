@@ -289,34 +289,34 @@ describe("setCommentReaction", () => {
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 
-  it("refuses to write a legacy DISLIKE (D1)", async () => {
-    await expect(setCommentReaction("c1", "DISLIKE")).rejects.toMatchObject({ status: 400 });
+  it.each(["DISLIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW"] as const)("refuses historical %s before any write", async (kind) => {
+    await expect(setCommentReaction("c1", kind)).rejects.toMatchObject({ status: 400 });
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 
   it("calls the comment react RPC and maps commentId + summary", async () => {
     clientMock.rpc.mockResolvedValue({
-      data: [{ comment_id: "c1", my_reaction: "HELPFUL", reaction_counts: { HELPFUL: 1 } }],
+      data: [{ comment_id: "c1", my_reaction: "LIKE", reaction_counts: { LIKE: 1 } }],
       error: null,
     });
 
-    const summary = await setCommentReaction("c1", "HELPFUL");
+    const summary = await setCommentReaction("c1", "LIKE");
 
     expect(clientMock.rpc).toHaveBeenCalledWith("findback_react_comment_client", {
       p_comment_id: "c1",
-      p_type: "HELPFUL",
+      p_type: "LIKE",
     });
     expect(summary).toEqual({
       commentId: "c1",
-      counts: { HELPFUL: 1 },
-      myReaction: "HELPFUL",
+      counts: { LOVE: 1 },
+      myReaction: "LOVE",
       total: 1,
     });
   });
 
   it("propagates an RPC error", async () => {
     clientMock.rpc.mockResolvedValue({ data: null, error: { message: "nope", code: "400" } });
-    await expect(setCommentReaction("c1", "LOVE")).rejects.toThrow("nope");
+    await expect(setCommentReaction("c1", "LIKE")).rejects.toThrow("nope");
   });
 });
 

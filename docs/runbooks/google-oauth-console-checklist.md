@@ -1,11 +1,37 @@
 # Google sign-in owner console checklist (FindBack)
 
-FindBack Google login is **Credential Manager → Google Auth Platform Web-client
-`serverClientId` → Supabase `signInWithIdToken`**. There is no Firebase, no
-`google-services.json` requirement, and no client secret anywhere in this path:
-the Web OAuth client ID is a public identifier baked into the APK as
+FindBack preserves two distinct Google sign-in paths:
+
+- **Web:** Supabase `signInWithOAuth` → Google consent → hosted Supabase callback
+  → `/auth/callback` → PKCE `exchangeCodeForSession`. Supabase needs the matching
+  **Web application** client ID and secret for Google's authorization-code exchange.
+- **Android:** Credential Manager → Web-client `serverClientId` → Google ID token
+  + nonce → Supabase `signInWithIdToken`. No Google client secret is sent by the app.
+
+There is no Firebase or `google-services.json` requirement. The Web OAuth client
+ID is a public identifier baked into the APK as
 `BuildConfig.GOOGLE_WEB_CLIENT_ID` (Gradle reads the `GOOGLE_WEB_CLIENT_ID`
 env var; `scripts/build-apk.mjs` loads it from the shell or root `.env`).
+
+Never paste, fetch, log, screenshot, or send a client secret to an agent. The
+owner enters the matching secret directly in Supabase's provider console.
+
+## Recovery status (2026-11-02 handoff; not login acceptance)
+
+- Intended Web client:
+  `961478941021-4hj634u50dug9mrjda769l7p98bh9hv1.apps.googleusercontent.com`.
+  The public authorize probe selected this client and the hosted callback below;
+  an HTTP redirect proves selection, **not** a successful Google login.
+- The handoff reports `invalid_client — The provided client secret is invalid.`
+  at `2026-11-02T17:26:24Z`. Next owner action: enter the secret belonging to
+  **that exact Web client** directly in Supabase → Authentication → Providers →
+  Google, then save. Do not substitute the Android client or request its secret.
+- The second listed client
+  `961478941021-1qtajvs93gj6f6a5g9lsumlhtsa5a6in.apps.googleusercontent.com`
+  has **unverified type**; inspect its type/package/fingerprint in Google Cloud
+  before assigning it a role. Site URL/Redirect URLs remain unverified too.
+- Production/local Web login and signed physical Android Credential Manager
+  login are **unpassed**. The owner performs signup; source checks cannot replace it.
 
 The app fails closed: when the ID is missing the button reports
 `misconfigured` and sign-in is never attempted. When the failure is
@@ -21,6 +47,11 @@ Project with the Android app package `com.findback.app`:
 - [ ] **Web OAuth client exists** (APIs & Services → Credentials → OAuth 2.0
       Client IDs → type **Web application**). Its client ID ends with
       `.apps.googleusercontent.com` — this exact value is `GOOGLE_WEB_CLIENT_ID`.
+- [ ] Web client's **Authorized redirect URIs** includes exactly
+      `https://nfjhpigbsyyoaaktfaev.supabase.co/auth/v1/callback`.
+      This is Google's return to Supabase, not the app's `/auth/callback` route.
+- [ ] Authorized JavaScript origins include `https://findbackapp.social` and
+      only the local development origins actually used (origin only, no path).
 - [ ] **Android OAuth client exists** for package `com.findback.app` with the
       **release SHA-1** `61:E9:32:D5:14:A0:28:7B:7B:6E:49:F1:90:70:2C:F4:F7:CF:D1:8A`.
       (A debug SHA-1 only covers local debug builds, never the signed
@@ -34,8 +65,14 @@ Project with the Android app package `com.findback.app`:
 ## 2. Supabase dashboard (auth providers)
 
 - [ ] **Authentication → Providers → Google → Enabled**, with the **same Web
-      OAuth client ID and client secret** entered there. The mobile app never
-      sends the secret; Supabase verifies the ID token server-side against it.
+      OAuth client ID and matching client secret** entered there. The secret is
+      used by Supabase for the Web authorization-code exchange; Android ID-token
+      verification checks the token/audience/nonce, not a secret sent by the app.
+- [ ] **Authentication → URL Configuration:** production Site URL is
+      `https://findbackapp.social`; Redirect URLs permit
+      `https://findbackapp.social/auth/callback` and each exact local callback
+      actually in use. A localhost error return can indicate fallback/allowlist
+      configuration; it is not proof of an app routing defect.
 - [ ] If logcat shows a successful Credential Manager token but the exchange
       fails, the Supabase auth log (`provider is not enabled`,
       `invalid JWT: unable to verify`, nonce/audience mismatch) is the source
@@ -62,6 +99,15 @@ stable human copy, never raw platform text.
 
 ## 4. After changing console state
 
-Console changes need no app rebuild (they are server-side), except changing
-the Web client ID itself, which requires a rebuild so the new audience is
-baked into `BuildConfig.GOOGLE_WEB_CLIENT_ID`.
+Secret/redirect/provider corrections are server-side and need no app rebuild.
+Changing the Web client ID requires a new Android build so its audience matches
+`BuildConfig.GOOGLE_WEB_CLIENT_ID`; it does not justify rewriting Web PKCE or the
+Credential Manager bridge.
+
+After configuration, verify separately: production Web login and callback;
+local Web login and callback; signed Android Credential Manager login; existing
+email/password signup and recovery. Record actual outcomes without tokens,
+authorization codes, raw nonces, secrets, or account personal data.
+
+References: [Supabase Google sign-in](https://supabase.com/docs/guides/auth/social-login/auth-google),
+[Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).

@@ -27,23 +27,17 @@
  *     MAX_BATCHES_PER_INVOCATION batches per invocation; an empty claim
  *     ends the loop as complete.
  *
- * Authorization (service-role/internal only, never anon/authenticated):
- * the caller must present EITHER `Authorization: Bearer
- * <SUPABASE_SERVICE_ROLE_KEY>` OR `x-cleanup-secret: <CLEANUP_CRON_SECRET>`.
- * Ordinary anon/authenticated user JWTs match neither and get 401 with
- * zero queue/storage calls. The function never reads comment bodies —
- * logs and responses carry storage keys and counts only, never user data.
- *
- * Required function environment (set with `supabase secrets set`):
- * - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — injected by the runtime.
- * - `CLEANUP_CRON_SECRET` (optional) — shared secret for the scheduler;
- *   when set, the scheduler calls with `x-cleanup-secret`.
+ * Production authorization: canonical server wrapper, secret API key in
+ * `apikey`. No cron-secret/bearer fallback. Ordinary callers never reach
+ * queue/Storage. Purges bounded abandoned reservations before claiming.
+ * Logs and responses contain counts and object keys, never comment content.
+ * The legacy pure orchestration adapter remains test-only, not an HTTP path.
  *
  * Pure orchestration (`sweepBatch`, `handleCleanup`, `isAuthorized`) is
  * dependency-injected for unit tests: `deno test supabase/functions/cleanup-comment-media/`.
  */
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+// deno-lint-ignore no-import-prefix -- Edge Functions use pinned npm specifiers.
+import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 
 /** Bucket holding comment attachment bytes (sweep target, never listed). */
 export const CLEANUP_BUCKET = "findback-comment-media";
@@ -80,6 +74,8 @@ export interface CleanupStorageAdmin {
 export interface CleanupClients {
   queue: QueueAdmin;
   storage: { from(bucket: string): CleanupStorageAdmin };
+  purgeStaging?: () => Promise<{ purged: number; error: { message: string } | null }>;
+  hasPending?: () => Promise<{ pending: boolean; error: { message: string } | null }>;
 }
 
 export interface CleanupEnv {
@@ -183,30 +179,50 @@ export async function handleCleanup(
     const missing = extractBearer(authHeader) === null && (cronHeader === null || cronHeader === "");
     return { status: 401, body: { error: missing ? "missing credentials" : "invalid credentials" } };
   }
+  return await runAuthorizedCleanup(clients, options);
+}
+
+async function runAuthorizedCleanup(clients: CleanupClients, options: CleanupOptions = {}): Promise<CleanupResponse> {
   const maxBatches = options.maxBatches ?? MAX_BATCHES_PER_INVOCATION;
+  if (!Number.isInteger(maxBatches) || maxBatches < 1 || maxBatches > MAX_BATCHES_PER_INVOCATION) {
+    return { status: 400, body: { error: "max_batches must be an integer from 1 to 10" } };
+  }
+  let purgedStaging = 0;
   let claimed = 0;
   let removed = 0;
   let acked = 0;
   const failedKeys: string[] = [];
   let batches = 0;
+  let empty = false;
+  let pending = true;
   try {
+    if (clients.purgeStaging) {
+      const purge = await clients.purgeStaging();
+      if (purge.error) throw new Error(`staging purge failed: ${purge.error.message}`);
+      purgedStaging = purge.purged;
+    }
     for (let i = 0; i < maxBatches; i++) {
       const batch = await sweepBatch(clients, CLAIM_BATCH_SIZE);
-      if (batch.claimed === 0) break;
+      if (batch.claimed === 0) { empty = true; break; }
       batches += 1;
       claimed += batch.claimed;
       removed += batch.removed.length;
       acked += batch.acked.length;
       failedKeys.push(...batch.failed);
     }
+    if (clients.hasPending) {
+      const status = await clients.hasPending();
+      if (status.error) throw new Error(`pending check failed: ${status.error.message}`);
+      pending = status.pending;
+    } else pending = !empty;
   } catch (err) {
     const message = err instanceof Error ? err.message : "cleanup failed";
-    return { status: 502, body: { error: message, claimed, removed, acked, failedKeys, batches, complete: false } };
+    return { status: 502, body: { error: message, purgedStaging, claimed, removed, acked, failedKeys, batches, complete: false } };
   }
   console.log(
     `cleanup-comment-media: batches=${batches} claimed=${claimed} removed=${removed} acked=${acked} failed=${failedKeys.length}`,
   );
-  return { status: 200, body: { claimed, removed, acked, failedKeys, batches, complete: true } };
+  return { status: 200, body: { purgedStaging, claimed, removed, acked, failedKeys, batches, complete: !pending && failedKeys.length === 0 && acked === removed } };
 }
 
 function jsonResponse(response: CleanupResponse): Response {
@@ -216,24 +232,48 @@ function jsonResponse(response: CleanupResponse): Response {
   });
 }
 
-if (import.meta.main) {
-  serve(async (req: Request): Promise<Response> => {
+async function authorizedCleanupRequest(req: Request, clients: CleanupClients): Promise<Response> {
+  let maxBatches = MAX_BATCHES_PER_INVOCATION;
+  try {
+    const text = await req.text();
+    if (text.length > 1024) throw new Error("body too large");
+    const body: unknown = text.trim() ? JSON.parse(text) : {};
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid body");
+    if ("max_batches" in body) {
+      const value = body.max_batches;
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_BATCHES_PER_INVOCATION) throw new Error("invalid batch limit");
+      maxBatches = value;
+    }
+  } catch {
+    return jsonResponse({ status: 400, body: { error: "max_batches must be an integer from 1 to 10" } });
+  }
+  return jsonResponse(await runAuthorizedCleanup(clients, { maxBatches }));
+}
+
+type CleanupDatabase = {
+  public: {
+    Tables: Record<string, never>; Views: Record<string, never>;
+    Functions: {
+      claim_comment_media_cleanup: { Args: { p_limit: number }; Returns: { storage_key: string }[] };
+      ack_comment_media_cleanup: { Args: { p_keys: string[] }; Returns: { storage_key: string }[] };
+      purge_abandoned_comment_media: { Args: { p_limit: number }; Returns: number };
+      findback_comment_media_cleanup_pending: { Args: Record<string, never>; Returns: boolean };
+    };
+    Enums: Record<string, never>; CompositeTypes: Record<string, never>;
+  };
+};
+
+export function createCommentCleanupEndpoint(env?: Partial<SupabaseEnv>, transport: typeof fetch = fetch) {
+  return withSupabase<CleanupDatabase>({ auth: "secret", cors: false, env,
+    errors: { detailed: false }, supabaseOptions: { global: { fetch: transport } },
+  }, async (req, ctx): Promise<Response> => {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "method not allowed" }), {
         status: 405,
         headers: { "content-type": "application/json" },
       });
     }
-    const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !serviceKey) {
-      return new Response(JSON.stringify({ error: "server misconfigured" }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    const cronSecret = Deno.env.get("CLEANUP_CRON_SECRET") ?? "";
-    const supabase = createClient(url, serviceKey);
+    const supabase = ctx.supabaseAdmin;
     const clients: CleanupClients = {
       queue: {
         claim: async (limit: number) => {
@@ -252,14 +292,19 @@ if (import.meta.main) {
       storage: {
         from: (bucket: string) => supabase.storage.from(bucket) as unknown as CleanupStorageAdmin,
       },
+      purgeStaging: async () => {
+        const { data, error } = await supabase.rpc("purge_abandoned_comment_media", { p_limit: 200 });
+        if (error || typeof data !== "number") return { purged: 0, error: { message: "staging purge unavailable" } };
+        return { purged: data, error: null };
+      },
+      hasPending: async () => {
+        const { data, error } = await supabase.rpc("findback_comment_media_cleanup_pending", {});
+        if (error || typeof data !== "boolean") return { pending: true, error: { message: "pending check unavailable" } };
+        return { pending: data, error: null };
+      },
     };
-    return jsonResponse(
-      await handleCleanup(
-        clients,
-        req.headers.get("authorization"),
-        req.headers.get("x-cleanup-secret"),
-        { serviceRoleKey: serviceKey, cronSecret },
-      ),
-    );
+    return await authorizedCleanupRequest(req, clients);
   });
 }
+
+export default { fetch: createCommentCleanupEndpoint() };

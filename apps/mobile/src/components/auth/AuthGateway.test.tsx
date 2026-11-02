@@ -30,6 +30,24 @@ import { Register } from "../../screens/Register";
 
 const mockCheckUsername = vi.mocked(checkUsername);
 
+it("keeps a stable credential identity in the locked-email password form", async () => {
+  renderGateway();
+  await continueWithEmail("synthetic@example.invalid");
+  const password=screen.getByLabelText("Password", { exact: true });
+  const identity=password.closest("form")!.querySelector<HTMLInputElement>('input[name="username"]');
+  expect(identity?.value).toBe("synthetic@example.invalid");
+  expect(identity?.getAttribute("autocomplete")).toBe("username");
+  expect(identity?.readOnly).toBe(true);
+  expect(password.getAttribute("name")).toBe("password");
+});
+
+it("exposes standard credential autocomplete in the editable sign-in entry", () => {
+  renderGateway(<AuthGateway initialMode="signin" />);
+  const email=screen.getByLabelText("Email", { exact: true });
+  expect(email.getAttribute("autocomplete")).toBe("username");
+  expect(email.getAttribute("name")).toBe("username");
+});
+
 function renderGateway(ui: React.ReactNode = <AuthGateway />, path = "/auth") {
   return render(
     <MemoryRouter initialEntries={[path]}>

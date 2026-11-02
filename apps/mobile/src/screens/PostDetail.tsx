@@ -7,6 +7,7 @@ import { OWNER_SELECTABLE_STATUSES } from "@findback/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { CommentIdentityHeader } from "../components/CommentIdentityHeader";
+import { CommentMediaPreview } from "../components/CommentMediaPreview";
 import { Button } from "../components/Button";
 import { Segmented, statusLabel } from "../components/Segmented";
 import { YouTubeEmbed } from "../components/YouTubeEmbed";
@@ -984,24 +985,12 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
               return (
                 <figure key={`${m.url}-${i}`} className="relative m-0">
                   {m.kind === "video" ? (
-                    <video
-                      src={m.url}
-                      controls
-                      playsInline
-                      preload="metadata"
-                      aria-label={`Attached video ${i + 1}`}
-                      className="h-24 max-w-full rounded-m3-sm border border-outline-variant object-cover"
-                    />
+                    <CommentMediaPreview media={{ ...m, alt: `Attached video ${i + 1}` }} />
                   ) : (
                     <button type="button" aria-label={`Open attached photo ${i + 1}`}
                       className="block rounded-m3-sm focus-visible:outline-2 focus-visible:outline-primary"
                       onClick={() => setCommentPhoto({ id: c.id, photoId: `${c.id}:${i}`, blocked: !!c.blockedAuthor })}>
-                    <img
-                      src={m.url}
-                      alt={`Attached photo ${i + 1}${provenance === "klipy" ? " via KLIPY" : ""}`}
-                      loading="lazy"
-                      className="h-24 w-auto rounded-m3-sm border border-outline-variant object-cover"
-                    />
+                    <CommentMediaPreview media={{ ...m, alt: `Attached photo ${i + 1}${provenance === "klipy" ? " via KLIPY" : ""}` }} />
                     </button>
                   )}
                   {provenance && (

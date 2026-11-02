@@ -5,6 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MediaViewer, type MediaViewerItem } from "./MediaViewer";
 import { consumeBackIntercept } from "./backNavigation";
 
+const { sdk } = vi.hoisted(() => ({ sdk: {
+  getSession: vi.fn(), onAuthStateChange: vi.fn(), sign: vi.fn(),
+} }));
+vi.mock("../services/supabaseClient", () => ({ getSupabase: () => ({
+  auth: { getSession: sdk.getSession, onAuthStateChange: sdk.onAuthStateChange },
+  storage: { from: () => ({ createSignedUrl: sdk.sign }) },
+}) }));
+
 const items: MediaViewerItem[] = [
   { id: "a", src: "https://example.test/front.jpg", alt: "Blue wallet front", width: 1600, height: 1200 },
   { id: "b", src: "https://example.test/back.jpg", alt: "Blue wallet back", width: 1200, height: 1600 },
@@ -17,11 +25,22 @@ function Gallery({ initial = 0 }: { initial?: number }) {
 }
 
 beforeEach(() => {
+  sdk.getSession.mockResolvedValue({ data: { session: { user: { id: "reader" } } } });
+  sdk.sign.mockResolvedValue({ data: { signedUrl: "https://signed.test/comment.jpg" }, error: null });
+  sdk.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe() {} } } });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: 1024, bottom: 768, width: 1024, height: 768, toJSON: () => ({}) });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("MediaViewer boundary", () => {
+  it("signs private comment slides and clears their bytes on sign-out", async () => {
+    const src="https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/authenticated/findback-comment-media/11111111-1111-4111-8111-111111111111/photo.jpg";
+    render(<MediaViewer items={[{ id: "comment", src, alt: "Private attached photo" }]} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("img", { name: "Private attached photo" }).getAttribute("src")).toBe("https://signed.test/comment.jpg"));
+    sdk.getSession.mockResolvedValue({ data: { session: null } });
+    act(() => { sdk.onAuthStateChange.mock.calls.at(-1)![0]("SIGNED_OUT", null); });
+    await waitFor(() => expect(screen.queryByRole("img", { name: "Private attached photo" })).toBeNull());
+  });
   it("does not create an overlay or fetch photos while closed or empty", () => {
     const { rerender } = render(<MediaViewer items={items} index={null} onClose={() => {}} />);
     expect(screen.queryByRole("dialog")).toBeNull();

@@ -44,6 +44,7 @@ export type CommentMediaProvenance = "storage" | "klipy";
 /** Buckets whose objects may render in the comment gallery. */
 const COMMENT_MEDIA_BUCKETS = new Set(["findback-comment-media", "findback-images"]);
 const STORAGE_PUBLIC_MARKER = "/storage/v1/object/public/";
+const STORAGE_PRIVATE_COMMENT_MARKER = "/storage/v1/object/authenticated/findback-comment-media/";
 
 /**
  * Classify a URL's provenance. Pure and total: never throws, returns null
@@ -67,6 +68,10 @@ export function commentMediaProvenance(url: string): CommentMediaProvenance | nu
   const projectRef = host.slice(0, -".supabase.co".length);
   if (projectRef === "" || projectRef.includes(".")) return null;
   const path = parsed.pathname;
+  if (path.startsWith(STORAGE_PRIVATE_COMMENT_MARKER)) {
+    const key = path.slice(STORAGE_PRIVATE_COMMENT_MARKER.length);
+    return /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(key) && !key.includes("..") && !parsed.search && !parsed.hash ? "storage" : null;
+  }
   // Exact path PREFIX (position 0): a marker buried in a foreign path or
   // query/fragment never counts.
   if (!path.startsWith(STORAGE_PUBLIC_MARKER)) return null;

@@ -34,7 +34,7 @@ const DEFAULT_SCOPE_ANSWER =
   "I can help with FindBack reports, search, status changes, comments, ratings, photos, location, notifications and account verification. Try asking about one of those features.";
 
 const OTP_ANSWER =
-  "Confirm your email with the one-time code sent at signup. Phone verification is not available.";
+  "Email confirmation is required at signup: use the one-time code sent to your email. Phone verification is optional and available from the verification/account flow when SMS verification is configured.";
 
 /** The app named outright. Enough on its own, and it lifts the veto below. */
 const APP_NAME_RE = /\bfindback\b|\b(?:the|this)\s+app\b/i;

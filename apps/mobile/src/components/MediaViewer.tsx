@@ -6,7 +6,8 @@ import Fullscreen from "yet-another-react-lightbox/plugins/fullscreen";
 import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
 import { ImageOff, RotateCcw } from "lucide-react";
 import { OverlayStackBridge, useOverlayDepth } from "./overlayFoundation";
-import { isPrivateMediaKey, peekMediaUrl, resolveMediaUrl } from "../services/media/privateMedia";
+import { isPrivateMediaKey, peekMediaUrl, privateCommentMediaKey, resolveMediaUrl } from "../services/media/privateMedia";
+import { getSupabase } from "../services/supabaseClient";
 import { useShouldReduceMotion } from "./uiMotion";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
@@ -90,16 +91,27 @@ function OpenMediaViewer({ items, index, onIndexChange, onClose }: MediaViewerPr
     const missing = keys.filter((key) => !peekMediaUrl(key));
     if (missing.length === 0) return;
     let live = true;
-    void Promise.all(missing.map(async (key) => [key, await resolveMediaUrl(key)] as const)).then((pairs) => {
-      if (!live) return;
-      const next: Record<string, string> = {};
-      for (const [key, url] of pairs) if (url) next[key] = url;
-      if (Object.keys(next).length > 0) setSignedSrcs((prev) => ({ ...prev, ...next }));
-    });
-    return () => { live = false; };
+    let generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      void Promise.all(missing.map(async (key) => [key, await resolveMediaUrl(key)] as const)).then((pairs) => {
+        if (!live || current !== generation) return;
+        const next: Record<string, string> = {};
+        for (const [key, url] of pairs) if (url) next[key] = url;
+        setSignedSrcs(next);
+      });
+    };
+    refresh();
+    const comments = keys.some((key) => !!privateCommentMediaKey(key));
+    const timer = comments ? window.setInterval(refresh, 45_000) : undefined;
+    const subscription = comments ? getSupabase().auth.onAuthStateChange(() => {
+      ++generation; setSignedSrcs({});
+      queueMicrotask(() => { if (live) refresh(); });
+    }).data.subscription : undefined;
+    return () => { live = false; ++generation; window.clearInterval(timer); subscription?.unsubscribe(); };
   }, [srcKey]);
   const slides = useMemo<SlideImage[]>(() => items.map((item) => ({
-    src: peekMediaUrl(item.src) ?? signedSrcs[item.src] ?? item.src, alt: item.alt, title: item.title ?? undefined,
+    src: peekMediaUrl(item.src) ?? signedSrcs[item.src] ?? (privateCommentMediaKey(item.src) ? "" : item.src), alt: item.alt, title: item.title ?? undefined,
     thumbnail: item.thumbnailSrc ?? undefined,
     width: item.width && item.width > 0 ? item.width : undefined,
     height: item.height && item.height > 0 ? item.height : undefined,

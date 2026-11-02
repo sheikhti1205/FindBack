@@ -11,6 +11,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 import {
   SCHEDULER_RULES,
@@ -41,13 +43,15 @@ const BASE = [
   '      MAX_BATCHES: "10"',
   "    steps:",
   "      - env:",
-  "          CLEANUP_CRON_SECRET: ${{ secrets.CLEANUP_CRON_SECRET }}",
+  "          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}",
   "        run: |",
+  '          if [ -z "$SUPABASE_SECRET_KEY" ] || [ -z "$PROJECT_REF" ]; then exit 1; fi',
   '          BATCH="${INPUT_MAX_BATCHES:-$MAX_BATCHES}"',
   '          [ "$BATCH" -gt "$MAX_BATCHES" ] && BATCH="$MAX_BATCHES"',
   '          curl -fsS -X POST "https://$PROJECT_REF.supabase.co/functions/v1/cleanup-comment-media" \\',
-  '            -H "x-cleanup-secret: ${CLEANUP_CRON_SECRET}" \\',
+  '            -H "apikey: ${SUPABASE_SECRET_KEY}" \\',
   '            -d "{\\"max_batches\\": ${BATCH}}"',
+  '          jq -e ".complete == true" "$RESULT"',
   "",
 ].join("\n");
 
@@ -81,6 +85,8 @@ describe("validateSchedulerWorkflow — base", () => {
         "bounded-batch",
         "invokes-function",
         "secret-by-name",
+        "fail-closed-config",
+        "validated-result",
       ],
     );
   });
@@ -143,13 +149,30 @@ describe("rule mutations each fail with the right rule id", () => {
 
   it("secret-by-name: a literal secret reference fails", () => {
     expectBroken(
-      (t) => t.replace("${{ secrets.CLEANUP_CRON_SECRET }}", "hardcoded-literal"),
+      (t) => t.replace("${{ secrets.SUPABASE_SECRET_KEY }}", "hardcoded-literal"),
       "secret-by-name",
     );
+  });
+  it("fail-closed-config: silently skipping missing configuration fails", () => {
+    expectBroken((t) => t.replace("exit 1", "exit 0"), "fail-closed-config");
+  });
+  it("validated-result: a successful HTTP status alone cannot prove a complete sweep", () => {
+    expectBroken((t) => t.replace('.complete == true', '.status == 200'), "validated-result");
   });
 });
 
 describe("the real committed workflow passes", () => {
+  it("real run script exits nonzero without credentials or project configuration", () => {
+    const source=readFileSync(resolve(HERE,"../.github/workflows/cleanup-comment-media.yml"),"utf8");
+    const script=source.split("run: |\n")[1].split("\n").map(line=>line.slice(10)).join("\n");
+    for (const fixture of [{ SUPABASE_SECRET_KEY: "", PROJECT_REF: "test-project" },
+      { SUPABASE_SECRET_KEY: "synthetic-test-only", PROJECT_REF: "" }]) {
+      const result=spawnSync("bash",["-e","-c",script],{encoding:"utf8",env:{ PATH:process.env.PATH,MAX_BATCHES:"10",...fixture }});
+      assert.equal(result.status,1);
+      assert.match(result.stdout,/cleanup did NOT run/);
+      assert.equal(result.stdout.includes("synthetic-test-only"),false);
+    }
+  });
   it(".github/workflows/cleanup-comment-media.yml satisfies every rule", () => {
     const result = checkSchedulerWorkflow();
     assert.deepEqual(result.errors, [], `real workflow errors: ${JSON.stringify(result.errors)}`);

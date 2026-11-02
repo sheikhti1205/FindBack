@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Radar } from "lucide-react";
 import { motionDurations, motionEasings } from "../uiMotion";
+import "./AuthShell.css";
 
 /**
  * Centered auth shell: brand mark, single h1 slot, and form content.
@@ -24,7 +25,7 @@ export function AuthShell({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-      className="mx-auto flex min-h-full w-full max-w-md flex-col justify-center gap-6 overflow-y-auto bg-surface px-5 py-10 text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className="fb-auth-shell mx-auto flex w-full max-w-md flex-col justify-center gap-6 bg-surface text-on-surface"
     >
       <header className="flex flex-col gap-3">
         <span className="flex items-center gap-2.5" aria-hidden="true">

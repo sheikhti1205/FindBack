@@ -21,14 +21,8 @@ import { getSupabase } from "./supabaseClient";
  *
  * The RPCs are the existing `findback_react_client` (post) and the new
  * `findback_react_comment_client` (comment); both return per-kind counts plus
- * the caller's own reaction. The writers accept the canonical kinds the
- * widened RPC still understands (LOVE / HELPFUL / SUPPORT / WOW) and null for
- * removal, but they REFUSE the legacy negative kind DISLIKE
- * (`assertWritableReactionKind`): a DISLIKE row is readable history, never a
- * write. The post path goes through `reactToPost(id, nextLikeReaction(current))`
- * and the comment path through `setCommentReaction`, so "new writes are LIKE or
- * null only" (packet `08` §2) is structural at the call site rather than a
- * convention callers have to remember.
+ * the caller's own reaction. Both writers enforce LIKE/null, matching server
+ * authority. Other kinds are historical read vocabulary only.
  */
 
 export type { ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
@@ -272,14 +266,11 @@ function assertKind(kind: ReactionKind | null): void {
 /**
  * Guard for the client reaction WRITERS (D1).
  *
- * A legacy DISLIKE row stays readable as history, but the app has no surface
- * that writes one — the "not helpful" control was removed and the rating
- * writer is gone. The writers therefore reject the kind outright, so no
- * caller can resurrect the negative write path by passing the token through.
+ * Historical kinds stay readable, but cannot be sent by a custom caller.
  */
 export function assertWritableReactionKind(kind: ReactionKind | null): void {
   assertKind(kind);
-  if (kind === "DISLIKE") {
+  if (kind !== null && kind !== "LIKE") {
     throw new ApiError("Unknown reaction", 400);
   }
 }

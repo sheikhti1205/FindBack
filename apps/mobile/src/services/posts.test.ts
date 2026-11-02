@@ -85,7 +85,7 @@ describe("social SQLSTATE preservation", () => {
     ["addComment", () => addComment("p1", "")],
     ["fetchComments", () => fetchComments("p1")],
     ["deleteComment", () => deleteComment("p1", "c1")],
-    ["reactToPost", () => reactToPost("p1", "LOVE")],
+    ["reactToPost", () => reactToPost("p1", "LIKE")],
     ["fetchSocialState", () => fetchSocialState("p1")],
   ])("%s carries P0002 without changing the 404 mapping", async (_name, run) => {
     clientMock.rpc.mockResolvedValue({ data: null, error: { message: "Unavailable", code: "P0002" } });
@@ -807,7 +807,7 @@ describe("fetchComments reaction summary (W3.3)", () => {
   });
 });
 
-describe("reactToPost multi-kind (W3.3)", () => {
+describe("reactToPost Like-only writes and historical summaries", () => {
   it("returns the per-kind summary when the widened RPC provides it", async () => {
     clientMock.rpc.mockResolvedValue({
       data: [
@@ -822,7 +822,7 @@ describe("reactToPost multi-kind (W3.3)", () => {
       error: null,
     });
 
-    const res = await reactToPost("p1", "HELPFUL");
+    const res = await reactToPost("p1", "LIKE");
 
     expect(res.reactionCounts).toEqual({
       counts: { LOVE: 1, HELPFUL: 1 },
@@ -842,24 +842,9 @@ describe("reactToPost multi-kind (W3.3)", () => {
     expect(res.reactionCounts).toBeUndefined();
   });
 
-  it("passes a canonical LOVE caller reaction through unwidened", async () => {
-    clientMock.rpc.mockResolvedValue({
-      data: [
-        {
-          post_id: "p1",
-          like_count: 0,
-          dislike_count: 0,
-          my_reaction: "LOVE",
-          reaction_counts: { LOVE: 1 },
-        },
-      ],
-      error: null,
-    });
-
-    const res = await reactToPost("p1", "LOVE");
-
-    expect(res.myReaction).toBe("LOVE");
-    expect(res.reactionCounts?.total).toBe(1);
+  it.each(["LOVE", "HELPFUL", "SUPPORT", "WOW", "DISLIKE"] as const)("rejects historical %s before RPC", async (kind) => {
+    await expect(reactToPost("p1", kind)).rejects.toMatchObject({ status: 400 });
+    expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 });
 

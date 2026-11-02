@@ -7,12 +7,14 @@ const { supaMock } = vi.hoisted(() => ({
     getPublicUrl: vi.fn(),
     remove: vi.fn(),
     getUser: vi.fn(),
+    rpc: vi.fn(),
     fromBucket: vi.fn(),
   },
 }));
 
 vi.mock("./supabaseClient", () => ({
   getSupabase: () => ({
+    rpc: supaMock.rpc,
     auth: { getUser: supaMock.getUser },
     storage: {
       from: (bucket: string) => {
@@ -141,16 +143,21 @@ describe("uploadCommentAttachment", () => {
   it("uploads through the owner-scoped path of the dedicated comment-media bucket", async () => {
     supaMock.getUser.mockResolvedValue({ data: { user: { id: "u-1" } }, error: null });
     supaMock.upload.mockResolvedValue({ error: null });
-    supaMock.getPublicUrl.mockReturnValue({
-      data: { publicUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/x.mp4") },
-    });
-    const f = file("v.mp4", "video/mp4", 2048);
+    supaMock.getPublicUrl.mockImplementation((key: string) => ({
+      data: { publicUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, key) },
+    }));
+    const f = file("photo.jpg", "image/jpeg", 2048);
+    supaMock.rpc.mockResolvedValue({ data: "u-1/reserved.jpg", error: null });
     const entry = createCommentAttachment(f);
     const seen: { loaded: number; total: number }[] = [];
     const res = await uploadCommentAttachment(entry, f, {
+      postId: "post-1",
       onProgress: (p) => seen.push(p),
     });
-    expect(res.remoteUrl).toBe(TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/x.mp4"));
+    expect(res.remoteUrl).toContain("/object/authenticated/findback-comment-media/");
+    expect(supaMock.rpc).toHaveBeenCalledWith("findback_reserve_comment_media", { p_post_id: "post-1", p_extension: "jpg" });
+    expect(supaMock.rpc.mock.invocationCallOrder.at(-1)).toBeLessThan(supaMock.upload.mock.invocationCallOrder.at(-1)!);
+    expect(res.objectKey).toBe("u-1/reserved.jpg");
     expect(res.objectKey.startsWith("u-1/")).toBe(true);
     expect(supaMock.fromBucket).toHaveBeenCalledWith(COMMENT_MEDIA_BUCKET);
     // The report image bucket must never receive comment media (FBX-013).
@@ -163,10 +170,11 @@ describe("uploadCommentAttachment", () => {
   it("surfaces Storage failures (retryable) and requires auth", async () => {
     supaMock.getUser.mockResolvedValue({ data: { user: { id: "u-1" } }, error: null });
     supaMock.upload.mockResolvedValue({ error: new Error("offline") });
-    const f = file("v.mp4", "video/mp4", 64);
-    await expect(uploadCommentAttachment(createCommentAttachment(f), f)).rejects.toThrow();
+    const f = file("photo.jpg", "image/jpeg", 64);
+    supaMock.rpc.mockResolvedValue({ data: "u-1/reserved.jpg", error: null });
+    await expect(uploadCommentAttachment(createCommentAttachment(f), f, { postId: "post-1" })).rejects.toThrow();
     supaMock.getUser.mockResolvedValue({ data: { user: null }, error: new Error("no") });
-    await expect(uploadCommentAttachment(createCommentAttachment(f), f)).rejects.toThrow(
+    await expect(uploadCommentAttachment(createCommentAttachment(f), f, { postId: "post-1" })).rejects.toThrow(
       /authenticated/i,
     );
   });
@@ -178,11 +186,16 @@ describe("uploadCommentAttachment", () => {
     await expect(
       removeCommentAttachment({ ...entry, objectKey: "u-1/x.jpg", remoteUrl: "https://cdn/x.jpg" }),
     ).resolves.toBeUndefined();
-    expect(supaMock.remove).toHaveBeenCalledTimes(1);
+    expect(supaMock.rpc).toHaveBeenCalledWith("findback_discard_comment_media", { p_key: "u-1/x.jpg" });
+    expect(supaMock.remove).not.toHaveBeenCalled();
   });
 });
 
 describe("commentBodyMedia", () => {
+  it("roundtrips stable authenticated comment addresses without embedding signed tokens", () => {
+    const url = TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/private.jpg").replace("/object/public/", "/object/authenticated/");
+    expect(parseCommentBody(appendBodyMedia("Photo", [{ kind: "photo", remoteUrl: url }])).media[0]?.url).toBe(url);
+  });
   it("appends media as https lines (never base64 in text)", () => {
     const body = appendBodyMedia("Nice find!", [
       { kind: "photo", remoteUrl: TRUSTED_STORAGE(COMMENT_MEDIA_BUCKET, "u-1/a.jpg") },

@@ -106,9 +106,10 @@ jobs:
         if: inputs.deploy_cleanup_comment_media
         run: |
           supabase link --project-ref "$PROJECT_REF"
-          # Internal sweeper only: the function enforces its own service-role /
-          # x-cleanup-secret check, so the gateway JWT check is redundant.
-          # Deploy only after migration 20261013020000 (cleanup lease) is live.
+          # Internal sweeper: canonical server auth:'secret' validates apikey;
+          # gateway JWT verification must be OFF for backend secret API keys.
+          # Deploy only after the chain through 20261102220000 is live
+          # (private reservations + TTL purge + pending-status RPC).
           supabase functions deploy cleanup-comment-media --no-verify-jwt
       - name: Deploy cleanup-report-media
         if: inputs.deploy_cleanup_report_media

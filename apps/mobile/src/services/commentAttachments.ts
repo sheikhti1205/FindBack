@@ -9,7 +9,7 @@ import type { CommentReportReference } from "@findback/shared";
 /**
  * Comment attachments.
  *
- * - Real Storage uploads: files go to the public `findback-comment-media`
+ * - Real Storage uploads: files go to the private `findback-comment-media`
  *   bucket under the caller's own folder (`<uid>/<uuid>.<ext>`), the same
  *   ownership-scoped RLS convention as report photos. Photos are normalized
  *   on-device first (EXIF/orientation, edge cap — the canonical image
@@ -26,7 +26,7 @@ import type { CommentReportReference } from "@findback/shared";
  * - States: `ready` (picked) → `uploading` (progress 0→1, indeterminate
  *   activity while the Storage client works) → `uploaded` | `failed`
  *   (retryable, removable). `removeCommentAttachment` revokes the preview
- *   and best-effort deletes the uploaded object so nothing is orphaned.
+ *   and discards the reservation; the durable queue reclaims abandoned bytes.
  */
 
 /** Photo cap enforced by the picker, the client gate and the grid layout. */
@@ -56,7 +56,7 @@ export const COMMENT_VIDEO_MIME: readonly string[] = ["video/mp4", "video/webm",
 export const COMMENT_ATTACH_ACCEPT = "image/*";
 
 /**
- * Dedicated public bucket for comment attachments (FBX-013).
+ * Dedicated private bucket for comment attachments.
  *
  * Comment media cannot share the report image bucket: that bucket's row pins
  * 8 MB and an images-only MIME list, while comment attachments allow 25 MB
@@ -92,7 +92,7 @@ export interface CommentAttachment {
   progress: number;
   /** Local preview (`blob:` object URL) or the provider preview for GIFs. */
   previewUrl: string;
-  /** `https://` remote URL once uploaded (Storage public URL or Klipy media URL). */
+  /** Stable authenticated Storage address or external Klipy URL; never a signed token. */
   remoteUrl?: string;
   /** Storage object key for cleanup (local uploads only). */
   objectKey?: string;
@@ -293,12 +293,13 @@ export async function importCommentPhotoFromNativeUri(uri: string): Promise<{
 }
 
 export interface UploadAttachmentOptions {
+  postId: string;
   onProgress?: (progress: AttachmentUploadProgress) => void;
   traceId?: string;
 }
 
 /**
- * Upload one attachment to Storage and resolve its public URL. Photos are
+ * Reserve before uploading and return a stable private address. Photos are
  * normalized on-device first (same pipeline as report photos); videos go
  * raw. Reports progress at start (0) and completion (1) — the Storage JS
  * client exposes no byte-level callbacks, so the UI renders an honest
@@ -307,7 +308,7 @@ export interface UploadAttachmentOptions {
 export async function uploadCommentAttachment(
   attachment: CommentAttachment,
   file: File,
-  options: UploadAttachmentOptions = {},
+  options: UploadAttachmentOptions,
 ): Promise<{ remoteUrl: string; objectKey: string }> {
   const supabase = getSupabase();
   const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -324,11 +325,20 @@ export async function uploadCommentAttachment(
     payload = normalized.blob;
     mimeType = normalized.mimeType;
   }
-  const objectKey = `${userData.user.id}/${newId()}.${extensionFor(mimeType, attachment.fileName)}`;
+  const { data: reservedKey, error: reserveError } = await supabase.rpc("findback_reserve_comment_media", {
+    p_post_id: options.postId,
+    p_extension: extensionFor(mimeType, attachment.fileName),
+  });
+  if (reserveError || typeof reservedKey !== "string" || !reservedKey.startsWith(`${userData.user.id}/`)) {
+    throw new ApiError(reserveError?.message || "Couldn't prepare this photo. Try again.", 400);
+  }
+  const objectKey = reservedKey;
   const { error: uploadError } = await supabase.storage
     .from(COMMENT_MEDIA_BUCKET)
     .upload(objectKey, payload, { contentType: mimeType, upsert: false });
   if (uploadError) {
+    // A lost HTTP response may have stored bytes. Queue reclamation anyway.
+    try { await supabase.rpc("findback_discard_comment_media", { p_key: objectKey }); } catch { /* TTL fallback */ }
     diag(
       "comments.attach.storage_error",
       { bucket: COMMENT_MEDIA_BUCKET, objectKey, message: uploadError.message },
@@ -336,7 +346,8 @@ export async function uploadCommentAttachment(
     );
     throw new ApiError(uploadError.message || "Upload failed", 502);
   }
-  const remoteUrl = supabase.storage.from(COMMENT_MEDIA_BUCKET).getPublicUrl(objectKey).data.publicUrl;
+  const remoteUrl = supabase.storage.from(COMMENT_MEDIA_BUCKET).getPublicUrl(objectKey).data.publicUrl
+    .replace("/object/public/", "/object/authenticated/");
   options.onProgress?.({ loaded: file.size, total: file.size });
   diag(
     "comments.attach.success",
@@ -361,9 +372,9 @@ export async function removeCommentAttachment(attachment: CommentAttachment): Pr
   }
   if (attachment.objectKey && attachment.remoteUrl) {
     try {
-      await getSupabase().storage.from(COMMENT_MEDIA_BUCKET).remove([attachment.objectKey]);
+      await getSupabase().rpc("findback_discard_comment_media", { p_key: attachment.objectKey });
     } catch {
-      // Orphan cleanup is best-effort; the row was never created server-side.
+      // Server reservation expiry remains a durable fallback.
     }
   }
 }

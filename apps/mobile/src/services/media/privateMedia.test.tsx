@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { createSignedUrlMock } = vi.hoisted(() => ({
+const { createSignedUrlMock, fromBucket, auth } = vi.hoisted(() => ({
+  fromBucket: vi.fn(),
+  auth: { getSession: vi.fn(), onAuthStateChange: vi.fn() },
   createSignedUrlMock: vi.fn(async (_key: string, _ttl: number) => ({
     data: { signedUrl: "https://signed.test/photo.jpg" } as { signedUrl: string } | null,
     error: null as { message: string } | null,
@@ -10,7 +12,7 @@ const { createSignedUrlMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../supabaseClient", () => ({
-  getSupabase: () => ({ storage: { from: () => ({ createSignedUrl: createSignedUrlMock }) } }),
+  getSupabase: () => ({ auth, storage: { from: (bucket: string) => { fromBucket(bucket); return { createSignedUrl: createSignedUrlMock }; } } }),
 }));
 
 import {
@@ -26,10 +28,44 @@ import {
 const key = (suffix: string) => `11111111-1111-4111-8111-111111111111/${suffix}.jpg`;
 
 beforeEach(() => {
-  createSignedUrlMock.mockClear();
+  createSignedUrlMock.mockReset();
+  auth.getSession.mockReset();
+  fromBucket.mockClear();
+  auth.getSession.mockResolvedValue({ data: { session: { user: { id: "reader-a" } } } });
+  auth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
   createSignedUrlMock.mockResolvedValue({
     data: { signedUrl: "https://signed.test/photo.jpg" },
     error: null,
+  });
+});
+
+describe("private comment media addresses", () => {
+  const address = (mode = "authenticated") => `https://nfjhpigbsyyoaaktfaev.supabase.co/storage/v1/object/${mode}/findback-comment-media/${key("comment")}`;
+  it.each(["authenticated", "public"])("signs %s comment addresses with a short TTL, never as a permanent URL", async (mode) => {
+    expect(isPrivateMediaKey(address(mode))).toBe(true);
+    expect(peekMediaUrl(address(mode))).toBeUndefined();
+    await expect(resolveMediaUrl(address(mode))).resolves.toBe("https://signed.test/photo.jpg");
+    expect(fromBucket).toHaveBeenCalledWith("findback-comment-media");
+    expect(createSignedUrlMock).toHaveBeenCalledWith(key("comment"), 60);
+    // No cross-account/global comment cache: each request checks current authority.
+    expect(peekMediaUrl(address(mode))).toBeUndefined();
+    await resolveMediaUrl(address(mode));
+    expect(createSignedUrlMock).toHaveBeenCalledTimes(2);
+  });
+  it("fails closed on denied signing, and discards an in-flight result after an account change", async () => {
+    createSignedUrlMock.mockResolvedValueOnce({ data: null, error: { message: "denied" } });
+    await expect(resolveMediaUrl(address())).resolves.toBeUndefined();
+    auth.getSession.mockResolvedValueOnce({ data: { session: { user: { id: "reader-a" } } } })
+      .mockResolvedValueOnce({ data: { session: { user: { id: "reader-b" } } } });
+    await expect(resolveMediaUrl(address())).resolves.toBeUndefined();
+  });
+  it("clears an already-rendered comment photo when the SDK account signs out", async () => {
+    function Photo() { const src=useMediaUrl(address()); return <img src={src} alt="Private comment" />; }
+    render(<Photo />);
+    await waitFor(() => expect(screen.getByAltText("Private comment").getAttribute("src")).toBe("https://signed.test/photo.jpg"));
+    auth.getSession.mockResolvedValue({ data: { session: null } });
+    act(() => { auth.onAuthStateChange.mock.calls.at(-1)![0]("SIGNED_OUT", null); });
+    expect(screen.getByAltText("Private comment").getAttribute("src")).toBeNull();
   });
 });
 

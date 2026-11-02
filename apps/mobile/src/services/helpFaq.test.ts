@@ -21,7 +21,8 @@ describe("builtInHelp", () => {
   it("still answers an explicit one-time-code question (AI-03 pair)", () => {
     const reply = builtInHelp("Where is my verification code?");
     expect(reply.toLowerCase()).toContain("one-time code");
-    expect(reply).toContain("Phone verification is not available");
+    expect(reply).toContain("Phone verification is optional");
+    expect(reply).toContain("when SMS verification is configured");
     expect(reply.toLowerCase()).toContain("signup");
   });
 

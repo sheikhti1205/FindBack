@@ -30,6 +30,12 @@ interface CachedMediaUrl {
 const cache = new Map<string, CachedMediaUrl>();
 const inFlight = new Map<string, Promise<string | null>>();
 
+/** Stable new addresses and legacy public addresses in the now-private bucket. */
+export function privateCommentMediaKey(value?: string | null): string | undefined {
+  const match = /^https:\/\/[a-zA-Z0-9-]+\.supabase\.co\/storage\/v1\/object\/(?:public|authenticated)\/findback-comment-media\/([A-Za-z0-9-]+\/[A-Za-z0-9._-]+)$/.exec(value ?? "");
+  return match?.[1] && !match[1].includes("..") ? match[1] : undefined;
+}
+
 /** A report-media key is exactly what the staging RPC derives: `<uid>/<file>`. */
 const PRIVATE_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/]+$/i;
 
@@ -43,12 +49,14 @@ const PRIVATE_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  * path can never be mistaken for a bucket object.
  */
 export function isPrivateMediaKey(value: string | null | undefined): value is string {
-  return typeof value === "string" && PRIVATE_KEY_RE.test(value);
+  return typeof value === "string" && (PRIVATE_KEY_RE.test(value) || !!privateCommentMediaKey(value));
 }
 
 /** Synchronous cache read: a URL only when one is already fresh. */
 export function peekMediaUrl(value?: string | null): string | undefined {
   if (!value) return undefined;
+  // Never share comment authority through the process-wide report cache.
+  if (privateCommentMediaKey(value)) return undefined;
   if (!isPrivateMediaKey(value)) return value;
   const hit = cache.get(value);
   return hit && hit.expiresAt > Date.now() ? hit.url : undefined;
@@ -81,6 +89,17 @@ async function signOne(key: string): Promise<string | null> {
 /** Resolve a stored address to something an `<img>` can load. */
 export async function resolveMediaUrl(value?: string | null): Promise<string | undefined> {
   if (!value) return undefined;
+  const commentKey = privateCommentMediaKey(value);
+  if (commentKey) {
+    try {
+      const sdk = getSupabase();
+      const before = (await sdk.auth.getSession()).data.session?.user.id;
+      if (!before) return undefined;
+      const { data, error } = await sdk.storage.from("findback-comment-media").createSignedUrl(commentKey, 60);
+      const after = (await sdk.auth.getSession()).data.session?.user.id;
+      return !error && before === after ? data?.signedUrl : undefined;
+    } catch { return undefined; }
+  }
   if (!isPrivateMediaKey(value)) return value;
   // A fresh cached URL is the answer: re-signing per consumer would turn one
   // page of photos into one Storage round trip each.
@@ -102,18 +121,34 @@ export async function resolveMediaUrl(value?: string | null): Promise<string | u
 export function useMediaUrl(value?: string | null): string | undefined {
   // Remembers WHICH key was signed: a resolved URL must never be painted for a
   // later, different value (a report card re-used for another report).
-  const [signed, setSigned] = useState<{ key: string; url: string } | null>(null);
+  const [signed, setSigned] = useState<{ key: string; url: string | undefined } | null>(null);
 
   useEffect(() => {
     if (!value || !isPrivateMediaKey(value)) return;
     if (peekMediaUrl(value)) return;
     const key = value;
     let live = true;
-    void resolveMediaUrl(key).then((url) => {
-      if (live) setSigned({ key, url: url ?? key });
-    });
+    let generation = 0;
+    const comment = !!privateCommentMediaKey(key);
+    const refresh = () => {
+      const current = ++generation;
+      void resolveMediaUrl(key).then((url) => {
+        if (live && current === generation) setSigned({ key, url: url ?? (comment ? undefined : key) });
+      });
+    };
+    refresh();
+    const timer = comment ? window.setInterval(refresh, 45_000) : undefined;
+    const subscription = comment ? getSupabase().auth.onAuthStateChange(() => {
+      ++generation;
+      setSigned(null);
+      // Do not make SDK calls inside its synchronous auth callback lock.
+      queueMicrotask(() => { if (live) refresh(); });
+    }).data.subscription : undefined;
     return () => {
       live = false;
+      ++generation;
+      window.clearInterval(timer);
+      subscription?.unsubscribe();
     };
   }, [value]);
 

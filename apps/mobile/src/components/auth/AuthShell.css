@@ -1,0 +1,21 @@
+/* A bounded form column, not a desktop card. Safe areas must add breathing
+   room rather than overriding all ordinary vertical padding with zero. */
+.fb-auth-shell {
+  min-height: 100svh;
+  padding-inline: 1.25rem;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+@media (min-width: 48rem) {
+  .fb-auth-shell {
+    padding-top: max(3rem, env(safe-area-inset-top));
+    padding-bottom: max(3rem, env(safe-area-inset-bottom));
+  }
+}
+/* Preserve browser/password-manager autofill while keeping the current theme
+   legible. No delayed transitions and no disabled autocomplete. */
+.fb-auth-shell input:is(:autofill, :-webkit-autofill) {
+  -webkit-text-fill-color: var(--fb-on-surface);
+  caret-color: var(--fb-on-surface);
+  box-shadow: 0 0 0 1000px var(--fb-surface) inset;
+}

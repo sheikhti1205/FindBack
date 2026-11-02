@@ -123,8 +123,8 @@ export function notificationSummary(
  *
  * IA (W4): Account / Preferences / Intelligence / Privacy / More. Moved rows
  * stay one tap away with unchanged routes — Cloud connections lives inside
- * AI & models (`/settings/ai`), Media & uploads and Diagnostics inside the
- * Advanced disclosure, Replay introduction and About inside Help & about —
+ * AI & models (`/settings/ai`), Media & uploads inside Advanced, Diagnostics
+ * inside Advanced → Troubleshooting, Replay introduction and About inside Help & about —
  * so no destination is orphaned and every row targets a real route.
  * Live summaries degrade to honest fallback text when a source is unreadable.
  */
@@ -363,12 +363,14 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
                 value={mediaSummary(settings.highQualityPhoto)}
                 route="/settings/media"
               />
-              <SettingsRow
-                title="Diagnostics"
-                icon={Activity}
-                iconTone="privacy"
-                route="/settings/diagnostics"
-              />
+              <SettingsNestedGroup title="Troubleshooting" icon={Activity} iconTone="privacy">
+                <SettingsRow
+                  title="Diagnostics"
+                  icon={Activity}
+                  iconTone="privacy"
+                  route="/settings/diagnostics"
+                />
+              </SettingsNestedGroup>
             </SettingsNestedGroup>
             <SettingsNestedGroup
               title="Legal"

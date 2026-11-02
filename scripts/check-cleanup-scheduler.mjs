@@ -14,8 +14,9 @@
  *   5. a BOUNDED batch input exists (`max_batches` + numeric `MAX_BATCHES`
  *      ceiling + an `-gt` clamp);
  *   6. it invokes the `cleanup-comment-media` function;
- *   7. it references the dispatch secret by NAME (`secrets.CLEANUP_CRON_SECRET`
- *      via the `x-cleanup-secret` header) — never a literal value.
+ *   7. canonical secret API key by name, never a literal or legacy cron header;
+ *   8. missing configuration fails instead of silently skipping;
+ *   9. validates worker completion instead of accepting HTTP 200 alone.
  *
  * Pure API (exported for node --test, hermetic):
  *   SCHEDULER_RULES, validateSchedulerWorkflow(text) -> { ok, errors }
@@ -76,9 +77,20 @@ export const SCHEDULER_RULES = Object.freeze([
   },
   {
     id: "secret-by-name",
-    message: "missing secrets.CLEANUP_CRON_SECRET reference via the x-cleanup-secret header",
+    message: "missing secrets.SUPABASE_SECRET_KEY reference via the apikey header",
     test: (text) =>
-      /secrets\.CLEANUP_CRON_SECRET/.test(text) && /x-cleanup-secret/.test(text),
+      /secrets\.SUPABASE_SECRET_KEY/.test(text) && /apikey:/.test(text) && !/x-cleanup-secret/.test(text),
+  },
+  {
+    id: "fail-closed-config",
+    message: "missing fail-red configuration guard, or contains successful skip",
+    test: (text) => /-z\s+"\$SUPABASE_SECRET_KEY"/.test(text) && /-z\s+"\$PROJECT_REF"/.test(text)
+      && /exit 1/.test(text) && !/exit 0/.test(text),
+  },
+  {
+    id: "validated-result",
+    message: "missing complete-result validation",
+    test: (text) => /jq\s+-e/.test(text) && /\.complete\s*==\s*true/.test(text),
   },
 ]);
 

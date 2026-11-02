@@ -219,6 +219,15 @@ describe("Settings home", () => {
     expect(within(group).getByRole("link", { name: /Optional AI Chat/ })).toBeTruthy();
   });
 
+  it("keeps Diagnostics behind a second, closed troubleshooting disclosure", () => {
+    renderSettings();
+    const diagnostics=document.querySelector('a[href="/settings/diagnostics"]')!;
+    const subgroup=diagnostics.closest("details")!;
+    expect(subgroup.querySelector("summary")?.textContent).toContain("Troubleshooting");
+    expect(subgroup.open).toBe(false);
+    expect(subgroup.parentElement?.closest("details")?.querySelector("summary")?.textContent).toContain("Advanced");
+  });
+
   it("links every row to its real route_map.csv target (nested disclosures included)", () => {
     renderSettings();
     const hrefs = rootHrefs();
@@ -275,7 +284,9 @@ describe("Settings home", () => {
     expect(within(more).getByText("Advanced")).toBeTruthy();
     expect(within(more).getByText("Legal")).toBeTruthy();
     expect(within(more).getByText("Help & about")).toBeTruthy();
-    expect(document.querySelectorAll("details.fb-settings-nested")).toHaveLength(3);
+    const topLevel = [...more.querySelectorAll("details.fb-settings-nested")]
+      .filter((group) => !group.parentElement?.closest("details"));
+    expect(topLevel).toHaveLength(3);
   });
 
   it("keeps every root row keyboard-focusable with a real target", () => {

@@ -8,7 +8,7 @@
  *       reply-comment        → --no-verify-jwt
  *       push-dispatch        → --no-verify-jwt   (after push-config PASS)
  *       cleanup-comment-media→ --no-verify-jwt   (ONLY after migration
- *                                                20261013020000 is live)
+ *                                                20261102220000 is live)
  *       delete-account       → JWT verify ON (no flag; gateway-enforced AND
  *                              function-enforced 401 — see source review in
  *                              supabase/functions/delete-account/index.ts),
@@ -36,9 +36,9 @@
  *
  * Usage:
  *   node scripts/deploy-required-edge-functions.mjs                 # dry-run plan
- *   node scripts/deploy-required-edge-functions.mjs --migrations-live   # (= --migration 20261013020000)
+ *   node scripts/deploy-required-edge-functions.mjs --migration 20261102220000
  *   SUPABASE_PROJECT_REF=<ref> node scripts/deploy-required-edge-functions.mjs \
- *       --execute --migration 20261013020000 --migration 20261014010000 \
+ *       --execute --migration 20261102220000 --migration 20261014010000 \
  *       [--manifest <live-manifest.json>]
  *   node scripts/deploy-required-edge-functions.mjs \
  *       --prove-401 https://<ref>.functions.supabase.co/delete-account
@@ -72,7 +72,7 @@ export const REQUIRED_FUNCTIONS = [
   {
     name: "cleanup-comment-media",
     verifyJwt: false,
-    requiresMigrationsLive: "20261013020000",
+    requiresMigrationsLive: "20261102220000",
   },
   {
     // JWT-verify ON, and GATED: the fence RPC (findback_begin_account_deletion)
@@ -205,7 +205,7 @@ usage:
   (default: dry-run plan; --execute performs real deploys)
   (--migration <version> marks a migration live so its gated step is included;
    repeatable. --migrations-live is shorthand for --migration 20261013020000)
-  (cleanup-comment-media needs 20261013020000; delete-account needs 20261014010000)
+  (cleanup-comment-media needs 20261102220000; delete-account needs 20261014010000)
   (delete-account IS in the deploy set: JWT-verify ON, fail-closed 401.
    --prove-401 posts WITHOUT credentials and expects 401; non-destructive,
    owner-runner only, never sends a token.)`);

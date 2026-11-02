@@ -76,9 +76,9 @@ export function SignInForm({
         <motion.div
           layoutId="auth-email-chip"
           transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-          className="flex min-h-[44px] items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2"
+          className="flex min-h-[44px] flex-wrap items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-3.5 py-2"
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{initialEmail}</span>
+          <span className="min-w-0 flex-1 basis-[12ch] break-all text-sm font-medium">{initialEmail}</span>
           <button
             type="button"
             onClick={onRequestChangeEmail}
@@ -90,6 +90,8 @@ export function SignInForm({
       )}
 
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        {emailLocked && <input type="email" name="username" autoComplete="username"
+          value={address} readOnly tabIndex={-1} aria-hidden="true" className="sr-only" />}
         {error && (
           <p
             className="rounded-m3-sm border border-error px-3 py-2 text-sm text-error"
@@ -105,12 +107,13 @@ export function SignInForm({
           >
             <TextField
               label="Email"
+              name="username"
               type="email"
               value={draftEmail}
               onChange={(e) => setDraftEmail(e.target.value)}
               autoCapitalize="none"
               autoCorrect="off"
-              autoComplete="email"
+              autoComplete="username"
               inputMode="email"
               placeholder="you@example.com"
               required
@@ -119,6 +122,7 @@ export function SignInForm({
         )}
         <TextField
           label="Password"
+          name="password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
