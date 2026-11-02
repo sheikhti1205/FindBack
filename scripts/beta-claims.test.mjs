@@ -29,8 +29,9 @@ test("beta README describes shipped peer messaging separately from cloud AI Chat
   assert.doesNotMatch(readme, /^path: \/home\//m);
 });
 
-test("capability mirrors and grounded knowledge no longer deny shipped messaging", () => {
-  for (const path of ["apps/mobile/src/services/appCapabilities.ts", "supabase/functions/ai-help/capabilities.ts", "apps/mobile/src/services/ai/appKnowledge.ts"]) {
+test("retained capabilities and grounded knowledge describe messaging without a retired server mirror", () => {
+  assert.equal(existsSync(resolve(root, "supabase/functions/ai-help/capabilities.ts")), false);
+  for (const path of ["apps/mobile/src/services/appCapabilities.ts", "apps/mobile/src/services/ai/appKnowledge.ts"]) {
     const source = read(path);
     assert.doesNotMatch(source, /label: "private messaging"|Not available: private messaging/, path);
     assert.match(source, /private messag/i, path);
