@@ -6,7 +6,7 @@ import brandTileDark from "../assets/brand/brand-tile-dark.png";
 import brandTileLight from "../assets/brand/brand-tile-light.png";
 
 /**
- * Canonical FindBack brand mark (owner LOGO2, derived from the source
+ * Canonical FindBack bird/leaf mark (owner 2026-10-19 master, derived from the source
  * asset — never redrawn). `dark` is the black glyph for light surfaces;
  * `light` is the white glyph for dark surfaces; `auto` (default) follows
  * the resolved app theme (documentElement `.dark`/`.amoled`, falling back
@@ -16,15 +16,13 @@ import brandTileLight from "../assets/brand/brand-tile-light.png";
 export type BrandMarkVariant = "dark" | "light" | "auto";
 
 /**
- * `glyph` (default) is the bare mark above. `tile` is the owner's app-icon
+ * `glyph` (default) is the monochrome alpha mark. `tile` is the owner's app-icon
  * treatment: the same glyph knocked out of a filled squircle, derived from the
- * 2026-10-19 master (`brand-tile-master.png`) by `derive-brand-tile.py`. The
- * master is an opaque render on a white page field, so derivation is
- * unavoidable rather than decorative: the page field is keyed to transparency
- * and the two ink layers swap polarity per theme (a near-black tile is
- * invisible on a near-black surface). Geometry, corner radius and glyph are
- * reused verbatim — nothing is redrawn. `tile` reads smaller than `glyph` at
- * the same nominal size because the knocked-out glyph sits inside the tile.
+ * 2026-10-19 master (`brand-tile-master.png`) by `scripts/generate-brand-assets.py`. The
+ * master is an opaque render on a white page field: the page field is keyed
+ * to transparency and the two ink layers swap polarity per theme. `glyph`
+ * additionally keys the interior bird/leaf to alpha for monochrome surfaces.
+ * Geometry, corner radius and glyph are reused verbatim — nothing is redrawn.
  */
 export type BrandMarkShape = "glyph" | "tile";
 

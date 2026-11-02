@@ -15,6 +15,9 @@ test('HTML and JSON use only the same safe projection; no visitor credentials re
   assert.match(html.body, /Black backpack/); assert.match(html.body, /property="og:title" content="Black backpack/);
   assert.match(html.body, /Sign in to contact/); assert.match(html.body, new RegExp(`/r/${id}`));
   assert.match(html.body, /November 2026/);
+  assert.match(html.body, /rel="icon"[^>]*findback-birdleaf-v1-32\.png/);
+  assert.match(html.body, /property="og:image" content="https:\/\/findbackapp.social\/icons\/findback-birdleaf-v1-512\.png"/);
+  assert.doesNotMatch(html.body, /<img[^>]*supabase|og:image[^>]*supabase/);
   const json = await handleShare(request('?format=json'), config, net.fetch);
   assert.deepEqual(JSON.parse(json.body), preview);
   for (const c of net.calls) {

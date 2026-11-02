@@ -1,0 +1,345 @@
+{
+  "generation": "birdleaf-v1",
+  "master": {
+    "path": "apps/mobile/src/assets/brand/brand-tile-master.png",
+    "sha256": "27c4f0479e5240b549183731d4302633c31734a405d1bdf2cc154543ebcc0b4d"
+  },
+  "generator": {
+    "path": "scripts/generate-brand-assets.py",
+    "sha256": "5ae99b608c6923a0a64f432b94810cc57751aae725eb37593cc0eebf768acdf1",
+    "pillow": "11.1.0"
+  },
+  "historical_master": "apps/mobile/src/assets/brand/logo2-master.jpg",
+  "outputs": {
+    "apps/mobile/src/assets/brand/brand-tile-dark.png": {
+      "sha256": "b9ec78609b98a3697732d2dff43dea1fb899c51b8693df5659f489f4e60073b4",
+      "width": 512,
+      "height": 512,
+      "recipe": "historical exact tile keying"
+    },
+    "apps/mobile/src/assets/brand/brand-mark-dark.png": {
+      "sha256": "90691cffa25d18843c95dae289d966f7bc166d5174120ce552cfeaf9b564000e",
+      "width": 512,
+      "height": 512,
+      "recipe": "owner ink to monochrome alpha"
+    },
+    "apps/mobile/src/assets/brand/brand-tile-light.png": {
+      "sha256": "17a5370d16875e589c52317f95457ae1b39ee81c55717adcc481ebc62624af79",
+      "width": 512,
+      "height": 512,
+      "recipe": "historical exact tile keying"
+    },
+    "apps/mobile/src/assets/brand/brand-mark-light.png": {
+      "sha256": "5b3b635d7d95f0b973f69a665823f2db53e4826d9cc84c70f3fb6ce81fdba77d",
+      "width": 512,
+      "height": 512,
+      "recipe": "owner ink to monochrome alpha"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-16.png": {
+      "sha256": "8d363f9e04f808f80630e7b89f9aa18896f2e359ea4bd7b38c473fb199a42aa3",
+      "width": 16,
+      "height": 16,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-32.png": {
+      "sha256": "58c8d49548512cca45fb1d4e36f3bba2adcdceff56fea083e356e8fe97ed307f",
+      "width": 32,
+      "height": 32,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-48.png": {
+      "sha256": "b892c8cda0842e98262b1b5bb2b3e0a973f80e7b1c688d9eead217c728d0ca1d",
+      "width": 48,
+      "height": 48,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-180.png": {
+      "sha256": "caaf7d3bf763b6a198ade5a58848476978125ba2839ce276c7f8b68e1b273f99",
+      "width": 180,
+      "height": 180,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/apple-touch-icon.png": {
+      "sha256": "caaf7d3bf763b6a198ade5a58848476978125ba2839ce276c7f8b68e1b273f99",
+      "width": 180,
+      "height": 180,
+      "recipe": "current compatibility URL"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-192.png": {
+      "sha256": "b34062149cddffe4e9b21c113e7487bc3d141bc28be702ea5f0447a3be428792",
+      "width": 192,
+      "height": 192,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/findback-192.png": {
+      "sha256": "b34062149cddffe4e9b21c113e7487bc3d141bc28be702ea5f0447a3be428792",
+      "width": 192,
+      "height": 192,
+      "recipe": "current compatibility URL"
+    },
+    "apps/mobile/public/icons/findback-birdleaf-v1-512.png": {
+      "sha256": "88bd7cd6ab47dd5a546b502e5af9054c0f2fc923a42276ac77f985b19b41c710",
+      "width": 512,
+      "height": 512,
+      "recipe": "white ink, 84% on #1a1a1a"
+    },
+    "apps/mobile/public/icons/findback-512.png": {
+      "sha256": "88bd7cd6ab47dd5a546b502e5af9054c0f2fc923a42276ac77f985b19b41c710",
+      "width": 512,
+      "height": 512,
+      "recipe": "current compatibility URL"
+    },
+    "apps/mobile/public/favicon.ico": {
+      "sha256": "af0b21f984babba547231fb54f6388b0f29404c664ae8e8e3ef8d184e458bcc6",
+      "width": 48,
+      "height": 48,
+      "recipe": "multi-size 16/32/48 current fallback"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher.png": {
+      "sha256": "b4142dfc9db29f20737657c8777efb6426ab9fdb21354f413b1c9da0faf7f4d7",
+      "width": 48,
+      "height": 48,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png": {
+      "sha256": "b4142dfc9db29f20737657c8777efb6426ab9fdb21354f413b1c9da0faf7f4d7",
+      "width": 48,
+      "height": 48,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png": {
+      "sha256": "941d7b9b83ddb26094e83cdb6d7b8d1de75b3bc30b174b337f316acca2d80cc7",
+      "width": 108,
+      "height": 108,
+      "recipe": "64dp ink in 108dp safe zone"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-mdpi/ic_launcher_monochrome.png": {
+      "sha256": "941d7b9b83ddb26094e83cdb6d7b8d1de75b3bc30b174b337f316acca2d80cc7",
+      "width": 108,
+      "height": 108,
+      "recipe": "same alpha as adaptive foreground"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-mdpi/ic_stat_findback.png": {
+      "sha256": "bd382266abb52093d38d28b38ad8a382ae7b63343e0d969834abe2ad2d0e1a7b",
+      "width": 24,
+      "height": 24,
+      "recipe": "22dp white ink in 24dp transparent canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-mdpi/brand_splash_icon.png": {
+      "sha256": "eb8f819be803003f070e6e6803b9c198e949c6cf814dda003d6aa39c62fbabe3",
+      "width": 288,
+      "height": 288,
+      "recipe": "160dp white ink in 288dp splash canvas"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher.png": {
+      "sha256": "19c3ac406dc72c2a7dc34a6677243c4b37f3ca458cdeca1250d990c037d38542",
+      "width": 72,
+      "height": 72,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png": {
+      "sha256": "19c3ac406dc72c2a7dc34a6677243c4b37f3ca458cdeca1250d990c037d38542",
+      "width": 72,
+      "height": 72,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png": {
+      "sha256": "7a9024a4356be0f60f261fc299a9bc19b9297609e26c52349b1b1b3f33e2409d",
+      "width": 162,
+      "height": 162,
+      "recipe": "64dp ink in 108dp safe zone"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-hdpi/ic_launcher_monochrome.png": {
+      "sha256": "7a9024a4356be0f60f261fc299a9bc19b9297609e26c52349b1b1b3f33e2409d",
+      "width": 162,
+      "height": 162,
+      "recipe": "same alpha as adaptive foreground"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-hdpi/ic_stat_findback.png": {
+      "sha256": "4a5678ddc0d5bb1b4ebb76b2ba47ee72ef1ce2fc732ea99b241af0cd3f663799",
+      "width": 36,
+      "height": 36,
+      "recipe": "22dp white ink in 24dp transparent canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-hdpi/brand_splash_icon.png": {
+      "sha256": "1495be42637896d818c670d2e69e51bc5f641d27580b8fb03371dd713d726027",
+      "width": 432,
+      "height": 432,
+      "recipe": "160dp white ink in 288dp splash canvas"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png": {
+      "sha256": "a6a73f8d016605beff5fea21d636559aec29cb8afa2403dd6a11f0167c188cc1",
+      "width": 96,
+      "height": 96,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png": {
+      "sha256": "a6a73f8d016605beff5fea21d636559aec29cb8afa2403dd6a11f0167c188cc1",
+      "width": 96,
+      "height": 96,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png": {
+      "sha256": "b49f58fbce1957b32368d3d7a12d458536d43db47f51629cf628e363347e7d0b",
+      "width": 216,
+      "height": 216,
+      "recipe": "64dp ink in 108dp safe zone"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xhdpi/ic_launcher_monochrome.png": {
+      "sha256": "b49f58fbce1957b32368d3d7a12d458536d43db47f51629cf628e363347e7d0b",
+      "width": 216,
+      "height": 216,
+      "recipe": "same alpha as adaptive foreground"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xhdpi/ic_stat_findback.png": {
+      "sha256": "61473b6cf9e3ac56db8292c48bd9ed02d5a6edffd9a79e18ed257012cebfba6a",
+      "width": 48,
+      "height": 48,
+      "recipe": "22dp white ink in 24dp transparent canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xhdpi/brand_splash_icon.png": {
+      "sha256": "0872ffb8c903b970d192fa9abb9401a642f54a37b111aaba546d101d9a44ee48",
+      "width": 576,
+      "height": 576,
+      "recipe": "160dp white ink in 288dp splash canvas"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png": {
+      "sha256": "3fea0d3d023f7526fcdc2982d31e26aa5ca4a62b2ea75192ae5f29513e465022",
+      "width": 144,
+      "height": 144,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png": {
+      "sha256": "3fea0d3d023f7526fcdc2982d31e26aa5ca4a62b2ea75192ae5f29513e465022",
+      "width": 144,
+      "height": 144,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png": {
+      "sha256": "2dfbc3ec0aef286bd30a893da960bdbaa3955e5e6b21a01ef3c240c1372534f8",
+      "width": 324,
+      "height": 324,
+      "recipe": "64dp ink in 108dp safe zone"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxhdpi/ic_launcher_monochrome.png": {
+      "sha256": "2dfbc3ec0aef286bd30a893da960bdbaa3955e5e6b21a01ef3c240c1372534f8",
+      "width": 324,
+      "height": 324,
+      "recipe": "same alpha as adaptive foreground"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxhdpi/ic_stat_findback.png": {
+      "sha256": "4e1fc4469203db8d25cfa78c9066a8c7dc3ffd98f5ab43fc04c0e0f702c5d04d",
+      "width": 72,
+      "height": 72,
+      "recipe": "22dp white ink in 24dp transparent canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxhdpi/brand_splash_icon.png": {
+      "sha256": "a307356b45bb5b5f53409b081d41e717dfc45393b05164613397de05f8831fc8",
+      "width": 864,
+      "height": 864,
+      "recipe": "160dp white ink in 288dp splash canvas"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png": {
+      "sha256": "54a50b052093e7358cf9a65ec7f95534b465dc276318e0852b4be39f20153450",
+      "width": 192,
+      "height": 192,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png": {
+      "sha256": "54a50b052093e7358cf9a65ec7f95534b465dc276318e0852b4be39f20153450",
+      "width": 192,
+      "height": 192,
+      "recipe": "legacy current mark"
+    },
+    "apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png": {
+      "sha256": "4af69453a0f1f743c4f6053858e8e9d9199d5fa0ca45d33ddd52c61566dd3389",
+      "width": 432,
+      "height": 432,
+      "recipe": "64dp ink in 108dp safe zone"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxxhdpi/ic_launcher_monochrome.png": {
+      "sha256": "4af69453a0f1f743c4f6053858e8e9d9199d5fa0ca45d33ddd52c61566dd3389",
+      "width": 432,
+      "height": 432,
+      "recipe": "same alpha as adaptive foreground"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxxhdpi/ic_stat_findback.png": {
+      "sha256": "071169c7a03703c7fe034cd98f7cc2b070b23e328b25515b82a91d2a833ab6e8",
+      "width": 96,
+      "height": 96,
+      "recipe": "22dp white ink in 24dp transparent canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-xxxhdpi/brand_splash_icon.png": {
+      "sha256": "49d54ecee6bf10f0605c1335963fbe61655c5840c4e3fe3d7243df0811d8c255",
+      "width": 1152,
+      "height": 1152,
+      "recipe": "160dp white ink in 288dp splash canvas"
+    },
+    "apps/mobile/android/app/src/main/res/drawable/splash.png": {
+      "sha256": "b95bb3ad1207dddf2a429e9360089a9ac9ca4141a7a757b4dfaa4cb62c309543",
+      "width": 480,
+      "height": 320,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-port-mdpi/splash.png": {
+      "sha256": "6bd01c6fb2a4bc83510222c55629f8e789aeb36177328d63577f8747263399fa",
+      "width": 320,
+      "height": 480,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-port-hdpi/splash.png": {
+      "sha256": "4dc229a18b092f5a6ff997c197dbc311b63461c85aae2da91729dc6e90bf6ef9",
+      "width": 480,
+      "height": 800,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-port-xhdpi/splash.png": {
+      "sha256": "11ed13d738acd6db250f74966a79be003227e56beac977568a1021a069b4cb8b",
+      "width": 720,
+      "height": 1280,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-port-xxhdpi/splash.png": {
+      "sha256": "0707e02b8c3c907e7ae24708504f51278addd3539003e4a70b06b25681733e38",
+      "width": 960,
+      "height": 1600,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-port-xxxhdpi/splash.png": {
+      "sha256": "bab355bbdc5f0fe6f92d40643d9d88775c33e8c59d5f0e787a0fc833768054d8",
+      "width": 1280,
+      "height": 1920,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-land-mdpi/splash.png": {
+      "sha256": "b95bb3ad1207dddf2a429e9360089a9ac9ca4141a7a757b4dfaa4cb62c309543",
+      "width": 480,
+      "height": 320,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-land-hdpi/splash.png": {
+      "sha256": "04c651724fa612dac90bfc77fc3f8f2fb214abcd9a53e19bb72673b0946809ab",
+      "width": 800,
+      "height": 480,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-land-xhdpi/splash.png": {
+      "sha256": "74fc649ad10618a6d979c5ee2caea65a4a66bb13a8cb239da1ab21b860b865a4",
+      "width": 1280,
+      "height": 720,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-land-xxhdpi/splash.png": {
+      "sha256": "7ffcfffc202aac2ca311b9e212d46625b04bc3529641ff8c05e2ae2b12b5073d",
+      "width": 1600,
+      "height": 960,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    },
+    "apps/mobile/android/app/src/main/res/drawable-land-xxxhdpi/splash.png": {
+      "sha256": "0e07863cf74d32e5c565f461e63d0c42f8af595a6da6d2f5862c42cd73097fd8",
+      "width": 1920,
+      "height": 1280,
+      "recipe": "centered owner ink, retained #1a1a1a background"
+    }
+  }
+}

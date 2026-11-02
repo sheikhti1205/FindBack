@@ -104,6 +104,11 @@
             </intent-filter>
         </service>
 
+        <!-- FCM fallback and every app-owned presenter share the same alpha mark. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_findback" />
+
         <!-- Receives the notification-shade reply text and posts it. -->
         <receiver
             android:name=".push.ReplyReceiver"

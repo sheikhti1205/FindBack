@@ -28,6 +28,18 @@ jobs:
           node-version: 22
       - name: Version sync (root == mobile) + clean tree
         run: node scripts/check-version-sync.mjs
+      - name: Canonical brand provenance and reference gate (no APK)
+        run: |
+          node scripts/check-brand-consistency.mjs
+          node --test scripts/check-brand-consistency.test.mjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reproduce brand derivatives from the owner master
+        run: |
+          python -m pip install Pillow==11.1.0
+          python scripts/generate-brand-assets.py --check
+          python scripts/brand-assets.test.py
       - name: Commit-message convention over new commits
         # Prospective only: merge/revert/generated commits pass gracefully;
         # an unresolvable range (e.g. all-zero `before` on branch creation)

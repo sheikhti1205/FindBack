@@ -18,9 +18,9 @@
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
-        <!-- Android 12+ system splash: branded background + launcher icon.
+        <!-- Android 12+ system splash: branded background + canonical alpha mark.
              Ignored on older releases, where android:background above applies. -->
         <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/brand_splash_icon</item>
     </style>
 </resources>

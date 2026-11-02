@@ -1,5 +1,7 @@
 # FindBack
 
+<img src="apps/mobile/src/assets/brand/brand-tile-dark.png" width="64" height="64" alt="FindBack bird and leaf emblem" />
+
 [![CI](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml/badge.svg)](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml)
 
 **Status: internal beta (pre-public).** Not a public release; builds are only
@@ -97,6 +99,7 @@ and only pending privileged email offers. See
 - Setup, stack, layout and checks: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - Architecture and data flow: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Current adaptive UI ownership: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)
+- Canonical brand assets and cache/device acceptance: [BRANDING.md](BRANDING.md)
 - Data model: [docs/erd/](docs/erd/)
 - Version history: [docs/history/VERSION_HISTORY.md](docs/history/VERSION_HISTORY.md)
 - Freeze record: [docs/releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md](docs/releases/BETA_FUNCTIONAL_FREEZE_2026-10-30.md)
