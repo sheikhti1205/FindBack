@@ -157,7 +157,7 @@ describe("QA-K guard matrix additions", () => {
       <Route path="/settings" element={<p>Settings screen</p>} />
     </>);
     expect(
-      screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." }),
+      screen.getByRole("heading", { level: 1, name: "Lost something?" }),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
