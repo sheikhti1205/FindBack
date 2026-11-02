@@ -19,18 +19,14 @@
  *     passed after Storage success;
  *   - leases older than STALE_LEASE_MINUTES (15) are reclaimable.
  *
- * Authorization (service-role/internal only, never anon/authenticated): the
- * caller must present EITHER `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
- * OR `x-cleanup-secret: <CLEANUP_CRON_SECRET>`. Ordinary user JWTs match
- * neither and get 401 with zero queue/storage calls. Logs and responses carry
- * storage keys and counts only, never report content.
- *
- * Required function environment (set with `supabase secrets set`):
- * - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — injected by the runtime.
- * - `CLEANUP_CRON_SECRET` (optional) — shared secret for the scheduler.
+ * Production authorization: the canonical server wrapper verifies a secret
+ * API key in `apikey`, exactly as chat-media maintenance does. Anonymous and
+ * ordinary user credentials cannot sweep. Runtime key resolution stays inside
+ * that wrapper. The legacy pure orchestration adapter below is test-only;
+ * its cron/bearer signature is not a deployed HTTP authentication path.
+ * Logs/responses contain counts and object keys, never report content.
  */
-import { createClient } from "npm:@supabase/supabase-js@2";
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 
 /** Bucket holding report photos (sweep target, never listed wholesale). */
 export const CLEANUP_BUCKET = "findback-report-media";
@@ -165,6 +161,10 @@ export async function handleCleanup(
     const missing = extractBearer(authHeader) === null && (cronHeader === null || cronHeader === "");
     return { status: 401, body: { error: missing ? "missing credentials" : "invalid credentials" } };
   }
+  return runAuthorizedCleanup(clients, options);
+}
+
+async function runAuthorizedCleanup(clients: CleanupClients, options: { maxBatches?: number } = {}): Promise<CleanupResponse> {
   let purgedStaging = 0;
   if (clients.purgeStaging) {
     // A failure here must not stop the byte sweep: queued objects are the
@@ -219,24 +219,57 @@ function jsonResponse(response: CleanupResponse): Response {
   });
 }
 
-if (import.meta.main) {
-  serve(async (req: Request): Promise<Response> => {
+/** The scheduled and manual HTTP paths share the same bounded batch control. */
+export async function handleCleanupRequest(req: Request, clients: CleanupClients, env: CleanupEnv): Promise<Response> {
+  if (req.method !== "POST") return jsonResponse({ status: 405, body: { error: "method not allowed" } });
+  const auth = req.headers.get("authorization");
+  const cron = req.headers.get("x-cleanup-secret");
+  if (!isAuthorized(auth, cron, env)) return jsonResponse({ status: 401, body: { error: "invalid credentials" } });
+  return authorizedCleanupRequest(req, clients);
+}
+
+async function authorizedCleanupRequest(req: Request, clients: CleanupClients): Promise<Response> {
+  let maxBatches = MAX_BATCHES_PER_INVOCATION;
+  try {
+    const text = await req.text();
+    if (text.length > 1024) throw new Error("body too large");
+    const body: unknown = text.trim() ? JSON.parse(text) : {};
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid body");
+    if ("max_batches" in body) {
+      const value = body.max_batches;
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > MAX_BATCHES_PER_INVOCATION) throw new Error("invalid batch limit");
+      maxBatches = value;
+    }
+  } catch {
+    return jsonResponse({ status: 400, body: { error: "max_batches must be an integer from 1 to 10" } });
+  }
+  return jsonResponse(await runAuthorizedCleanup(clients, { maxBatches }));
+}
+
+type CleanupDatabase = {
+  public: {
+    Tables: Record<string, never>; Views: Record<string, never>;
+    Functions: {
+      claim_report_media_cleanup: { Args: { p_limit: number }; Returns: { bucket_id: string; object_key: string }[] };
+      ack_report_media_cleanup: { Args: { p_bucket_id: string; p_keys: string[] }; Returns: number };
+      purge_abandoned_staging_uploads: { Args: { p_limit: number }; Returns: number };
+    };
+    Enums: Record<string, never>; CompositeTypes: Record<string, never>;
+  };
+};
+
+/** The production boundary uses the same secret-key owner as chat maintenance. */
+export function createReportCleanupEndpoint(env?: Partial<SupabaseEnv>, transport: typeof fetch = fetch) {
+  return withSupabase<CleanupDatabase>({ auth: "secret", cors: false, env,
+    errors: { detailed: false }, supabaseOptions: { global: { fetch: transport } },
+  }, async (req, ctx): Promise<Response> => {
     if (req.method !== "POST") {
       return new Response(JSON.stringify({ error: "method not allowed" }), {
         status: 405,
         headers: { "content-type": "application/json" },
       });
     }
-    const url = Deno.env.get("SUPABASE_URL") ?? "";
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    if (!url || !serviceKey) {
-      return new Response(JSON.stringify({ error: "server misconfigured" }), {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    const cronSecret = Deno.env.get("CLEANUP_CRON_SECRET") ?? "";
-    const supabase = createClient(url, serviceKey);
+    const supabase = ctx.supabaseAdmin;
     const clients: CleanupClients = {
       queue: {
         claim: async (limit: number) => {
@@ -270,13 +303,8 @@ if (import.meta.main) {
         return { purged: typeof data === "number" ? data : 0, error: null };
       },
     };
-    return jsonResponse(
-      await handleCleanup(
-        clients,
-        req.headers.get("authorization"),
-        req.headers.get("x-cleanup-secret"),
-        { serviceRoleKey: serviceKey, cronSecret },
-      ),
-    );
+    return authorizedCleanupRequest(req, clients);
   });
 }
+
+export default { fetch: createReportCleanupEndpoint() };

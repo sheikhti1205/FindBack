@@ -31,6 +31,10 @@ vi.mock("../utils/pendingReportLink", () => pendingMock);
 
 import { checkUsername } from "../services/auth";
 import { Register } from "./Register";
+import { SignIn } from "./SignIn";
+import { ApiError } from "../services/session";
+import { AuthGateway } from "./AuthGateway";
+import { __setGoogleSignInSeams, __resetGoogleSignInSeams } from "../components/auth/GoogleSignInButton";
 import { Verify } from "./Verify";
 import { OnboardingRoute } from "../components/Guards";
 import { ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION } from "../services/onboarding";
@@ -81,9 +85,24 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); __resetGoogleSignInSeams(); });
 
 describe("QA-K signup-success routing (post-auth resume matrix)", () => {
+  it.each(["email", "signin", "signup"] as const)("exposes Google on the %s auth entry when available", (mode) => {
+    __setGoogleSignInSeams({ strategy: () => "web-oauth" });
+    renderRoutes("/auth", <Route path="/auth" element={<AuthGateway initialMode={mode} />} />);
+    expect(screen.getByRole("button", { name: /Google/i })).toBeTruthy();
+  });
+  it("resumes verification on password-verified email_not_confirmed", async () => {
+    authMock.login.mockRejectedValueOnce(new ApiError("Verify email", 403, "email_not_confirmed"));
+    renderRoutes("/signin", <>
+      <Route path="/signin" element={<SignIn email="pending@example.invalid" />} />
+      <Route path="/verify" element={<p>Verify destination</p>} />
+    </>);
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "synthetic-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByText("Verify destination");
+  });
   it("routes a pending signup to /verify (pending-email state entry)", async () => {
     authMock.register.mockResolvedValue({ status: "pending", email: "qa-k@example.com" });
     renderRoutes("/register", <>

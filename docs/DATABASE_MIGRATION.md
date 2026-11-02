@@ -7,6 +7,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md) and
 [LEGACY_API_RETIREMENT.md](LEGACY_API_RETIREMENT.md). Applied SQL history remains
 immutable; the historical paths below are not current runtime dependencies.
 
+**P11 retirement:** every `ai-help` invocation/deployment described below is
+historical. The current app has no caller, its Edge source and deployment entry
+have been removed, and optional BYOK AI Chat connects directly to the selected
+provider. Do not redeploy the retired server assistant from this narrative.
+
 # Database (historical)
 
 FindBack has exactly two persistence paths, and they never mix.

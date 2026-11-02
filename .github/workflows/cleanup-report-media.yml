@@ -8,11 +8,9 @@
 # successes, and purges abandoned staging uploads older than the 24h grace.
 # Failures stay queued for the next stale-lease reclaim, so nothing is lost.
 #
-# The function is internal-only: it accepts EITHER a service-role bearer OR the
-# `x-cleanup-secret` header matching the function env `CLEANUP_CRON_SECRET`.
-# This lane reuses the existing `CLEANUP_CRON_SECRET` secret and
-# `SUPABASE_PROJECT_REF` variable — names only, the value is never echoed, and
-# the workflow is a no-op until they are provisioned.
+# Internal-only: the canonical server wrapper verifies the secret API key.
+# Reuses the already provisioned chat-maintenance credential; fails closed
+# rather than silently skipping a required deletion worker.
 #
 # Trigger: schedule + manual dispatch ONLY. Never on push/tag — a code push
 # must not sweep production Storage.
@@ -40,22 +38,23 @@ jobs:
   sweep:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment: backend
     env:
       MAX_BATCHES: "10"
     steps:
       - name: Sweep orphaned report media
         env:
-          CLEANUP_CRON_SECRET: ${{ secrets.CLEANUP_CRON_SECRET }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || vars.SUPABASE_PROJECT_REF }}
           INPUT_MAX_BATCHES: ${{ github.event.inputs.max_batches }}
         run: |
-          if [ -z "$CLEANUP_CRON_SECRET" ]; then
-            echo "CLEANUP_CRON_SECRET is not provisioned; skipping sweep."
-            exit 0
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::SUPABASE_SECRET_KEY unavailable; cleanup did NOT run."
+            exit 1
           fi
           if [ -z "$PROJECT_REF" ]; then
-            echo "SUPABASE_PROJECT_REF is not set; skipping sweep."
-            exit 0
+            echo "::error::SUPABASE_PROJECT_REF unavailable; cleanup did NOT run."
+            exit 1
           fi
           BATCH="${INPUT_MAX_BATCHES:-$MAX_BATCHES}"
           case "$BATCH" in ''|*[!0-9]*) BATCH="$MAX_BATCHES" ;; esac
@@ -63,7 +62,7 @@ jobs:
           [ "$BATCH" -gt "$MAX_BATCHES" ] && BATCH="$MAX_BATCHES"
           echo "sweeping up to ${BATCH} batch(es) (bounded)"
           curl -fsS -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/cleanup-report-media" \
-            -H "x-cleanup-secret: ${CLEANUP_CRON_SECRET}" \
+            -H "apikey: ${SUPABASE_SECRET_KEY}" \
             -H "content-type: application/json" \
             -d "{\"max_batches\": ${BATCH}}" \
             --retry 2 --retry-all-errors --max-time 60

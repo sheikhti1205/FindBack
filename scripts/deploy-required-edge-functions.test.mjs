@@ -32,20 +32,20 @@ describe("deploy-required-edge-functions plan", () => {
     assert.equal(names[names.length - 1], "delete-account");
   });
 
-  it("keeps no forbidden function: the old delete-account exclusion is retired", () => {
-    assert.deepEqual(FORBIDDEN_FUNCTIONS, []);
+  it("forbids the retired server assistant", () => {
+    assert.deepEqual(FORBIDDEN_FUNCTIONS, ["ai-help"]);
   });
 
-  it("orders the set ai-help, reply-comment, push-dispatch, cleanup-comment-media, delete-account", () => {
+  it("orders the current production set without the retired server assistant", () => {
     assert.deepEqual(
       REQUIRED_FUNCTIONS.map((f) => f.name),
-      ["ai-help", "reply-comment", "push-dispatch", "cleanup-comment-media", "delete-account"],
+      ["reply-comment", "push-dispatch", "cleanup-report-media", "chat-wake", "cleanup-comment-media", "delete-account"],
     );
   });
 
-  it("keeps JWT verification ON for ai-help and delete-account, OFF for the rest", () => {
+  it("keeps JWT verification ON for delete-account, OFF for functions with their own auth boundary", () => {
     const byName = Object.fromEntries(REQUIRED_FUNCTIONS.map((f) => [f.name, f.verifyJwt]));
-    assert.equal(byName["ai-help"], true);
+    assert.equal(byName["ai-help"], undefined);
     assert.equal(byName["delete-account"], true);
     assert.equal(byName["reply-comment"], false);
     assert.equal(byName["push-dispatch"], false);
@@ -78,8 +78,7 @@ describe("deploy-required-edge-functions plan", () => {
     }
   });
 
-  it("builds flags-free argv for ai-help and delete-account, --no-verify-jwt for the rest", () => {
-    assert.deepEqual(deployArgs({ name: "ai-help", verifyJwt: true }), ["functions", "deploy", "ai-help"]);
+  it("builds flags-free argv for delete-account, --no-verify-jwt for the rest", () => {
     assert.deepEqual(deployArgs({ name: "delete-account", verifyJwt: true }), [
       "functions",
       "deploy",
@@ -101,13 +100,13 @@ describe("deploy-required-edge-functions plan", () => {
 
   it("still refuses forbidden functions when a forbidden list is supplied", () => {
     assert.throws(() => assertNoForbidden(["ai-help", "delete-account"], ["delete-account"]), /forbidden/);
-    assert.doesNotThrow(() => assertNoForbidden(["ai-help", "push-dispatch"]));
-    assert.doesNotThrow(() => assertNoForbidden(["ai-help", "delete-account"]));
+    assert.throws(() => assertNoForbidden(["ai-help", "push-dispatch"]), /forbidden/);
+    assert.doesNotThrow(() => assertNoForbidden(["push-dispatch", "delete-account"]));
   });
 
   it("renders a names-only plan and states delete-account is included JWT-verify ON", () => {
     const report = formatPlan(buildDeploymentPlan({ liveMigrations: ["20261013020000", "20261014010000"] }));
-    for (const name of ["ai-help", "reply-comment", "push-dispatch", "cleanup-comment-media", "delete-account"]) {
+    for (const name of ["reply-comment", "push-dispatch", "cleanup-comment-media", "delete-account"]) {
       assert.ok(report.includes(name));
     }
     assert.match(report, /delete-account included/);

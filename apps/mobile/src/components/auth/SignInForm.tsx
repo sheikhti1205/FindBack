@@ -7,6 +7,7 @@ import { TextField } from "../Fields";
 import { motionDurations, motionEasings } from "../uiMotion";
 import { getPendingReportRoute } from "../../utils/pendingReportLink";
 import { EMAIL_PATTERN, SIGNIN_GENERIC_ERROR } from "./authCopy";
+import { ApiError } from "../../services/session";
 
 /**
  * Stage B sign-in form. Backend behavior is the pre-existing `login()` call —
@@ -56,7 +57,11 @@ export function SignInForm({
     try {
       await login(address, password);
       navigate(getPendingReportRoute() ?? "/", { replace: true });
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "email_not_confirmed") {
+        navigate("/verify", { replace: true });
+        return;
+      }
       // Deliberately generic: identical whether or not the email exists.
       // Never log the address or password alongside the failure.
       setError(SIGNIN_GENERIC_ERROR);

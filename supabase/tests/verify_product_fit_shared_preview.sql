@@ -27,8 +27,10 @@ select 'P4a authenticated cannot bypass owner RPC via the new private column' as
  not has_column_privilege('authenticated','public.item_posts','public_share_enabled','SELECT')
  and not has_column_privilege('authenticated','public.item_posts','public_share_enabled','UPDATE')
  and not has_column_privilege('authenticated','public.item_posts','public_share_enabled','INSERT')
- and has_column_privilege('authenticated','public.item_posts','title','INSERT')
- and has_column_privilege('authenticated','public.item_posts','event_date','INSERT');
+  -- P11: all report writes, including formerly granted content columns, are
+  -- canonical-RPC only. Sharing metadata remains private as before.
+  and not has_column_privilege('authenticated','public.item_posts','title','INSERT')
+  and not has_column_privilege('authenticated','public.item_posts','event_date','INSERT');
 update public.item_posts set moderation_visibility='HIDDEN' where id='00000000-0000-4000-8000-00000000f611';
 set local role anon;
 select 'P5 hidden report is unavailable even to anonymous preview' as probe where

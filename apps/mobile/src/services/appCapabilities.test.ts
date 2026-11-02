@@ -4,17 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { APP_CAPABILITIES, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "./appCapabilities";
 
-// The server-side mirror lives outside the Vite root, so compare by source:
-// the contract is strict version parity + accurate, platform-scoped product facts.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
-const edgeSource = readFileSync(
-  join(repoRoot, "supabase", "functions", "ai-help", "capabilities.ts"),
-  "utf8",
-);
-const edgeSummary = edgeSource.slice(
-  edgeSource.indexOf("CAPABILITY_SUMMARY"),
-  edgeSource.indexOf("export function buildSystemPrompt"),
-);
 
 const mobileCopy = JSON.stringify(APP_CAPABILITIES);
 
@@ -38,27 +28,26 @@ describe("capability docs", () => {
     expect(APP_CAPABILITIES.social.join(" ")).toMatch(/Like only/i);
     expect(APP_CAPABILITIES.social.join(" ")).toMatch(/recovery/i);
     expect(APP_CAPABILITIES.unavailable).not.toContain("private messaging");
-    for (const copy of [mobileCopy, edgeSummary]) {
+    for (const copy of [mobileCopy]) {
       expect(copy).not.toMatch(/Love, Helpful, Support or Wow/);
       expect(copy).toMatch(/private messag/i);
       expect(copy).toMatch(/not end-to-end encrypted/i);
       expect(copy).toMatch(/safety[^.]*retain|retain[^.]*safety/i);
     }
   });
-  it("stays in sync with the server-side mirror", () => {
-    const match = edgeSource.match(/CAPABILITIES_VERSION = "([^"]+)"/);
-    expect(match?.[1]).toBe(CAPABILITIES_VERSION);
+  it("retains a versioned historical corpus without a server deployment dependency", () => {
+    expect(CAPABILITIES_VERSION).toMatch(/beta-truth/);
+    expect(readdirSync(join(repoRoot, "supabase", "functions"))).not.toContain("ai-help");
   });
 
   it("avoids unsupported speed, privacy and retired-architecture claims", () => {
     for (const [pattern, label] of RETIRED_CLAIMS) {
       expect(pattern.test(mobileCopy), `mobile capability copy still claims ${label}`).toBe(false);
-      expect(pattern.test(edgeSummary), `server capability copy still claims ${label}`).toBe(false);
     }
   });
 
   it("describes explicit verified Android installs and specialized offline tasks only", () => {
-    for (const copy of [mobileCopy, edgeSummary]) {
+    for (const copy of [mobileCopy]) {
       expect(copy).toMatch(/Android/);
       expect(copy).toMatch(/Needle/);
       expect(copy).toMatch(/checksum/);
@@ -78,10 +67,9 @@ describe("capability docs", () => {
     expect(APP_CAPABILITIES.photoAnalysis.join(" ")).toMatch(/AI provider/i);
     expect(APP_CAPABILITIES.helpAssistant.join(" ")).toMatch(/AI provider/i);
     expect(APP_CAPABILITIES.privacy.join(" ")).toMatch(/provider you connect/i);
-    expect(edgeSummary).toMatch(/openrouter\/free/i);
     // The retired free-only gate is the opposite of what ships: the model you
     // pick is billed by your provider. Neither copy may claim the gate again.
-    for (const copy of [mobileCopy, edgeSummary]) {
+    for (const copy of [mobileCopy]) {
       expect(copy).not.toMatch(/never switches to a paid model/i);
       expect(copy).not.toMatch(/free-only by default/i);
       expect(copy).not.toMatch(/free route by default/i);
@@ -97,7 +85,7 @@ describe("capability docs", () => {
     const photoCopy = APP_CAPABILITIES.photoAnalysis.join(" ");
     expect(photoCopy).toMatch(/photo analysis isn't available/i);
     expect(photoCopy).toMatch(/no photo is sent to an AI provider/i);
-    for (const copy of [photoCopy, edgeSummary]) {
+    for (const copy of [photoCopy]) {
       expect(copy).not.toMatch(/local-first/i);
       expect(copy).not.toMatch(/on-device-only/i);
       expect(copy).not.toMatch(/skips local inference/i);
@@ -109,20 +97,15 @@ describe("capability docs", () => {
 
   it("never describes a removed inference-mode selector", () => {
     expect(mobileCopy).not.toMatch(/\bAUTO\b|\bQUALITY\b/);
-    expect(edgeSummary).not.toMatch(/Model modes: AUTO/);
   });
 
-  it("describes post feedback as reactions on both mirrors (W1-A FBX-035)", () => {
+  it("describes post feedback as reactions", () => {
     const socialCopy = APP_CAPABILITIES.social.join(" ");
     expect(socialCopy).toMatch(/one reaction per user/i);
     expect(socialCopy).not.toMatch(/like or dislike/i);
     const inboxCopy = APP_CAPABILITIES.notifications.join(" ");
     expect(inboxCopy).toMatch(/inbox for reactions, comments, mentions/i);
     expect(inboxCopy).not.toMatch(/likes, dislikes/i);
-    expect(edgeSummary).toMatch(/one reaction per user/i);
-    expect(edgeSummary).toMatch(/inbox for reactions, comments, mentions/i);
-    expect(edgeSummary).not.toMatch(/one like\/dislike per user/);
-    expect(edgeSummary).not.toMatch(/inbox for likes, dislikes/);
   });
 });
 

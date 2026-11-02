@@ -172,9 +172,11 @@ select 'R12 no subject returns nothing' as probe where not exists
  (select 1 from pg_temp.fit_candidates('fit-target',80));
 reset role;
 
-select 'R13 versioned stable invoker, authenticated only, pinned path' as probe
+select 'R13 versioned stable definer, authenticated only, pinned path and both visibility arms' as probe
 where exists(select 1 from pg_proc where oid=to_regprocedure('public.findback_match_candidates_v2(text,integer)')
- and not prosecdef and provolatile='s' and proconfig @> array['search_path=public, pg_temp'])
+ and prosecdef and provolatile='s' and proconfig @> array['search_path=public, pg_temp']
+ and pg_get_functiondef(oid) ~ 'findback_can_read_post\(t.id\)'
+ and pg_get_functiondef(oid) ~ 'findback_can_read_post\(c.id\)')
 and has_function_privilege('authenticated','public.findback_match_candidates_v2(text,integer)','EXECUTE')
 and not has_function_privilege('anon','public.findback_match_candidates_v2(text,integer)','EXECUTE')
 and not exists(select 1 from pg_proc p,lateral aclexplode(p.proacl) a

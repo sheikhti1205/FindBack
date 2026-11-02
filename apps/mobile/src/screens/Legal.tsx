@@ -60,8 +60,8 @@ export function Terms() {
         <Paragraph>
           AI Chat is optional and works through the cloud provider you choose in Settings. The
           messages you send, and the conversation context needed to answer them, go to that
-          provider. Search and report-field suggestions can run on this phone instead, and those
-          requests never leave the device.
+          provider. Possible Matches uses report text, category, date and location; its similarity
+          scores are not probabilities. This beta does not compare photos or generate report fields.
         </Paragraph>
         <Paragraph>
           AI answers can be wrong, incomplete or out of date. Check anything important against the
@@ -102,7 +102,7 @@ export function PrivacyPolicy() {
     >
       <SettingsGroup title="What stays on your phone">
         <Paragraph>
-          Your settings, your appearance and the AI models you downloaded stay on your phone.
+          Your settings, appearance and any downloaded text-search resources stay on your device.
           AI Chat conversations are held in memory while the app is open, separately for each
           account, and are gone when you close it. Private messages between people are stored on
           your device so accepted history can be read offline. The list of reports you save is
@@ -136,16 +136,19 @@ export function PrivacyPolicy() {
         <Paragraph>
           Only when you write to the assistant: the message you send and the conversation context
           needed to reply go to the provider you chose, which handles them under its own terms.
-          The local helpers — search and report-field suggestions — never send anything anywhere.
+          Optional on-device text similarity runs locally. Searching published reports still queries
+          FindBack's servers. This beta has no local generative assistant or photo matcher.
         </Paragraph>
       </SettingsGroup>
 
       <SettingsGroup title="Who can see your reports">
         <Paragraph>
           Reports are meant to be found by other people, so other FindBack users can see your
-          report, its photos and the comments on it. A shared report link requires a FindBack
-          account and access to that report. Do not put anything private in a report, a comment
-          or a photo.
+          report, its photos and the comments on it when they have access. A shared report link can
+          show a limited public preview without an account; it does not reveal contact details or
+          exact location. Full details and private actions require sign-in and report access.
+          Deleting, hiding or revoking the report also removes its public preview. Do not put
+          anything private in a report, a comment or a photo.
         </Paragraph>
       </SettingsGroup>
 
@@ -158,6 +161,10 @@ export function PrivacyPolicy() {
       </SettingsGroup>
 
       <SettingsGroup title="Deleting your data">
+        <Paragraph>
+          Unconfirmed accounts that have never signed in and hold no content or stored files
+          may be removed after 30 days. You can create an account again if that happens.
+        </Paragraph>
         <Paragraph>
           You can delete your account from Settings → Account. That removes your account, your
           reports and their photos, comments and reactions. You can also delete your own comments;

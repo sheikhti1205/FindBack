@@ -233,6 +233,11 @@ describe("login", () => {
 });
 
 describe("pending email verification", () => {
+  it("preserves the email-not-confirmed code for the verification recovery route", async () => {
+    clientMock.auth.signInWithPassword.mockResolvedValue({ data: { session: null }, error: { code: "email_not_confirmed" } });
+    await expect(login({ email: "pending@example.invalid", password: "synthetic-password" }))
+      .rejects.toMatchObject({ code: "email_not_confirmed", status: 403 });
+  });
   it("verifies a code and returns the user", async () => {
     clientMock.auth.verifyOtp.mockResolvedValue({
       data: { user: USER, session: { access_token: "tok" } },

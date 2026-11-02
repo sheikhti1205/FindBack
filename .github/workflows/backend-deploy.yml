@@ -18,43 +18,43 @@ on:
       push_migrations:
         description: "Push pending supabase/migrations (db push)"
         type: boolean
-        default: true
-      deploy_ai_help:
-        description: "Deploy the ai-help Edge Function"
-        type: boolean
-        default: true
+        default: false
       deploy_push_dispatch:
         description: "Deploy the push-dispatch Edge Function"
         type: boolean
-        default: true
+        default: false
       deploy_reply_comment:
         description: "Deploy the reply-comment Edge Function"
         type: boolean
-        default: true
+        default: false
       deploy_cleanup_comment_media:
         description: "Deploy the cleanup-comment-media Edge Function"
         type: boolean
-        default: true
+        default: false
       deploy_cleanup_report_media:
         description: "Deploy the cleanup-report-media Edge Function (P11 migrations required)"
         type: boolean
-        default: true
+        default: false
       deploy_chat_wake:
         description: "Deploy the chat-wake Edge Function (P11 migrations required)"
         type: boolean
-        default: true
+        default: false
       deploy_chat_media:
         description: "Deploy the chat-media gateway Edge Function"
         type: boolean
-        default: true
+        default: false
       deploy_cleanup_chat_media:
         description: "Deploy the cleanup-chat-media sweeper Edge Function"
         type: boolean
-        default: true
+        default: false
       deploy_copy_chat_evidence:
         description: "Deploy the copy-chat-evidence worker Edge Function"
         type: boolean
-        default: true
+        default: false
+      enable_leaked_password_protection:
+        description: "Enable Auth leaked-password protection (requires eligible plan)"
+        type: boolean
+        default: false
       deploy_trust_maintenance:
         description: "Deploy the appeal expiry and report-evidence maintenance worker (M3 migrations required)"
         type: boolean
@@ -85,15 +85,9 @@ jobs:
         run: |
           supabase link --project-ref "$PROJECT_REF"
           supabase db push
-      # ai-help is retained: the consumer app makes no call to it, but it is the
-      # optional BYOK cloud assistant and its retirement means deleting a live
-      # function plus the whole capabilities mirror. That is an owner decision,
-      # reported in P11 rather than taken here.
-      - name: Deploy ai-help
-        if: inputs.deploy_ai_help
-        run: |
-          supabase link --project-ref "$PROJECT_REF"
-          supabase functions deploy ai-help
+      - name: Enable and verify leaked-password protection
+        if: inputs.enable_leaked_password_protection
+        run: node scripts/enable-leaked-password-protection.mjs
       - name: Deploy push-dispatch
         if: inputs.deploy_push_dispatch
         run: |

@@ -5,7 +5,6 @@
  *
  * Contract (enforced by tests + CLI guards):
  *   - Deploys ONLY the required production set, in order:
- *       ai-help              → JWT verify ON (no flag)
  *       reply-comment        → --no-verify-jwt
  *       push-dispatch        → --no-verify-jwt   (after push-config PASS)
  *       cleanup-comment-media→ --no-verify-jwt   (ONLY after migration
@@ -60,9 +59,16 @@ const HERE = fileURLToPath(import.meta.url);
 
 /** Required production deploy set. Order is the deploy order. */
 export const REQUIRED_FUNCTIONS = [
-  { name: "ai-help", verifyJwt: true },
   { name: "reply-comment", verifyJwt: false },
   { name: "push-dispatch", verifyJwt: false, requiresPushConfig: true },
+  {
+    name: "cleanup-report-media", verifyJwt: false,
+    requiresMigrationsLive: "20261102120000",
+  },
+  {
+    name: "chat-wake", verifyJwt: false,
+    requiresMigrationsLive: "20261102120000",
+  },
   {
     name: "cleanup-comment-media",
     verifyJwt: false,
@@ -81,10 +87,10 @@ export const REQUIRED_FUNCTIONS = [
 /**
  * Functions this orchestration must never deploy. Retired the old
  * `delete-account` entry after source review + 401 proof closed the live
- * gap; the mechanism stays so a future exclusion needs one line, not a
- * redesign. Empty means: every required function is deployable.
+ * gap. The retired server assistant is now explicitly forbidden; optional
+ * client-owned BYOK Chat does not depend on it.
  */
-export const FORBIDDEN_FUNCTIONS = [];
+export const FORBIDDEN_FUNCTIONS = ["ai-help"];
 
 /** Build the ordered plan, dropping gated steps whose migration gate is unmet. */
 export function buildDeploymentPlan({ liveMigrations, cleanupMigrationsLive = false } = {}) {

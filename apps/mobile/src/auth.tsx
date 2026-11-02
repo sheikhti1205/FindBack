@@ -183,8 +183,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (seed) {
             if (!sdkObserved.current || seed.accountId === sdkAccount.current) setNeedsProfileState(seed);
           } else if (!sdkObserved.current || sdkAccount.current === null) {
-            clearAllAuth();
-            setPendingEmailState(null);
+            // An empty startup session is normal while confirming a signup.
+            // Keep its durable email; real sign-out/account replacement owns
+            // invalidation below, not a failed session restore.
+            if (hadStoredSession.current) {
+              clearAllAuth();
+              setPendingEmailState(null);
+            } else {
+              setToken(null);
+            }
           } else {
             setBootError("unreachable");
           }
@@ -219,7 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sdkAccount.current = nextAccount;
         if (nextAccount !== null) lastAccount.current = nextAccount;
         sdkObserved.current = true;
-        if (event === "SIGNED_OUT" || nextAccount === null) profileAdoptionBlocked.current = true;
+        if (event === "SIGNED_OUT" || (accountChanged && nextAccount === null)) profileAdoptionBlocked.current = true;
         // SIGNED_IN can reconfirm the same session on tab refocus. Only a
         // changed SDK slot may reopen adoption after local sign-out.
         else if (previousAccount !== nextAccount) profileAdoptionBlocked.current = false;
@@ -315,8 +322,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const next = await apiLogin({ email, password });
+    const epoch = authEpoch.current;
+    let next: PublicUser;
+    try {
+      next = await apiLogin({ email, password });
+    } catch (error) {
+      // This code is returned only after password verification by Auth. Never
+      // probe an address or send another email just to infer membership.
+      if (error instanceof ApiError && error.code === "email_not_confirmed") {
+        if (epoch !== authEpoch.current || sdkAccount.current !== null || currentUser.current !== null) throw new AuthAccountChangedError();
+        persistPendingEmail(email.trim());
+        setPendingEmailState(email.trim());
+      }
+      throw error;
+    }
     assertAccount(next.id);
+    persistPendingEmail(null);
+    setPendingEmailState(null);
     setNeedsProfileState(null); // W0-B (S2, additive): password login is a complete profile.
     setUserState(next);
     return next;
@@ -327,7 +349,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const epoch = authEpoch.current;
       const result = await apiRegister(input);
       if (result.emailVerificationRequired) {
-        if (epoch !== authEpoch.current || profileAdoptionBlocked.current) throw new AuthAccountChangedError();
+        // A previous sign-out blocks profile adoption, not a new pending
+        // signup. The epoch and current SDK slot still reject late A -> B work.
+        if (epoch !== authEpoch.current || sdkAccount.current !== null || currentUser.current !== null) throw new AuthAccountChangedError();
         const email = result.email ?? input.email;
         persistPendingEmail(email);
         setPendingEmailState(email);

@@ -95,7 +95,7 @@ function mapAuthError(error: AuthErrorLike): ApiError {
     return new ApiError(RATE_LIMIT_MESSAGE, 429);
   }
   if (code === "email_not_confirmed") {
-    return new ApiError("Email not confirmed. Verify your email to continue.", 403);
+    return new ApiError("Email not confirmed. Verify your email to continue.", 403, "email_not_confirmed");
   }
   if (
     code === "invalid_credentials" ||

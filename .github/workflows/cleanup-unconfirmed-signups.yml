@@ -1,0 +1,33 @@
+name: Cleanup stale unconfirmed signups
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: findback-stale-signups
+  cancel-in-progress: false
+jobs:
+  purge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    environment: backend
+    steps:
+      - name: Purge at most 100 never-activated signups older than 30 days
+        env:
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          const ref=process.env.PROJECT_REF,key=process.env.SUPABASE_SECRET_KEY;
+          if(!/^[a-z]{20}$/.test(ref??'')||!key){console.error('cleanup credential capability unavailable');process.exit(1);}
+          const response=await fetch(`https://${ref}.supabase.co/rest/v1/rpc/findback_purge_stale_unconfirmed_signups`,{
+            method:'POST',headers:{apikey:key,'Content-Type':'application/json'},
+            body:JSON.stringify({p_limit:100}),signal:AbortSignal.timeout(60000),redirect:'error',
+          });
+          if(!response.ok){await response.body?.cancel();console.error(`cleanup HTTP ${response.status}`);process.exit(1);}
+          const count=await response.json();
+          if(!Number.isInteger(count)||count<0||count>100){console.error('invalid cleanup count');process.exit(1);}
+          console.log(JSON.stringify({purged:count}));
+          JS

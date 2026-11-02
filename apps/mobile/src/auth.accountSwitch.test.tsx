@@ -44,7 +44,7 @@ import { GuestOnly } from "./components/Guards";
 import { ApplicationAiService } from "./services/ai/applicationAi";
 import { NEEDLE_DESCRIPTOR } from "./services/ai/modelDescriptors";
 import { aiCredentials } from "./services/aiCredentials";
-import { beginAccountSwitch, getPendingEmail, getToken, setPendingEmail } from "./services/session";
+import { ApiError, beginAccountSwitch, getPendingEmail, getToken, setPendingEmail } from "./services/session";
 import { loadDraft, saveDraft } from "./services/reportDraft";
 import { disconnectRealtime } from "./services/realtime";
 
@@ -105,6 +105,46 @@ afterEach(() => {
 });
 
 describe("direct SDK account replacement isolation", () => {
+  it("accepts pending signup after the ordinary empty startup snapshot", async () => {
+    seams.restoreSession.mockRejectedValue(new Error("no session"));
+    seams.register.mockResolvedValue({ user: A, emailVerificationRequired: true, email: "a@example.invalid" });
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await act(async () => { seams.callback?.("INITIAL_SESSION", null); });
+    await waitFor(() => expect(auth.booting).toBe(false));
+    await act(async () => {
+      await expect(auth.register({ username: "alice", email: "a@example.invalid", phone: "", password: "synthetic-password" }))
+        .resolves.toEqual({ status: "pending", email: "a@example.invalid" });
+    });
+    expect(auth.pendingEmail).toBe("a@example.invalid");
+    expect(getPendingEmail()).toBe("a@example.invalid");
+    expect(auth.user).toBeNull();
+  });
+
+  it("keeps a pending verification email through a signed-out cold boot", async () => {
+    setPendingEmail("pending@example.invalid");
+    seams.restoreSession.mockRejectedValue(new Error("no session"));
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await act(async () => { seams.callback?.("INITIAL_SESSION", null); });
+    await waitFor(() => expect(auth.booting).toBe(false));
+    expect(auth.pendingEmail).toBe("pending@example.invalid");
+    expect(getPendingEmail()).toBe("pending@example.invalid");
+  });
+
+  it("reconstructs pending verification from password-authenticated email_not_confirmed", async () => {
+    seams.restoreSession.mockRejectedValue(new Error("no session"));
+    seams.login.mockRejectedValueOnce(new ApiError("Verify email", 403, "email_not_confirmed"));
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await act(async () => { seams.callback?.("INITIAL_SESSION", null); });
+    await waitFor(() => expect(auth.booting).toBe(false));
+    await act(async () => {
+      await expect(auth.login("recovered@example.invalid", "synthetic-password"))
+        .rejects.toMatchObject({ code: "email_not_confirmed" });
+    });
+    expect(auth.pendingEmail).toBe("recovered@example.invalid");
+    expect(getPendingEmail()).toBe("recovered@example.invalid");
+    expect(auth.user).toBeNull();
+  });
+
   it("cancels A's real local flight and clears private state before B's profile resolves", async () => {
     const local = activeAi();
     await local.service.ready;

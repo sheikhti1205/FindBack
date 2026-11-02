@@ -7,14 +7,13 @@ import packageJson from "../../package.json";
  * from a built-in knowledge base, and the server-side `ai-help` assistant is a
  * retired route the app must never call (enforced by
  * `services/noLegacyAiRoute.test.ts`). The corpus below survives only for the
- * server mirror's version-parity contract.
+ * historical product-fact tests. No server mirror remains.
  *
  * Its remaining AI entries now describe the shipped surfaces only. The removed
  * report-photo helper and its inference-mode switch are no longer described, and
  * the price policy and the cloud-chat description were corrected on 2026-10-21
  * (the app no longer gates paid models and no longer answers with built-in text).
- * `CAPABILITIES_VERSION` must be bumped in both this file and its mirror at
- * `supabase/functions/ai-help/capabilities.ts` whenever either copy changes.
+ * `CAPABILITIES_VERSION` identifies this retained historical corpus only.
  *
  * Containment: `appCapabilities.test.ts` enforces that no production source
  * imports `APP_CAPABILITIES`, so a stale claim cannot reach a consumer
@@ -34,7 +33,7 @@ export const APP_VERSION: string = packageJson.version;
  * Matches the newest data-contract migration prefix the app was built
  * against; shown in Profile → About for release diagnosis.
  */
-export const BACKEND_SCHEMA_VERSION = "20261102120000";
+export const BACKEND_SCHEMA_VERSION = "20261102181000";
 
 export interface AppCapabilities {
   version: string;

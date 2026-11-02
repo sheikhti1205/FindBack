@@ -20,7 +20,8 @@ import {
 } from "./check-edge-parity.mjs";
 
 const FIXTURE_SOURCE = {
-  "ai-help": "ai-help source v1",
+  "cleanup-report-media": "cleanup-report-media source v1",
+  "chat-wake": "chat-wake source v1",
   "push-dispatch": "push-dispatch source v1",
   "reply-comment": "reply-comment source v1",
   "cleanup-comment-media": "cleanup-comment-media source v1",
@@ -41,10 +42,11 @@ const manifestFor = (overrides = {}) =>
   }));
 
 describe("check-edge-parity fixtures", () => {
-  it("covers exactly the five edge functions", () => {
+  it("covers the current required edge functions", () => {
     assert.deepEqual([...EDGE_FUNCTIONS].sort(), [
-      "ai-help",
+      "chat-wake",
       "cleanup-comment-media",
+      "cleanup-report-media",
       "delete-account",
       "push-dispatch",
       "reply-comment",
@@ -104,7 +106,7 @@ describe("check-edge-parity fixtures", () => {
 
   it("accepts { functions: [...] } manifest envelopes", () => {
     const entries = parseManifest(JSON.stringify({ functions: manifestFor() }));
-    assert.equal(entries.length, 5);
+    assert.equal(entries.length, 6);
   });
 
   it("report lists every function by name with counts, never secret values", () => {
@@ -112,6 +114,6 @@ describe("check-edge-parity fixtures", () => {
     const results = checkParity({ localHashes, manifestEntries: manifestFor() });
     const report = formatParityReport(results);
     for (const name of EDGE_FUNCTIONS) assert.ok(report.includes(name), `missing ${name}`);
-    assert.match(report, /5 CURRENT, 0 STALE, 0 MISSING/);
+    assert.match(report, /6 CURRENT, 0 STALE, 0 MISSING/);
   });
 });

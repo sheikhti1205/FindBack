@@ -89,10 +89,7 @@ where (select l.limit_per_day from public.findback_post_limit() l)=3
   and public.findback_standing()='PROBATION';
 
 -- P5. First public write lands and spends exactly one admission.
-insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-values ('pb-u2-post-1','00000000-0000-4000-9200-000000000002','LOST','study keys','desc','Other','OPEN','2026-10-24',
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select public.findback_create_post_client('LOST','study keys','Description for probation test','Other','2026-10-24') as first_post;
 reset role;
 select 'PB5 a first public write is admitted once' as probe
 where (select count(*) from public.public_action_admissions
@@ -104,10 +101,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
 do $$
 begin
-  insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-  values ('pb-u2-post-2','00000000-0000-4000-9200-000000000002','LOST','second keys','desc','Other','OPEN','2026-10-24',
-          to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-          to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_create_post_client('LOST','second keys','Description for probation test','Other','2026-10-24');
   raise exception 'PB6 FAILED: a second public write landed inside the 30 s window' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_COOLDOWN: wait % seconds before posting again' then
@@ -126,10 +120,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
 do $$
 begin
-  insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-  values('pb-u2-c1','pb-target','00000000-0000-4000-9200-000000000002','close comment',
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_add_comment_client('pb-target','close comment');
   raise exception 'PB7 FAILED: a comment landed 30 s after a post' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_COOLDOWN%' then
@@ -142,16 +133,10 @@ update public.public_action_admissions set admitted_at = admitted_at - interval 
  where user_id='00000000-0000-4000-9200-000000000002';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000002',true);
-insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-values('pb-u2-c1','pb-target','00000000-0000-4000-9200-000000000002','after the window',
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select set_config('pb.u2c1',(select id from public.findback_add_comment_client('pb-target','after the window')),true);
 do $$
 begin
-  insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-  values ('pb-u2-post-2','00000000-0000-4000-9200-000000000002','LOST','after comment','desc','Other','OPEN','2026-10-24',
-          to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-          to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_create_post_client('LOST','after comment','Description for probation test','Other','2026-10-24');
   raise exception 'PB7b FAILED: a post landed 30 s after a comment' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_COOLDOWN%' then
@@ -251,7 +236,7 @@ select public.findback_block_user('00000000-0000-4000-9200-000000000006') as blo
 select public.findback_standing() as standing;
 select public.findback_my_appeals() as appeals;
 select public.findback_my_reports() as reports;
-select public.findback_delete_comment_client('pb-u2-c1') as deletion;
+select public.findback_delete_comment_client(current_setting('pb.u2c1')) as deletion;
 reset role;
 select 'PB11 report/block/standing/appeals/removal bypass the public clock' as probe
 where (select count(*) from public.public_action_admissions
@@ -279,28 +264,19 @@ values ('pb-sanc-u4','00000000-0000-4000-9200-000000000004','PROBATION',
         'OTHER',true,to_char(now() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
-insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-values('pb-u4-c1','pb-target','00000000-0000-4000-9200-000000000004','three one',
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select set_config('pb.u4c1',(select id from public.findback_add_comment_client('pb-target','three one')),true);
 reset role;
 update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
  where user_id='00000000-0000-4000-9200-000000000004';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
-insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-values('pb-u4-c2','pb-target','00000000-0000-4000-9200-000000000004','three two',
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select set_config('pb.u4c2',(select id from public.findback_add_comment_client('pb-target','three two')),true);
 reset role;
 update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
  where user_id='00000000-0000-4000-9200-000000000004';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
-insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-values('pb-u4-c3','pb-target','00000000-0000-4000-9200-000000000004','three three',
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-       to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select set_config('pb.u4c3',(select id from public.findback_add_comment_client('pb-target','three three')),true);
 reset role;
 update public.public_action_admissions set admitted_at = admitted_at - interval '31 seconds'
  where user_id='00000000-0000-4000-9200-000000000004';
@@ -308,10 +284,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
 do $$
 begin
-  insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-  values('pb-u4-c4','pb-target','00000000-0000-4000-9200-000000000004','fourth',
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_add_comment_client('pb-target','fourth');
   raise exception 'PB13 FAILED: a fourth same-day comment landed' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_LIMIT_REACHED%' then
@@ -319,15 +292,12 @@ exception when raise_exception then
   end if;
 end $$;
 -- Deleting the three comments must not restore the fourth slot.
-select public.findback_delete_comment_client('pb-u4-c1') as d1;
-select public.findback_delete_comment_client('pb-u4-c2') as d2;
-select public.findback_delete_comment_client('pb-u4-c3') as d3;
+select public.findback_delete_comment_client(current_setting('pb.u4c1')) as d1;
+select public.findback_delete_comment_client(current_setting('pb.u4c2')) as d2;
+select public.findback_delete_comment_client(current_setting('pb.u4c3')) as d3;
 do $$
 begin
-  insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-  values('pb-u4-c4','pb-target','00000000-0000-4000-9200-000000000004','fourth',
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_add_comment_client('pb-target','fourth');
   raise exception 'PB13b FAILED: deleting content reset the daily ceiling' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_LIMIT_REACHED%' then
@@ -346,10 +316,7 @@ update public.public_action_admissions set admitted_at = admitted_at - interval 
  where user_id='00000000-0000-4000-9200-000000000004';
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
-insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-values ('pb-u4-post-1','00000000-0000-4000-9200-000000000004','LOST','spaced post','Description','Other','OPEN','2026-10-24',
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select public.findback_create_post_client('LOST','spaced post','Description for probation test','Other','2026-10-24') as spaced_post;
 reset role;
 select 'PB13c probation keeps the per-table ceiling, not a pooled one' as probe
 where (select count(*) from public.public_action_admissions
@@ -360,7 +327,7 @@ where (select count(*) from public.public_action_admissions
 -- PB13d. The reaction/rating tables are no longer a second, ungated write path:
 --        no INSERT/UPDATE/DELETE for a client role on any of the three tables,
 --        table-level or column-level, including anon and PUBLIC, while reads
---        stay available.
+--        are governed RPC projections only after P11.
 select 'PB13d reaction and rating tables are not directly writable by clients' as probe
 where not exists (
   select 1 from information_schema.role_table_grants g
@@ -376,9 +343,9 @@ and not exists (
      and g.grantee in ('anon','authenticated','PUBLIC')
      and g.privilege_type in ('INSERT','UPDATE','DELETE')
 )
-and has_any_column_privilege('authenticated','public.reactions','SELECT')
-and has_any_column_privilege('authenticated','public.comment_reactions','SELECT')
-and has_any_column_privilege('authenticated','public.ratings','SELECT');
+and not has_any_column_privilege('authenticated','public.reactions','SELECT')
+and not has_any_column_privilege('authenticated','public.comment_reactions','SELECT')
+and not has_any_column_privilege('authenticated','public.ratings','SELECT');
 
 -- PB13e. A definer writer must restate BOTH halves of the policy it replaced
 --        (review R2-F1): a stranger can neither react to nor count a post that
@@ -474,10 +441,7 @@ select 'PB15 non-probation limits and clock are unchanged' as probe
 where public.findback_standing()='GOOD'
   and (select l.limit_per_day from public.findback_post_limit() l)=3
   and (select l.burst_cooldown_seconds from public.findback_post_limit() l)=120;
-insert into public.item_posts (id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-values ('pb-u1-post-1','00000000-0000-4000-9200-000000000001','LOST','good standing','desc','Other','OPEN','2026-10-24',
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-        to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+select public.findback_create_post_client('LOST','good standing','Description for probation test','Other','2026-10-24') as good_standing_post;
 reset role;
 select 'PB15b a non-probation write is not recorded as an admission' as probe
 where (select count(*) from public.public_action_admissions
@@ -616,10 +580,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000003',true);
 do $$
 begin
-  insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-  values('pb-u3-standing','pb-target','00000000-0000-4000-9200-000000000003','standing test',
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_add_comment_client('pb-target','standing test');
   raise exception 'PB19 FAILED: a zero-limit author wrote a comment' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_NOT_AVAILABLE%' then
@@ -642,10 +603,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9200-000000000004',true);
 do $$
 begin
-  insert into public.comments(id,post_id,user_id,body,created_at,updated_at)
-  values('pb-u4-standing','pb-target','00000000-0000-4000-9200-000000000004','standing test',
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-         to_char(clock_timestamp() at time zone 'utc','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  perform public.findback_add_comment_client('pb-target','standing test');
   raise exception 'PB19b FAILED: a restricted author wrote a comment' using errcode='0A000';
 exception when raise_exception then
   if sqlerrm not like 'POST_NOT_AVAILABLE%' then

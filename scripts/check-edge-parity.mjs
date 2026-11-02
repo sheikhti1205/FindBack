@@ -7,8 +7,8 @@
  * by the caller/CI. No network calls in this checker — the manifest is
  * injected (file path via --manifest, or object in tests).
  *
- * Covered functions (5):
- *   ai-help, push-dispatch, reply-comment, cleanup-comment-media, delete-account
+ * Covered functions: current dispatcher, media workers, replies and deletion.
+ * The retired server assistant is intentionally excluded (history only).
  *
  * Per-function status:
  *   CURRENT — manifest sha256 matches repo sha256
@@ -27,11 +27,11 @@
  *      project. Deploy command (owner runs):
  *      supabase functions deploy cleanup-comment-media [--no-verify-jwt per
  *      its invocation contract].
- *   3. ai-help / reply-comment: redeploy ONLY if this checker proves STALE
+ *   3. reply-comment: redeploy ONLY if this checker proves STALE
  *      (manifest sha256 != repo sha256). Matching (CURRENT) means no
  *      redeploy. Missing (MISSING) means first-time deploy review.
  *   4. delete-account: NOT covered by .github/workflows/backend-deploy.yml
- *      (that workflow patterns only ai-help/push-dispatch/reply-comment plus
+ *      (that workflow patterns only push-dispatch/reply-comment plus
  *      the newly added cleanup-comment-media). delete-account deploys
  *      separately, owner-side, after explicit auth-review — never silently
  *      added to the shared backend pipeline by this change.
@@ -63,8 +63,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
 
 export const EDGE_FUNCTIONS = [
-  "ai-help",
   "push-dispatch",
+  "cleanup-report-media",
+  "chat-wake",
   "reply-comment",
   "cleanup-comment-media",
   "delete-account",

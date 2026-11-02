@@ -1091,6 +1091,9 @@ const NON_FUNCTION_DYNAMIC_DDL = new Set([
   "51af0c4545d38216f29e5cc6790358f60c45ecfff9e38a1428bd0d47311db303",
   // Hosted ACL repair: preserve ordinary column grants, sharing stays RPC-only.
   "8673876203c9b93369ceec003d15e3f69a0ab2b9eea69fe8d5b1f74258ed8d92",
+  // P11 forward repair: column-level attachment SELECT revocation only.
+  // Actual table/column denial is asserted by verify_p11_corrective.sql.
+  "b8c31204d048d0420191ebef4cc0c15eb453f4809a9187d2d8e7e95de85a03b8",
 ]);
 
 /** Top-level DDL in actual statement order; bodies/data cannot declare objects.
@@ -1720,9 +1723,11 @@ function findReaderGrantGaps(migrations) {
 }
 
 describe("column-grant coverage (client-read media tables)", () => {
-  it("the real chain lets authenticated read every column of the media tables", () => {
+  it("the real chain covers direct staging reads; attachments are governed projections only", () => {
     const chain = ls().map((file) => ({ file, sql: mig(file) }));
-    assert.deepEqual(findColumnGrantGaps(chain), []);
+    assert.deepEqual(findColumnGrantGaps(chain, ["uploads"]), []);
+    assert.ok(mig("20261102180000_p11_candidate_reader_followup.sql")
+      .includes("revoke select on public.attachments from authenticated,anon"));
   });
 
   it("detects the exact 20261015154642 defect (REVIEW-M1 F1/F2)", () => {

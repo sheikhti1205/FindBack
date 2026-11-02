@@ -80,7 +80,17 @@ describe("legal documents", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Privacy policy" })).toBeTruthy();
     expect(screen.getByText(/stays on your phone/i)).toBeTruthy();
     expect(screen.getByText(/the provider you chose/i)).toBeTruthy();
-    expect(screen.getByText(/local helpers/i)).toBeTruthy();
+    expect(screen.getByText(/optional on-device text similarity/i)).toBeTruthy();
+  });
+
+  it("describes current preview, search and Drive boundaries without retired AI promises", () => {
+    const { container } = render(<MemoryRouter><Terms /><PrivacyPolicy /></MemoryRouter>);
+    const copy = container.textContent ?? "";
+    expect(copy).toMatch(/limited public preview without an account/i);
+    expect(copy).toMatch(/does not reveal contact details or exact location/i);
+    expect(copy).toMatch(/does not compare photos or generate report fields/i);
+    expect(copy).toMatch(/no consumer Drive backup option/i);
+    expect(copy).not.toMatch(/report-field suggestions|AI models you downloaded|shared report link requires a FindBack account/i);
   });
 
   it("says how a reader removes their own data", () => {

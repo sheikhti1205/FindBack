@@ -338,12 +338,12 @@ describe("AuthGateway Google entry (W0-C S3, appended)", () => {  it("shows Cont
     }
   });
 
-  it("sign-in/signup stages show no Google button (insertion is email-stage only)", async () => {
+  it("keeps Google available after advancing to password sign-in", async () => {
     configureGoogleSeams({ status: "needsProfile", seed: GOOGLE_SEED });
     try {
       renderGateway();
       await continueWithEmail("user@example.com");
-      expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Continue with Google" })).toBeTruthy();
     } finally {
       __resetGoogleSignInSeams();
     }

@@ -145,6 +145,16 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
           {SESSION_EXPIRED_MESSAGE}
         </p>
       ) : null}
+      {stage !== "email" && isGoogleSignInAvailable() && (
+        <div className="mb-4 flex flex-col gap-4">
+          <GoogleSignInButton mode={stage === "signup" ? "signup" : "signin"} onDone={handleGoogleDone} />
+          <div role="separator" aria-label="or" className="flex items-center gap-3 text-sm text-on-surface-variant">
+            <span aria-hidden="true" className="h-px flex-1 bg-outline-variant" />
+            <span>or</span>
+            <span aria-hidden="true" className="h-px flex-1 bg-outline-variant" />
+          </div>
+        </div>
+      )}
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={stage}
