@@ -6,8 +6,6 @@ const {
   getUserMock,
   uploadMock,
   removeMock,
-  insertMock,
-  uploadsDeleteEqMock,
   normalizeMock,
   clientMock,
 } = vi.hoisted(() => {
@@ -15,31 +13,26 @@ const {
   const getUserMock = vi.fn();
   const uploadMock = vi.fn();
   const removeMock = vi.fn();
-  const insertMock = vi.fn();
-  const uploadsDeleteEqMock = vi.fn();
-  const getPublicUrlMock = vi.fn((path: string) => ({
-    data: { publicUrl: `https://cdn.test/storage/v1/object/public/findback-images/${path}` },
-  }));
   const normalizeMock = vi.fn();
   const storageApi = {
     upload: (...args: unknown[]) => uploadMock(...args),
     remove: (...args: unknown[]) => removeMock(...args),
-    getPublicUrl: (path: string) => getPublicUrlMock(path),
   };
   const clientMock = {
     auth: { getUser: (...args: unknown[]) => getUserMock(...args) },
     storage: { from: vi.fn(() => storageApi) },
-    from: vi.fn(() => ({
-      insert: (...args: unknown[]) => insertMock(...args),
-      delete: () => ({ eq: (...args: unknown[]) => uploadsDeleteEqMock(...args) }),
-    })),
     rpc: (...args: unknown[]) => rpcMock(...args),
   };
-  return {
-    rpcMock, getUserMock, uploadMock, removeMock, insertMock,
-    uploadsDeleteEqMock, normalizeMock, clientMock,
-  };
+  return { rpcMock, getUserMock, uploadMock, removeMock, normalizeMock, clientMock };
 });
+
+// P11: staging/discard are RPCs. Every "did not create" assertion must name the
+// create RPC rather than count all calls, or it would also forbid the discard.
+const CREATE_RPCS = ["findback_create_post_client", "findback_create_post_client_multi"];
+const createCalls = () =>
+  rpcMock.mock.calls.filter(([name]) => CREATE_RPCS.includes(name as string));
+const discardCalls = () =>
+  rpcMock.mock.calls.filter(([name]) => name === "findback_discard_staged_upload");
 
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
 vi.mock("./image", () => ({ normalizeImage: (...args: unknown[]) => normalizeMock(...args) }));
@@ -63,21 +56,18 @@ beforeEach(() => {
   getUserMock.mockReset();
   uploadMock.mockReset();
   removeMock.mockReset();
-  insertMock.mockReset();
-  uploadsDeleteEqMock.mockReset();
   normalizeMock.mockReset();
   getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
   uploadMock.mockResolvedValue({ error: null });
   removeMock.mockResolvedValue({ error: null });
-  insertMock.mockResolvedValue({ error: null });
-  uploadsDeleteEqMock.mockResolvedValue({ error: null });
   normalizeMock.mockImplementation(async (file: File) => ({
     blob: new Blob(["normalized"], { type: "image/jpeg" }),
     mimeType: file.type || "image/jpeg",
     width: 100,
     height: 100,
   }));
-  rpcMock.mockResolvedValue({ data: "post-new", error: null });
+  rpcMock.mockImplementation(async (name: string) =>
+    CREATE_RPCS.includes(name) ? { data: "post-new", error: null } : { error: null });
 });
 
 describe("publish lifetime fence (F5)", () => {
@@ -98,22 +88,22 @@ describe("publish lifetime fence (F5)", () => {
     current = false;
     finishUpload({ error: null });
     await assertion;
-    expect(rpcMock).not.toHaveBeenCalled();
+    expect(createCalls()).toHaveLength(0);
     expect(removeMock).toHaveBeenCalledTimes(1);
-    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(1);
+    expect(discardCalls()).toHaveLength(1);
   });
 
   it("a single-photo publish stops before the create when the form is gone", async () => {
     await expect(publishReport(input, photo("p1.jpg"), undefined, () => false))
       .rejects.toMatchObject({ name: "UploadCancelledError" });
-    expect(rpcMock).not.toHaveBeenCalled();
+    expect(createCalls()).toHaveLength(0);
     expect(removeMock).toHaveBeenCalledTimes(1);
   });
 
   it("a multi-photo publish stops before the create when the form is gone", async () => {
     await expect(publishReportWithPhotos(input, [photo("p1.jpg")], { isCurrent: () => false }))
       .rejects.toMatchObject({ name: "UploadCancelledError" });
-    expect(rpcMock).not.toHaveBeenCalled();
+    expect(createCalls()).toHaveLength(0);
     expect(removeMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -142,10 +132,10 @@ describe("publishReportWithPhotos cancellation boundary (P1)", () => {
 
     await expect(pending).rejects.toMatchObject({ name: "UploadCancelledError" });
     // Point of no return was never entered: no post row may exist.
-    expect(rpcMock).not.toHaveBeenCalled();
+    expect(createCalls()).toHaveLength(0);
     // Exactly this attempt's staged objects are removed (no orphans).
     expect(removeMock).toHaveBeenCalledTimes(2);
-    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(2);
+    expect(discardCalls()).toHaveLength(2);
     expect(seen).toEqual([
       { completed: 1, total: 2 },
       { completed: 2, total: 2 },

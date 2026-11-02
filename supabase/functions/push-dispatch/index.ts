@@ -39,8 +39,6 @@ function createAdminClient(url: string, key: string) {
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 const BATCH_LIMIT = 100;
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 /** A transient FCM failure keeps a notification pending this many runs. */
 const MAX_PUSH_ATTEMPTS = 5;
 

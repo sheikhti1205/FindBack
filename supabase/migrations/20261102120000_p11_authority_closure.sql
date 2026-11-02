@@ -706,10 +706,166 @@ revoke update (id) on public.uploads from authenticated;
 grant select (object_key) on public.uploads to authenticated;
 grant select (storage_path) on public.attachments to authenticated;
 
--- The pre-P1 alternate match reader is dead in the app; close its read path
--- instead of keeping a second, older candidate projector alive.
-revoke execute on function public.findback_match_candidates_client(text, integer)
-  from authenticated;
+-- The pre-P1 alternate match reader reads `reactions`/`ratings` directly,
+-- which the client can no longer read, so it must stop running as the caller.
+-- It cannot simply be deleted: the 20261022160000 contract is still asserted
+-- by the full-chain behaviour probe and by the projection-parity test.
+--
+-- `findback_visible_posts` is security_invoker WITH NO WHERE of its own (the
+-- predicate lives in the item_posts SELECT policy), so a definer body would
+-- bypass RLS and propose hidden reports. The atom is therefore evaluated
+-- explicitly here, exactly as the other P11 readers do.
+
+create or replace function public.findback_match_candidates_client(
+  p_target_id text,
+  p_limit integer default 20
+)
+returns table (
+  id text,
+  user_id text,
+  type text,
+  title text,
+  description text,
+  category text,
+  status text,
+  event_date text,
+  latitude double precision,
+  longitude double precision,
+  location_label text,
+  youtube_url text,
+  created_at text,
+  updated_at text,
+  author_username text,
+  author_email_verified integer,
+  author_phone_verified integer,
+  author_avatar_url text,
+  author_created_at text,
+  like_count bigint,
+  dislike_count bigint,
+  rating_avg numeric,
+  rating_count bigint,
+  comment_count bigint,
+  attachments jsonb,
+  total_count bigint,
+  reaction_counts jsonb,
+  reaction_total bigint,
+  my_reaction text
+)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with target as (
+    -- The target is read from the VISIBLE view, so a caller cannot point the
+    -- reader at a report they are not allowed to see. An invisible target
+    -- leaves the cross join empty and the reader returns nothing.
+    select t.id, t.type
+    from public.findback_visible_posts t
+    where t.id = p_target_id
+      -- P11: this body is DEFINER and the view is security_invoker
+      -- with no WHERE of its own, so the policy atom is evaluated HERE.
+      and public.findback_can_read_post(t.id)
+  ),
+  filtered as (
+    select
+      c.*,
+      u.username as author_username,
+      u.email_verified as author_email_verified,
+      u.phone_verified as author_phone_verified,
+      u.avatar_url as author_avatar_url,
+      u.created_at as author_created_at,
+      (select count(r.id) from reactions r where r.post_id = c.id and r.type = 'LIKE') as like_count,
+      (select count(r.id) from reactions r where r.post_id = c.id and r.type = 'DISLIKE') as dislike_count,
+      (select avg(ra.score) from ratings ra where ra.post_id = c.id) as rating_avg,
+      (select count(ra.id) from ratings ra where ra.post_id = c.id) as rating_count,
+      (select count(cm.id) from comments cm where cm.post_id = c.id) as comment_count,
+      coalesce((
+        select jsonb_agg(
+          jsonb_build_object(
+            'id', a.id,
+            'post_id', a.post_id,
+            'file_url', a.file_url,
+            'mime_type', a.mime_type,
+            'file_name', a.file_name,
+            'file_size', a.file_size,
+            'created_at', a.created_at,
+            'display_order', a.display_order,
+            'width', a.width,
+            'height', a.height
+          ) order by a.display_order asc, a.created_at asc, a.id asc
+        )
+        from attachments a
+        where a.post_id = c.id
+      ), '[]'::jsonb) as attachments,
+      count(*) over() as total_count,
+      coalesce((
+        select jsonb_object_agg(t.kind, t.n)
+        from (
+          select case when r.type = 'LIKE' then 'LOVE' else r.type end as kind,
+                 count(*) as n
+          from public.reactions r
+          where r.post_id = c.id
+          group by 1
+        ) t
+      ), '{}'::jsonb) as reaction_counts,
+      (select count(r.id) from reactions r where r.post_id = c.id) as reaction_total,
+      (select r.type from reactions r
+        where r.post_id = c.id and r.user_id = auth.uid()::text
+        limit 1) as my_reaction
+    from public.findback_visible_posts c
+    join users u on u.id = c.user_id
+    cross join target t
+    where
+      c.type <> t.type                                   -- a LOST report matches a FOUND one and the other way round
+      and c.status = 'OPEN'                              -- only an open report can still be the answer
+      and c.id <> t.id                                   -- never the target itself
+      and c.user_id <> (select auth.uid())::text         -- never the reader's own report
+      and not c.blocked_author                           -- THE DECISION: a blocked counterpart is not proposed
+      and public.findback_can_read_post(c.id)
+  )
+  select
+    id,
+    user_id,
+    type,
+    title,
+    description,
+    category,
+    status,
+    event_date,
+    latitude,
+    longitude,
+    location_label,
+    youtube_url,
+    created_at,
+    updated_at,
+    author_username,
+    author_email_verified,
+    author_phone_verified,
+    author_avatar_url,
+    author_created_at,
+    like_count,
+    dislike_count,
+    rating_avg,
+    rating_count,
+    comment_count,
+    attachments,
+    total_count,
+    reaction_counts,
+    reaction_total,
+    my_reaction
+  from filtered
+  order by created_at desc, id desc
+  limit least(greatest(coalesce(p_limit, 20), 1), 20);
+$$;
+
+revoke all on function public.findback_match_candidates_client(text, integer)
+  from public, anon;
+grant execute on function public.findback_match_candidates_client(text, integer)
+  to authenticated;
+
+comment on function public.findback_match_candidates_client(text, integer) is
+  'Match-candidate reader (pinned 20261022160000 contract). P11: SECURITY DEFINER because the client lost raw reactions/ratings reads; candidates are filtered by findback_can_read_post because the security_invoker view carries no WHERE. The shipping caller uses findback_match_candidates_v2.';
 
 -- Policies whose only writer grant is gone. Keeping them would advertise an
 -- authority that no longer exists.

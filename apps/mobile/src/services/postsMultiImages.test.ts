@@ -6,9 +6,6 @@ const {
   getUserMock,
   uploadMock,
   removeMock,
-  insertMock,
-  uploadsDeleteEqMock,
-  getPublicUrlMock,
   normalizeMock,
   clientMock,
 } = vi.hoisted(() => {
@@ -16,43 +13,27 @@ const {
   const getUserMock = vi.fn();
   const uploadMock = vi.fn();
   const removeMock = vi.fn();
-  const insertMock = vi.fn();
-  const uploadsDeleteEqMock = vi.fn();
-  const getPublicUrlMock = vi.fn((path: string) => ({
-    data: { publicUrl: `https://cdn.test/storage/v1/object/public/findback-images/${path}` },
-  }));
   const normalizeMock = vi.fn();
   const storageApi = {
     upload: (...args: unknown[]) => uploadMock(...args),
     remove: (...args: unknown[]) => removeMock(...args),
-    getPublicUrl: (path: string) => getPublicUrlMock(path),
   };
   const clientMock = {
     auth: { getUser: (...args: unknown[]) => getUserMock(...args) },
     storage: { from: vi.fn(() => storageApi) },
-    from: vi.fn((table: string) => {
-      if (table === "uploads") {
-        return {
-          insert: (...args: unknown[]) => insertMock(...args),
-          delete: () => ({ eq: (...args: unknown[]) => uploadsDeleteEqMock(...args) }),
-        };
-      }
-      throw new Error(`unexpected table ${table}`);
-    }),
     rpc: (...args: unknown[]) => rpcMock(...args),
   };
-  return {
-    rpcMock,
-    getUserMock,
-    uploadMock,
-    removeMock,
-    insertMock,
-    uploadsDeleteEqMock,
-    getPublicUrlMock,
-    normalizeMock,
-    clientMock,
-  };
+  return { rpcMock, getUserMock, uploadMock, removeMock, normalizeMock, clientMock };
 });
+
+// P11: staging and discarding are RPCs now, so "was anything staged, created or
+// cleaned" is a question about WHICH rpc ran — never about a table insert.
+const CREATE_RPCS = ["findback_create_post_client", "findback_create_post_client_multi"];
+const callsTo = (...names: string[]) =>
+  rpcMock.mock.calls.filter(([name]) => names.includes(name as string));
+const createCalls = () => callsTo(...CREATE_RPCS);
+const stageCalls = () => callsTo("findback_stage_upload");
+const discardCalls = () => callsTo("findback_discard_staged_upload");
 
 vi.mock("./supabaseClient", () => ({ getSupabase: () => clientMock }));
 vi.mock("./image", () => ({ normalizeImage: (...args: unknown[]) => normalizeMock(...args) }));
@@ -134,24 +115,19 @@ beforeEach(() => {
   getUserMock.mockReset();
   uploadMock.mockReset();
   removeMock.mockReset();
-  insertMock.mockReset();
-  uploadsDeleteEqMock.mockReset();
-  getPublicUrlMock.mockClear();
   normalizeMock.mockReset();
-  clientMock.from.mockClear();
-  (clientMock.storage.from as ReturnType<typeof vi.fn>).mockClear?.();
   getUserMock.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
   uploadMock.mockResolvedValue({ error: null });
   removeMock.mockResolvedValue({ error: null });
-  insertMock.mockResolvedValue({ error: null });
-  uploadsDeleteEqMock.mockResolvedValue({ error: null });
   normalizeMock.mockImplementation(async (file: File) => ({
     blob: new Blob(["normalized"], { type: "image/jpeg" }),
     mimeType: file.type || "image/jpeg",
     width: 100,
     height: 100,
   }));
-  rpcMock.mockResolvedValue({ data: "post-new", error: null });
+  // Only the create RPC answers with a post id; staging/discard answer ok.
+  rpcMock.mockImplementation(async (name: string) =>
+    CREATE_RPCS.includes(name) ? { data: "post-new", error: null } : { error: null });
 });
 
 describe("publishReportWithPhotos", () => {
@@ -160,8 +136,8 @@ describe("publishReportWithPhotos", () => {
 
     expect(id).toBe("post-new");
     expect(uploadMock).toHaveBeenCalledTimes(3);
-    expect(insertMock).toHaveBeenCalledTimes(3);
-    const stagedIds = insertMock.mock.calls.map((call) => (call[0] as { id: string }).id);
+    expect(stageCalls()).toHaveLength(3);
+    const stagedIds = stageCalls().map(([, args]) => (args as { p_id: string }).p_id);
     expect(rpcMock).toHaveBeenCalledWith(
       "findback_create_post_client_multi",
       expect.objectContaining({ p_attachment_keys: stagedIds }),
@@ -200,39 +176,48 @@ describe("publishReportWithPhotos", () => {
     ).rejects.toThrow("network blew up mid-batch");
 
     // No ghost post: the create RPC is never reached when staging is incomplete.
-    expect(rpcMock).not.toHaveBeenCalled();
-    // Exactly the two staged objects of the aborted attempt are cleaned up.
+    expect(createCalls()).toHaveLength(0);
+    // Exactly the two staged objects of the aborted attempt are cleaned up, and
+    // each discard names the row the server actually staged.
     expect(removeMock).toHaveBeenCalledTimes(2);
-    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(2);
-    const stagedIds = insertMock.mock.calls.map((call) => (call[0] as { id: string }).id);
+    expect(discardCalls()).toHaveLength(2);
+    const stagedIds = stageCalls().map(([, args]) => (args as { p_id: string }).p_id);
     expect(stagedIds).toHaveLength(2);
+    expect(discardCalls().map(([, args]) => (args as { p_id: string }).p_id).sort()).toEqual([...stagedIds].sort());
   });
 
   it("a create failure after full staging leaves no ghost post staged (all cleaned)", async () => {
-    rpcMock.mockResolvedValue({ data: null, error: { message: "create blew up", code: "400" } });
+    rpcMock.mockImplementation(async (name: string) =>
+      CREATE_RPCS.includes(name)
+        ? { data: null, error: { message: "create blew up", code: "400" } }
+        : { error: null });
 
     await expect(publishReportWithPhotos(input, [photo("p1.jpg"), photo("p2.jpg")])).rejects.toThrow(
       "create blew up",
     );
 
-    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(createCalls()).toHaveLength(1);
     expect(removeMock).toHaveBeenCalledTimes(2);
-    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(2);
+    expect(discardCalls()).toHaveLength(2);
   });
 
   it("a lost create response preserves potentially committed photo bytes for reconciliation", async () => {
-    rpcMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    rpcMock.mockImplementation(async (name: string) => {
+      if (CREATE_RPCS.includes(name)) throw new TypeError("Failed to fetch");
+      return { error: null };
+    });
 
     await expect(publishReportWithPhotos(input, [photo("p1.jpg"), photo("p2.jpg")]))
       .rejects.toThrow(/publication.*uncertain/i);
 
-    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(createCalls()).toHaveLength(1);
     expect(removeMock).not.toHaveBeenCalled();
-    expect(uploadsDeleteEqMock).not.toHaveBeenCalled();
+    expect(discardCalls()).toHaveLength(0);
   });
 
   it("a missing post id does not confirm publication or delete staged media", async () => {
-    rpcMock.mockResolvedValue({ data: null, error: null });
+    rpcMock.mockImplementation(async (name: string) =>
+      CREATE_RPCS.includes(name) ? { data: null, error: null } : { error: null });
 
     await expect(publishReportWithPhotos(input, [photo("p1.jpg")]))
       .rejects.toThrow(/publication.*uncertain/i);
@@ -286,12 +271,12 @@ describe("uploadPhotos", () => {
 
     const stored = await uploadPhotos([photo("portrait.jpg"), photo("landscape.jpg")]);
 
-    const rows = insertMock.mock.calls.map(
-      (call) => call[0] as { file_name: string; width?: number; height?: number },
+    const rows = stageCalls().map(
+      ([, args]) => args as { p_file_name: string; p_width?: number; p_height?: number },
     );
     expect(rows).toEqual([
-      expect.objectContaining({ file_name: "portrait.jpg", width: 1080, height: 1440 }),
-      expect.objectContaining({ file_name: "landscape.jpg", width: 1600, height: 900 }),
+      expect.objectContaining({ p_file_name: "portrait.jpg", p_width: 1080, p_height: 1440 }),
+      expect.objectContaining({ p_file_name: "landscape.jpg", p_width: 1600, p_height: 900 }),
     ]);
     expect(stored.map((s) => [s.width, s.height])).toEqual([
       [1080, 1440],
@@ -312,7 +297,7 @@ describe("uploadPhotos", () => {
 
     await expect(uploadPhotos([photo("early.jpg"), photo("late.jpg")])).rejects.toThrow("late failure");
     expect(removeMock).toHaveBeenCalledTimes(1);
-    expect(uploadsDeleteEqMock).toHaveBeenCalledTimes(1);
+    expect(discardCalls()).toHaveLength(1);
   });
 });
 

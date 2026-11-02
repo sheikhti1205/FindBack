@@ -30,16 +30,20 @@ interface CachedMediaUrl {
 const cache = new Map<string, CachedMediaUrl>();
 const inFlight = new Map<string, Promise<string | null>>();
 
+/** A report-media key is exactly what the staging RPC derives: `<uid>/<file>`. */
+const PRIVATE_KEY_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/]+$/i;
+
 /**
- * True when the value is a Storage key rather than a ready-to-use URL. Legacy
- * rows keep absolute `https://` URLs, provider GIFs are `https://`, local
- * previews are `blob:` and fixtures use their own scheme — all of those are
- * returned unchanged.
+ * True when the value is a private Storage key rather than a ready-to-use URL.
+ *
+ * Legacy rows keep absolute `https://` URLs, provider GIFs are `https://`, local
+ * previews are `blob:`, fixtures use their own scheme, and an older row may
+ * still hold a root-relative path — all of those are returned unchanged. Only
+ * the exact `<uuid>/<file>` shape the server derives is signed, so an app-local
+ * path can never be mistaken for a bucket object.
  */
 export function isPrivateMediaKey(value: string | null | undefined): value is string {
-  return typeof value === "string"
-    && value.length > 0
-    && !/^(?:https?:|blob:|data:|fixture:)/i.test(value);
+  return typeof value === "string" && PRIVATE_KEY_RE.test(value);
 }
 
 /** Synchronous cache read: a URL only when one is already fresh. */

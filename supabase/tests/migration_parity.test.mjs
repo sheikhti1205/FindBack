@@ -775,6 +775,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_mark_notifications_read_client",
   "findback_mark_notifications_unread_client",
   "findback_mark_recovered",
+  "findback_match_candidates_client",
   "findback_match_candidates_v2",
   "findback_moderation_queue",
   "findback_moderation_target",

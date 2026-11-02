@@ -23,7 +23,7 @@ import {
 
 // The module keeps a process-wide cache; a distinct key per test keeps the
 // cases independent without exposing a reset hook in production code.
-const key = (suffix: string) => `u1/${suffix}.jpg`;
+const key = (suffix: string) => `11111111-1111-4111-8111-111111111111/${suffix}.jpg`;
 
 beforeEach(() => {
   createSignedUrlMock.mockClear();
@@ -42,6 +42,10 @@ describe("private report media addresses", () => {
     expect(isPrivateMediaKey(key("a"))).toBe(true);
     expect(isPrivateMediaKey("https://cdn.test/legacy.jpg")).toBe(false);
     expect(isPrivateMediaKey("blob:local-preview")).toBe(false);
+    // An app-local path or a bare filename is not a bucket object: signing it
+    // would replace a working legacy image with a broken one.
+    expect(isPrivateMediaKey("/wallet.jpg")).toBe(false);
+    expect(isPrivateMediaKey("assets/wallet.jpg")).toBe(false);
     expect(isPrivateMediaKey("data:image/png;base64,AA")).toBe(false);
     expect(isPrivateMediaKey("fixture:assets/x.jpg")).toBe(false);
     expect(isPrivateMediaKey("")).toBe(false);

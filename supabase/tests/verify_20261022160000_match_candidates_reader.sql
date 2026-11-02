@@ -6,13 +6,17 @@
 -- Hosted-only readback is in readback_20261022160000_match_candidates_hosted.sql.
 
 -- 1. Catalog: exact singleton signature, posture, ACL and OUT columns.
-select 'P1 singleton signature, invoker, stable, locked path' as probe
+-- P11 turned this reader DEFINER: it projects `reactions`/`ratings`, which the
+-- client may no longer read directly. Candidates still come from
+-- findback_visible_posts with the same filters, so the contract below is
+-- unchanged apart from the security model.
+select 'P1 singleton signature, definer, stable, locked path' as probe
 where (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
        where n.nspname='public' and p.proname='findback_match_candidates_client') = 1
 and exists(select 1 from pg_proc p
  where p.oid=to_regprocedure('public.findback_match_candidates_client(text,integer)')
  and pg_get_function_identity_arguments(p.oid)='p_target_id text, p_limit integer'
- and p.pronargdefaults=1 and not p.prosecdef and p.provolatile='s'
+ and p.pronargdefaults=1 and p.prosecdef and p.provolatile='s'
  and p.proconfig @> array['search_path=public, pg_temp']);
 
 select 'P2 authenticated-only ACL' as probe
