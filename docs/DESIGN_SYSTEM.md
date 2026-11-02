@@ -78,3 +78,19 @@ phone, landscape, tablet, 1024/1280/1440 desktop, themes, reduced motion and rel
 loading/empty/error/success/input states. Unit tests do not replace capture review.
 These fixtures do not certify real accounts, Android touch/IME/native plugins,
 screen readers, Sentry ingestion or the owner's phone-photo matching corpus.
+## First-run onboarding
+
+`screens/Onboarding.tsx` owns the user-paced four-scene editorial introduction:
+Lost / Found / Search and likely matches / Control. It uses the current
+`BrandMark`, app typography and semantic surface/text/focus tokens. Portrait is
+type-led; landscape, tablet/unfolded and desktop use independent headline and
+support regions. Short windows and enlarged text grow into natural scroll rather
+than clipping content or pinning controls over it.
+
+No autoplay, illustrated explainer cards, mock Home, ambient infinite animation,
+or prototype toolbar ships. Masked headline/support transitions and resisted
+horizontal dragging reuse `uiMotion`; reduced motion removes travel and keeps
+native buttons. One visible heading, announced scene/progress, visible focus and
+arrow-key paging accompany Skip/Back/Next/Get started. Native button Enter must
+advance only once. The existing onboarding service (completion version 2) and
+guard still own first-run/replay/pending-link behavior and actual app routing.

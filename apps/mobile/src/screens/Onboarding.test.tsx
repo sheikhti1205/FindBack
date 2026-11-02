@@ -33,22 +33,24 @@ function goToLastPage() {
 }
 
 describe("Onboarding first run", () => {
-  it("shares the truthful recovery example and explains discovery, contact and handover", () => {
+  it("uses the approved editorial narrative without demo cards or illustrations", () => {
     render(<Onboarding />);
-    expect(screen.getByRole("figure", { name: /example recovery journey/i })).toBeTruthy();
-    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
-    expect(screen.getByRole("list", { name: /report to recovery/i }).textContent).toMatch(/Report.*Discover.*Match.*Contact.*Recover/s);
+    expect(screen.getByRole("heading", { level: 1, name: "Lost something?" })).toBeTruthy();
+    expect(screen.queryByRole("figure")).toBeNull();
+    expect(document.querySelector("[data-onboarding-art]")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
-    expect(screen.getByText(/browse nearby reports.*possible matches/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Search reports. Follow likely matches." })).toBeTruthy();
+    expect(screen.getByText(/suggestion.*not a guarantee/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
-    expect(screen.getByText(/contact.*handover.*recovered/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "You stay in control." })).toBeTruthy();
+    expect(screen.getByText(/message requests, blocking and location choices/i)).toBeTruthy();
   });
   it("fresh launch shows the first page with progress announced", () => {
     render(<Onboarding />);
-    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Lost something?" })).toBeTruthy();
     expect(
-      screen.getByText(/report a lost or found item and keep every update in one place\./i),
+      screen.getByText(/create a report with real photos, useful details/i),
     ).toBeTruthy();
     const progress = screen.getByRole("progressbar", { name: /onboarding progress/i });
     expect(progress.textContent).toMatch(/1 of 4/);
@@ -60,24 +62,24 @@ describe("Onboarding first run", () => {
   it("Next walks through all four exact pages; Back returns", () => {
     render(<Onboarding />);
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
-    expect(screen.getByRole("heading", { level: 1, name: /report in seconds\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Found something?" })).toBeTruthy();
     expect(
-      screen.getByText(/you stay in control before anything is posted\./i),
+      screen.getByText(/keep enough identifying detail private/i),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     expect(
-      screen.getByRole("heading", { level: 1, name: /useful matches\. privacy first\./i }),
+      screen.getByRole("heading", { level: 1, name: "Search reports. Follow likely matches." }),
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
-    expect(screen.getByRole("heading", { level: 1, name: /report in seconds\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Found something?" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
-    expect(screen.getByRole("heading", { level: 1, name: /bring it back, together\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "You stay in control." })).toBeTruthy();
     expect(
-      screen.getByText(/contact each other.*safe handover.*recovered/i),
+      screen.getByText(/agree a safe handover/i),
     ).toBeTruthy();
   });
 
@@ -130,11 +132,11 @@ describe("Onboarding first run", () => {
     expect(document.body.textContent).not.toMatch(/\b\d+\s*percent\b/i);
   });
 
-  it("decorative illustrations stay hidden from assistive tech", () => {
+  it("uses the canonical decorative BrandMark beside the wordmark", () => {
     render(<Onboarding initialPage={1} />);
-    const art = document.querySelector("[data-onboarding-art]");
-    expect(art).toBeTruthy();
-    expect(art?.getAttribute("aria-hidden")).toBe("true");
+    const mark = document.querySelector("img");
+    expect(mark?.getAttribute("src")).toMatch(/brand-tile-/);
+    expect(mark?.getAttribute("alt")).toBe("");
   });
 
   it("full keyboard operability: native buttons plus arrow-key paging", () => {
@@ -147,10 +149,10 @@ describe("Onboarding first run", () => {
     next.focus();
     expect(document.activeElement).toBe(next);
     fireEvent.keyDown(document.activeElement as Element, { key: "ArrowRight" });
-    expect(screen.getByRole("heading", { level: 1, name: /report in seconds\./i })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Found something?" })).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole("region", { name: /onboarding/i }), { key: "ArrowLeft" });
-    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Lost something?" })).toBeTruthy();
   });
 
   it("does not overflow horizontally at Extra-large text", () => {
@@ -160,13 +162,13 @@ describe("Onboarding first run", () => {
     expect(root.className).toMatch(/fb-onboarding/);
   });
 
-  it("reduced motion renders the static illustration variant without travel", () => {
+  it("reduced motion keeps the same narrative without travel", () => {
     reduceMotion = true;
     render(<Onboarding />);
     const root = screen.getByRole("region", { name: /onboarding/i });
     expect(root.getAttribute("data-motion")).toBe("static");
-    const art = screen.getByRole("figure", { name: /example recovery journey/i });
-    expect(art?.getAttribute("data-motion")).toBe("static");
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(document.querySelector("[data-onboarding-art]")).toBeNull();
   });
 
   it("full motion marks the animated variant", () => {
@@ -174,6 +176,38 @@ describe("Onboarding first run", () => {
     expect(screen.getByRole("region", { name: /onboarding/i }).getAttribute("data-motion")).toBe(
       "full",
     );
+  });
+
+  it("never advances on a timer or completes just by visiting the last page", () => {
+    vi.useFakeTimers();
+    try {
+      const finish = vi.fn();
+      render(<Onboarding onComplete={finish} />);
+      vi.advanceTimersByTime(60_000);
+      expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+      expect(finish).not.toHaveBeenCalled();
+      expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not double-advance native buttons on Enter and ignores modified shortcuts", () => {
+    render(<Onboarding />);
+    const next = screen.getByRole("button", { name: /^next$/i });
+    fireEvent.keyDown(next, { key: "Enter" });
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    fireEvent.click(next);
+    expect(screen.getByRole("heading", { name: "Found something?" })).toBeTruthy();
+    fireEvent.keyDown(next, { key: "ArrowRight", ctrlKey: true });
+    expect(screen.getByRole("heading", { name: "Found something?" })).toBeTruthy();
+  });
+
+  it("announces scene changes and completes at most once", () => {
+    const finish = vi.fn();
+    render(<Onboarding initialPage={3} onComplete={finish} />);
+    expect(screen.getByRole("status").textContent).toMatch(/4 of 4.*You stay in control/);
+    const button = screen.getByRole("button", { name: /get started/i });
+    fireEvent.click(button); fireEvent.click(button);
+    expect(finish).toHaveBeenCalledTimes(1);
   });
 });
 

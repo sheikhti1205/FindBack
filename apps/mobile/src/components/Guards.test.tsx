@@ -136,7 +136,7 @@ describe("GuestOnly", () => {
 describe("OnboardingRoute", () => {
   it("renders onboarding for a fresh guest and finishes to /auth", () => {
     renderGuard("/guarded", <OnboardingRoute />);
-    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Lost something?" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^skip$/i }));
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe(String(ONBOARDING_VERSION));
   });
@@ -169,7 +169,7 @@ describe("OnboardingRoute", () => {
     auth.user = { id: "u1" };
     localStorage.setItem(ONBOARDING_STORAGE_KEY, String(ONBOARDING_VERSION));
     renderGuard("/guarded?replay=1", <OnboardingRoute />);
-    expect(screen.getByRole("heading", { level: 1, name: "Report it. Match it. Return it." })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Lost something?" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
