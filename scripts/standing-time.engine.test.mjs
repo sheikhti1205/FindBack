@@ -73,21 +73,21 @@ test("daily limit uses the UTC day after the actual actor-lock wait", { timeout:
               as $$select value from ${schema}.clock$$;
             alter function ${signature} set search_path=${schema},public,pg_temp,pg_catalog;
             commit;`);
-          const insert = id => table === "item_posts"
-            ? `insert into public.item_posts(id,user_id,type,title,description,category,status,event_date,created_at,updated_at)
-                values('${id}','${uid}','LOST','New day','Synthetic','Other','OPEN','2040-01-02','2040-01-02T00:01:00Z','2040-01-02T00:01:00Z');`
-            : `insert into public.comments(id,user_id,post_id,body,created_at,updated_at)
-                values('${id}','${uid}','${prefix}_target','New day','2040-01-02T00:01:00Z','2040-01-02T00:01:00Z');`;
+          // P11 closes raw writes. Exercise the same real actor-lock wait via
+          // canonical mutation RPCs; generated IDs are deliberately server-owned.
+          const insert = () => table === "item_posts"
+            ? `select public.findback_create_post_client('LOST','New day','Synthetic rollover fixture','Other','2026-10-24');`
+            : `select id from public.findback_add_comment_client('${prefix}_target','New day');`;
           const actor = `set role authenticated; select set_config('request.jwt.claim.sub','${uid}',false);`;
           // Same-day exhausted limit must still refuse before the clock transition.
-          const refused = await session(actor + insert(`${prefix}_refused`)).done;
+          const refused = await session(actor + insert()).done;
           assert.equal(refused.code, 3);
           assert.match(refused.err, /POST_LIMIT_REACHED/);
           holder = session(`begin; select pg_advisory_xact_lock(hashtextextended('findback_public_admission:${uid}',0));
             select 'HOLDER:'||pg_backend_pid();\n`, true);
           await waitFor(() => /HOLDER:\d+/.test(holder.out), "holder acquired actor lock");
           const holderPid = Number(holder.out.match(/HOLDER:(\d+)/)[1]);
-          caller = session(`${actor} select 'CALLER:'||pg_backend_pid(); ${insert(`${prefix}_new`)}`);
+          caller = session(`${actor} select 'CALLER:'||pg_backend_pid(); ${insert()}`);
           await waitFor(() => /CALLER:\d+/.test(caller.out), "caller backend identity");
           const callerPid = Number(caller.out.match(/CALLER:(\d+)/)[1]);
           await waitFor(() => query(`select ${holderPid}=any(pg_blocking_pids(${callerPid}));`) === "t", "exact actor-lock wait");
@@ -96,7 +96,7 @@ test("daily limit uses the UTC day after the actual actor-lock wait", { timeout:
           assert.equal((await holder.done).code, 0);
           const written = await caller.done;
           assert.equal(written.code, 0, `post-midnight INSERT must succeed: ${written.err}`);
-          assert.equal(query(`select count(*) from public.${table} where id='${prefix}_new';`), "1");
+          assert.equal(query(`select count(*) from public.${table} where user_id='${uid}' and ${table === "item_posts" ? "title" : "body"}='New day';`), "1");
           assert.equal(query(`select count(*) from public.${table} where id like '${prefix}_old_%';`), "3");
           assert.equal(query(`select count(*) from public.public_action_admissions where user_id='${uid}';`), probation ? "1" : "0");
         } finally {
@@ -105,8 +105,8 @@ test("daily limit uses the UTC day after the actual actor-lock wait", { timeout:
           query(`begin;
             alter function ${signature} set search_path=public,pg_temp;
             drop schema if exists ${schema} cascade;
-            delete from public.comments where id like '${prefix}%';
-            delete from public.item_posts where id like '${prefix}%';
+            delete from public.comments where id like '${prefix}%' or user_id='${uid}';
+            delete from public.item_posts where id like '${prefix}%' or user_id='${uid}';
             delete from public.users where id in('${uid}','${targetOwner}');
             commit;`);
           assert.equal(query(`select md5(pg_get_functiondef('${signature}'::regprocedure));`), before, "test metadata must be restored");

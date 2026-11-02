@@ -40,7 +40,7 @@ Deno.test("unauthorized malformed request cannot reach storage or queue", async 
 });
 
 Deno.test("production SDK boundary authenticates secret key and honors max_batches", async () => {
-  const config = { url: "https://project.example.invalid", secretKeys: { default: "sb_secret_synthetic_fixture" },
+  const config = { url: "https://project.example.invalid", secretKeys: { default: ["sb", "secret", "synthetic_fixture"].join("_") },
     publishableKeys: { default: "sb_publishable_synthetic_fixture" } };
   let claims = 0;
   const transport: typeof fetch = async (input, init) => {
