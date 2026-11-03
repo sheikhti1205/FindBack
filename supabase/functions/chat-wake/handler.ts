@@ -28,6 +28,7 @@
  */
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import { drainChatWakes, type ChatClaim } from "../_shared/chatWake.ts";
+import { corsJson, preflight } from "../_shared/cors.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -54,11 +55,14 @@ type Database = {
   };
 };
 
-const respond = (body: object, status: number) =>
-  Response.json(body, { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+const respond = (body: object, status: number) => corsJson(body, status);
 
 export function createChatWakeEndpoint(env?: Partial<SupabaseEnv>) {
   return async (request: Request): Promise<Response> => {
+    // A browser preflight must be answered from the shared CORS contract: a 405
+    // here makes the browser drop the POST that would have woken the recipient.
+    const options = preflight(request);
+    if (options) return options;
     if (request.method !== "POST") return respond({ error: "Method not allowed" }, 405);
 
     let messageId: string | null = null;

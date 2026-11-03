@@ -1,6 +1,7 @@
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import { MAX_BYTES, uploadChatMedia, type GatewayPorts } from "../_shared/chatMediaGateway.ts";
 import { downloadChatMedia } from "../_shared/chatMediaDownload.ts";
+import { corsHeaders, corsJson, preflight } from "../_shared/cors.js";
 
 type Database = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: {
   findback_reserve_chat_media: { Args: { p_account_id: string; p_message_id: string; p_attachment_id: string }; Returns: string };
@@ -11,12 +12,8 @@ type Database = { public: { Tables: Record<string, never>; Views: Record<string,
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // Bearer-token API, never cookie credentials. The outer endpoint owns CORS so
 // early validation and normalized auth/transport failures carry it too.
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-message-id, x-attachment-id, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
-const respond=(body: object,status: number) => Response.json(body,{status,headers:{...CORS_HEADERS,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
+const CORS_HEADERS = corsHeaders();
+const respond=(body: object,status: number) => corsJson(body,status);
 async function bodyBytes(request: Request, signal: AbortSignal): Promise<Uint8Array> {
   if (!request.body) throw Error(); const reader=request.body.getReader(); const chunks: Uint8Array[]=[]; let total=0;
   let onAbort=()=>{};
@@ -29,7 +26,7 @@ async function bodyBytes(request: Request, signal: AbortSignal): Promise<Uint8Ar
 export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: typeof fetch = fetch) {
   let active=false;
   return async (request: Request): Promise<Response> => {
-    if (request.method==="OPTIONS") return new Response(null,{status:204,headers:{...CORS_HEADERS,"Cache-Control":"no-store"}});
+    const options=preflight(request); if (options) return options;
     if (request.method!=="POST" && request.method!=="GET") return respond({error:"Method not allowed"},405);
     const messageId=request.headers.get("x-message-id"), attachmentId=request.headers.get("x-attachment-id"), mime=request.headers.get("content-type")?.trim().toLowerCase();
     if (!attachmentId || !UUID.test(attachmentId) || (request.method==="POST" && (!messageId || !UUID.test(messageId)))) return respond({error:"Invalid request"},400);

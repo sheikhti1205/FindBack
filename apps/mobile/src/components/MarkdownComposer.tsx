@@ -127,7 +127,7 @@ export function MarkdownComposer({
             tabIndex={tab === "write" ? 0 : -1}
             onClick={() => setTab("write")}
             className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
-              tab === "write" ? "bg-on-surface text-surface" : "text-on-surface-variant"
+              tab === "write" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant"
             }`}
           >
             Write
@@ -141,7 +141,7 @@ export function MarkdownComposer({
             tabIndex={tab === "preview" ? 0 : -1}
             onClick={() => setTab("preview")}
             className={`min-h-[48px] rounded-full px-4 text-xs font-medium ${
-              tab === "preview" ? "bg-on-surface text-surface" : "text-on-surface-variant"
+              tab === "preview" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant"
             }`}
           >
             Preview

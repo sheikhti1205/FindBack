@@ -424,16 +424,23 @@ html.fb-reduce-motion .fb-morph-bar {
   min-width: 44px;
   min-height: 48px;
   padding: 0.5rem 0.25rem;
-  border: 1px solid var(--fb-outline-variant);
+  border: 0;
   border-radius: var(--radius-m3-sm);
   background: var(--fb-surface);
-  color: var(--fb-on-surface);
+  /* Quiet action language: the primary content stays stronger than the row. */
+  color: var(--fb-on-surface-variant);
   font-size: 0.75rem;
   font-weight: 500;
   transition: background-color 150ms;
 }
 .fb-report-action:hover, .fb-report-action:active {
   background: var(--fb-surface-container);
+}
+/* Selected state is owned here, not by utility-layer precedence (unlayered
+   plain CSS wins over @layer utilities), so the user's accent is what shows. */
+.fb-report-action[aria-pressed="true"] {
+  background: var(--fb-primary-container);
+  color: var(--fb-on-primary-container);
 }
 .fb-report-action:disabled { cursor: wait; opacity: 0.6; }
 @media (min-width: 480px) {

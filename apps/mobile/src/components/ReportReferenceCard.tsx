@@ -27,7 +27,7 @@ import { useMediaUrl } from "../services/media/privateMedia";
 export const REPORT_UNAVAILABLE: ReactNode = (
   <span
     data-testid="report-unavailable"
-    className="inline-flex items-center rounded-m3-sm border border-outline-variant px-2 py-1 align-middle text-xs text-on-surface-variant"
+    className="inline-flex items-center rounded-m3-sm bg-surface-container px-2 py-1 align-middle text-xs text-on-surface-variant"
   >
     Report unavailable
   </span>
@@ -52,7 +52,7 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
     return (
       <span
         data-testid="report-reference-error"
-        className="inline-flex flex-wrap items-center gap-1 rounded-m3-sm border border-outline-variant px-2 py-1 align-middle text-xs text-on-surface-variant"
+        className="inline-flex flex-wrap items-center gap-1 rounded-m3-sm bg-surface-container px-2 py-1 align-middle text-xs text-on-surface-variant"
       >
         <span>Couldn&apos;t load this report.</span>
         <button
@@ -70,7 +70,7 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
     return (
       <span
         data-testid="report-reference-loading"
-        className="inline-flex max-w-full items-center gap-2 rounded-m3-sm border border-outline-variant p-1.5 align-middle"
+        className="inline-flex max-w-full items-center gap-2 rounded-m3-sm bg-surface-container p-1.5 align-middle"
       >
         <span aria-hidden className="h-12 w-12 shrink-0 animate-pulse rounded-m3-sm bg-surface-container" />
         <span aria-hidden className="flex min-w-0 flex-col gap-1">
@@ -87,7 +87,7 @@ export function ReportReferenceCard({ postId }: { postId: string | null }) {
     <PostLink
       to={`/posts/${post.id}`}
       data-testid="report-reference"
-      className="inline-flex max-w-full items-center gap-2 rounded-m3-sm border border-outline-variant p-1.5 align-middle hover:border-outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+      className="inline-flex max-w-full items-center gap-2 rounded-m3-sm bg-surface-container p-1.5 align-middle hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
     >
       <span className="h-12 w-12 shrink-0 overflow-hidden rounded-m3-sm bg-surface-container">
         {cover ? (

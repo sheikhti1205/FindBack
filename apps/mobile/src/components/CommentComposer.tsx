@@ -804,7 +804,7 @@ export function CommentComposer({
                   onClick={() => setGifTab(tab)}
                   className={`flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors ${
                     gifTab === tab
-                      ? "bg-on-surface text-surface"
+                      ? "bg-primary-container text-on-primary-container"
                       : "text-on-surface-variant hover:bg-surface-container"
                   }`}
                 >

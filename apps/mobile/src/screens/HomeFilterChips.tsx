@@ -76,7 +76,7 @@ export function HomeFilterChips({
               disabled
                 ? "cursor-not-allowed opacity-50"
                 : selected
-                  ? "border-transparent text-surface"
+                  ? "border-transparent text-on-primary-container"
                   : "border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-container"
             }`}
           >
@@ -86,7 +86,7 @@ export function HomeFilterChips({
                 data-testid="home-chips-selection"
                 aria-hidden="true"
                 transition={motionSprings.snappy}
-                className="absolute inset-0 rounded-full bg-on-surface"
+                className="absolute inset-0 rounded-full bg-primary-container"
               />
             )}
             <span className="relative z-[1] flex items-center gap-1.5">
@@ -172,7 +172,7 @@ export function HomeScopeChips({
             disabled
               ? "cursor-not-allowed opacity-50"
               : chip.pressed
-                ? "border-transparent bg-on-surface text-surface"
+                ? "border-transparent bg-primary-container text-on-primary-container"
                 : "border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-container"
           }`}
         >

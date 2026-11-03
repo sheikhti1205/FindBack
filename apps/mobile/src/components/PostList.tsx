@@ -209,7 +209,7 @@ export function PostList({
               <button
                 type="button"
                 onClick={() => void onRetry()}
-                className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
+                className="min-h-[48px] rounded-m3-sm bg-surface-container px-4 text-sm font-medium text-on-surface"
               >
                 Try again
               </button>

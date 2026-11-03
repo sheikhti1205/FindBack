@@ -32,10 +32,29 @@ interface Owner {
   session: Session;
   generation: number;
   refreshing: Promise<void> | null;
-  refreshAgain: boolean;
+  /**
+   * A hint that arrived while a pass was already running. Full outranks fast:
+   * a relationship/authority pass must never be downgraded by a message hint.
+   */
+  pendingRefresh: RefreshMode | null;
+  /** REGISTER has completed for this owner; SYNC is only valid after it. */
+  started: boolean;
   authorityVersion: number;
   detach: () => void;
 }
+
+/**
+ * Foreground message traffic and relationship/authority recovery are different
+ * costs (owner handoff 2026-11-03):
+ *
+ *   fast — flush the pending outbox, drain the newest authorized mailbox page
+ *          (persist + ACK), reload local summaries. No VIEWS scan, no full
+ *          history drain, no media sweep: those are what made an ordinary
+ *          message wait on unrelated reconciliation.
+ *   full — startup, reconnect/focus, relationship or block changes, explicit
+ *          Sync, media sends and error recovery. Everything the old path did.
+ */
+type RefreshMode = "fast" | "full";
 
 let snapshot = EMPTY_MESSAGING_SNAPSHOT;
 let generation = 0;
@@ -117,7 +136,7 @@ function closeOwner(owner: Owner): Promise<void> {
  * ever interpreted as a message, relationship change, or persistence receipt. */
 function attachResume(owner: Owner): () => void {
   if (typeof window === "undefined") return () => undefined;
-  const resume = () => { void refreshOwner(owner); };
+  const resume = () => { void requestRefresh(owner, "full"); };
   const visible = () => { if (document.visibilityState === "visible") resume(); };
   const offline = () => {
     if (current === owner) {
@@ -127,10 +146,10 @@ function attachResume(owner: Owner): () => void {
   };
   const unsubscribeChat = onRealtime("chat:invalidate", (payload) => {
     if (current !== owner || owner.generation !== generation || payload.accountId !== owner.handle.scope.accountId) return;
-    // A hint invalidates live receipt authority immediately; the canonical
-    // owner refetches mailbox, erasure state and relationship projections.
-    publish({ ...snapshot, currentProjections: null });
-    void refreshOwner(owner);
+    // The payload is a content-free hint, never a message or receipt. The
+    // fast path settles the new message and the sender's own echo; unrelated
+    // projections and media work stay with the full pass.
+    void requestRefresh(owner, "fast");
   });
   window.addEventListener("online", resume);
   window.addEventListener("focus", resume);
@@ -145,46 +164,69 @@ function attachResume(owner: Owner): () => void {
   };
 }
 
-function refreshOwner(owner: Owner): Promise<void> {
-  invalidateAuthority(owner);
+function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
+  // Full is the only mode that may drop live receipt authority; it refetches it.
+  if (mode === "full") invalidateAuthority(owner);
   if (owner.refreshing) {
     // A send/wake can arrive after the running flush already exhausted its
-    // outbox. Coalesce one follow-up instead of dropping that invalidation.
-    owner.refreshAgain = true;
+    // outbox. Coalesce one follow-up instead of dropping that invalidation, and
+    // never let a fast hint downgrade a queued full pass.
+    owner.pendingRefresh = mode === "full" || owner.pendingRefresh === "full" ? "full" : "fast";
     return owner.refreshing;
   }
+  const run = mode === "full" || !owner.started ? "full" : "fast";
   const work = async () => {
     const authorityVersion = owner.authorityVersion;
     try {
       assertOwner(owner);
-      publish({ ...snapshot, currentProjections: null });
+      if (run === "full") publish({ ...snapshot, currentProjections: null });
       // Registration is idempotent and precedes SEND/SYNC for this installation.
-      await owner.session.start(owner.handle.platform);
-      // Resolve own end/block before considering cached media send eligibility.
-      const projections = await owner.session.refreshConversations();
+      let projections: ConversationProjection[] | null = null;
+      if (run === "full") {
+        await owner.session.start(owner.handle.platform);
+        // Resolve own end/block before considering cached media send eligibility.
+        projections = await owner.session.refreshConversations();
+        // Only a completed full pass earns the fast path: SYNC without current
+        // projections would leave the composer unable to judge eligibility.
+        owner.started = true;
+      }
       let sendFailed = false;
       try { await owner.session.flush(); } catch { sendFailed = true; }
       assertOwner(owner);
-      // Fetch is bounded to 100. Drain ordinary replay rather than treating one
-      // batch as complete history. Limit work per wake; a later resume continues.
-      for (let page = 0; page < 10; page++) {
-        assertOwner(owner);
-        if (await owner.session.sync() < 100) break;
+      if (run === "full") {
+        // Fetch is bounded to 100. Drain ordinary replay rather than treating
+        // one batch as complete history. Limit work per wake.
+        for (let page = 0; page < 10; page++) {
+          assertOwner(owner);
+          if (await owner.session.sync() < 100) break;
+        }
+      } else if (await owner.session.sync() > 0) {
+        // The fast path drains the newest authorized page (persist + ACK). A
+        // full page means more is waiting: ask for one bounded follow-up pass
+        // rather than looping here and holding the hint open.
+        owner.pendingRefresh = owner.pendingRefresh === "full" ? "full" : "fast";
       }
-      // An outgoing failure must never starve independently authorized incoming
-      // deliveries or lost-ACK settlement. Each session pass is bounded.
       let mediaFailed = false;
+      // Uploading already-admitted photos is bounded (10 per pass) and is a no-op
+      // when nothing is queued: a photo must never wait for the next full sweep.
+      // The download/ACK sweep stays with the full pass.
       try { await owner.session.flushMedia(); } catch { mediaFailed = true; }
       assertOwner(owner);
-      try { await owner.session.syncMedia(); } catch { mediaFailed = true; }
+      if (run === "full") {
+        // An outgoing failure must never starve independently authorized incoming
+        // deliveries or lost-ACK settlement. Each session pass is bounded.
+        try { await owner.session.syncMedia(); } catch { mediaFailed = true; }
+      }
       await reload(owner);
       assertOwner(owner);
+      const projectionsNow = run === "full" && projections && authorityVersion === owner.authorityVersion
+        ? Object.fromEntries(projections.map((projection) => [projection.conversationId, projection]))
+        // An end/block/preference change or newer wake during a slow photo must
+        // not restore earlier receipt authority; the coalesced full pass refetches.
+        : run === "full" ? null : snapshot.currentProjections;
       publish({ ...snapshot, status: "ready", error: mediaFailed ? "Some photos could not sync. Try again."
         : sendFailed ? "Some messages could not send. Try again." : null,
-        // An end/block/preference change or newer wake during a slow photo must
-        // not restore earlier receipt authority. The coalesced pass refetches it.
-        currentProjections: authorityVersion === owner.authorityVersion
-          ? Object.fromEntries(projections.map((projection) => [projection.conversationId, projection])) : null });
+        currentProjections: projectionsNow });
     } catch {
       if (current !== owner || owner.generation !== generation) return;
       // Local data remains primary and usable even if the server is unreachable.
@@ -195,10 +237,9 @@ function refreshOwner(owner: Owner): Promise<void> {
   };
   owner.refreshing = work().finally(() => {
     owner.refreshing = null;
-    if (owner.refreshAgain && current === owner && owner.generation === generation) {
-      owner.refreshAgain = false;
-      void refreshOwner(owner);
-    }
+    const pending = owner.pendingRefresh;
+    owner.pendingRefresh = null;
+    if (pending && current === owner && owner.generation === generation) void requestRefresh(owner, pending);
   });
   return owner.refreshing;
 }
@@ -233,11 +274,12 @@ export function setMessagingAccount(accountId: string | null): void {
         ...(Capacitor.isNativePlatform() ? {} : { deviceId: webInstallationId() }) });
       if (ticket !== generation) { await closePlatformHandle(handle); return; }
       const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history),
-        generation: ticket, refreshing: null, refreshAgain: false, authorityVersion: 0, detach: () => undefined };
+        generation: ticket, refreshing: null, pendingRefresh: null, started: false,
+        authorityVersion: 0, detach: () => undefined };
       current = owner;
       owner.detach = attachResume(owner);
       await reload(owner); // Publish local rows before attempting network work.
-      void refreshOwner(owner);
+      void requestRefresh(owner, "full");
     } catch (error) {
       if (current?.generation === ticket) {
         const failed = current;
@@ -277,8 +319,9 @@ export function purgeMessagingAccount(accountId: string): Promise<void> {
 export function invalidateMessaging(accountId: string): void {
   const owner = current;
   if (!owner || desiredAccount !== accountId || owner.handle.scope.accountId !== accountId || owner.generation !== generation) return;
-  publish({ ...snapshot, currentProjections: null });
-  void refreshOwner(owner);
+  // A push is a message-scoped hint: settle messages fast, leave reconciliation
+  // to focus/reconnect/relationship passes.
+  void requestRefresh(owner, "fast");
 }
 
 export function refreshMessaging(accountId: string): Promise<void> {
@@ -288,7 +331,7 @@ export function refreshMessaging(accountId: string): Promise<void> {
     setMessagingAccount(accountId);
     return lifecycle;
   }
-  return refreshOwner(ownerFor(accountId));
+  return requestRefresh(ownerFor(accountId), "full");
 }
 
 export async function readMessagingThread(accountId: string, conversationId: string): Promise<StoredHumanMessage[]> {
@@ -320,7 +363,9 @@ export async function sendMessagingMedia(accountId: string, conversationId: stri
     recipientId: uuid(peerId), body }, metadata, bytes);
   assertOwner(owner);
   await reload(owner);
-  void refreshOwner(owner);
+  // The upload/sync media lanes live on the full pass; a photo must not wait for
+  // a later focus to start uploading.
+  void requestRefresh(owner, "full");
   return id;
 }
 
@@ -349,7 +394,8 @@ export async function sendMessagingText(accountId: string, conversationId: strin
     ...(contextReportId ? { messageType: "TEXT" as const, contextReportId: uuid(contextReportId) } : {}) });
   assertOwner(owner);
   await reload(owner); // Queued send appears without waiting for connectivity.
-  void refreshOwner(owner);
+  // Settle this send and the peer's echo; projections/media stay on full passes.
+  void requestRefresh(owner, "fast");
   return id;
 }
 
@@ -363,7 +409,8 @@ export async function sendMessagingLocation(accountId: string, conversationId: s
     body: "", messageType: "LOCATION", location });
   assertOwner(owner);
   await reload(owner);
-  void refreshOwner(owner);
+  // Static location settles on the canonical echo, not on a media/projection sweep.
+  void requestRefresh(owner, "fast");
   return id;
 }
 
@@ -378,7 +425,7 @@ export async function recoverMessagingText(accountId: string, conversationId: st
     || message.server || message.unsentAt !== undefined || message.messageType || !message.body.trim()
     || queued?.status !== "NEEDS_REVIEW") throw new Error("Message no longer needs review");
   await owner.session.send(message);
-  assertOwner(owner); await reload(owner); void refreshOwner(owner);
+  assertOwner(owner); await reload(owner); void requestRefresh(owner, "fast");
 }
 
 /**
@@ -406,7 +453,7 @@ export async function retryMessagingMessage(accountId: string, conversationId: s
     // resend fails again.
     assertOwner(owner);
     await reload(owner);
-    void refreshOwner(owner);
+    void requestRefresh(owner, "fast");
   }
 }
 
@@ -447,7 +494,7 @@ export async function requestMessagingConversation(accountId: string, peerId: st
   const owner = ownerFor(accountId);
   const id = await owner.session.request(uuid(peerId));
   assertOwner(owner);
-  await refreshOwner(owner);
+  await requestRefresh(owner, "full");
   assertOwner(owner);
   return id;
 }
@@ -463,7 +510,7 @@ export async function setMessagingMuted(accountId: string, conversationId: strin
     await owner.session.setMuted(id, muted);
     assertOwner(owner);
   } finally {
-    if (current === owner && owner.generation === generation) await refreshOwner(owner);
+    if (current === owner && owner.generation === generation) await requestRefresh(owner, "full");
   }
 }
 
@@ -478,7 +525,7 @@ export async function changeMessagingRelationship(accountId: string, conversatio
     } else await owner.session[action](uuid(conversationId));
     assertOwner(owner);
   } finally {
-    if (current === owner && owner.generation === generation) await refreshOwner(owner);
+    if (current === owner && owner.generation === generation) await requestRefresh(owner, "full");
   }
 }
 
@@ -496,7 +543,7 @@ export async function runMessagingAuthorityAction<T>(accountId: string | null, w
   try {
     return await owner.session.fence(work);
   } finally {
-    if (current === owner && owner.generation === generation) void refreshOwner(owner);
+    if (current === owner && owner.generation === generation) void requestRefresh(owner, "full");
   }
 }
 
@@ -513,7 +560,7 @@ export async function removeMessagingMessage(accountId: string, conversationId: 
   await owner.session.removeMessage(uuid(conversationId), uuid(messageId), unsend);
   assertOwner(owner);
   await reload(owner);
-  void refreshOwner(owner);
+  void requestRefresh(owner, "full");
 }
 
 export async function clearMessagingConversation(accountId: string, conversationId: string, throughSequence: number): Promise<void> {
@@ -522,7 +569,7 @@ export async function clearMessagingConversation(accountId: string, conversation
   await owner.session.clearConversation(uuid(conversationId), throughSequence);
   assertOwner(owner);
   await reload(owner);
-  void refreshOwner(owner);
+  void requestRefresh(owner, "full");
 }
 
 export async function setMessagingPreference(accountId: string, key: keyof MessagingPreferences, enabled: boolean): Promise<MessagingPreferences> {
@@ -535,6 +582,6 @@ export async function setMessagingPreference(accountId: string, key: keyof Messa
     assertOwner(owner);
     return await fetchMessagingPreferences(accountId);
   } finally {
-    if (current === owner && owner.generation === generation) void refreshOwner(owner);
+    if (current === owner && owner.generation === generation) void requestRefresh(owner, "full");
   }
 }

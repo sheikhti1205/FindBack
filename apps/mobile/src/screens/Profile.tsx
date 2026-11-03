@@ -79,7 +79,7 @@ export function Profile() {
         </div>
         <Link
           to="/profile/edit"
-          className="col-start-2 flex min-h-[44px] items-center justify-self-start rounded-m3-md border border-outline-variant px-4 text-sm font-medium hover:bg-surface-container sm:col-start-auto"
+          className="col-start-2 flex min-h-[44px] items-center justify-self-start rounded-m3-md bg-surface-container px-4 text-sm font-medium text-on-surface hover:bg-surface-container-high sm:col-start-auto"
         >
           Edit profile
         </Link>

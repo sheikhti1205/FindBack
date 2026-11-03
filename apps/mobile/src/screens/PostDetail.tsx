@@ -1137,7 +1137,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
 
         {/* Owner management sits early, right after summary/actions. */}
         {isOwner && (
-          <section id="detail-manage" tabIndex={-1} aria-label="Manage report" className="scroll-mt-4 rounded-m3-md border border-outline-variant p-3">
+          <section id="detail-manage" tabIndex={-1} aria-label="Manage report" className="scroll-mt-4 rounded-m3-md bg-surface-container-low p-3">
             <p className="mb-1 text-sm">
               Current status: <strong>{statusLabel(post.status)}</strong>
             </p>
@@ -1176,7 +1176,7 @@ export function PostDetail({ contextual = false }: { contextual?: boolean } = {}
           </section>
         )}
 
-        <section aria-label="Community Rating" className="flex flex-col gap-3 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4">
+        <section aria-label="Community Rating" className="flex flex-col gap-3 rounded-m3-lg bg-surface-container-low p-4">
           <h2 className="text-sm font-medium text-on-surface-variant">Community Rating</h2>
           <div aria-live="polite">
             {/* Read-only truth (D1): the client no longer writes a rating, so

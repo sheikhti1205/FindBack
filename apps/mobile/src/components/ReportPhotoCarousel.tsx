@@ -143,7 +143,7 @@ export function ReportPhotoCarousel({
                 data-photo-id={photo.id}
                 data-active={index === activeIndex ? "true" : undefined}
                 role="listitem"
-                className="w-full shrink-0 snap-center"
+                className="w-full shrink-0 snap-center snap-always"
                 variants={{ hidden: { opacity: 0, scale: 0.98 }, visible: { opacity: 1, scale: 1 } }}
                 initial="hidden"
                 animate="visible"

@@ -20,8 +20,8 @@ interface FeedMediaCarouselProps {
    * shared element is disabled (stray cards must never duplicate a layoutId).
    */
   sharedMediaId?: string;
-  /** Open the canonical MediaViewer at the tapped image's index. */
-  onOpenImage: (index: number) => void;
+  /** Open the report this media belongs to (two-stage media navigation). */
+  onOpenReport: () => void;
 }
 
 type ImageState = "loading" | "loaded" | "failed";
@@ -40,15 +40,15 @@ const imageFade = { duration: motionDurations.fast, ease: motionEasings.inOut } 
  * post because the media region is a sibling of the detail link, never inside
  * it. The active index lives here and survives ordinary parent rerenders.
  */
-export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMediaCarouselProps) {
+export function FeedMediaCarousel({ images, sharedMediaId, onOpenReport }: FeedMediaCarouselProps) {
   // Canonical continuous paging: native scroll-snap track; the active index
   // is derived from scroll position and survives ordinary parent rerenders.
   const { trackRef, active, onScroll, goTo, cancelJump } = useSnapPager(images.length);
   const { pressStart, isTap } = usePagerTap();
 
-  const onSlideClick = (index: number, event: MouseEvent<HTMLButtonElement>) => {
+  const onSlideClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (!isTap(event)) return;
-    onOpenImage(index);
+    onOpenReport();
   };
 
   return (
@@ -80,8 +80,8 @@ export function FeedMediaCarousel({ images, sharedMediaId, onOpenImage }: FeedMe
               const t = e.touches[0];
               if (t) pressStart(t.clientX, t.clientY);
             }}
-            onClick={(e) => onSlideClick(index, e)}
-            className="relative block h-full w-full shrink-0 snap-center overflow-hidden p-0"
+            onClick={onSlideClick}
+            className="relative block h-full w-full shrink-0 snap-center snap-always overflow-hidden p-0"
           >
             <CarouselImage
               image={image}

@@ -121,7 +121,7 @@ export function OwnerReportCard({ post }: { post: PostItem }) {
   const lastIndex = lightboxPhotos.length - 1;
 
   const card = (
-    <div className="flex w-full gap-2.5 rounded-[18px] border border-outline-variant bg-surface-container-low p-2.5 transition-colors hover:border-on-surface-variant active:bg-surface-container">
+    <div className="flex w-full gap-2.5 rounded-[18px] bg-surface-container-low p-2.5 transition-colors hover:bg-surface-container active:bg-surface-container-high">
       <div
         data-testid="owner-report-card"
         className="grid min-w-0 flex-1 grid-cols-[minmax(0,34%)_minmax(0,1fr)] gap-3"

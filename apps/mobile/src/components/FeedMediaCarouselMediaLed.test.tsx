@@ -17,14 +17,14 @@ afterEach(cleanup);
 
 describe("W7B-HOME FeedMediaCarousel viewport", () => {
   it("carries the media-led hook class with a stable 4:3 aspect", () => {
-    render(<FeedMediaCarousel images={images(2)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(2)} onOpenReport={() => {}} />);
     const viewport = screen.getByTestId("feed-media-viewport");
     expect(viewport.className).toContain("fb-home-media-viewport");
     expect(viewport.style.aspectRatio.replace(/\s/g, "")).toBe("4/3");
   });
 
   it("keeps the scroll-snap track + dots contracts", () => {
-    render(<FeedMediaCarousel images={images(2)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(2)} onOpenReport={() => {}} />);
     expect(screen.getByTestId("feed-media-track").className).toMatch(/snap-x/);
     expect(screen.getAllByTestId("carousel-dot")).toHaveLength(2);
   });

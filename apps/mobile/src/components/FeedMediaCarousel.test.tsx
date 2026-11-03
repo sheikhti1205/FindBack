@@ -37,7 +37,7 @@ afterEach(cleanup);
 
 describe("FeedMediaCarousel media viewport", () => {
   it("renders a full-width 4:3 horizontal scroll-snap viewport, one slide per image", () => {
-    render(<FeedMediaCarousel images={images(3)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(3)} onOpenReport={() => {}} />);
     const el = track();
     expect(el.className).toMatch(/overflow-x-auto/);
     expect(el.className).toMatch(/snap-x/);
@@ -51,7 +51,7 @@ describe("FeedMediaCarousel media viewport", () => {
   });
 
   it("places the dots inside the media viewport", () => {
-    render(<FeedMediaCarousel images={images(3)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(3)} onOpenReport={() => {}} />);
     const viewport = screen.getByTestId("feed-media-viewport");
     for (const dot of screen.getAllByTestId("carousel-dot")) {
       expect(viewport.contains(dot)).toBe(true);
@@ -61,17 +61,17 @@ describe("FeedMediaCarousel media viewport", () => {
 
 describe("FeedMediaCarousel dots", () => {
   it("shows no dots for a single image", () => {
-    render(<FeedMediaCarousel images={images(1)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(1)} onOpenReport={() => {}} />);
     expect(screen.queryAllByTestId("carousel-dot")).toHaveLength(0);
   });
 
   it("shows one dot per image for a few images", () => {
-    render(<FeedMediaCarousel images={images(3)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(3)} onOpenReport={() => {}} />);
     expect(screen.getAllByTestId("carousel-dot")).toHaveLength(3);
   });
 
   it("renders compact windowed dots when there are many images", () => {
-    render(<FeedMediaCarousel images={images(12)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(12)} onOpenReport={() => {}} />);
     const dots = screen.getAllByTestId("carousel-dot");
     expect(dots.length).toBeGreaterThan(1);
     expect(dots.length).toBeLessThan(12);
@@ -79,7 +79,7 @@ describe("FeedMediaCarousel dots", () => {
   });
 
   it("tracks the active index from the scroll position", () => {
-    render(<FeedMediaCarousel images={images(3)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(3)} onOpenReport={() => {}} />);
     expect(activeDotIndex()).toBe("0");
     scrollToIndex(track(), 1);
     expect(activeDotIndex()).toBe("1");
@@ -89,35 +89,35 @@ describe("FeedMediaCarousel dots", () => {
 
   it("keeps the active index across ordinary rerenders", () => {
     const { rerender } = render(
-      <FeedMediaCarousel images={images(4)} onOpenImage={() => {}} />,
+      <FeedMediaCarousel images={images(4)} onOpenReport={() => {}} />,
     );
     scrollToIndex(track(), 2);
     expect(activeDotIndex()).toBe("2");
     // A parent rerender (new array identity, changed sibling data) must not
     // reset the reader's place in the carousel.
-    rerender(<FeedMediaCarousel images={images(4)} onOpenImage={() => {}} />);
+    rerender(<FeedMediaCarousel images={images(4)} onOpenReport={() => {}} />);
     expect(activeDotIndex()).toBe("2");
   });
 
   it("jumps to a photo when its dot is tapped", () => {
-    render(<FeedMediaCarousel images={images(4)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(4)} onOpenReport={() => {}} />);
     fireEvent.click(screen.getAllByTestId("carousel-dot")[2]!);
     expect(activeDotIndex()).toBe("2");
   });
 });
 
 describe("FeedMediaCarousel tap vs swipe", () => {
-  it("opens the lightbox at the current carousel index on a tap", () => {
+  it("opens the report on a photo tap", () => {
     const onOpen = vi.fn();
-    render(<FeedMediaCarousel images={images(4)} onOpenImage={onOpen} />);
+    render(<FeedMediaCarousel images={images(4)} onOpenReport={onOpen} />);
     scrollToIndex(track(), 2);
     fireEvent.click(screen.getAllByTestId("feed-slide")[2]!);
-    expect(onOpen).toHaveBeenCalledWith(2);
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it("does not open the lightbox while swiping the carousel", () => {
     const onOpen = vi.fn();
-    render(<FeedMediaCarousel images={images(4)} onOpenImage={onOpen} />);
+    render(<FeedMediaCarousel images={images(4)} onOpenReport={onOpen} />);
     const el = track();
     scrollToIndex(el, 1);
     // A drag that starts elsewhere and "clicks" the slide after moving is a
@@ -131,7 +131,7 @@ describe("FeedMediaCarousel tap vs swipe", () => {
   });
 
   it("keeps the media out of the post link so a swipe can never navigate", () => {
-    render(<FeedMediaCarousel images={images(3)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(3)} onOpenReport={() => {}} />);
     const viewport = screen.getByTestId("feed-media-viewport");
     expect(viewport.closest("a")).toBeNull();
     // No anchors anywhere in the media region.
@@ -141,7 +141,7 @@ describe("FeedMediaCarousel tap vs swipe", () => {
 
 describe("FeedMediaCarousel image states", () => {
   it("reserves the frame while loading and falls back with a label on failure", () => {
-    render(<FeedMediaCarousel images={images(1)} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={images(1)} onOpenReport={() => {}} />);
     const frame = screen.getByTestId("post-image-state");
     expect(frame.getAttribute("data-state")).toBe("loading");
     fireEvent.error(screen.getByAltText("Photo 1"));

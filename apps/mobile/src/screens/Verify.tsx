@@ -101,7 +101,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
 
   if (verified) {
     return (
-      <div className="flex items-start gap-3 rounded-m3-md border border-outline-variant bg-surface-container-low p-4">
+      <div className="flex items-start gap-3 rounded-m3-md bg-surface-container-low p-4">
         <CheckCircle2 className="mt-0.5 shrink-0 text-on-surface" size={20} aria-hidden />
         <div>
           <p className="font-medium">{channel === "EMAIL" ? "Email" : "Phone"} verified</p>
@@ -116,7 +116,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: motionDurations.standard, ease: motionEasings.out }}
-      className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4"
+      className="flex flex-col gap-3 rounded-m3-md bg-surface-container-low p-4"
     >
       <p className="text-sm text-on-surface-variant">
         {channel === "PHONE" && !sent ? "Send an SMS code to " : "Enter the code sent to "}<span className="font-medium text-on-surface">{destination}</span>.
@@ -198,11 +198,11 @@ function PendingEmailVerify({ email }: { email: string }) {
       title="Check your email"
       supporting="Enter the code we sent to finish creating your account."
     >
-      <p className="rounded-m3-md border border-outline-variant bg-surface-container-low px-4 py-3 text-sm">
+      <p className="rounded-m3-md bg-surface-container-low px-4 py-3 text-sm">
         <span className="font-medium text-on-surface">{email}</span>
       </p>
 
-      <div className="flex flex-col gap-3 rounded-m3-md border border-outline-variant p-4">
+      <div className="flex flex-col gap-3 rounded-m3-md bg-surface-container-low p-4">
         {message && (
           <p className="text-sm text-on-surface-variant" role="status">
             {message}

@@ -605,7 +605,7 @@ export function Home() {
                 onClick={() => onRadiusChange(km)}
                 className={`min-h-[44px] rounded-full border px-4 text-sm font-medium ${
                   km === nearbyRadiusKm
-                    ? "border-transparent bg-on-surface text-surface"
+                    ? "border-transparent bg-primary-container text-on-primary-container"
                     : "border-outline-variant text-on-surface-variant"
                 }`}
               >

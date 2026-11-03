@@ -50,7 +50,7 @@ function heroActive(): string | null {
 
 describe("FeedMediaCarousel shares the jump guard", () => {
   it("keeps the chosen dot while the jump animates, then follows the scroll", () => {
-    render(<FeedMediaCarousel images={FEED} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={FEED} onOpenReport={() => {}} />);
     const el = track("feed-media-track");
 
     fireEvent.click(screen.getAllByTestId("carousel-dot")[1]!);
@@ -65,7 +65,7 @@ describe("FeedMediaCarousel shares the jump guard", () => {
   });
 
   it("lets a pointer gesture take over an in-flight jump", () => {
-    render(<FeedMediaCarousel images={FEED} onOpenImage={() => {}} />);
+    render(<FeedMediaCarousel images={FEED} onOpenReport={() => {}} />);
     const el = track("feed-media-track");
     fireEvent.click(screen.getAllByTestId("carousel-dot")[2]!);
     scrollFrame(el, 2);

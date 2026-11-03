@@ -22,6 +22,21 @@ export default tseslint.config(
     },
   },
   {
+    // Deno Edge Functions run on Deno, not Node: the Web API globals the
+    // module uses are provided by the runtime, so no-undef must not flag them.
+    files: ["supabase/functions/**/*.js"],
+    languageOptions: {
+      globals: {
+        Request: "readonly",
+        Response: "readonly",
+        crypto: "readonly",
+        Deno: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+  },
+  {
     // Azure Functions v3 entrypoints are intentionally dependency-free CommonJS.
     files: ["apps/share-preview/**/*.cjs"],
     languageOptions: { globals: { module: "readonly", require: "readonly" } },
@@ -34,6 +49,7 @@ export default tseslint.config(
         process: "readonly",
         console: "readonly",
         fetch: "readonly",
+        Request: "readonly",
         Response: "readonly",
         Buffer: "readonly",
         URL: "readonly",

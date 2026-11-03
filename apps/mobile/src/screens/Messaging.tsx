@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router";
-import { Archive, ArrowLeft, BellOff, ChevronDown, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
+import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { PostItem } from "@findback/shared";
 import { copyStaticLocation, isUuid } from "../services/messaging/validation";
@@ -8,6 +8,7 @@ import { subscribeSafetyChanged } from "../services/safetySignals";
 import { onRealtime } from "../services/realtime";
 import { useAuth } from "../auth";
 import { UserAvatar } from "../components/UserAvatar";
+import { ChatIdentity } from "../components/ChatIdentity";
 import { StatusChip } from "../components/StatusChip";
 import { formatEventDate, timeAgo } from "../utils/dates";
 import { SplitView } from "../components/SplitView";
@@ -16,7 +17,6 @@ import { PeopleSearch } from "../components/PeopleSearch";
 import { PeerChatComposer } from "../components/PeerChatComposer";
 import { ChatLocationComposer } from "../components/ChatLocationComposer";
 import { AdaptiveTaskSurface, ConfirmDialog } from "../components/AdaptiveTaskSurface";
-import { UserIdentityTrigger } from "../components/UserIdentityTrigger";
 import { BlockControl } from "../components/BlockControl";
 import { ReportSheet } from "../components/ReportSheet";
 import { MediaViewer, type MediaViewerItem } from "../components/MediaViewer";
@@ -140,21 +140,8 @@ function useLabels(peerIds: string[]) {
   return labels;
 }
 
-/** Compact heading; the complete name remains available to every user. */
-export function ChatIdentity({ peerId, name, status }: { peerId?: string; name?: string; status: string }) {
-  const heading = useRef<HTMLHeadingElement>(null);
-  const label = name ? `@${name}` : "Conversation";
-  useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
-  return <>
-    <div className="fb-chat-heading">
-      <h1 ref={heading} tabIndex={-1}>{name && peerId
-        ? <UserIdentityTrigger person={{ id: peerId, username: name }} trigger={<span className="fb-chat-identity"><span>{label}</span><ChevronDown size={16} aria-hidden="true" /></span>} />
-        : <span className="fb-chat-identity"><span>{label}</span></span>}
-      </h1>
-      <p className="fb-chat-secondary">{status}</p>
-    </div>
-  </>;
-}
+/** Own module so the visual fixture route can render it without the runtime. */
+export { ChatIdentity } from "../components/ChatIdentity";
 
 // A media task is another view of ChatPhoto, not another ready-byte cache.
 function ignorePhotoReadiness() {}
@@ -281,7 +268,7 @@ function ConnectionsSession({ accountId, selectedId }: { accountId: string; sele
               : view?.request === "INCOMING" ? "Message request" : view?.request === "OUTGOING" ? "Request sent" : "Conversation";
           return <li key={row.conversationId}>
              <Link to={`/chats/${row.conversationId}`} className="fb-chat-row" aria-current={selectedId === row.conversationId ? "page" : undefined}>
-              <UserAvatar username={name} size={40} />
+              <UserAvatar username={name} size={44} />
               <span className="fb-chat-row-copy"><strong>{name ? `@${name}` : "Member"}</strong>
                 <span className="fb-chat-preview">{row.lastMessage?.unsentAt !== undefined ? "Message unsent"
                   : row.lastMessage?.body || (row.lastMessage?.messageType === "LOCATION" ? "Location shared" : row.lastMessage?.messageType === "MEDIA" ? "Photo" : state)}</span>
@@ -614,24 +601,34 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     await sendMessagingLocation(accountId, conversationId, row.peerId, copyStaticLocation(location));
     if (alive.current) { nearBottom.current = true; announce("Location shared."); }
   }
+  /**
+   * Normal conversation is not a form submission: the durable outbox admits the
+   * message, the draft clears, and the next message can start immediately. Only
+   * authority/destructive actions take `busy`.
+   */
   async function send() {
-    if (!row || busy || (!photo && !draft.trim())) return;
+    if (!row || (!photo && !draft.trim())) return;
     if (photo && (!photo.prepared || view?.mode !== "CONNECTED" || view.ownBlocked)) return;
-    setBusy(true); setError(null);
+    const body = draft, sendingPhoto = photo;
+    setError(null);
     try {
-      if (photo?.prepared) {
-        const { bytes, ...info } = photo.prepared;
-        const attempt = admission.current ?? { caption: draft, metadata: { ...info, id: crypto.randomUUID(), messageId: crypto.randomUUID(), direction: "OUT", expiresAt: null } };
+      if (sendingPhoto?.prepared) {
+        const { bytes, ...info } = sendingPhoto.prepared;
+        const attempt = admission.current ?? { caption: body, metadata: { ...info, id: crypto.randomUUID(), messageId: crypto.randomUUID(), direction: "OUT", expiresAt: null } };
         admission.current = attempt;
         await sendMessagingMedia(accountId, conversationId, row.peerId, attempt.caption, attempt.metadata, bytes);
-      } else await sendMessagingText(accountId, conversationId, row.peerId, draft, reportContext ?? undefined);
+      } else await sendMessagingText(accountId, conversationId, row.peerId, body, reportContext ?? undefined);
       if (alive.current) {
-        nearBottom.current = true; setDraft(""); setPhoto(null);
-        if (!photo && reportContext) clearReportContext(reportContext);
+        nearBottom.current = true;
+        // Only clear what this admission owned: typing that arrived while it was
+        // in flight is newer intent and must survive.
+        setDraft((current) => current === body ? "" : current);
+        if (sendingPhoto) setPhoto((current) => current === sendingPhoto ? null : current);
+        if (!sendingPhoto && reportContext) clearReportContext(reportContext);
         admission.current = null; announce("Message saved. Sending.");
       }
     } catch { if (alive.current) setError("Your message could not be saved. Your draft is still here."); }
-    finally { if (alive.current) { setBusy(false); composer.current?.focus(); } }
+    finally { if (alive.current) composer.current?.focus(); }
   }
   const selectedMessage = messages.find((message) => message.id === selectedMessageId);
   const selectedNeedsReview = selectedMessage?.authorId === accountId && !selectedMessage.server
@@ -670,9 +667,8 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   return <section className="fb-chat-page" aria-label="Conversation">
     <header className="fb-chat-header">
       <Link to="/chats" className="fb-chat-icon" aria-label="Back to chats"><ArrowLeft size={22} aria-hidden="true" /></Link>
-      <UserAvatar username={name} size={32} />
-      <ChatIdentity peerId={row?.peerId} name={name} status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
-      {view?.ownMuted && <span className="fb-chat-muted" role="img" aria-label="Notifications muted"><BellOff size={17} aria-hidden="true" /></span>}
+      <ChatIdentity peerId={row?.peerId} name={name} muted={view?.ownMuted === true}
+        status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
       <button type="button" className="fb-chat-icon" aria-label="Conversation options" onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
     </header>
     <div className="fb-chat-messages" ref={scroll}>
@@ -747,7 +743,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
           if (source && Capacitor.getPlatform() !== "android") void preparePhoto(source);
         }} />}
       <PeerChatComposer value={draft} onChange={setDraft} onSend={() => void send()} inputRef={composer}
-        busy={busy} locked={!!admission.current} canSend={photo ? photoAllowed && !!photo.prepared : !!draft.trim()}
+        busy={false} locked={!!admission.current} canSend={photo ? photoAllowed && !!photo.prepared : !!draft.trim()}
         photoAllowed={view?.mode === "CONNECTED"} onPhoto={() => void choosePhoto()}
         locationAllowed={locationAllowed} onLocation={() => setSheet("location")} />
     </>}

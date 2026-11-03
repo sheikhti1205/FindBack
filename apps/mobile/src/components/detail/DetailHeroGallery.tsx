@@ -76,7 +76,7 @@ export function DetailHeroGallery({ postId, title, images, onOpenLightbox }: Det
                   ? `Open photo for ${title} fullscreen`
                   : `Open photo ${index + 1} of ${images.length} fullscreen`
               }
-              className="block h-full w-full shrink-0 snap-center overflow-hidden p-0"
+              className="block h-full w-full shrink-0 snap-center snap-always overflow-hidden p-0"
             >
               <HeroImage
                 fileUrl={image.fileUrl}

@@ -564,23 +564,32 @@ describe("home-feed content-first interactions", () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
-  it("opens the canonical MediaViewer at the current carousel index on an image tap", () => {
-    renderHomeFeed(imagePost(4));
+  it("opens the report when a feed photo is tapped, not the fullscreen viewer", () => {
+    const target = imagePost(4);
+    render(<MemoryRouter initialEntries={["/"]}>
+      <FeedLoveProvider items={[target]} patchItem={vi.fn() as unknown as FeedPatchItem}>
+        <PostCardContent post={target} layout="home-feed" />
+      </FeedLoveProvider>
+      <LocationProbe />
+    </MemoryRouter>);
     const track = screen.getByTestId("feed-media-track");
     Object.defineProperty(track, "clientWidth", { configurable: true, value: 300 });
     track.scrollLeft = 2 * 300;
     fireEvent.scroll(track);
     fireEvent.click(screen.getAllByTestId("feed-slide")[2]!);
-    expect(screen.getByTestId("media-viewer")).toBeTruthy();
-    // Starts on the third photo, not the first.
-    expect(screen.getByText("Photo 3 of 4")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "3 of 4" }).getAttribute("aria-current"),
-    ).toBe("true");
+    expect(screen.getByTestId("location").textContent).toBe("/posts/p1");
+    // The fullscreen viewer belongs to the report detail stage.
+    expect(screen.queryByTestId("media-viewer")).toBeNull();
   });
 
-  it("does not open the lightbox when the carousel is swiped", () => {
-    renderHomeFeed(imagePost(4));
+  it("neither navigates nor opens the viewer when the carousel is swiped", () => {
+    const target = imagePost(4);
+    render(<MemoryRouter initialEntries={["/"]}>
+      <FeedLoveProvider items={[target]} patchItem={vi.fn() as unknown as FeedPatchItem}>
+        <PostCardContent post={target} layout="home-feed" />
+      </FeedLoveProvider>
+      <LocationProbe />
+    </MemoryRouter>);
     const track = screen.getByTestId("feed-media-track");
     Object.defineProperty(track, "clientWidth", { configurable: true, value: 300 });
     track.scrollLeft = 300;
@@ -588,6 +597,7 @@ describe("home-feed content-first interactions", () => {
     const slide = screen.getAllByTestId("feed-slide")[1]!;
     fireEvent.mouseDown(slide, { clientX: 260, clientY: 30 });
     fireEvent.click(slide, { clientX: 30, clientY: 34 });
+    expect(screen.getByTestId("location").textContent).toBe("/");
     expect(screen.queryByTestId("media-viewer")).toBeNull();
   });
 

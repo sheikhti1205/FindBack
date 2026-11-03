@@ -844,7 +844,7 @@ export function ChatComposer({
             className={`flex h-12 shrink-0 items-center justify-center rounded-full ${
               showStop
                 ? "border border-outline px-4 text-sm font-semibold text-on-surface"
-                : "w-12 bg-on-surface text-surface disabled:opacity-40"
+                : "w-12 bg-primary text-on-primary disabled:opacity-40"
             }`}
           >
             <span className="grid place-items-center">

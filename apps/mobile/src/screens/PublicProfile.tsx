@@ -192,7 +192,7 @@ function PublicProfileSession({ username }: { username: string }) {
                   onClick={() => void loadMoreReports()}
                   disabled={loadingMore}
                   aria-busy={loadingMore}
-                  className="min-h-[44px] rounded-m3-sm border border-outline-variant px-3 py-2 text-sm font-medium text-on-surface"
+                  className="min-h-[44px] rounded-m3-sm bg-surface-container px-3 py-2 text-sm font-medium text-on-surface hover:bg-surface-container-high"
                 >
                   {loadingMore ? "Loading more reports…" : "Load more reports"}
                 </button>

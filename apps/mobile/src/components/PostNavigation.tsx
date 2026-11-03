@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useCallback, useContext } from "react";
 import { Link, useLocation, useNavigate, type LinkProps, type Location } from "react-router";
 
 /** UI navigation only; the auth provider and route guards remain authoritative. */
@@ -24,8 +24,29 @@ export function postBackgroundLocation(location: Location, viewerId: string | nu
   return source as unknown as Location;
 }
 
-/** Normal links/new tabs remain real report URLs; only same-tab wide navigation is contextual. */
-export function PostLink({ onClick, ...props }: LinkProps) {
+/**
+ * Same contextual destination as the title link, for tap targets that cannot
+ * be links (a photo region that also owns a horizontal swipe gesture).
+ * Returns the report URL so the caller keeps the label/route ownership.
+ */
+export function useReportNavigation(): (to: string) => void {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const viewerId = useContext(PostNavigationContext);
+  return useCallback((to: string) => {
+    if (viewerId && window.innerWidth >= 768) {
+      const background = postBackgroundLocation(location, viewerId) ?? (isBackgroundPath(location.pathname) ? location : null);
+      if (background) {
+        void navigate(to, { preventScrollReset: true,
+          state: { postBackground: { location: background, viewerId } } });
+        return;
+      }
+    }
+    void navigate(to);
+  }, [location, navigate, viewerId]);
+}
+
+/** Normal links/new tabs remain real report URLs; only same-tab wide navigation is contextual. */export function PostLink({ onClick, ...props }: LinkProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const viewerId = useContext(PostNavigationContext);

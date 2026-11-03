@@ -31,3 +31,14 @@ it("does not offer participant details before a name is available", () => {
   expect(screen.getByText("Conversation")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Conversation" })).toBeNull();
 });
+
+it("treats the avatar and name as one identity trigger without a dropdown chevron", () => {
+  render(<MemoryRouter><ChatIdentity peerId="peer" name="peer_name" status="Connected" /></MemoryRouter>);
+  const button = screen.getByRole("button", { name: "About peer_name" });
+  const avatar = button.querySelector('[data-testid="user-avatar"]') as HTMLElement | null;
+  expect(avatar).toBeTruthy();
+  expect(avatar!.style.width).toBe("44px");
+  expect(avatar!.style.height).toBe("44px");
+  expect(button.textContent).toContain("@peer_name");
+  expect(document.querySelector(".lucide-chevron-down")).toBeNull();
+});

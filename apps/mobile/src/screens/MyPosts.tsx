@@ -573,7 +573,7 @@ export function MyPosts() {
           role="group"
           aria-label="Copy link"
           data-testid="my-posts-copy-manual"
-          className="mx-4 flex flex-col gap-1 rounded-m3-sm border border-outline-variant bg-surface-container-low p-3"
+          className="mx-4 flex flex-col gap-1 rounded-m3-sm bg-surface-container-low p-3"
         >
           <label htmlFor="my-reports-copy-link" className="text-xs text-on-surface-variant">
             Report link
@@ -634,7 +634,7 @@ export function MyPosts() {
                 onClick={() => setOwnerStatus(o.value)}
                 className={`min-h-[44px] shrink-0 rounded-full border px-4 text-sm font-medium transition-colors ${
                   selected
-                    ? "border-transparent bg-on-surface text-surface"
+                    ? "border-transparent bg-primary-container text-on-primary-container"
                     : "border-outline-variant bg-surface text-on-surface-variant hover:bg-surface-container"
                 }`}
               >

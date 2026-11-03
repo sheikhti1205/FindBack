@@ -335,7 +335,7 @@ function EditReportSession({ id, userId }: { id: string; userId?: string }) {
       )}
 
       {isOwner && isResolved && (
-        <div role="status" className="rounded-m3-sm border border-outline-variant px-3 py-2 text-sm">
+        <div role="status" className="rounded-m3-sm bg-surface-container-low px-3 py-2 text-sm">
           <p className="font-medium">This report is {post.status === "RECOVERED" ? "recovered" : "closed"}.</p>
           <p className="mt-1 text-on-surface-variant">
             A resolved report cannot be edited here. Set it back to Open on My Reports to change the details.

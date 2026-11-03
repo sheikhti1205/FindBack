@@ -138,7 +138,7 @@ function AccountSearchScreen(props: SearchScreenProps) {
   return <div className="fb-search-screen">
     <div role="group" aria-label="Search type" className="flex shrink-0 gap-3 border-b border-outline-variant px-3">
       {(["Reports", "People"] as const).map(label => <button key={label} type="button" aria-pressed={people === (label === "People")}
-        className={`min-h-[44px] border-b-2 px-2 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${people === (label === "People") ? "border-on-surface text-on-surface" : "border-transparent text-on-surface-variant"}`}
+        className={`min-h-[44px] border-b-2 px-2 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${people === (label === "People") ? "border-primary text-on-surface" : "border-transparent text-on-surface-variant"}`}
         onClick={() => setParams(previous => { const next = new URLSearchParams(previous); if (label === "People") next.set("scope", "people"); else next.delete("scope"); return next; }, { replace: true })}>{label}</button>)}
     </div>
     <div hidden={people} className={people ? "hidden" : "min-h-0 flex-1"}><ReportSearch {...props} /></div>

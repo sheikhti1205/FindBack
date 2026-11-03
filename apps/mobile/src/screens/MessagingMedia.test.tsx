@@ -37,6 +37,27 @@ async function open() {
 function RouteState() { return <output data-testid="query">{useLocation().search}</output>; }
 function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
 
+it("keeps the composer usable and preserves newer typing while a text is still being admitted", async () => {
+  const resolvers: Array<(value: string) => void> = [];
+  m.text.mockReset().mockImplementation(() => new Promise<string>((resolve) => { resolvers.push(resolve); }));
+  await open();
+  const field = screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+  fireEvent.change(field, { target: { value: "First" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(m.text).toHaveBeenCalledTimes(1));
+  expect(field.disabled).toBe(false);
+  fireEvent.change(field, { target: { value: "Second" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(m.text).toHaveBeenCalledTimes(2));
+  expect(m.text).toHaveBeenLastCalledWith("account", "chat", "peer", "Second", undefined);
+  expect(field.value).toBe("Second");
+  // The first admission settling must not wipe input the person typed after it.
+  await act(async () => { resolvers[0]!("saved"); });
+  await waitFor(() => expect(field.value).toBe("Second"));
+  await act(async () => { resolvers[1]!("saved"); });
+  await waitFor(() => expect(field.value).toBe(""));
+});
+
 it("attaches a report-origin subject to the first text only", async () => {
   const report = "00000000-0000-4000-8000-000000000007";
   render(thread(`?report=${report}`)); await waitFor(() => expect(screen.queryByText("Opening messages…")).toBeNull());

@@ -463,3 +463,38 @@ describe("production messaging media owner", () => {
     expect((await runtime.readMessagingThreadState(A, CONV)).media).toEqual([]);
   });
 });
+
+describe("foreground fast path", () => {
+  it("settles an outgoing text and a realtime hint without full reconciliation", async () => {
+    runtime.setMessagingAccount(A);
+    await waitForState((state) => state.status === "ready" && !!state.currentProjections);
+    requestLog.length = 0;
+
+    await runtime.sendMessagingText(A, CONV, B, "hello");
+    let revision = runtime.getMessagingRuntimeSnapshot().revision;
+    await waitForState((state) => state.status === "ready" && state.revision > revision);
+
+    // The send is admitted, its echo settled, and the durable mailbox ACKed.
+    expect(sent.map((fields) => fields.body)).toContain("hello");
+    expect(requestLog).toContain("SEND");
+    expect(requestLog).toContain("SYNC");
+    expect(requestLog).toContain("ACK");
+    // No VIEWS scan, no media sweep, no re-registration for one message.
+    expect(requestLog).not.toContain("VIEWS");
+    expect(requestLog).not.toContain("REGISTER");
+    // No attachment upload is attempted by a plain text pass (the chat-wake
+    // POST is the message-scoped push hint and is not media work).
+    expect(requestLog.filter((entry) => /^POST:[0-9a-f-]{36}$/.test(entry))).toEqual([]);
+    // Live receipt authority survives the fast pass.
+    expect(runtime.getMessagingRuntimeSnapshot().currentProjections?.[CONV]?.mode).toBe("CONNECTED");
+
+    requestLog.length = 0;
+    revision = runtime.getMessagingRuntimeSnapshot().revision;
+    runtime.invalidateMessaging(A);
+    await waitForState((state) => state.status === "ready" && state.revision > revision);
+    expect(requestLog).toContain("SYNC");
+    expect(requestLog).not.toContain("VIEWS");
+    expect(requestLog).not.toContain("REGISTER");
+    expect(runtime.getMessagingRuntimeSnapshot().currentProjections?.[CONV]?.mode).toBe("CONNECTED");
+  });
+});

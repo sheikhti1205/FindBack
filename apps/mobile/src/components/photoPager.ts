@@ -79,6 +79,21 @@ export function useSnapPager(count: number): SnapPager {
   const jumpRef = useRef<{ left: number; width: number } | null>(null);
 
   /**
+   * One gesture, one photo (owner decision).
+   *
+   * Native momentum decides where a fling lands, and a strong fling can cross
+   * several widths. FindBack limits photo counts, so predictability beats free
+   * scrolling: the page the person was on when the finger/wheel took the track
+   * is remembered, and the landed page is clamped to that page ±1. Programmatic
+   * jumps (`goTo`) and keyboard/AT scrolling are explicit choices, so they are
+   * never clamped.
+   */
+  const gestureRef = useRef<{ index: number } | null>(null);
+  /** `scrollend` is not universal yet: an idle pause also settles the gesture. */
+  const idleRef = useRef(0);
+  const settleGestureRef = useRef<() => void>(() => undefined);
+
+  /**
    * Native releases that are not pointer gestures: a keyboard/AT scroll on the
    * focused track, and the browser's own `scrollend`. Both mean "the track has
    * stopped somewhere"; if that somewhere is not the armed pixel target, the
@@ -93,34 +108,91 @@ export function useSnapPager(count: number): SnapPager {
     if (!el || listenersRef.current?.el === el) return;
     listenersRef.current?.cleanup();
 
+    const clearIdle = () => {
+      if (idleRef.current) {
+        window.clearTimeout(idleRef.current);
+        idleRef.current = 0;
+      }
+    };
+
     const release = () => {
       jumpRef.current = null;
     };
 
+    /** Clamp the page a real gesture landed on to the page it started from ±1. */
+    const settleGesture = () => {
+      const gesture = gestureRef.current;
+      gestureRef.current = null;
+      clearIdle();
+      // A programmatic jump owns the position until it arrives.
+      if (!gesture || jumpRef.current) return;
+      const measured = el.clientWidth || el.offsetWidth || 0;
+      if (measured <= 0) return;
+      const landed = Math.max(0, Math.min(count - 1, Math.round(el.scrollLeft / measured)));
+      const target = Math.max(gesture.index - 1, Math.min(gesture.index + 1, landed));
+      if (target === landed) return;
+      const left = target * measured;
+      setActive((current) => (current === target ? current : target));
+      // Guard the settle like any other programmatic jump: intermediate frames
+      // are animation, not the reader changing photo.
+      jumpRef.current = { left, width: measured };
+      const behavior: ScrollBehavior = shouldReduceMotion() ? "auto" : "smooth";
+      const scroller = el as HTMLDivElement & { scrollTo?: (opts: ScrollToOptions) => void };
+      if (typeof scroller.scrollTo === "function") scroller.scrollTo({ left, behavior });
+      else el.scrollLeft = left;
+    };
+    settleGestureRef.current = settleGesture;
+
+    const beginGesture = () => {
+      // A real gesture always outranks an in-flight dot/arrow animation.
+      jumpRef.current = null;
+      clearIdle();
+      const measured = el.clientWidth || el.offsetWidth || 0;
+      gestureRef.current = measured <= 0
+        ? null
+        : { index: Math.max(0, Math.min(count - 1, Math.round(el.scrollLeft / measured))) };
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (PAGER_SCROLL_KEYS.has(event.key)) release();
+      if (!PAGER_SCROLL_KEYS.has(event.key)) return;
+      // An explicit keyboard/AT choice is not a fling and must not be clamped.
+      release();
+      gestureRef.current = null;
+      clearIdle();
     };
 
     const onScrollEnd = () => {
       const jump = jumpRef.current;
-      if (!jump) return;
-      const measured = el.clientWidth || el.offsetWidth || 0;
-      jumpRef.current = null;
-      if (measured <= 0) return;
-      if (Math.abs(el.scrollLeft - jump.left) <= PAGER_NAV_ARRIVE_PX) return;
-      // Stopped short of (or past) the armed page: this was not our animation,
-      // so report the page the track actually landed on immediately.
-      const next = Math.max(0, Math.min(count - 1, Math.round(el.scrollLeft / measured)));
-      setActive((current) => (current === next ? current : next));
+      if (jump) {
+        gestureRef.current = null;
+        clearIdle();
+        const measured = el.clientWidth || el.offsetWidth || 0;
+        jumpRef.current = null;
+        if (measured <= 0) return;
+        if (Math.abs(el.scrollLeft - jump.left) <= PAGER_NAV_ARRIVE_PX) return;
+        // Stopped short of (or past) the armed page: this was not our animation,
+        // so report the page the track actually landed on immediately.
+        const next = Math.max(0, Math.min(count - 1, Math.round(el.scrollLeft / measured)));
+        setActive((current) => (current === next ? current : next));
+        return;
+      }
+      settleGesture();
     };
 
     el.addEventListener("keydown", onKeyDown);
     el.addEventListener("scrollend", onScrollEnd);
+    el.addEventListener("pointerdown", beginGesture);
+    el.addEventListener("touchstart", beginGesture, { passive: true });
+    el.addEventListener("wheel", beginGesture, { passive: true });
     listenersRef.current = {
       el,
       cleanup: () => {
         el.removeEventListener("keydown", onKeyDown);
         el.removeEventListener("scrollend", onScrollEnd);
+        el.removeEventListener("pointerdown", beginGesture);
+        el.removeEventListener("touchstart", beginGesture);
+        el.removeEventListener("wheel", beginGesture);
+        clearIdle();
       },
     };
   }, [count]);
@@ -130,6 +202,10 @@ export function useSnapPager(count: number): SnapPager {
     return () => {
       listenersRef.current?.cleanup();
       listenersRef.current = null;
+      if (idleRef.current) {
+        window.clearTimeout(idleRef.current);
+        idleRef.current = 0;
+      }
     };
   }, [ensureListeners]);
 
@@ -144,6 +220,13 @@ export function useSnapPager(count: number): SnapPager {
   const onScroll = useCallback(() => {
     const el = trackRef.current;
     if (!el) return;
+    // A browser without `scrollend`: settle once the track has been still for a
+    // moment. Momentum keeps producing scroll events, so a moving fling never
+    // settles early.
+    if (gestureRef.current) {
+      if (idleRef.current) window.clearTimeout(idleRef.current);
+      idleRef.current = window.setTimeout(() => settleGestureRef.current(), 140);
+    }
     const measured = el.clientWidth || el.offsetWidth || 0;
     if (measured <= 0) {
       // Nothing is laid out to select, and a jump cannot be measured either.
@@ -169,6 +252,13 @@ export function useSnapPager(count: number): SnapPager {
   const goTo = useCallback(
     (index: number) => {
       const clamped = Math.max(0, Math.min(count - 1, index));
+      // An explicit jump is the person choosing a page: it is never clamped to
+      // ±1 and it retires any gesture that was in progress.
+      gestureRef.current = null;
+      if (idleRef.current) {
+        window.clearTimeout(idleRef.current);
+        idleRef.current = 0;
+      }
       setActive(clamped);
       const el = trackRef.current;
       if (!el) return;

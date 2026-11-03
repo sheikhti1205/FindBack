@@ -133,7 +133,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
         <button
           type="button"
           onClick={() => setAttempt((a) => a + 1)}
-          className="min-h-[48px] rounded-m3-sm border border-outline-variant px-4 text-sm font-medium"
+          className="min-h-[48px] rounded-m3-sm bg-surface-container px-4 text-sm font-medium text-on-surface"
         >
           Try again
         </button>
@@ -171,7 +171,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
   const suggestionSummary = `${visibleMatches.length} possible match${visibleMatches.length === 1 ? "" : "es"} to review.`;
 
   return (
-    <section className="fb-match-list min-w-0 rounded-m3-lg border border-outline-variant bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
+    <section className="fb-match-list min-w-0 rounded-m3-lg bg-surface-container-low p-4" aria-labelledby="possible-matches-heading">
       <h2 id="possible-matches-heading" className="mb-1 text-base font-semibold">
         Possible matches
       </h2>
@@ -190,7 +190,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
             }}
             className="fb-match-suggestion min-w-0"
           >
-            <div className="fb-match-suggestion-content fb-match-card flex min-w-0 gap-3 rounded-m3-md border border-outline-variant bg-surface p-3 transition-colors hover:border-on-surface-variant">
+            <div className="fb-match-suggestion-content fb-match-card flex min-w-0 gap-3 rounded-m3-md bg-surface p-3 transition-colors hover:bg-surface-container">
               <div className="w-20 shrink-0 sm:w-24">
                 {match.post.photoUrl ? (
                   <button
@@ -233,7 +233,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
                   <PostLink
                     to={`/posts/${match.post.id}`}
                     aria-label={`View report: ${match.post.title}`}
-                    className="flex min-h-[44px] items-center rounded-m3-sm border border-outline-variant px-3 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
+                    className="flex min-h-[44px] items-center rounded-m3-sm bg-surface-container px-3 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-high active:bg-surface-container"
                   >
                     View report
                   </PostLink>
@@ -242,7 +242,7 @@ function AccountMatches({ account, post, onConfirmMatch }: PossibleMatchesProps 
                       type="button"
                       onClick={() => onConfirmMatch(match)}
                       aria-label={`Propose match: ${match.post.title}`}
-                      className="min-h-[44px] rounded-m3-sm border border-outline-variant px-3 text-xs font-medium text-on-surface transition-colors hover:border-on-surface-variant active:bg-surface-container"
+                      className="min-h-[44px] rounded-m3-sm bg-surface-container px-3 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-high active:bg-surface-container"
                     >
                       Propose match
                     </button>

@@ -1402,7 +1402,7 @@ export function RichTextEditor({ label, value, onChange, placeholder, editorRef,
               title="Done"
               aria-label="Done"
               onClick={() => setIsExpanded(false)}
-              className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-m3-xs bg-on-surface text-surface"
+              className="min-h-[48px] min-w-[48px] flex items-center justify-center rounded-m3-xs bg-primary text-on-primary"
             >
               <Check size={20} aria-hidden />
             </button>

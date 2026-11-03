@@ -6,6 +6,7 @@ import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
 import { FeedLayoutFixtures } from "./sections/FeedLayoutFixtures";
 import { HomeFixtures } from "./sections/HomeFixtures";
+import { MessagingFixtures } from "./sections/MessagingFixtures";
 import { NavigationFixtures } from "./sections/NavigationFixtures";
 import { FoundationFixtures } from "./sections/FoundationFixtures";
 import { SocialFixtures } from "./sections/SocialFixtures";
@@ -28,6 +29,7 @@ const SECTION_LINKS = [
   { id: "admin", label: "Staff console" },
   { id: "assistant", label: "Assistant" },
   { id: "map-unavailable", label: "Map unavailable" },
+  { id: "messaging", label: "Messaging thread" },
 ] as const;
 
 /**
@@ -96,6 +98,9 @@ export function FixtureRoute() {
       </div>
       <div>
         <SocialFixtures />
+      </div>
+      <div>
+        <MessagingFixtures />
       </div>
       <div>
         <SystemFixtures />

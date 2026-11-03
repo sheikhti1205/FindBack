@@ -39,6 +39,7 @@ const SECTIONS = [
   "settings",
   "assistant",
   "map-unavailable",
+  "messaging",
 ] as const;
 
 beforeAll(() => {
