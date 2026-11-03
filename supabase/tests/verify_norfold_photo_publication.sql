@@ -3,7 +3,9 @@
 begin;
 create function pg_temp.photo_exchange(p_action text,p_args jsonb default '{}'::jsonb)
 returns jsonb language sql as $$
- select public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),p_action,p_args)
+  select public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),p_action,
+   case when p_action='SEND' then p_args||jsonb_build_object('expectedHead',
+    public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),'HEAD',p_args)) else p_args end)
 $$;
 create function pg_temp.photo_mailbox(p_ids text[]) returns void language plpgsql as $$
 declare ids text[];

@@ -3,6 +3,13 @@
 -- an accepted message's identity must stay replayable after the report it
 -- references disappears. No hosted identity or credential.
 begin;
+-- Current-client admission; canonical immutable-payload checks are unchanged.
+create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
+returns jsonb language plpgsql as $$ begin
+ return public.findback_chat_exchange(p_account,p_device,p_action,p_args||jsonb_build_object('expectedHead',
+  public.findback_chat_exchange(p_account,p_device,'HEAD',jsonb_build_object('conversationId',p_args->>'conversationId'))));
+end $$;
+grant execute on function pg_temp.ready_send(text,text,text,jsonb) to authenticated;
 insert into public.users(id,username,email,phone,created_at,updated_at) values
  ('00000000-0000-4000-9900-000000000001','era_author','era_a@example.invalid','+100009900001',now(),now()),
  ('00000000-0000-4000-9900-000000000002','era_peer','era_b@example.invalid','+100009900002',now(),now());
@@ -25,7 +32,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001'
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','REGISTER','{"platform":"web"}');
 select set_config('era.conversation',public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011',
  'CREATE','{"otherId":"00000000-0000-4000-9900-000000000002"}')#>>'{}',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000201','body','Is this your scarf?','messageType','TEXT',
  'contextReportId','00000000-0000-4000-9900-000000000101',
@@ -36,7 +43,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000002'
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000021','ACCEPT',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000021')->>'epoch'));
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000202','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.8103,'lng',90.4125,'accuracy',25),
@@ -66,7 +73,7 @@ end $$;
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000203','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.82,'lng',90.42,'accuracy',null),
@@ -95,7 +102,7 @@ end $$;
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
 do $$ declare v_id text; begin
- v_id:=public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+ v_id:=pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
   'messageId','00000000-0000-4000-9900-000000000201','body','Is this your scarf?','messageType','TEXT',
   'contextReportId','00000000-0000-4000-9900-000000000101',
@@ -115,7 +122,7 @@ values('00000000-0000-4000-9900-000000000102','00000000-0000-4000-9900-000000000
  '2026-10-30T00:00:00Z','2026-10-30T00:00:00Z');
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000204','body','About the second report','messageType','TEXT',
  'contextReportId','00000000-0000-4000-9900-000000000102',
@@ -124,14 +131,14 @@ reset role;
 update public.item_posts set moderation_visibility='HIDDEN' where id='00000000-0000-4000-9900-000000000102';
 set local role authenticated;
 do $$ declare v_id text; begin
- v_id:=public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+ v_id:=pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
   'messageId','00000000-0000-4000-9900-000000000204','body','About the second report','messageType','TEXT',
   'contextReportId','00000000-0000-4000-9900-000000000102',
   'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000011')->>'epoch'))#>>'{}';
  assert v_id='00000000-0000-4000-9900-000000000204','an accepted retry survives a later-hidden report';
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
    'messageId','00000000-0000-4000-9900-000000000205','body','New work on a hidden report','messageType','TEXT',
    'contextReportId','00000000-0000-4000-9900-000000000102',
@@ -142,7 +149,7 @@ end $$;
 
 -- 5. An exact retry after content erasure still resolves to the accepted id and
 --    does not resurrect erased content.
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000202','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.8103,'lng',90.4125,'accuracy',25),
@@ -161,13 +168,13 @@ end $$;
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000206',
  'body','hello|ctx:00000000-0000-4000-9900-000000000102','messageType','TEXT',
  'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000011')->>'epoch'));
 do $$ begin
- perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+ perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
   'messageId','00000000-0000-4000-9900-000000000206','body','hello','messageType','TEXT',
   'contextReportId','00000000-0000-4000-9900-000000000102',
@@ -182,13 +189,13 @@ reset role;
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000207','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.8103001,'lng',90.4125001,'accuracy',25.0001),
  'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000011')->>'epoch'));
 do $$ begin
- perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+ perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
   'messageId','00000000-0000-4000-9900-000000000207','body','','messageType','LOCATION',
   'location',jsonb_build_object('lat',23.8103002,'lng',90.4125001,'accuracy',25.0001),
@@ -196,7 +203,7 @@ do $$ begin
  raise exception 'a sub-rounding latitude change was accepted as a replay';
 exception when invalid_parameter_value then null; end $$;
 do $$ begin
- perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+ perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
   'messageId','00000000-0000-4000-9900-000000000207','body','','messageType','LOCATION',
   'location',jsonb_build_object('lat',23.8103001,'lng',90.4125001,'accuracy',25.0002),
@@ -217,7 +224,7 @@ update public.chat_mailbox set expires_at=clock_timestamp()-interval '1 minute'
 select public.findback_cleanup_chat_mailbox();
 create function pg_temp.era_expect_conflict(p_id text,p_body text,p_type text,p_extra jsonb)
  returns boolean language plpgsql as $$ declare message text; begin
- perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',
+ perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',
   jsonb_build_object('conversationId',current_setting('era.conversation'),
    'recipientId','00000000-0000-4000-9900-000000000002','messageId',p_id,'body',p_body,'messageType',p_type)||p_extra);
  raise exception 'changed payload acknowledged as accepted';
@@ -242,7 +249,7 @@ select pg_temp.era_expect_conflict('00000000-0000-4000-9900-000000000207','','LO
  '{"location":{"lat":23.8103001,"lng":90.4125001,"accuracy":25.0002}}');
 select pg_temp.era_expect_conflict('00000000-0000-4000-9900-000000000207','','LOCATION',
  '{"location":{"lat":23.8103001,"lng":90.4125001,"accuracy":null}}');
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000207','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.8103001,'lng',90.4125001,'accuracy',25.0001)));

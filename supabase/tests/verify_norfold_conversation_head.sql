@@ -29,6 +29,20 @@ end $$;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9944-000000000001',true);
 select set_config('head.device','00000000-0000-4000-9944-000000000011',true);
 select pg_temp.head_call('REGISTER','{"platform":"web"}');
+-- New work has no legacy bypass; malformed/absent HEAD cannot authorize SEND.
+do $$ declare args jsonb; invalid jsonb; begin
+ args:=jsonb_build_object('recipientId','00000000-0000-4000-9944-000000000002',
+  'messageId','00000000-0000-4000-9944-000000000199','body','No HEAD admission',
+  'expectedEpoch',pg_temp.head_get()->>'epoch');
+ foreach invalid in array array[args,args||'{"expectedHead":null}'::jsonb,
+  args||'{"expectedHead":{}}'::jsonb,args||'{"expectedHead":[]}'::jsonb] loop
+  begin
+   perform pg_temp.head_call('SEND',invalid);
+   raise exception 'new SEND admitted without a complete authorized HEAD';
+  exception when serialization_failure then null;
+  end;
+ end loop;
+end $$;
 do $$ begin
  for n in 101..111 loop perform pg_temp.head_send(n); end loop;
  if pg_temp.head_get()->>'position'<>'11' or pg_temp.head_get()->>'messageHead'<>'11' then raise exception 'actor head is not dense'; end if;
@@ -89,6 +103,14 @@ do $$ begin
  end;
  -- Lost response retry still validates payload identity but is not new work.
  if pg_temp.head_send(102)#>>'{}'<>'00000000-0000-4000-9944-000000000102' then raise exception 'accepted replay broken'; end if;
+ if pg_temp.head_call('SEND',jsonb_build_object('recipientId','00000000-0000-4000-9944-000000000002',
+  'messageId','00000000-0000-4000-9944-000000000102','body','Head fixture','messageType','TEXT',
+  'expectedEpoch',current_setting('head.stale')::jsonb->>'epoch',
+  'expectedHead',current_setting('head.stale')::jsonb))#>>'{}'<>'00000000-0000-4000-9944-000000000102'
+ then raise exception 'stale HEAD broke accepted replay'; end if;
+ if pg_temp.head_call('SEND',jsonb_build_object('recipientId','00000000-0000-4000-9944-000000000002',
+  'messageId','00000000-0000-4000-9944-000000000102','body','Head fixture','messageType','TEXT'))#>>'{}'
+  <>'00000000-0000-4000-9944-000000000102' then raise exception 'HEAD requirement broke accepted replay'; end if;
 end $$;
 -- An unpublished photo UNSEND must not invent peer activity or erasure metadata.
 select pg_temp.head_send(160,'MEDIA');

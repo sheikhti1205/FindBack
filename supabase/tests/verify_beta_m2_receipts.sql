@@ -10,6 +10,8 @@ create function pg_temp.m2_exchange(p_uid text,p_device text,p_action text,p_arg
 returns jsonb language plpgsql as $$
 begin
  perform set_config('request.jwt.claim.sub',p_uid,true);
+ if p_action='SEND' then p_args:=p_args||jsonb_build_object('expectedHead',
+  public.findback_chat_exchange(p_uid,p_device,'HEAD',p_args)); end if;
  return public.findback_chat_exchange(p_uid,p_device,p_action,p_args);
 end $$;
 create function pg_temp.m2_view(p_uid text,p_device text,p_conversation text,p_ids jsonb default '[]'::jsonb)

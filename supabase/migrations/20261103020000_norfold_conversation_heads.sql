@@ -248,10 +248,11 @@ begin
   if not found or (p_args->>'recipientId') is distinct from v_other then raise exception 'Conversation unavailable' using errcode='42501'; end if;
   -- Stable accepted IDs remain replayable after a boundary; immutable payload
   -- validation is still performed by the canonical send owner below.
-  if p_args ? 'expectedHead' and not exists(select 1 from public.chat_messages
+  if not exists(select 1 from public.chat_messages
    where id=p_args->>'messageId' and conversation_id=p_args->>'conversationId' and sender_id=v_uid) then
    v_head:=public.findback_chat_head_internal(v_uid,p_device_id,p_args->>'conversationId');
-   if (v_head-'serverTime') is distinct from ((p_args->'expectedHead')-'serverTime') then
+   if jsonb_typeof(p_args->'expectedHead') is distinct from 'object'
+    or (v_head-'serverTime') is distinct from ((p_args->'expectedHead')-'serverTime') then
     raise exception 'Conversation changed' using errcode='40001'; end if;
   end if;
   return to_jsonb(public.findback_chat_send_internal(p_args->>'conversationId',p_args->>'body',p_args->>'messageId',

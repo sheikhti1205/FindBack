@@ -117,3 +117,87 @@ it("never certifies a partial multi-page range, then safely replays durable unav
   expect(await h.listConversationUnavailable(conversationId)).toHaveLength(101);
   expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
 });
+
+it("reconciles and certifies missing canonical history before the actual queued SEND admission", async () => {
+  const h = await history(), ownId = "00000000-0000-4000-8000-000000000008";
+  const own = { id: ownId, conversationId, authorId: accountId, recipientId: peer, body: "Queued reply", messageType: "TEXT" as const };
+  await h.enqueueOutgoing(own, "epoch-a");
+  let sent = false, ownAck = false;
+  const session = createMessagingSession({ accountId, deviceId }, h, async input => {
+    if (input.action === "STATE_SYNC") return [];
+    if (input.action === "HEAD") return head;
+    if (input.action === "CONVERSATION_SYNC") return page();
+    if (input.action === "SEND") {
+      expect(await h.getConversationCheckpoint(conversationId)).toEqual(head);
+      expect((await h.getMessage(messageId))?.body).toBe("Real persisted fixture");
+      expect(input.args.expectedHead).toEqual(head);
+      expect(input.args.expectedEpoch).toBe("epoch-a"); sent = true; return ownId;
+    }
+    if (input.action === "SYNC") return sent && !ownAck ? [{ ...envelope, mailboxId: ownId,
+      event: { kind: "TEXT", eventId: ownId, sequence: 91, message: own } }] : [];
+    if (input.action === "ACK") { if (input.args.mailboxId === ownId) ownAck = true; return null; }
+    throw Error("unexpected " + input.action);
+  });
+  await session.flush(); expect(sent).toBe(true); expect(await h.listOutbox()).toEqual([]);
+  await session.close();
+});
+it("does not dispatch a queued send when its missing range cannot be closed", async () => {
+  const h = await history();
+  await h.enqueueOutgoing({ id: "00000000-0000-4000-8000-000000000008", conversationId, authorId: accountId,
+    recipientId: peer, body: "Do not dispatch yet", messageType: "TEXT" }, "epoch-a");
+  let sent = false;
+  const session = createMessagingSession({ accountId, deviceId }, h, async input => {
+    if (input.action === "STATE_SYNC" || input.action === "SYNC") return [];
+    if (input.action === "HEAD") return head;
+    if (input.action === "CONVERSATION_SYNC") return { ...page(), entries: [] };
+    if (input.action === "SEND") { sent = true; return input.args.messageId; }
+    throw Error("unexpected " + input.action);
+  });
+  await expect(session.flush()).rejects.toThrow();
+  expect(sent).toBe(false); expect(await h.getConversationCheckpoint(conversationId)).toBeNull();
+  await session.close();
+});
+
+it("keeps queued relationship intent rather than rebinding it to the newly reconciled epoch", async () => {
+  const h = await history(), ownId = "00000000-0000-4000-8000-000000000008";
+  await h.enqueueOutgoing({ id: ownId, conversationId, authorId: accountId, recipientId: peer,
+    body: "Old relationship intent", messageType: "TEXT" }, "epoch-old");
+  let attempted = false;
+  const session = createMessagingSession({ accountId, deviceId }, h, async input => {
+    if (input.action === "STATE_SYNC" || input.action === "SYNC") return [];
+    if (input.action === "HEAD") return head;
+    if (input.action === "CONVERSATION_SYNC") return page();
+    if (input.action === "ACK") return null;
+    if (input.action === "SEND") {
+      expect(input.args.expectedEpoch).toBe("epoch-old"); expect(input.args.expectedHead).toEqual(head);
+      attempted = true; throw Error("Relationship boundary moved");
+    }
+    throw Error("unexpected " + input.action);
+  });
+  await expect(session.flush()).rejects.toThrow("Relationship boundary moved");
+  expect(attempted).toBe(true); expect((await h.listOutbox())[0]?.status).toBe("FAILED");
+  await session.close();
+});
+it("rechecks local erasure after missing-range reconciliation before sending a claimed row", async () => {
+  const h = await history(), ownId = "00000000-0000-4000-8000-000000000008";
+  await h.enqueueOutgoing({ id: ownId, conversationId, authorId: accountId, recipientId: peer,
+    body: "Removed on another device", messageType: "TEXT" }, "epoch-a");
+  const target = { ...head, messageHead: 0, stateHead: 1 };
+  let sent = false;
+  const session = createMessagingSession({ accountId, deviceId }, h, async input => {
+    if (input.action === "STATE_ACK") return null;
+    if (input.action === "STATE_SYNC" || input.action === "SYNC") return [];
+    if (input.action === "HEAD") return target;
+    if (input.action === "CONVERSATION_SYNC") return { head: target, afterPosition: 0, throughPosition: 1, entries: [{
+      position: 1, kind: "STATE", sourceId: messageId, messageId: ownId, publishedAt: 900,
+      change: { accountId, deviceId, change: { kind: "DELETE_FOR_ME", eventId: messageId, sequence: 1,
+        conversationId, messageId: ownId, authorId: accountId, recipientId: peer, messageSequence: 90, occurredAt: 900 } },
+    }] };
+    if (input.action === "SEND") { sent = true; return ownId; }
+    throw Error("unexpected " + input.action);
+  });
+  await expect(session.flush()).rejects.toThrow("Message is no longer pending");
+  expect(sent).toBe(false); expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
+  expect((await h.getMessage(ownId))?.body).not.toBe("Removed on another device");
+  await session.close();
+});

@@ -95,6 +95,9 @@ beforeEach(async () => {
       }
       const action = args.p_action as string, fields = args.p_args as Record<string, unknown>;
       requestLog.push(action);
+      if (action === "HEAD") return Response.json({ accountId: account, conversationId: fields.conversationId,
+        streamId: "fixture-stream", epoch: "fixture-epoch", revision: 1, position: 0, messageHead: 0, stateHead: 0, serverTime: 1_000 });
+      if (action === "CONVERSATION_SYNC") return Response.json({ head: fields.head, afterPosition: 0, throughPosition: 0, entries: [] });
       if (action === "REGISTER" || action === "STATE_ACK") return Response.json(null);
       if (action === "DELETE_FOR_ME" || action === "UNSEND") return Response.json(fields.messageId);
       if (action === "STATE_SYNC") return Response.json([]);
@@ -212,7 +215,9 @@ describe("production messaging media owner", () => {
     await waitForState((state) => state.status === "ready" && sent.length === 1).catch(async (error: Error) => {
       throw new Error(`${error.message}: ${JSON.stringify({ requests: requestLog, state: runtime.getMessagingRuntimeSnapshot(), thread: await runtime.readMessagingThreadState(A, CONV) })}`);
     });
-    expect(sent).toEqual([{ conversationId: CONV, recipientId: B, messageId: id(101), body: "Older caption" }]);
+    expect(sent).toEqual([{ conversationId: CONV, recipientId: B, messageId: id(101), body: "Older caption",
+      expectedHead: { accountId: A, conversationId: CONV, streamId: "fixture-stream", epoch: "fixture-epoch",
+        revision: 1, position: 0, messageHead: 0, stateHead: 0, serverTime: 1_000 } }]);
     expect((await runtime.readMessagingThreadState(A, CONV)).outbox).toEqual([]);
   });
   it("does not recover a message from another conversation or inactive account", async () => {

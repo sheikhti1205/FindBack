@@ -13,6 +13,7 @@ import { openSqliteMessagingHistory } from "./sqliteHistory";
 import { openMediaBytes, type MediaBytesStore } from "./mediaBytes";
 import { createMediaTransport, type MediaTransportPorts } from "./mediaTransport";
 import { createMessagingSession, type MessagingRpc } from "./session";
+import { emptyConversationHead, emptyConversationRange } from "./headTestDoubles";
 import { deferred, mediaFixture } from "./mediaTestDoubles";
 import type { MediaMetadata } from "./media";
 import type { ConversationProjection } from "./conversationIndex";
@@ -93,6 +94,8 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
   }
   const rpc: MessagingRpc = async ({ accountId, deviceId, action, args, signal }) => {
     expect({ accountId, deviceId }).toEqual(scope); expect(signal.aborted).toBe(false);
+    if (action === "HEAD") return emptyConversationHead(accountId, args.conversationId as string);
+    if (action === "CONVERSATION_SYNC") return emptyConversationRange(args.head);
     if (action === "SEND") {
       sends.push(args); if (sendError) throw new Error("offline");
       const value = { id: args.messageId, conversationId: args.conversationId, authorId: A,
@@ -165,7 +168,7 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     const fixture = await mediaFixture(id(201), value.id);
     await history.enqueueOutgoingWithMedia(value, fixture.metadata, fixture.bytes);
     await client.flush();
-    expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: value.id, body: caption, messageType: "MEDIA" }]);
+    expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: value.id, body: caption, messageType: "MEDIA", expectedHead: emptyConversationHead(A, CONV) }]);
     expect(await history.getMessage(value.id)).toMatchObject({ messageType: "MEDIA", server: { sequence: 1 } });
     expect(await history.listOutbox()).toEqual([]);
     expect((await history.listMedia(CONV))[0]?.state).toBe("QUEUED");
@@ -211,7 +214,7 @@ describe.each(["sqlite", "web"] as const)("%s canonical media session", (backend
     await client.sendMedia(legacy, fixture.metadata, fixture.bytes);
     expect((await history.getMessage(legacy.id))?.messageType).toBe("MEDIA");
     await client.flush();
-    expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: legacy.id, body: legacy.body, messageType: "MEDIA" }]);
+    expect(sends).toEqual([{ conversationId: CONV, recipientId: B, messageId: legacy.id, body: legacy.body, messageType: "MEDIA", expectedHead: emptyConversationHead(A, CONV) }]);
     expect(await history.listOutbox()).toEqual([]);
   });
 

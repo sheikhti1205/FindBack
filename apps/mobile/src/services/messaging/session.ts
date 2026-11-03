@@ -233,6 +233,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
             if (!attachments.some((row) => row.messageId === message.id)) throw new Error("Photo unavailable");
           }
           if (message.authorId !== scope.accountId) throw new Error("Invalid messaging author");
+          const expectedHead = await reconcileConversation(message.conversationId);
           // A local erase can win after the claim, removing both parent visibility
           // and attachment metadata. Never downgrade its captured caption to TEXT.
           const live = await history.getMessage(message.id);
@@ -246,6 +247,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
           const accepted = await call("SEND", {
             conversationId: message.conversationId, recipientId: message.recipientId,
             messageId: message.id, body: message.body,
+            expectedHead,
             ...(kind !== "TEXT" ? { messageType: kind } : {}),
             ...(message.contextReportId ? { contextReportId: message.contextReportId } : {}),
             ...(message.location ? { location: message.location } : {}),

@@ -1,6 +1,13 @@
 -- Synthetic disposable SQL engine contract for report context + static location.
 -- Every write rolls back; no hosted identity or credential.
 begin;
+-- Current-client admission; original payload/authority assertions stay intact.
+create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
+returns jsonb language plpgsql as $$ begin
+ return public.findback_chat_exchange(p_account,p_device,p_action,p_args||jsonb_build_object('expectedHead',
+  public.findback_chat_exchange(p_account,p_device,'HEAD',jsonb_build_object('conversationId',p_args->>'conversationId'))));
+end $$;
+grant execute on function pg_temp.ready_send(text,text,text,jsonb) to authenticated;
 insert into public.users(id,username,email,phone,created_at,updated_at) values
  ('00000000-0000-4000-9800-000000000001','ctx_author','ctx_a@example.invalid','+100009800001',now(),now()),
  ('00000000-0000-4000-9800-000000000002','ctx_peer','ctx_b@example.invalid','+100009800002',now(),now()),
@@ -30,7 +37,7 @@ select set_config('ctx.conversation',public.findback_chat_exchange(auth.uid()::t
  'CREATE','{"otherId":"00000000-0000-4000-9800-000000000002"}')#>>'{}',true);
 
 -- Request-stage report context is the "Connect about this report" path.
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
  'messageId','00000000-0000-4000-9800-000000000201','body','Is this your wallet?','messageType','TEXT',
  'contextReportId','00000000-0000-4000-9800-000000000101',
@@ -46,7 +53,7 @@ end $$;
 -- A report the sender cannot read cannot be attached, and no id is echoed.
 do $$ begin
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000202','body','Hidden context','messageType','TEXT',
    'contextReportId','00000000-0000-4000-9800-000000000102',
@@ -58,7 +65,7 @@ end $$;
 -- Request-stage location is refused before any coordinate is stored.
 do $$ begin
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000203','body','','messageType','LOCATION',
    'location',jsonb_build_object('lat',23.81,'lng',90.41,'accuracy',25),
@@ -72,7 +79,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000002'
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000021','ACCEPT',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'expectedEpoch',pg_temp.ctx_view('00000000-0000-4000-9800-000000000021')->>'epoch'));
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000001',true);
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
  'messageId','00000000-0000-4000-9800-000000000204','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.8103,'lng',90.4125,'accuracy',25),
@@ -89,7 +96,7 @@ end $$;
 -- Bounded payload: out-of-range coordinates and a replayed id with new
 -- coordinates are both refused.
 -- A manually selected pin is not a device fix: no fabricated accuracy estimate.
-select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
  'messageId','00000000-0000-4000-9800-000000000208','body','','messageType','LOCATION',
  'location',jsonb_build_object('lat',23.81,'lng',90.413,'accuracy',null),
@@ -100,7 +107,7 @@ do $$ declare v jsonb; begin
  assert v->'event'->'message'->'location'->'accuracy'='null'::jsonb,'manual pin retains unknown accuracy';
  assert (v->'event'->'message'->'location'->>'lng')::double precision=90.413,'manual approximate pin round-trips';
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000208','body','','messageType','LOCATION',
    'location',jsonb_build_object('lat',23.81,'lng',90.413,'accuracy',25),
@@ -108,7 +115,7 @@ do $$ declare v jsonb; begin
   raise exception 'manual pin replay fabricated accuracy';
  exception when invalid_parameter_value then null; end;
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000209','body','','messageType','LOCATION',
    'location',jsonb_build_object('lat',23.81,'lng',90.413,'accuracy',0),
@@ -118,7 +125,7 @@ do $$ declare v jsonb; begin
 end $$;
 do $$ begin
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000205','body','','messageType','LOCATION',
    'location',jsonb_build_object('lat',91,'lng',90.41,'accuracy',25),
@@ -126,7 +133,7 @@ do $$ begin
   raise exception 'out-of-range latitude accepted';
  exception when invalid_parameter_value then null; end;
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000204','body','','messageType','LOCATION',
    'location',jsonb_build_object('lat',10,'lng',10,'accuracy',5),
@@ -134,7 +141,7 @@ do $$ begin
   raise exception 'replay recast to another coordinate';
  exception when invalid_parameter_value then null; end;
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000206','body','caption','messageType','MEDIA',
    'contextReportId','00000000-0000-4000-9800-000000000101',
@@ -165,7 +172,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000003'
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000031','REGISTER','{"platform":"web"}');
 do $$ begin
  begin
-  perform public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000031','SEND',jsonb_build_object(
+  perform pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000031','SEND',jsonb_build_object(
    'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
    'messageId','00000000-0000-4000-9800-000000000207','body','not mine','messageType','TEXT',
    'expectedEpoch',pg_temp.ctx_view('00000000-0000-4000-9800-000000000031')->>'epoch'));

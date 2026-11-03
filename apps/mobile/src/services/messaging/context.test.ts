@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openWebMessagingHistory } from "./indexedDbHistory";
 import type { HumanMessage, MailboxEnvelope, MessagingHistory } from "./history";
 import { createMessagingSession, type MessagingRpc } from "./session";
+import { emptyConversationHead, emptyConversationRange } from "./headTestDoubles";
 import { copyContextMessage, copyLocationMessage, copyMessage, copyReceivedMessage } from "./validation";
 
 const A = "00000000-0000-4000-8000-000000000001";
@@ -79,6 +80,8 @@ function serverFor(history: MessagingHistory) {
   const sends: Array<Record<string, unknown>> = [];
   let envelope: MailboxEnvelope | null = null;
   const rpc: MessagingRpc = async (input) => {
+    if (input.action === "HEAD") return emptyConversationHead(A, input.args.conversationId as string);
+    if (input.action === "CONVERSATION_SYNC") return emptyConversationRange(input.args.head);
     if (input.action === "SEND") {
       sends.push(input.args as Record<string, unknown>);
       const args = input.args as Record<string, unknown>;

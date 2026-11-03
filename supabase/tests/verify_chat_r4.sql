@@ -2,6 +2,14 @@
 -- Uses the canonical exchange and global block API, never legacy helpers.
 -- The runner fails at the end with every violated boundary, not the first one.
 begin;
+-- Current-client admission for unrelated regressions; no-HEAD/stale/replay
+-- behavior is exercised directly by verify_norfold_conversation_head.sql.
+create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
+returns jsonb language plpgsql as $$ begin
+ return public.findback_chat_exchange(p_account,p_device,p_action,p_args||jsonb_build_object('expectedHead',
+  public.findback_chat_exchange(p_account,p_device,'HEAD',jsonb_build_object('conversationId',p_args->>'conversationId'))));
+end $$;
+grant execute on function pg_temp.ready_send(text,text,text,jsonb) to authenticated;
 create temp table r4_checks(name text primary key, passed boolean not null) on commit drop;
 create function pg_temp.r4_check(p_name text,p_passed boolean) returns void
 language sql as $$ insert into r4_checks values(p_name,coalesce(p_passed,false)) $$;
@@ -83,7 +91,7 @@ do $$
 declare denied boolean:=false;
 begin
  begin
-  perform public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+  perform pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
    '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
    'messageId','00000000-0000-4000-9940-000000000109','body','stale','messageType','TEXT',
@@ -93,14 +101,14 @@ begin
  perform pg_temp.r4_check('stale relationship epoch cannot authorize a send',denied);
 end $$;
 
-select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
  'messageId','00000000-0000-4000-9940-000000000101','body','First request text','messageType','TEXT',
  'expectedEpoch',current_setting('r4.epoch')));
 select set_config('r4.epoch',pg_temp.r4_epoch(current_setting('r4.conversation'),
  '00000000-0000-4000-9940-000000000011'),true);
-select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
  'messageId','00000000-0000-4000-9940-000000000102','body','Another request text','messageType','TEXT',
@@ -108,7 +116,7 @@ select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
 
 -- Idempotent replay of an already-accepted identity survives a changed epoch.
 select pg_temp.r4_check('identical retry stays idempotent across an epoch change',
- public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+ pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
   '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
   'messageId','00000000-0000-4000-9940-000000000101','body','First request text','messageType','TEXT',
@@ -124,7 +132,7 @@ begin
  exception when others then own_accept:=true;
  end;
  begin
-  perform public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+  perform pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
    '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
    'messageId','00000000-0000-4000-9940-000000000103','body','','messageType','MEDIA',
@@ -188,7 +196,7 @@ do $$
 declare denied boolean:=false;
 begin
  begin
-  perform public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+  perform pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
    '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
    'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
    'messageId','00000000-0000-4000-9940-000000000104','body','stale after end','messageType','TEXT',
@@ -199,7 +207,7 @@ begin
 end $$;
 select set_config('r4.epoch',pg_temp.r4_epoch(current_setting('r4.conversation'),
  '00000000-0000-4000-9940-000000000011'),true);
-select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
  'messageId','00000000-0000-4000-9940-000000000104','body','fresh request after end','messageType','TEXT',
@@ -224,7 +232,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
 select set_config('r4.epoch',pg_temp.r4_epoch(current_setting('r4.conversation'),
  '00000000-0000-4000-9940-000000000011'),true);
-select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
+select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000002',
  'messageId','00000000-0000-4000-9940-000000000105','body','','messageType','MEDIA',
@@ -257,7 +265,7 @@ do $$
 declare denied boolean:=false;
 begin
  begin
-  perform public.findback_chat_exchange('00000000-0000-4000-9940-000000000003',
+  perform pg_temp.ready_send('00000000-0000-4000-9940-000000000003',
    '00000000-0000-4000-9940-000000000031','SEND',jsonb_build_object(
    'conversationId',current_setting('r4.conversation'),'recipientId','00000000-0000-4000-9940-000000000001',
    'messageId','00000000-0000-4000-9940-000000000110','body','outsider','messageType','TEXT',

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openWebMessagingHistory } from "./indexedDbHistory";
 import type { HumanMessage, MailboxEnvelope, MessagingHistory } from "./history";
 import { createMessagingSession, type MessagingRpc } from "./session";
+import { emptyConversationHead, emptyConversationRange } from "./headTestDoubles";
 
 const A="00000000-0000-4000-8000-000000000001";
 const B="00000000-0000-4000-8000-000000000002";
@@ -20,6 +21,8 @@ function serverFor(history: MessagingHistory) {
  let sendFailure:string|null=null; let currentAccount=A; let acknowledged=false;
  const rpc:MessagingRpc=async(input)=>{
   if(input.accountId!==currentAccount) throw new Error("Session changed");
+  if(input.action==="HEAD") return emptyConversationHead(A,input.args.conversationId as string);
+  if(input.action==="CONVERSATION_SYNC") return emptyConversationRange(input.args.head);
   if(input.action==="SEND" && sendFailure) throw new Error(sendFailure);
   if(input.action==="SEND") {
    envelope={...scope,mailboxId:MAIL,event:{kind:"TEXT",eventId:ID,sequence:1,message}};
@@ -121,7 +124,9 @@ describe("human messaging session delivery",()=>{
   await history.cacheConversation(boundary(EPOCH_A,1));
   const envelopes=new Map<string,MailboxEnvelope>(); let sequence=0;
   const rpc:MessagingRpc=async(input)=>{
-   if(input.action==="SEND"){
+  if(input.action==="HEAD") return emptyConversationHead(A,input.args.conversationId as string);
+  if(input.action==="CONVERSATION_SYNC") return emptyConversationRange(input.args.head);
+     if(input.action==="SEND"){
     const args=input.args as {messageId:string;expectedEpoch?:string;body:string};
     // The server refuses intent composed at a boundary that has since moved.
     if(args.expectedEpoch!==EPOCH_B) throw new Error("Relationship boundary moved");
