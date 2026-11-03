@@ -35,6 +35,11 @@ bird/leaf interior keyed out; `shape="tile"` retains the exact prepared owner's
 two-ink treatment. Both preserve the master's geometry. The wordmark is text,
 not baked into platform icons.
 
+The shared `AuthShell` (email/Google gateway, verification and profile completion)
+also uses `BrandMark` for its header and supporting glyph. A generic Radar icon
+is not a FindBack logo. The canonical brand gate covers these shared auth and
+onboarding consumers, not just generated platform assets.
+
 Maintained generation (Python 3.12+ and Pillow 11.1.0):
 
 ```sh

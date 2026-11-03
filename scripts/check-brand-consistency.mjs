@@ -58,6 +58,11 @@ export function checkBrandConsistency({read=path=>readFileSync(resolve(root,path
  const presenter=text('apps/mobile/android/app/src/main/java/com/findback/app/push/NotificationPresenter.kt');
  assert.equal((presenter.match(/setSmallIcon\(R.drawable.ic_stat_findback\)/g)??[]).length,3);
  for(const screen of ['HomeTopBar','Splash','About'])assert.ok(text(`apps/mobile/src/screens/${screen}.tsx`).includes('<BrandMark'));
+ const auth=text('apps/mobile/src/components/auth/AuthShell.tsx');
+ assert.ok(auth.includes('<BrandMark'),'shared auth must use canonical brand');
+ assert.doesNotMatch(auth,/\bRadar\b|<svg|assets\/brand\//,'shared auth must not substitute or clone the mark');
+ assert.ok(text('apps/mobile/src/screens/Onboarding.tsx').includes('<BrandMark'));
+ assert.doesNotMatch(text('apps/mobile/src/App.tsx'),/PublicLanding|RecoveryDemo/,'app root must not revive the rejected landing');
  const share=text('apps/share-preview/handler.cjs');
  assert.ok(share.includes(`/icons/findback-${token}-32.png`));
  return {outputs:expected.length,generation:token};

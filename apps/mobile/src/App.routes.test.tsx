@@ -17,8 +17,9 @@ const auth = vi.hoisted(() => ({
   booting: false,
   bootError: null as string | null,
   retryBoot: vi.fn(),
+  needsProfile: null as import("./services/auth/googleSignIn").GoogleProfileSeed | null,
 }));
-const native = vi.hoisted(() => ({ back: null as (() => void) | null }));
+const native = vi.hoisted(() => ({ back: null as (() => void) | null, platform: true }));
 const editorPosts = vi.hoisted(() => ({ load: vi.fn(), save: vi.fn() }));
 vi.mock("./services/posts", async (original) => ({
   ...await original<typeof import("./services/posts")>(),
@@ -29,10 +30,10 @@ vi.mock("./auth", () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useAuth: () => ({ ...auth }),
 }));
-vi.mock("./theme", () => ({
-  ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+vi.mock("@capacitor/core", () => ({
+  Capacitor: { isNativePlatform: () => native.platform, getPlatform: () => native.platform ? "android" : "web" },
+  registerPlugin: () => ({ getColors: async () => ({ supported: false }), addListener: async () => ({ remove: async () => {} }) }),
 }));
-vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true }, registerPlugin: () => ({}) }));
 vi.mock("@capacitor/app", () => ({
   App: {
     getLaunchUrl: async () => undefined,
@@ -43,10 +44,7 @@ vi.mock("@capacitor/app", () => ({
     },
   },
 }));
-vi.mock("./screens/Onboarding", () => ({
-  Onboarding: () => <p>Onboarding screen</p>,
-  ONBOARDING_PAGES: [],
-}));
+vi.mock("./screens/CompleteProfile", () => ({ CompleteProfileRoute: () => <p>CompleteProfile screen</p> }));
 vi.mock("./screens/AuthGateway", () => ({
   AuthGateway: ({ initialMode = "email" }: { initialMode?: string }) => (
     <p>Gateway:{initialMode}</p>
@@ -143,6 +141,8 @@ beforeEach(() => {
   auth.user = null;
   auth.booting = false;
   auth.bootError = null;
+  auth.needsProfile = null;
+  native.platform = true;
   localStorage.clear();
   sessionStorage.clear();
   unexpectedErrors.length = 0;
@@ -187,6 +187,70 @@ afterEach(() => {
 });
 
 describe("consumer route map", () => {
+  it.each([false, true])("starts a fresh guest at the real approved onboarding (native=%s)", platform => {
+    native.platform = platform;
+    renderAt("/");
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(screen.queryByText("Report it. Match it. Return it.")).toBeNull();
+    expect(screen.queryByRole("link", { name: /create an account|sign in/i })).toBeNull();
+    expect(router?.state.location.pathname).toBe("/onboarding");
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/auth");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe(String(ONBOARDING_VERSION));
+  });
+
+  it("starts a returning unsigned Web user at unified auth", () => {
+    native.platform = false;
+    returningGuest();
+    renderAt("/");
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/auth");
+  });
+
+  it("waits for Web session restoration and retains boot error retry", () => {
+    native.platform = false;
+    auth.booting = true;
+    renderAt("/");
+    expect(screen.queryByRole("heading", { name: "Lost something?" })).toBeNull();
+    expect(screen.queryByText("Gateway:email")).toBeNull();
+    expect(router?.state.location.pathname).toBe("/");
+    cleanup();
+    auth.booting = false;
+    auth.bootError = "unreachable";
+    renderAt("/");
+    expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/");
+  });
+
+  it("restores an authenticated Web user to Home", () => {
+    native.platform = false;
+    signedIn();
+    renderAt("/");
+    expect(screen.getByText("Home screen")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Lost something?" })).toBeNull();
+  });
+
+  it.each(["/", "/onboarding"])("resumes an incomplete profile from %s before onboarding or pending links", route => {
+    native.platform = false;
+    auth.needsProfile = { accountId: "u1", email: "route@test.example", name: null, avatarUrl: null, phone: "", suggestedUsername: "route_user" };
+    sessionStorage.setItem("findback.pendingReportLink", JSON.stringify({ url: `${origin}/r/${postId}`, expiresAt: Date.now() + 60_000 }));
+    renderAt(route);
+    expect(screen.getByText("CompleteProfile screen")).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/complete-profile");
+    expect(sessionStorage.getItem("findback.pendingReportLink")).toContain(postId);
+  });
+
+  it("keeps a fresh Web guest's pending report intact and bypasses onboarding to unified auth", () => {
+    native.platform = false;
+    sessionStorage.setItem("findback.pendingReportLink", JSON.stringify({ url: `${origin}/r/${postId}`, expiresAt: Date.now() + 60_000 }));
+    renderAt("/");
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/auth");
+    expect(sessionStorage.getItem("findback.pendingReportLink")).toContain(postId);
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
   it("keeps the exact background mounted under a contextual report and returns on Close", async () => {
     signedIn();
     renderAt("/");
@@ -302,7 +366,7 @@ describe("consumer route map", () => {
 
   it("renders first-run onboarding for a fresh guest", () => {
     renderAt("/onboarding");
-    expect(screen.getByText("Onboarding screen")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
   });
 
   it.each([
@@ -317,7 +381,7 @@ describe("consumer route map", () => {
 
   it("redirects a fresh guest away from /auth to onboarding", () => {
     renderAt("/auth");
-    expect(screen.getByText("Onboarding screen")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
   });
 
   it("renders the verify screen", () => {
@@ -399,7 +463,7 @@ describe("consumer route map", () => {
 
   it("guards signed routes: fresh guests go to onboarding, returning guests to auth", () => {
     renderAt("/settings/appearance");
-    expect(screen.getByText("Onboarding screen")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
     cleanup();
     returningGuest();
     renderAt("/settings/appearance");

@@ -61,11 +61,9 @@ import { AdminInvite } from "./screens/AdminInvite";
 import { AdminAuditLog } from "./screens/AdminAuditLog";
 import { CommunityGuidelines, PrivacyPolicy, Terms } from "./screens/Legal";
 import { Diagnostics } from "./screens/Diagnostics";
-import { Capacitor } from "@capacitor/core";
 import { ReportLinkHandler } from "./components/ReportLinkHandler";
 import { ChatPushLinkHandler } from "./components/ChatPushLinkHandler";
 import { AuthLinkBootstrap } from "./components/AuthLinkBootstrap";
-import { PublicLanding } from "./screens/PublicLanding";
 import { SharedReport } from "./screens/SharedReport";
 // L-FIXTURE additive-only: deterministic visual preflight route (static,
 // network-free). No guards changed; the route mounts no data-bound screens.
@@ -91,8 +89,8 @@ function MessagingLifecycle() {
 }
 
 function StartScreen() {
-  const { user } = useAuth();
-  if (!Capacitor.isNativePlatform() && !user) return <PublicLanding />;
+  // All hosts enter through the same session-first guards. GuestOnly at /auth
+  // owns incomplete-profile, pending-link and first-run onboarding decisions.
   return <RequireAuth><Shell /></RequireAuth>;
 }
 

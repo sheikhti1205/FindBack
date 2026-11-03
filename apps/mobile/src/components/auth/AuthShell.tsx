@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
-import { Radar } from "lucide-react";
+import { BrandMark } from "../BrandMark";
 import { motionDurations, motionEasings } from "../uiMotion";
 import "./AuthShell.css";
 
@@ -29,9 +29,7 @@ export function AuthShell({
     >
       <header className="flex flex-col gap-3">
         <span className="flex items-center gap-2.5" aria-hidden="true">
-          <span className="flex h-11 w-11 items-center justify-center rounded-m3-md bg-primary text-on-primary">
-            <Radar size={24} />
-          </span>
+          <BrandMark size={44} shape="tile" alt="" />
           <span className="text-lg font-semibold tracking-tight">FindBack</span>
         </span>
         {illustration && (
@@ -39,7 +37,7 @@ export function AuthShell({
             aria-hidden="true"
             className="flex items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant"
           >
-            <Radar size={20} className="shrink-0 text-on-surface" />
+            <BrandMark size={20} alt="" className="shrink-0" />
             Lost something? FindBack helps it find its way back to you.
           </span>
         )}

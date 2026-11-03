@@ -12,7 +12,8 @@
   background: var(--fb-surface);
   color: var(--fb-on-surface);
 }
-.fb-onboarding-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 2.75rem; }
+.fb-onboarding-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; min-height: 2.75rem; }
+.fb-onboarding-header > button { margin-inline-start: auto; }
 .fb-onboarding-brand { display: flex; align-items: center; gap: .6rem; font-size: 1.25rem; font-weight: 700; letter-spacing: -.04em; }
 .fb-onboarding-pager { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: center; min-width: 0; padding-block: clamp(2rem, 8vh, 5rem); }
 .fb-onboarding-index { margin: 0 0 1.25rem; font-size: .75rem; font-weight: 600; letter-spacing: .12em; color: var(--fb-on-surface-variant); }

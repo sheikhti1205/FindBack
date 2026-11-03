@@ -80,6 +80,12 @@ These fixtures do not certify real accounts, Android touch/IME/native plugins,
 screen readers, Sentry ingestion or the owner's phone-photo matching corpus.
 ## First-run onboarding
 
+The application root uses the same session-first guards on Web and native.
+Restoration/error retry precedes guest routing; incomplete profiles resume their
+completion, pending links bypass onboarding without being consumed, fresh guests
+see onboarding and completed guests reach the unified `/auth` entry. There is no
+separate public marketing landing or fabricated Lost/Found recovery demo.
+
 `screens/Onboarding.tsx` owns the user-paced four-scene editorial introduction:
 Lost / Found / Search and likely matches / Control. It uses the current
 `BrandMark`, app typography and semantic surface/text/focus tokens. Portrait is

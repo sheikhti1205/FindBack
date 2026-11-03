@@ -18,3 +18,7 @@ test('rejects changed art, omitted outputs, stale HTML, old native splash and be
   assert.throws(()=>checkBrandConsistency({read:path=>path===changed?bytes:readFileSync(path)}),undefined,changed);
  }
 });
+test('rejects a substitute auth logo even if all generated assets are correct',()=>{
+ const path='apps/mobile/src/components/auth/AuthShell.tsx';
+ assert.throws(()=>checkBrandConsistency({read:p=>p===path?Buffer.from('import { Radar } from "lucide-react"; <Radar />'):readFileSync(p)}));
+});
