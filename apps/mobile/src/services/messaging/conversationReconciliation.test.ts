@@ -98,6 +98,7 @@ it("applies page erasures before its older available body and never resurrects i
     }, () => {});
   expect((await h.getMessage(messageId))?.body).toBe("");
   expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
+  expect(await h.getStateCursor()).toBeNull();
 });
 it("never certifies a partial multi-page range, then safely replays durable unavailable records", async () => {
   const h = await history(), target = { ...head, position: 101, messageHead: 101 };
@@ -113,9 +114,44 @@ it("never certifies a partial multi-page range, then safely replays durable unav
   }, async () => {}, () => {})).rejects.toThrow("offline second page");
   expect(await h.getConversationCheckpoint(conversationId)).toBeNull();
   expect(await h.listConversationUnavailable(conversationId)).toHaveLength(100);
-  await reconcileConversation({ accountId, deviceId }, h, target, fetch, async () => {}, () => {});
+  const resumed: number[] = [];
+  await reconcileConversation({ accountId, deviceId }, h, target, async (head, after) => {
+    resumed.push(after); return fetch(head, after);
+  }, async () => {}, () => {});
+  expect(resumed).toEqual([100]);
   expect(await h.listConversationUnavailable(conversationId)).toHaveLength(101);
   expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
+});
+
+it("makes durable finite progress across the 100-page wake budget without certifying a partial target", async () => {
+  const h = await history(), target = { ...head, position: 10_001, messageHead: 10_001 };
+  // This test isolates page-budget/resume bookkeeping. Per-entry unavailable
+  // persistence has separate actual-adapter coverage; it is not body recovery.
+  const bookkeeping = { ...h, recordConversationUnavailable: async () => {} };
+  const seen: number[] = [];
+  const fetch = async (_head: ConversationHead, after: number) => {
+    seen.push(after); const through = Math.min(after + 100, target.position);
+    return { head: target, afterPosition: after, throughPosition: through,
+      entries: Array.from({ length: through - after }, (_, i) => {
+        const position = after + i + 1, id = `00000000-0000-4000-8000-${position.toString(16).padStart(12, "0")}`;
+        return { position, kind: "MESSAGE", sourceId: id, messageId: id, publishedAt: 900, disposition: "UNAVAILABLE" };
+      }) };
+  };
+  await expect(reconcileConversation({ accountId, deviceId }, bookkeeping, target, fetch, async () => {}, () => {})).rejects.toThrow("incomplete");
+  expect(await h.getConversationCheckpoint(conversationId)).toBeNull();
+  expect(seen).toHaveLength(100); seen.length = 0;
+  await reconcileConversation({ accountId, deviceId }, bookkeeping, target, fetch, async () => {}, () => {});
+  expect(seen).toEqual([10_000]); expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
+});
+
+it("never reuses partial retry progress under another relationship or target prefix", async () => {
+  const h = await history();
+  await h.saveConversationProgress({ target: { ...head, epoch: "old-epoch" }, through: 1 });
+  const fetched: number[] = [];
+  await reconcileConversation({ accountId, deviceId }, h, head, async (_head, after) => {
+    fetched.push(after); return page();
+  }, async () => {}, () => {});
+  expect(fetched).toEqual([0]); expect((await h.getMessage(messageId))?.body).toBe(envelope.event.message.body);
 });
 
 it("reconciles and certifies missing canonical history before the actual queued SEND admission", async () => {
@@ -200,4 +236,12 @@ it("rechecks local erasure after missing-range reconciliation before sending a c
   expect(sent).toBe(false); expect(await h.getConversationCheckpoint(conversationId)).toEqual(target);
   expect((await h.getMessage(ownId))?.body).not.toBe("Removed on another device");
   await session.close();
+});
+
+it("rejects a body page substituted for the target's erasure publication before persisting anything", async () => {
+  const h = await history(), target = { ...head, stateHead: 1, messageHead: 0 };
+  await expect(reconcileConversation({ accountId, deviceId }, h, target,
+    async () => ({ ...page(), head: target }), async () => {}, () => {})).rejects.toThrow();
+  expect(await h.getMessage(messageId)).toBeNull();
+  expect(await h.getConversationCheckpoint(conversationId)).toBeNull();
 });

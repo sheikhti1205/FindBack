@@ -118,4 +118,40 @@ describe.each(["IndexedDB", "SQLite"] as const)("%s durable conversation checkpo
     const reopened = await f.open();
     expect(await reopened.listConversationUnavailable(conversationId)).toEqual([value]);
   });
+  it("does not let conversation-only erasures skip an unseen account-wide state event", async () => {
+    const f = await fixture(kind), history = await f.open();
+    const later = { ...scope, change: { kind: "CLEAR_FOR_ME" as const, conversationId, peerId: scope.deviceId,
+      eventId: "00000000-0000-4000-8000-000000000099", sequence: 2, throughSequence: 50, occurredAt: 900 } };
+    await history.applyStateChange(later, "conversation");
+    expect(await history.getStateCursor()).toBeNull();
+    await expect(history.applyStateChange({ ...later, change: { ...later.change,
+      eventId: "00000000-0000-4000-8000-000000000097" } })).rejects.toThrow("Immutable messaging state conflict");
+    await f.close(history); const reopened = await f.open();
+    expect(await reopened.getStateCursor()).toBeNull();
+    await expect(reopened.applyStateChange({ ...later, change: { ...later.change, throughSequence: 51 } })).rejects.toThrow();
+    const earlier = { ...later, change: { ...later.change, conversationId: scope.deviceId,
+      eventId: "00000000-0000-4000-8000-000000000098", sequence: 1 } };
+    await reopened.applyStateChange(earlier);
+    expect(await reopened.getStateCursor()).toEqual({ eventId: earlier.change.eventId, sequence: 1 });
+    await reopened.applyStateChange(later);
+    expect(await reopened.getStateCursor()).toEqual({ eventId: later.change.eventId, sequence: 2 });
+    await expect(reopened.applyStateChange({ ...later, change: { ...later.change, occurredAt: 901 } }, "conversation")).rejects.toThrow();
+    expect(JSON.stringify(await reopened.exportSnapshot())).not.toContain(later.change.eventId);
+    await reopened.purgeHistory();
+    await expect(reopened.applyStateChange(later, "conversation")).rejects.toThrow();
+    await f.close(reopened); const purged = await f.open();
+    await expect(purged.applyStateChange(later, "conversation")).rejects.toThrow();
+  });
+  it("stores retry progress without granting a checkpoint or exporting replay authority", async () => {
+    const f = await fixture(kind), history = await f.open();
+    await history.saveConversationProgress({ target: head, through: 2 });
+    expect(await history.getConversationCheckpoint(conversationId)).toBeNull();
+    expect(JSON.stringify(await history.exportSnapshot())).not.toContain("stream-a");
+    await f.close(history); const reopened = await f.open();
+    expect(await reopened.getConversationProgress(conversationId)).toEqual({ target: head, through: 2 });
+    await expect(reopened.saveConversationProgress({ target: head, through: 4 })).rejects.toThrow();
+    await expect(reopened.saveConversationProgress({ target: { ...head, accountId: scope.deviceId }, through: 2 })).rejects.toThrow();
+    await reopened.purgeHistory();
+    await expect(reopened.getConversationProgress(conversationId)).rejects.toThrow();
+  });
 });

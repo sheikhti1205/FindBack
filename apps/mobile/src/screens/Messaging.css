@@ -44,6 +44,12 @@
 .fb-chat-secondary, .fb-chat-sync { font-size:.8rem; color:var(--fb-on-surface-variant); }
 .fb-chat-sync { padding:.3rem 1rem; margin:0; }
 .fb-chat-sync:empty { display:none; }
+.fb-chat-catchup { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:.4rem .65rem; flex:none; padding:.8rem 1rem; border-bottom:1px solid var(--fb-outline-variant); }
+.fb-chat-catchup > svg { flex:none; margin-top:.15rem; color:var(--fb-on-surface-variant); }
+.fb-chat-catchup > div { min-width:0; font-size:.85rem; line-height:1.4; overflow-wrap:anywhere; }
+.fb-chat-catchup strong { font-weight:600; }
+.fb-chat-catchup p { margin:.2rem 0 0; color:var(--fb-on-surface-variant); }
+.fb-chat-catchup button { grid-column:2; justify-self:start; max-width:100%; min-height:44px; padding:.4rem .6rem; border:0; border-radius:.5rem; background:transparent; color:var(--fb-primary); font:inherit; font-size:.85rem; font-weight:600; }
 .fb-chat-unread { background:var(--fb-primary); color:var(--fb-on-primary); border-radius:1rem; padding:.1rem .4rem; font-size:.75rem; font-weight:650; flex:none; }
 .fb-chat-empty { padding:2rem 1.25rem; color:var(--fb-on-surface-variant); font-size:.9rem; line-height:1.5; }
 .fb-chat-empty h2 { font-size:1.1rem; color:var(--fb-on-surface); font-weight:600; margin-bottom:.4rem; }

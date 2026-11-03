@@ -30,7 +30,7 @@ import {
   changeMessagingRelationship, markMessagingConversationRead, readMessagingThreadState,
   refreshMessaging, sendMessagingText, sendMessagingLocation, sendMessagingMedia, clearMessagingConversation, removeMessagingMessage,
   fetchMessagingReceiptView, observeMessagingReceipt, readMessagingMedia, downloadMessagingMedia, recoverMessagingText,
-  retryMessagingMessage, setMessagingMuted,
+  retryMessagingMessage, setMessagingMuted, watchMessagingThread,
 } from "../services/messaging/runtime";
 import type { MediaAttachment, OutboxEntry, StaticLocation, StoredHumanMessage } from "../services/messaging/history";
 import { prepareMessagingPhoto, type PreparedMessagingPhoto } from "../services/messaging/preparePhoto";
@@ -297,6 +297,16 @@ export function MessagingThread() {
 
 function ThreadSession({ accountId, conversationId }: { accountId: string; conversationId: string }) {
   const chat = useMessaging();
+  const [renderedRevision, setRenderedRevision] = useState(-1);
+  const [threadReadFailed, setThreadReadFailed] = useState(false);
+  const [threadReadRetry, setThreadReadRetry] = useState(0);
+  const runtimeOpen = chat.accountId === accountId && (chat.status === "ready" || chat.status === "offline");
+  useEffect(() => {
+    if (runtimeOpen) return watchMessagingThread(accountId, conversationId);
+  }, [runtimeOpen, accountId, conversationId]);
+  const threadSync = chat.threadSync?.conversationId === conversationId ? chat.threadSync : null;
+  const threadBlocked = threadReadFailed || !threadSync || (threadSync.mode !== "ready" && threadSync.mode !== "soft")
+    || (threadSync.appliedRevision !== undefined && renderedRevision < threadSync.appliedRevision);
   const row = chat.conversations.find((entry) => entry.conversationId === conversationId);
   const current = chat.currentProjections?.[conversationId];
   const view = current ?? row?.cachedProjection;
@@ -325,7 +335,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     navigate({ pathname: latest.pathname, search: params.toString() ? `?${params}` : "", hash: latest.hash },
       { replace: true, state: latest.state });
   }
-  const locationAllowed = chat.accountId === accountId && chat.status === "ready"
+  const locationAllowed = !threadBlocked && chat.accountId === accountId && chat.status === "ready"
     && current?.mode === "CONNECTED" && !current.ownBlocked;
   const locationAuthority = useRef("");
   locationAuthority.current = JSON.stringify([chat.accountId, chat.status, row?.peerId,
@@ -345,6 +355,9 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<"actions" | "search" | "media" | "location" | "end" | "message" | "delete" | "unsend" | "clear" | "review" | null>(null);
+  useLayoutEffect(() => {
+    if (threadBlocked) { setSheet(null); setViewer(null); }
+  }, [threadBlocked]);
   useLayoutEffect(() => { if (!locationAllowed) setSheet(previous => previous === "location" ? null : previous); }, [locationAllowed]);
   const [messageQuery, setMessageQuery] = useState("");
   const [jumpTo, setJumpTo] = useState<string | null>(null);
@@ -440,9 +453,10 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     void readMessagingThreadState(accountId, conversationId).then((state) => {
       if (cancelled) return;
       setMessages(state.messages); setOutbox(state.outbox); setMedia(state.media); setLoaded(true);
-    }).catch(() => { if (!cancelled) setError("Your saved messages could not open. Try syncing again."); });
+      setRenderedRevision(chat.revision); setThreadReadFailed(false);
+    }).catch(() => { if (!cancelled) setThreadReadFailed(true); });
     return () => { cancelled = true; };
-  }, [accountId, conversationId, chat.accountId, chat.status, chat.revision]);
+  }, [accountId, conversationId, chat.accountId, chat.status, chat.revision, threadReadRetry]);
   useLayoutEffect(() => {
     if (nearBottom.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
   }, [messages]);
@@ -460,7 +474,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const highest = messages.reduce((maximum, message) => Math.max(maximum, message.server?.sequence ?? 0), 0);
   useEffect(() => {
     const area = scroll.current;
-    if (!area || !loaded) return;
+    if (!area || !loaded || threadBlocked) return;
     const checkRead = () => {
       nearBottom.current = area.scrollHeight - area.scrollTop - area.clientHeight < 32;
       if (document.visibilityState !== "visible" || !nearBottom.current || highest <= lastMarked.current) return;
@@ -474,7 +488,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       area.removeEventListener("scroll", checkRead);
       document.removeEventListener("visibilitychange", checkRead);
     };
-  }, [accountId, conversationId, highest, loaded]);
+  }, [accountId, conversationId, highest, loaded, threadBlocked]);
 
   // This is live, disposable receipt authority, never the stored unread cursor.
   // A fetched context precedes a fresh geometric observation of an inbound bubble.
@@ -486,7 +500,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     } else if (receiptAuthority) {
       setReceipt(previous => previous?.authority === receiptAuthority ? previous : null);
     }
-    if (!area || !loaded || !visible || sheet !== null || reportTarget || viewer || chat.accountId !== accountId || chat.status !== "ready"
+    if (threadBlocked || !area || !loaded || !visible || sheet !== null || reportTarget || viewer || chat.accountId !== accountId || chat.status !== "ready"
       || !projections || !receiptAuthority || current?.mode !== "CONNECTED" || current.ownBlocked) return;
     const controller = new AbortController();
     let context: string | null = null;
@@ -589,7 +603,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       area.removeEventListener("load", schedule, true);
       window.removeEventListener("resize", schedule);
     };
-  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, receiptAuthority, loaded, messages, visible, sheet, reportTarget, viewer]);
+  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, receiptAuthority, loaded, messages, visible, sheet, reportTarget, viewer, threadBlocked]);
 
   async function setMuted(muted: boolean) {
     if (busy || chat.status !== "ready" || typeof current?.ownMuted !== "boolean") return;
@@ -621,7 +635,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
    * authority/destructive actions take `busy`.
    */
   async function send() {
-    if (!row || (!photo && !draft.trim())) return;
+    if (threadBlocked || !row || (!photo && !draft.trim())) return;
     if (photo && (!photo.prepared || view?.mode !== "CONNECTED" || view.ownBlocked)) return;
     const body = draft, sendingPhoto = photo, sendingRevision = draftRevision.current;
     setError(null);
@@ -683,9 +697,18 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       <Link to="/chats" className="fb-chat-icon" aria-label="Back to chats"><ArrowLeft size={22} aria-hidden="true" /></Link>
       <ChatIdentity peerId={row?.peerId} name={name} muted={view?.ownMuted === true}
         status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
-      <button type="button" className="fb-chat-icon" aria-label="Conversation options" onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
+      <button type="button" className="fb-chat-icon" aria-label="Conversation options" disabled={threadBlocked} onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
     </header>
-    <div className="fb-chat-messages" ref={scroll}>
+    {threadBlocked && <div className="fb-chat-catchup">
+      <RefreshCw size={18} aria-hidden="true" />
+      <div role="status"><strong>{threadReadFailed || threadSync?.mode === "error" ? "Couldn’t update this conversation." : "Updating this conversation…"}</strong>
+        <p>{threadReadFailed || threadSync?.mode === "error" ? "Your saved messages and draft are still here. Try again before continuing."
+          : "We’re getting the latest changes before you continue."}</p></div>
+      {(threadReadFailed || threadSync?.mode === "error") && <button type="button" onClick={() => {
+        setThreadReadRetry(value => value + 1); void refreshMessaging(accountId).catch(() => undefined);
+      }}>Try again</button>}
+    </div>}
+    <div className="fb-chat-messages" ref={scroll} inert={threadBlocked || undefined}>
       <p className="fb-chat-sync" role="status">{chat.error ?? (chat.status === "offline" ? "You’re offline. Messages will send when you reconnect." : "")}</p>
       {!loaded && <p role="status" className="fb-chat-secondary">Opening messages…</p>}
       {loaded && messages.length === 0 && <p className="fb-chat-empty">{view?.request === "INCOMING" ? "A new message request."
@@ -758,7 +781,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
           if (source && Capacitor.getPlatform() !== "android") void preparePhoto(source);
         }} />}
       <PeerChatComposer value={draft} onChange={value => { draftRevision.current++; setDraft(value); }} onSend={() => void send()} inputRef={composer}
-        busy={false} locked={!!admission.current} canSend={photo ? photoAllowed && !!photo.prepared : !!draft.trim()}
+         busy={false} locked={threadBlocked || !!admission.current} canSend={!threadBlocked && (photo ? photoAllowed && !!photo.prepared : !!draft.trim())}
         photoAllowed={view?.mode === "CONNECTED"} onPhoto={() => void choosePhoto()}
         locationAllowed={locationAllowed} onLocation={() => setSheet("location")} />
     </>}

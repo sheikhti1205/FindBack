@@ -10,6 +10,14 @@ import type { MessagingPreferences } from "./session";
 import { onRealtime } from "../realtime";
 import { getSupabaseBackendUrl } from "../supabaseClient";
 
+export interface MessagingThreadSync {
+  conversationId: string;
+  mode: "checking" | "ready" | "soft" | "blocking" | "error";
+  missing: number | null;
+  /** UI must finish this post-reconciliation durable read before interaction. */
+  appliedRevision?: number;
+}
+
 export interface MessagingRuntimeSnapshot {
   accountId: string | null;
   status: "closed" | "opening" | "ready" | "offline" | "error";
@@ -17,13 +25,15 @@ export interface MessagingRuntimeSnapshot {
   /** Last fully fetched projection set in this live account lifetime. Cleared
    * when offline/refreshing; cached local projections are kept separately. */
   currentProjections: Readonly<Record<string, ConversationProjection>> | null;
+  /** Ephemeral active-thread gate. Only durable session reconciliation unlocks it. */
+  threadSync: MessagingThreadSync | null;
   error: string | null;
   /** Invalidates consumer thread reads after local persistence or synchronization. */
   revision: number;
 }
 
 export const EMPTY_MESSAGING_SNAPSHOT: MessagingRuntimeSnapshot = Object.freeze({
-  accountId: null, status: "closed", conversations: [], currentProjections: null, error: null, revision: 0,
+  accountId: null, status: "closed", conversations: [], currentProjections: null, threadSync: null, error: null, revision: 0,
 });
 
 type Session = ReturnType<typeof createSupabaseMessagingSession>;
@@ -40,6 +50,7 @@ interface Owner {
   /** REGISTER has completed for this owner; SYNC is only valid after it. */
   started: boolean;
   authorityVersion: number;
+  activeThread: { conversationId: string } | null;
   detach: () => void;
 }
 
@@ -109,7 +120,40 @@ async function reload(owner: Owner) {
 
 function invalidateAuthority(owner: Owner) {
   owner.authorityVersion++;
-  if (current === owner) publish({ ...snapshot, currentProjections: null });
+  if (current === owner) publish({ ...snapshot, currentProjections: null,
+    threadSync: owner.activeThread ? { ...owner.activeThread, mode: "checking", missing: null } : null });
+}
+
+async function reconcileActiveThread(owner: Owner) {
+  const thread = owner.activeThread;
+  if (!thread) return;
+  const authorityVersion = owner.authorityVersion;
+  const live = () => current === owner && owner.generation === generation && owner.activeThread === thread
+    && owner.authorityVersion === authorityVersion;
+  try {
+    await owner.session.reconcileConversation(thread.conversationId, gate => {
+      if (live() && gate.mode !== "ready") publish({ ...snapshot, threadSync: { conversationId: thread.conversationId, mode: gate.mode, missing: gate.missing } });
+    });
+    if (!live()) return;
+    await reload(owner);
+    if (live()) publish({ ...snapshot, threadSync: { ...thread, mode: "ready", missing: 0, appliedRevision: snapshot.revision } });
+  } catch {
+    if (live()) publish({ ...snapshot, threadSync: { ...thread, mode: "error", missing: null } });
+  }
+}
+
+/** One active transcript lease; closing/switching cannot publish a late old gate.
+ * Network work stays in the ordinary serialized refresh owner, never a UI lane. */
+export function watchMessagingThread(accountId: string, conversationId: string): () => void {
+  const owner = ownerFor(accountId), thread = { conversationId: uuid(conversationId) };
+  owner.activeThread = thread;
+  publish({ ...snapshot, threadSync: { ...thread, mode: "checking", missing: null } });
+  void requestRefresh(owner, "full");
+  return () => {
+    if (owner.activeThread !== thread) return;
+    owner.activeThread = null;
+    if (current === owner) publish({ ...snapshot, threadSync: null });
+  };
 }
 
 function rememberClose(accountId: string, work: Promise<void>): Promise<void> {
@@ -190,6 +234,9 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
         // projections would leave the composer unable to judge eligibility.
         owner.started = true;
       }
+      // Open/reconnect compare the active thread before pending SEND admission.
+      // A thread failure stays gated while unrelated mailbox recovery can proceed.
+      await reconcileActiveThread(owner); assertOwner(owner);
       let sendFailed = false;
       try { await owner.session.flush(); } catch { sendFailed = true; }
       assertOwner(owner);
@@ -236,6 +283,7 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
       // Local data remains primary and usable even if the server is unreachable.
       await reload(owner).catch(() => undefined);
       if (current === owner) publish({ ...snapshot, status: "offline", currentProjections: null,
+        threadSync: owner.activeThread ? { ...owner.activeThread, mode: "error", missing: null } : null,
         error: "Chat could not sync. Try again." });
     }
   };
@@ -266,7 +314,7 @@ export function setMessagingAccount(accountId: string | null): void {
   // Attach rejection handling immediately; lifecycle work may still be queued.
   const settledClose = closing.then(() => ({ ok: true as const }), () => ({ ok: false as const }));
   publish(next === null ? EMPTY_MESSAGING_SNAPSHOT : {
-    accountId: next, status: "opening", conversations: [], currentProjections: null, error: null, revision: 0,
+    accountId: next, status: "opening", conversations: [], currentProjections: null, threadSync: null, error: null, revision: 0,
   });
   const start = async () => {
     const closed = await settledClose;
@@ -279,7 +327,7 @@ export function setMessagingAccount(accountId: string | null): void {
       if (ticket !== generation) { await closePlatformHandle(handle); return; }
       const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history),
         generation: ticket, refreshing: null, pendingRefresh: null, started: false,
-        authorityVersion: 0, detach: () => undefined };
+        authorityVersion: 0, activeThread: null, detach: () => undefined };
       current = owner;
       owner.detach = attachResume(owner);
       await reload(owner); // Publish local rows before attempting network work.

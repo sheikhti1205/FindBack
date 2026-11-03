@@ -21,7 +21,7 @@ beforeEach(() => {
     { conversationId:"request",peerId:"requester",mode:"REQUEST" as const,request:"INCOMING" as const,ownHidden:false },
     { conversationId:"archive",peerId:"archived",mode:"CONNECTED" as const,request:"NONE" as const,ownHidden:true },
   ].map(v=>({...v,requestEpoch:null,ownBlocked:false,ownDeclined:false,revision:1}));
-  state.chat={accountId:"viewer",status:"ready",revision:1,error:null,currentProjections:Object.fromEntries(views.map(v=>[v.conversationId,v])),conversations:views.map(v=>({conversationId:v.conversationId,peerId:v.peerId,cachedProjection:v,lastMessage:null,lastSequence:0,unreadCount:v.conversationId==="request"?2:0,pendingCount:0,updatedAt:0,projectionObservedAt:0}))};
+  state.chat={accountId:"viewer",status:"ready",revision:1,error:null,threadSync:null,currentProjections:Object.fromEntries(views.map(v=>[v.conversationId,v])),conversations:views.map(v=>({conversationId:v.conversationId,peerId:v.peerId,cachedProjection:v,lastMessage:null,lastSequence:0,unreadCount:v.conversationId==="request"?2:0,pendingCount:0,updatedAt:0,projectionObservedAt:0}))};
   Object.defineProperty(window,"innerWidth",{value:1200,configurable:true});
 });
 afterEach(cleanup);

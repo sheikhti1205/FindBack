@@ -16,6 +16,15 @@ export interface ConversationHead {
   serverTime: number;
 }
 
+/** Retry bookkeeping for an exact target, never a ready/authority checkpoint. */
+export interface ConversationProgress { target: ConversationHead; through: number }
+
+export function copyConversationProgress(input: ConversationProgress): ConversationProgress {
+  const target = copyConversationHead(input?.target), through = counter(input?.through);
+  if (through > target.position) throw new Error("Invalid conversation retry progress");
+  return { target, through };
+}
+
 export type ConversationGate =
   | { mode: "ready"; missing: 0 }
   | { mode: "soft"; missing: number }

@@ -804,6 +804,19 @@ describe("chat media records (web parity with SQLite)", () => {
     db.close();
   });
 
+  it("fences a pre-range executable after upgrading its durable history", async () => {
+    await seedV3();
+    const store = await open();
+    expect((await store.getMessage(MESSAGE))?.body).toBe(text.body);
+    await store.close();
+    const old = factory.open(DB_NAME, 7);
+    const error = await new Promise<DOMException | null>(resolve => {
+      old.onerror = () => resolve(old.error);
+      old.onsuccess = () => { old.result.close(); resolve(null); };
+    });
+    expect(error?.name).toBe("VersionError");
+  });
+
   it("upgrades a v3 database with media stores while quarantining unknown classification", async () => {
     await seedV3();
     const store = await open();

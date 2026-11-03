@@ -36,7 +36,7 @@ import {
 } from "./media";
 import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
 import { withHistoryLock } from "./historyLock";
-import { copyConversationHead, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationUnavailable } from "./conversationHead";
+import { copyConversationHead, copyConversationProgress, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationProgress, type ConversationUnavailable } from "./conversationHead";
 
 export type SqliteValue = string | number | null;
 
@@ -989,6 +989,22 @@ export async function openSqliteMessagingHistory(
     });
   }
 
+  async function getConversationProgress(conversationId: string): Promise<ConversationProgress | null> {
+    const id = uuid(conversationId);
+    const row = (await driver.all<{ value: string }>(S.getMeta, [`conversation_progress:${id}`]))[0];
+    const value = row ? copyConversationProgress(JSON.parse(row.value)) : null;
+    if (value && (value.target.accountId !== scope.accountId || value.target.conversationId !== id)) throw new Error("Conversation scope mismatch");
+    return value;
+  }
+
+  async function saveConversationProgress(input: ConversationProgress): Promise<void> {
+    const value = copyConversationProgress(input);
+    if (value.target.accountId !== scope.accountId) throw new Error("Conversation scope mismatch");
+    await transaction(async () => {
+      await driver.run(S.setMeta, [`conversation_progress:${value.target.conversationId}`, JSON.stringify(value)]);
+    });
+  }
+
   async function listConversationUnavailable(conversationId: string): Promise<ConversationUnavailable[]> {
     const id = uuid(conversationId);
     const rows = await driver.all<{ value: string }>("select value from messaging_meta where key like ?", [`conversation_unavailable:${id}:%`]);
@@ -997,14 +1013,23 @@ export async function openSqliteMessagingHistory(
     return values.sort((a, b) => a.position - b.position);
   }
 
-  async function applyStateChange(input: StateChangeEnvelope): Promise<StateCursor> {
+  async function applyStateChange(input: StateChangeEnvelope, mode: "account" | "conversation" = "account"): Promise<StateCursor> {
     await assertOpen();
     const { change } = copyStateEnvelope(input, scope);
     const json = JSON.stringify(change);
     return transaction(async () => {
       const prior = (await driver.all<{ sequence: number; changeJson: string }>(S.getStateEvent, [change.eventId]))[0];
-      if (prior) {
-        if (prior.sequence !== change.sequence || prior.changeJson !== json) throw new Error("Immutable messaging state conflict");
+      const rangeKey = `conversation_state_event:${change.eventId}`;
+      const sequenceKey = `conversation_state_sequence:${change.sequence}`;
+      const range = (await driver.all<{ value: string }>(S.getMeta, [rangeKey]))[0];
+      const rangeSequence = (await driver.all<{ value: string }>(S.getMeta, [sequenceKey]))[0];
+      const globalSequence = (await driver.all<{ changeJson: string }>(
+        "select change_json as changeJson from messaging_state_events where sequence = ?", [change.sequence]))[0];
+      if ((prior && (prior.sequence !== change.sequence || prior.changeJson !== json))
+        || (range && range.value !== json) || (rangeSequence && rangeSequence.value !== change.eventId)
+        || (globalSequence && globalSequence.changeJson !== json)) throw new Error("Immutable messaging state conflict");
+      if (prior || range) {
+        if (mode === "account" && !prior) await driver.run(S.insertStateEvent, [change.eventId, change.sequence, json]);
         return { eventId: change.eventId, sequence: change.sequence };
       }
       await ensureConversationState(change.conversationId, statePeer(scope, change));
@@ -1045,7 +1070,11 @@ export async function openSqliteMessagingHistory(
         // synthetic id here would make the real echo look like a conflict.
         await driver.run(S.deleteOutbox, [change.messageId]);
       }
-      await driver.run(S.insertStateEvent, [change.eventId, change.sequence, json]);
+      if (mode === "account") await driver.run(S.insertStateEvent, [change.eventId, change.sequence, json]);
+      else {
+        await driver.run(S.setMeta, [rangeKey, json]);
+        await driver.run(S.setMeta, [sequenceKey, change.eventId]);
+      }
       return { eventId: change.eventId, sequence: change.sequence };
     });
   }
@@ -1621,6 +1650,7 @@ export async function openSqliteMessagingHistory(
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
     markConversationRead: serial(markConversationRead),
     getStateCursor: serial(getStateCursor), applyStateChange: serial(applyStateChange),
+    getConversationProgress: serial(getConversationProgress), saveConversationProgress: serial(saveConversationProgress),
     getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),
     recordConversationUnavailable: serial(recordConversationUnavailable), listConversationUnavailable: serial(listConversationUnavailable),
     claimNextOutgoing: serial(claimNextOutgoing), retryOutgoing: serial(retryOutgoing),

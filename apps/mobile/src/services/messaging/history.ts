@@ -212,10 +212,13 @@ export interface MessagingHistory {
   markConversationRead(conversationId: string, throughSequence: number): Promise<void>;
   /** Body-free erasure metadata survives temporary message-mailbox expiry. */
   getStateCursor(): Promise<StateCursor | null>;
-  applyStateChange(envelope: StateChangeEnvelope): Promise<StateCursor>;
+  /** Conversation ranges apply suppression but never certify account-wide replay. */
+  applyStateChange(envelope: StateChangeEnvelope, scope?: "account" | "conversation"): Promise<StateCursor>;
   /** Local-device proof of a fully applied authorized conversation prefix.
    * Deliberately absent from portable snapshots. Never derived from max sequence. */
   getConversationCheckpoint(conversationId: string): Promise<import("./conversationHead").ConversationHead | null>;
+  getConversationProgress(conversationId: string): Promise<import("./conversationHead").ConversationProgress | null>;
+  saveConversationProgress(progress: import("./conversationHead").ConversationProgress): Promise<void>;
   /** CAS after complete reconciliation; not a way to acknowledge a HEAD lookup. */
   commitConversationCheckpoint(next: import("./conversationHead").ConversationHead,
     expected: import("./conversationHead").ConversationHead | null): Promise<void>;

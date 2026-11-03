@@ -13,13 +13,13 @@ import {
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
-import { copyConversationHead, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationUnavailable } from "./conversationHead";
+import { copyConversationHead, copyConversationProgress, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationProgress, type ConversationUnavailable } from "./conversationHead";
 import { erasureMatches, exportPortable, mergePortable, type PortableConversation, type PortableErasure,
   type PortableMessage, type PortableView } from "./indexedDbBackup";
 
-// v7 adds local-only prefix checkpoints and fences pre-HEAD executables.
-export const MESSAGING_IDB_VERSION = 7;
-const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle", "conversationCheckpoints", "conversationUnavailable"];
+// v8 isolates range suppression from the account-wide state replay cursor.
+export const MESSAGING_IDB_VERSION = 8;
+const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "rangeStateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle", "conversationCheckpoints", "conversationProgress", "conversationUnavailable"];
 const LEASE_MS = 60_000;
 
 interface EventIdentity {
@@ -40,6 +40,10 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
     request.onerror = () => reject(new Error("Messaging storage could not open"));
     request.onupgradeneeded = () => {
       const db = request.result;
+      if (!db.objectStoreNames.contains("conversationProgress")) db.createObjectStore("conversationProgress", { keyPath: "conversationId" });
+      if (!db.objectStoreNames.contains("rangeStateEvents")) {
+        db.createObjectStore("rangeStateEvents", { keyPath: "eventId" }).createIndex("sequence", "sequence", { unique: true });
+      }
       if (!db.objectStoreNames.contains("conversationCheckpoints")) db.createObjectStore("conversationCheckpoints", { keyPath: "conversationId" });
       if (!db.objectStoreNames.contains("conversationUnavailable")) {
         db.createObjectStore("conversationUnavailable", { keyPath: "id" }).createIndex("conversation", "conversationId");
@@ -546,6 +550,27 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
 
+  async function getConversationProgress(conversationId: string): Promise<ConversationProgress | null> {
+    const id = uuid(conversationId);
+    return transaction("readonly", (tx, result, guard) => {
+      const request = tx.objectStore("conversationProgress").get(id);
+      request.onsuccess = guard(() => {
+        const value = request.result ? copyConversationProgress(request.result) : null;
+        if (value && (value.target.accountId !== scope.accountId || value.target.conversationId !== id)) throw new Error("Conversation scope mismatch");
+        result(value);
+      });
+    });
+  }
+
+  async function saveConversationProgress(input: ConversationProgress): Promise<void> {
+    const value = copyConversationProgress(input);
+    if (value.target.accountId !== scope.accountId) throw new Error("Conversation scope mismatch");
+    return transaction("readwrite", (tx, result) => {
+      tx.objectStore("conversationProgress").put({ ...value, conversationId: value.target.conversationId });
+      result(undefined);
+    });
+  }
+
   async function recordConversationUnavailable(input: ConversationUnavailable): Promise<void> {
     const value = copyConversationUnavailable(input);
     if (value.accountId !== scope.accountId) throw new Error("Conversation scope mismatch");
@@ -571,14 +596,21 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
 
-  async function applyStateChange(input: StateChangeEnvelope): Promise<StateCursor> {
+  async function applyStateChange(input: StateChangeEnvelope, mode: "account" | "conversation" = "account"): Promise<StateCursor> {
     const { change } = copyStateEnvelope(input, scope);
     return transaction("readwrite", (tx, result, guard) => {
       const events = tx.objectStore("stateEvents");
-      const prior = events.get(change.eventId);
-      prior.onsuccess = guard(() => {
-        if (prior.result) {
-          if (JSON.stringify(prior.result) !== JSON.stringify(change)) throw new Error("Immutable messaging state conflict");
+      const ranges = tx.objectStore("rangeStateEvents");
+      const requests = [events.get(change.eventId), ranges.get(change.eventId),
+        events.index("sequence").get(change.sequence), ranges.index("sequence").get(change.sequence)];
+      let pending = requests.length;
+      const complete = guard(() => {
+        if (--pending) return;
+        for (const request of requests) {
+          if (request.result && JSON.stringify(request.result) !== JSON.stringify(change)) throw new Error("Immutable messaging state conflict");
+        }
+        if (requests[0]!.result || requests[1]!.result) {
+          if (mode === "account" && !requests[0]!.result) events.add(change);
           result({ eventId: change.eventId, sequence: change.sequence }); return;
         }
         updateConversation(tx, guard, change.conversationId, statePeer(scope, change), (state) => state);
@@ -654,9 +686,10 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
           request.onsuccess = complete; deletion.onsuccess = complete; unsend.onsuccess = complete;
           byId.onsuccess = complete; bySequence.onsuccess = complete;
         }
-        events.add(change);
+        (mode === "account" ? events : ranges).add(change);
         result({ eventId: change.eventId, sequence: change.sequence });
       });
+      for (const request of requests) request.onsuccess = complete;
     });
   }
 
@@ -1098,6 +1131,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),
     recordConversationUnavailable: serial(recordConversationUnavailable), listConversationUnavailable: serial(listConversationUnavailable),
     applyStateChange: serial(applyStateChange), listOutbox: serial(listOutbox), claimNextOutgoing: serial(claimNextOutgoing),
+    getConversationProgress: serial(getConversationProgress), saveConversationProgress: serial(saveConversationProgress),
     retryOutgoing: serial(retryOutgoing), failOutgoing: serial(failOutgoing), persistInbound: serializedPersist, persistInboundAndAck, close,
     enqueueOutgoingWithMedia: serial(enqueueOutgoingWithMedia), claimNextMediaUpload: serial(claimNextMediaUpload),
     failMediaUpload: serial((attempt: MediaUploadAttempt) => settleMediaUpload(attempt, false)),

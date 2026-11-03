@@ -6,18 +6,20 @@ import { MessagingThread } from "./Messaging";
 import { LiveRegion } from "../components/LiveRegion";
 import { Capacitor } from "@capacitor/core";
 import { PhotoUnavailableError } from "../services/messaging/mediaTransport";
+import type { MessagingThreadSync } from "../services/messaging/runtime";
 
 const m = vi.hoisted(() => {
   const view = { mode: "CONNECTED", request: "OUTGOING", ownBlocked: false, ownMuted: false, epoch: "relationship-a", revision: 1 };
-  return { view, chat: { accountId: "account", status: "ready", revision: 1,
+  return { view, watch: vi.fn(), chat: { accountId: "account", status: "ready", revision: 1,
+    threadSync: { conversationId: "chat", mode: "ready", missing: 0 } as MessagingThreadSync | null,
     conversations: [{ conversationId: "chat", peerId: "peer", cachedProjection: view }], currentProjections: { chat: view } },
-    messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[],
+    messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[], threadRead: vi.fn(),
     location: vi.fn(), mute: vi.fn(), prepare: vi.fn(), relationship: vi.fn(), text: vi.fn(), send: vi.fn(), read: vi.fn(), download: vi.fn(), remove: vi.fn(), recover: vi.fn(), retry: vi.fn(), receipt: vi.fn(), observe: vi.fn(), refresh: vi.fn(), choose: vi.fn(), import: vi.fn(), file: vi.fn() };
 });
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "account" } }) }));
 vi.mock("../services/accountLabels", () => ({ fetchAccountLabels: async () => new Map() }));
 vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => m.chat }));
-vi.mock("../services/messaging/runtime", () => ({ sendMessagingLocation: m.location, setMessagingMuted: m.mute, readMessagingThreadState: async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: m.text, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: m.relationship, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover, retryMessagingMessage: m.retry }));
+vi.mock("../services/messaging/runtime", () => ({ watchMessagingThread: m.watch, sendMessagingLocation: m.location, setMessagingMuted: m.mute, readMessagingThreadState: () => m.threadRead(), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: m.text, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: m.relationship, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover, retryMessagingMessage: m.retry }));
 vi.mock("../services/messaging/preparePhoto", () => ({ prepareMessagingPhoto: m.prepare }));
 vi.mock("../services/media/nativeMedia", () => ({ chooseNativeImages: m.choose, importNativeImageUri: m.import, importedImageToFile: m.file }));
 beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() })); m.view.mode = "CONNECTED"; m.view.ownBlocked = false; m.chat.revision = 1; m.messages = []; m.media = []; m.outbox = []; m.prepare.mockReset(); m.send.mockReset(); m.read.mockReset().mockResolvedValue(null); m.download.mockReset().mockResolvedValue(undefined); m.remove.mockReset().mockResolvedValue(undefined); m.recover.mockReset().mockResolvedValue(undefined); m.receipt.mockReset().mockResolvedValue({ context: "authority", readIds: [] }); m.observe.mockReset().mockResolvedValue(true); m.refresh.mockReset().mockResolvedValue(undefined);
@@ -29,6 +31,9 @@ beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { cr
   m.relationship.mockReset().mockResolvedValue(undefined);
   m.mute.mockReset().mockResolvedValue(undefined); m.view.ownMuted = false; m.chat.status = "ready";
   m.view.epoch = "relationship-a"; m.view.revision = 1; m.chat.currentProjections = { chat: m.view };
+  m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0 };
+  m.watch.mockReset().mockReturnValue(() => {});
+  m.threadRead.mockReset().mockImplementation(async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function open() {
@@ -38,6 +43,70 @@ async function open() {
 }
 function RouteState() { return <output data-testid="query">{useLocation().search}</output>; }
 function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><LiveRegion /><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
+
+it("leases active thread catch-up without restarting it on snapshot refresh and releases it on close", async () => {
+  const detach = vi.fn(); m.watch.mockReturnValue(detach);
+  const rendered = await open(); expect(m.watch).toHaveBeenCalledWith("account", "chat");
+  m.chat.revision++; rendered.rerender(thread());
+  expect(m.watch).toHaveBeenCalledTimes(1);
+  rendered.unmount(); expect(detach).toHaveBeenCalledTimes(1);
+});
+it("keeps cached messages and a draft while a large gap locks interaction, then restores the same composer", async () => {
+  sentText(); const rendered = await open();
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Keep this draft" } });
+  m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 11 }; rendered.rerender(thread());
+  expect(screen.getByText("Updating this conversation…")).toBeTruthy();
+  expect(screen.getByText("Already read")).toBeTruthy(); expect(field).toHaveProperty("readOnly", true);
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", true);
+  expect(screen.getByRole("button", { name: "Conversation options" })).toHaveProperty("disabled", true);
+  expect(screen.getByRole("link", { name: "Back to chats" })).toBeTruthy();
+  fireEvent.keyDown(field, { key: "Enter" }); expect(m.text).not.toHaveBeenCalled();
+  m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0 }; rendered.rerender(thread());
+  expect(screen.getByRole("textbox", { name: "Message" })).toBe(field);
+  expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Keep this draft");
+  expect(screen.queryByText("Updating this conversation…")).toBeNull();
+});
+it("silently leaves a small harmless gap usable and offers a safe retry only after catch-up fails", async () => {
+  m.chat.threadSync = { conversationId: "chat", mode: "soft", missing: 10 };
+  const rendered = await open(); const field = screen.getByRole("textbox", { name: "Message" });
+  expect(field).toHaveProperty("readOnly", false); expect(screen.queryByText("Updating this conversation…")).toBeNull();
+  fireEvent.change(field, { target: { value: "Still here" } });
+  m.chat.threadSync = { conversationId: "chat", mode: "error", missing: null }; rendered.rerender(thread());
+  expect(screen.getByText("Couldn’t update this conversation.")).toBeTruthy();
+  expect(field).toHaveProperty("readOnly", true); expect(field).toHaveProperty("value", "Still here");
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(m.refresh).toHaveBeenCalledWith("account");
+});
+it("does not unlock an older rendered body before the reconciled local transcript has loaded", async () => {
+  sentText(); const rendered = await open();
+  m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 1 }; rendered.rerender(thread());
+  let finish!: (value: { messages: unknown[]; outbox: unknown[]; media: unknown[] }) => void;
+  m.threadRead.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  m.chat.revision = 2; m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0, appliedRevision: 2 };
+  rendered.rerender(thread());
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("readOnly", true);
+  expect(document.querySelector(".fb-chat-messages")?.hasAttribute("inert")).toBe(true);
+  await act(async () => { finish({ messages: [], outbox: [], media: [] }); });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("readOnly", false));
+  expect(screen.queryByText("Already read")).toBeNull();
+});
+it("offers retry when a reconciled transcript cannot be read instead of remaining stuck updating", async () => {
+  sentText(); const rendered = await open();
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Preserve my draft" } });
+  m.threadRead.mockRejectedValue(new Error("local read failed"));
+  m.chat.revision = 2; m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0, appliedRevision: 2 };
+  rendered.rerender(thread());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy());
+  expect(field).toHaveProperty("readOnly", true); expect(field).toHaveProperty("value", "Preserve my draft");
+  expect(screen.getByText("Already read")).toBeTruthy();
+  m.threadRead.mockResolvedValue({ messages: [], outbox: [], media: [] });
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(m.refresh).toHaveBeenCalledWith("account");
+  await waitFor(() => expect(field).toHaveProperty("readOnly", false));
+  expect(screen.queryByText("Already read")).toBeNull();
+});
 
 it("keeps the composer usable and preserves newer typing while a text is still being admitted", async () => {
   const resolvers: Array<(value: string) => void> = [];

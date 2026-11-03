@@ -31,6 +31,9 @@ function page(input: unknown, target: ConversationHead, after: number, scope: Me
     if (position !== after + index + 1 || publishedAt > head.serverTime || typeof value.sourceId !== "string"
       || !/^[A-Za-z0-9_:-]{1,256}$/.test(value.sourceId)) throw new Error("Invalid conversation publication");
     const base = { position, sourceId: value.sourceId, messageId: value.messageId === null ? null : uuid(value.messageId as string), publishedAt };
+    if ((position === head.stateHead && value.kind !== "STATE")
+      || (position === head.messageHead && value.kind === "STATE")
+      || position > (value.kind === "STATE" ? head.stateHead : head.messageHead)) throw new Error("Conversation publication kind conflict");
     if (value.kind === "STATE") {
       const change = copyStateEnvelope(value.change as StateChangeEnvelope, scope);
       if (change.change.eventId !== base.sourceId || change.change.conversationId !== target.conversationId
@@ -64,6 +67,10 @@ export async function reconcileConversation(scope: MessagingScope, history: Mess
     throw new Error("Conversation progress regressed");
   }
   let after = expected?.streamId === target.streamId ? expected.position : 0;
+  const progress = await history.getConversationProgress(target.conversationId); live();
+  if (progress && identity(progress.target) === identity(target) && progress.target.serverTime <= target.serverTime) {
+    after = Math.max(after, progress.through);
+  }
   for (let batch = 0; batch < 100; batch++) {
     live();
     const response = await fetchPage(target, after); live();
@@ -71,7 +78,7 @@ export async function reconcileConversation(scope: MessagingScope, history: Mess
     // Erasure wins even over another entry in this same page. The canonical
     // adapters also enforce existing tombstones/clear cutoffs against replay.
     for (const entry of validated.entries) if (entry.kind === "STATE") {
-      live(); await history.applyStateChange(entry.change); live();
+      live(); await history.applyStateChange(entry.change, "conversation"); live();
     }
     for (const entry of validated.entries) if (entry.kind !== "STATE") {
       live();
@@ -90,6 +97,9 @@ export async function reconcileConversation(scope: MessagingScope, history: Mess
     if (after === target.position) {
       live(); await history.commitConversationCheckpoint(validated.head, expected); live(); return validated.head;
     }
+    // Save only after the full page's durable effects and ACKs. This is an exact
+    // target retry token, not a partial HEAD that could unlock stale authority.
+    await history.saveConversationProgress({ target: validated.head, through: after }); live();
   }
   throw new Error("Conversation sync is incomplete. Try again.");
 }

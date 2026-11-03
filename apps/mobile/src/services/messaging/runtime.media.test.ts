@@ -38,6 +38,9 @@ let downloadStatus: number;
 let sent: Array<Record<string, unknown>>;
 let muted: Map<string, boolean>, muteFails: boolean;
 let wakes: Array<{ messageId: string; committed: boolean }>;
+let headPosition: number, headRevision: number, headState: number;
+let rangeGate: ReturnType<typeof deferred> | null;
+let rangeEntered: ReturnType<typeof deferred> | null;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -51,6 +54,7 @@ async function waitForState(predicate: (state: ReturnType<typeof runtime.getMess
 
 beforeEach(async () => {
   vi.resetModules(); boundary.handles = []; account = A; online = true; uploadFails = false;
+  headPosition = 0; headRevision = 1; headState = 0; rangeGate = null; rangeEntered = null;
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
   mutationGate = null; mutationEntered = deferred(); connected = true;
@@ -96,8 +100,16 @@ beforeEach(async () => {
       const action = args.p_action as string, fields = args.p_args as Record<string, unknown>;
       requestLog.push(action);
       if (action === "HEAD") return Response.json({ accountId: account, conversationId: fields.conversationId,
-        streamId: "fixture-stream", epoch: "fixture-epoch", revision: 1, position: 0, messageHead: 0, stateHead: 0, serverTime: 1_000 });
-      if (action === "CONVERSATION_SYNC") return Response.json({ head: fields.head, afterPosition: 0, throughPosition: 0, entries: [] });
+        streamId: "fixture-stream", epoch: "fixture-epoch", revision: headRevision, position: headPosition,
+        messageHead: headState === headPosition && headState > 0 ? headPosition - 1 : headPosition, stateHead: headState, serverTime: 1_000 });
+      if (action === "CONVERSATION_SYNC") {
+        rangeEntered?.resolve();
+        if (rangeGate) await rangeGate.promise;
+        const after = fields.afterPosition as number, target = fields.head as { position: number };
+        return Response.json({ head: fields.head, afterPosition: after, throughPosition: target.position,
+          entries: Array.from({ length: target.position - after }, (_, i) => ({ position: after + i + 1,
+            kind: "MESSAGE", sourceId: id(1000 + after + i), messageId: id(1000 + after + i), publishedAt: 900, disposition: "UNAVAILABLE" })) });
+      }
       if (action === "REGISTER" || action === "STATE_ACK") return Response.json(null);
       if (action === "DELETE_FOR_ME" || action === "UNSEND") return Response.json(fields.messageId);
       if (action === "STATE_SYNC") return Response.json([]);
@@ -143,9 +155,72 @@ beforeEach(async () => {
   runtime = await import("./runtime");
 });
 afterEach(async () => {
-  runtime.clearMessagingRuntime(); deliveryGate?.resolve(); mutationGate?.resolve();
+  runtime.clearMessagingRuntime(); deliveryGate?.resolve(); mutationGate?.resolve(); rangeGate?.resolve();
   await Promise.all(boundary.handles.map((handle) => handle.close()));
   vi.unstubAllGlobals(); vi.restoreAllMocks();
+});
+
+describe("active conversation canonical catch-up", () => {
+  it.each([[10, "soft"], [11, "blocking"]] as const)("checks an open thread then gates %i unseen events on reconnect as %s", async (gap, mode) => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const detach = runtime.watchMessagingThread(A, CONV);
+    await waitForState(s => s.threadSync?.mode === "ready");
+    const handle = boundary.handles.at(-1)!;
+    expect((await handle.history.getConversationCheckpoint(CONV))?.position).toBe(0);
+    headPosition = gap; rangeGate = deferred();
+    window.dispatchEvent(new Event("focus"));
+    await waitForState(s => s.threadSync?.mode === mode);
+    expect(runtime.getMessagingRuntimeSnapshot().threadSync).toMatchObject({ conversationId: CONV, missing: gap });
+    expect((await handle.history.getConversationCheckpoint(CONV))?.position).toBe(0);
+    rangeGate.resolve();
+    await waitForState(s => s.threadSync?.mode === "ready");
+    expect((await handle.history.getConversationCheckpoint(CONV))?.position).toBe(gap);
+    detach(); expect(runtime.getMessagingRuntimeSnapshot().threadSync).toBeNull();
+  });
+  it("hard-updates a zero-gap authority change and ignores a late result after thread close", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const detach = runtime.watchMessagingThread(A, CONV);
+    await waitForState(s => s.threadSync?.mode === "ready");
+    headRevision++; rangeGate = deferred(); window.dispatchEvent(new Event("online"));
+    await waitForState(s => s.threadSync?.mode === "blocking");
+    detach(); rangeGate.resolve();
+    await runtime.refreshMessaging(A);
+    expect(runtime.getMessagingRuntimeSnapshot().threadSync).toBeNull();
+  });
+  it("never publishes an older ready gate after a newer reconnect invalidates its authority", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const detach = runtime.watchMessagingThread(A, CONV);
+    await waitForState(s => s.threadSync?.mode === "ready");
+    headPosition = 11; rangeGate = deferred(); rangeEntered = deferred(); const oldRange = rangeGate;
+    window.dispatchEvent(new Event("focus"));
+    await waitForState(s => s.threadSync?.mode === "blocking");
+    await rangeEntered.promise;
+    const modes: string[] = [];
+    const unsubscribe = runtime.subscribeMessagingRuntime(() => {
+      const mode = runtime.getMessagingRuntimeSnapshot().threadSync?.mode; if (mode) modes.push(mode);
+    });
+    try {
+      headRevision++; rangeGate = deferred();
+      window.dispatchEvent(new Event("online"));
+      oldRange.resolve();
+      await waitForState(s => s.threadSync?.mode === "blocking");
+      expect(modes).not.toContain("ready");
+      rangeGate.resolve(); await waitForState(s => s.threadSync?.mode === "ready");
+    } finally { oldRange.resolve(); rangeGate?.resolve(); unsubscribe(); detach(); }
+  });
+  it("keeps failed catch-up gated and retries without losing cached history", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const handle = boundary.handles.at(-1)!;
+    await handle.history.enqueueOutgoing({ id: id(900), conversationId: CONV, authorId: A, recipientId: B, body: "Cached draft" });
+    // Do not dispatch this deliberately unclassified row; cached content survives.
+    online = false;
+    const detach = runtime.watchMessagingThread(A, CONV);
+    await waitForState(s => s.threadSync?.mode === "error");
+    expect((await handle.history.getMessage(id(900)))?.body).toBe("Cached draft");
+    online = true; await runtime.refreshMessaging(A);
+    await waitForState(s => s.threadSync?.mode === "ready");
+    detach();
+  });
 });
 
 describe("production messaging mute owner", () => {

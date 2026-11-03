@@ -102,8 +102,12 @@ describe.each(["sqlite", "web"] as const)("%s complete history purge", (backend)
     }
     await history.applyStateChange({ ...scope, change: { kind: "CLEAR_FOR_ME", sequence: 3,
       eventId: id(503), conversationId: CONV, peerId: B, throughSequence: 2, occurredAt: Date.now() } });
+    await history.applyStateChange({ ...scope, change: { kind: "CLEAR_FOR_ME", sequence: 4,
+      eventId: id(504), conversationId: CONV, peerId: B, throughSequence: 2, occurredAt: Date.now() } }, "conversation");
     await history.commitConversationCheckpoint({ accountId: A, conversationId: CONV, streamId: "purge-checkpoint-stream",
       epoch: "purge-relationship", revision: 1, position: 6, messageHead: 3, stateHead: 6, serverTime: Date.now() }, null);
+    await history.saveConversationProgress({ target: { accountId: A, conversationId: CONV, streamId: "purge-checkpoint-stream",
+      epoch: "purge-relationship", revision: 1, position: 6, messageHead: 3, stateHead: 6, serverTime: Date.now() }, through: 2 });
     await history.recordConversationUnavailable({ accountId: A, conversationId: CONV, streamId: "purge-checkpoint-stream",
       position: 1, sourceId: message(1).id, messageId: message(1).id, publishedAt: Date.now() });
     const fixture = await mediaFixture(id(210), message(10).id);
