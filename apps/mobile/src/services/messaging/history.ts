@@ -123,7 +123,8 @@ export interface OutgoingAttempt {
 /**
  * MUST come from a participant-authorized transport validator, not push payloads.
  * This local boundary checks shape/scope/idempotency, not server authorization.
- * Sequence is authoritative per conversation, never a timestamp or ACK cursor.
+   * Sequence is the legacy globally allocated message identity used by clear and
+   * read-through watermarks, never a per-conversation progress/HEAD cursor.
    * TEXT is the legacy transport event kind, not the message classification.
  */
 export interface MailboxEnvelope extends MessagingScope {
@@ -212,6 +213,14 @@ export interface MessagingHistory {
   /** Body-free erasure metadata survives temporary message-mailbox expiry. */
   getStateCursor(): Promise<StateCursor | null>;
   applyStateChange(envelope: StateChangeEnvelope): Promise<StateCursor>;
+  /** Local-device proof of a fully applied authorized conversation prefix.
+   * Deliberately absent from portable snapshots. Never derived from max sequence. */
+  getConversationCheckpoint(conversationId: string): Promise<import("./conversationHead").ConversationHead | null>;
+  /** CAS after complete reconciliation; not a way to acknowledge a HEAD lookup. */
+  commitConversationCheckpoint(next: import("./conversationHead").ConversationHead,
+    expected: import("./conversationHead").ConversationHead | null): Promise<void>;
+  recordConversationUnavailable(value: import("./conversationHead").ConversationUnavailable): Promise<void>;
+  listConversationUnavailable(conversationId: string): Promise<import("./conversationHead").ConversationUnavailable[]>;
   listOutbox(): Promise<OutboxEntry[]>;
   /**
    * A 60-second durable lease; expired SENDING is eligible after crash/reopen.

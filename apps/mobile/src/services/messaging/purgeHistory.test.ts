@@ -89,6 +89,7 @@ describe.each(["sqlite", "web"] as const)("%s complete history purge", (backend)
       { key: "account_id", value: A }, { key: "device_id", value: DEVICE }, { key: "history_purged", value: "1" },
     ]));
     expect(JSON.stringify(rows)).not.toContain("private caption");
+    expect(JSON.stringify(rows)).not.toContain("purge-checkpoint-stream");
   }
   async function seed(history: MessagingHistory) {
     await history.cacheConversation(projection);
@@ -101,6 +102,10 @@ describe.each(["sqlite", "web"] as const)("%s complete history purge", (backend)
     }
     await history.applyStateChange({ ...scope, change: { kind: "CLEAR_FOR_ME", sequence: 3,
       eventId: id(503), conversationId: CONV, peerId: B, throughSequence: 2, occurredAt: Date.now() } });
+    await history.commitConversationCheckpoint({ accountId: A, conversationId: CONV, streamId: "purge-checkpoint-stream",
+      epoch: "purge-relationship", revision: 1, position: 6, messageHead: 3, stateHead: 6, serverTime: Date.now() }, null);
+    await history.recordConversationUnavailable({ accountId: A, conversationId: CONV, streamId: "purge-checkpoint-stream",
+      position: 1, sourceId: message(1).id, messageId: message(1).id, publishedAt: Date.now() });
     const fixture = await mediaFixture(id(210), message(10).id);
     await history.enqueueOutgoingWithMedia(message(10), fixture.metadata, fixture.bytes);
     await bytes.put(A, id(299), fixture.bytes); // unreferenced, too young for sweep

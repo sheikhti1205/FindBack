@@ -36,6 +36,7 @@ import {
 } from "./media";
 import { verifyMediaContent, type MediaDecoder } from "./mediaContent";
 import { withHistoryLock } from "./historyLock";
+import { copyConversationHead, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationUnavailable } from "./conversationHead";
 
 export type SqliteValue = string | number | null;
 
@@ -125,7 +126,7 @@ const LEASE_MS = 60_000;
  * is a file written by a newer build, and it is refused before any mutation.
  */
 const SUPPORTED_PRIOR_VERSIONS: readonly string[] = [
-  "1", "2", "3", "4", "5", "6", "7", "8", String(MESSAGING_SQLITE_SCHEMA_VERSION),
+  "1", "2", "3", "4", "5", "6", "7", "8", "9", String(MESSAGING_SQLITE_SCHEMA_VERSION),
 ];
 
 function defaultToken(): string {
@@ -960,6 +961,42 @@ export async function openSqliteMessagingHistory(
     return (await driver.all<StateCursor>(S.getStateCursor))[0] ?? null;
   }
 
+  async function getConversationCheckpoint(conversationId: string): Promise<ConversationHead | null> {
+    const id = uuid(conversationId);
+    const row = (await driver.all<{ value: string }>(S.getMeta, [`conversation_head:${id}`]))[0];
+    const value = row ? copyConversationHead(JSON.parse(row.value)) : null;
+    if (value && (value.accountId !== scope.accountId || value.conversationId !== id)) throw new Error("Conversation checkpoint scope mismatch");
+    return value;
+  }
+
+  async function commitConversationCheckpoint(input: ConversationHead, expected: ConversationHead | null): Promise<void> {
+    const next = copyConversationHead(input);
+    await transaction(async () => {
+      const stored = await getConversationCheckpoint(next.conversationId);
+      const checked = validateCheckpointCommit(scope.accountId, next, expected, stored);
+      await driver.run(S.setMeta, [`conversation_head:${next.conversationId}`, JSON.stringify(checked)]);
+    });
+  }
+
+  async function recordConversationUnavailable(input: ConversationUnavailable): Promise<void> {
+    const value = copyConversationUnavailable(input);
+    if (value.accountId !== scope.accountId) throw new Error("Conversation scope mismatch");
+    await transaction(async () => {
+      const key = `conversation_unavailable:${value.conversationId}:${value.streamId}:${value.position}`;
+      const prior = (await driver.all<{ value: string }>(S.getMeta, [key]))[0];
+      if (prior && JSON.stringify(copyConversationUnavailable(JSON.parse(prior.value))) !== JSON.stringify(value)) throw new Error("Conversation resolution conflict");
+      await driver.run(S.setMeta, [key, JSON.stringify(value)]);
+    });
+  }
+
+  async function listConversationUnavailable(conversationId: string): Promise<ConversationUnavailable[]> {
+    const id = uuid(conversationId);
+    const rows = await driver.all<{ value: string }>("select value from messaging_meta where key like ?", [`conversation_unavailable:${id}:%`]);
+    const values = rows.map(row => copyConversationUnavailable(JSON.parse(row.value)));
+    if (values.some(value => value.accountId !== scope.accountId || value.conversationId !== id)) throw new Error("Conversation scope mismatch");
+    return values.sort((a, b) => a.position - b.position);
+  }
+
   async function applyStateChange(input: StateChangeEnvelope): Promise<StateCursor> {
     await assertOpen();
     const { change } = copyStateEnvelope(input, scope);
@@ -1584,6 +1621,8 @@ export async function openSqliteMessagingHistory(
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
     markConversationRead: serial(markConversationRead),
     getStateCursor: serial(getStateCursor), applyStateChange: serial(applyStateChange),
+    getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),
+    recordConversationUnavailable: serial(recordConversationUnavailable), listConversationUnavailable: serial(listConversationUnavailable),
     claimNextOutgoing: serial(claimNextOutgoing), retryOutgoing: serial(retryOutgoing),
     failOutgoing: serial(failOutgoing),
     persistInbound: serializedPersist, persistInboundAndAck, close,

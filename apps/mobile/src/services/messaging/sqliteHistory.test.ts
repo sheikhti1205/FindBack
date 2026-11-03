@@ -1200,7 +1200,7 @@ describe("chat media schema and migration", () => {
     expect(database.prepare("select * from outbox").all()).toEqual(outbox);
     expect(database.prepare("select name from sqlite_master where name='messages_v9'").all()).toEqual([]);
     const h = await open();
-    expect(database.prepare("select value from messaging_meta where key='schema_version'").get()?.value).toBe("9");
+    expect(database.prepare("select value from messaging_meta where key='schema_version'").get()?.value).toBe(String(MESSAGING_SQLITE_SCHEMA_VERSION));
     expect(database.prepare("pragma foreign_key_check").all()).toEqual([]);
     await h.close(); database = new DatabaseSync(path);
     const reopened = await open(); expect((await reopened.getMessage(MESSAGE_2))?.messageType).toBe("MEDIA");

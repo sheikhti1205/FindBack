@@ -1,5 +1,8 @@
-import type { HumanMessage, MailboxEnvelope, MessagingHistory, MessagingScope } from "./history";
-import { copyContextMessage, copyLocationMessage, copyMediaMessage, copyOutgoingMessage, copyMessage, copyReceivedMessage, positiveSequence, uuid } from "./validation";
+import type { HumanMessage, MessagingHistory, MessagingScope } from "./history";
+import { copyContextMessage, copyLocationMessage, copyMediaMessage, copyOutgoingMessage, copyMessage, positiveSequence, uuid } from "./validation";
+import { copyMailboxEnvelope as mailbox } from "./mailbox";
+import { assessConversationHead, copyConversationHead, type ConversationGate } from "./conversationHead";
+import { reconcileConversation as applyConversationPrefix } from "./conversationReconciliation";
 import { copyConversationProjection, type ConversationProjection } from "./conversationIndex";
 import { copyStateEnvelope, type StateChangeEnvelope } from "./stateChanges";
 import { copyMediaMetadata, sameMediaIdentity, type MediaMetadata } from "./media";
@@ -9,7 +12,7 @@ import { PhotoUnavailableError } from "./mediaTransport";
 type MediaTransportFactory = (scope: MessagingScope, signal: AbortSignal) => ReturnType<typeof createMediaTransport>;
 
 type ChatAction = "REGISTER" | "CREATE" | "ACCEPT" | "END" | "BLOCK" | "SEND" | "SYNC" | "ACK" | "RECEIPT_VIEW" | "RECEIPT_OBSERVE" | "RECEIPTS" | "VIEWS" | "PRIVATE" | "PREFERENCES" | "CONTACT_MODE" | "MUTE"
-  | "STATE_SYNC" | "STATE_ACK" | "UNSEND" | "DELETE_FOR_ME" | "CLEAR_FOR_ME";
+  | "STATE_SYNC" | "STATE_ACK" | "UNSEND" | "DELETE_FOR_ME" | "CLEAR_FOR_ME" | "HEAD" | "CONVERSATION_SYNC";
 export interface MessagingPreferences { openMessages: boolean; readReceipts: boolean }
 export type MessagingRpc = (input: MessagingScope & {
   action: ChatAction;
@@ -20,23 +23,6 @@ export type MessagingRpc = (input: MessagingScope & {
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid messaging response");
   return value as Record<string, unknown>;
-}
-
-/** Shape/scope validation comes before the durable adapter's own validation. */
-function mailbox(value: unknown, scope: MessagingScope): MailboxEnvelope {
-  const row = object(value);
-  const event = object(row.event);
-  if (row.accountId !== scope.accountId || row.deviceId !== scope.deviceId || event.kind !== "TEXT") {
-    throw new Error("Invalid messaging scope");
-  }
-  // The authorized TEXT envelope also carries optional media captions. This
-  // does not relax local plain-text admission in send().
-  const message = copyReceivedMessage(object(event.message) as unknown as HumanMessage);
-  if (message.authorId !== scope.accountId && message.recipientId !== scope.accountId) throw new Error("Invalid messaging participant");
-  return {
-    ...scope, mailboxId: uuid(row.mailboxId as string),
-    event: { kind: "TEXT", eventId: uuid(event.eventId as string), sequence: positiveSequence(event.sequence), message },
-  };
 }
 
 /**
@@ -155,6 +141,24 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       if (envelope.event.message.messageType === "MEDIA" && envelope.event.message.authorId !== scope.accountId) mediaDiscoveryRevision++;
     }
     return envelopes.length;
+  };
+  const reconcileConversation = async (conversationId: string, onGate?: (gate: ConversationGate) => void) => {
+    const id = uuid(conversationId);
+    // Surviving-account suppression precedes thread repair, even if the peer or
+    // conversation no longer exists and therefore cannot supply a readable HEAD.
+    await syncState(); assertOpen();
+    const head = copyConversationHead(await call("HEAD", { conversationId: id }));
+    if (head.accountId !== scope.accountId || head.conversationId !== id) throw new Error("Invalid conversation scope");
+    const checkpoint = await history.getConversationCheckpoint(id); assertOpen();
+    const gate = assessConversationHead(checkpoint, head);
+    onGate?.(gate);
+    if (gate.mode === "ready") return head;
+    if (gate.mode === "blocking" && gate.reason === "integrity") throw new Error("Conversation progress could not be verified");
+    const settled = await applyConversationPrefix(scope, history, head,
+      (target, afterPosition) => call("CONVERSATION_SYNC", { head: target, afterPosition }),
+      receipt => call("ACK", { mailboxId: receipt.mailboxId }).then(() => undefined), assertOpen,
+      () => { mediaDiscoveryRevision++; });
+    assertOpen(); onGate?.({ mode: "ready", missing: 0 }); return settled;
   };
   const refreshConversations = async (): Promise<ConversationProjection[]> => {
     const mutationEpochAtStart = mediaMutationEpoch;
@@ -482,6 +486,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       assertOpen();
     },
     sync, syncState, flush, refreshConversations, flushMedia, syncMedia,
+    reconcileConversation,
     needsMediaDiscovery: () => mediaDiscoveryRevision !== discoveredMediaRevision,
     close() { controller.abort(); mediaController.abort(); return Promise.resolve(history.close()); },
   };

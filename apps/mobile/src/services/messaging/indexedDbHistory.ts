@@ -13,13 +13,13 @@ import {
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
+import { copyConversationHead, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationUnavailable } from "./conversationHead";
 import { erasureMatches, exportPortable, mergePortable, type PortableConversation, type PortableErasure,
   type PortableMessage, type PortableView } from "./indexedDbBackup";
 
-// v6 adds portable suppression metadata to existing records. Fence older
-// executables that do not honor it, even though no new object store is needed.
-export const MESSAGING_IDB_VERSION = 6;
-const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle"];
+// v7 adds local-only prefix checkpoints and fences pre-HEAD executables.
+export const MESSAGING_IDB_VERSION = 7;
+const STORES = ["messages", "outbox", "events", "mailbox", "conversations", "stateEvents", "deletions", "clears", "unsends", "mediaAttachments", "mediaLifecycle", "conversationCheckpoints", "conversationUnavailable"];
 const LEASE_MS = 60_000;
 
 interface EventIdentity {
@@ -40,6 +40,10 @@ function connect(factory: IDBFactory, name: string): Promise<IDBDatabase> {
     request.onerror = () => reject(new Error("Messaging storage could not open"));
     request.onupgradeneeded = () => {
       const db = request.result;
+      if (!db.objectStoreNames.contains("conversationCheckpoints")) db.createObjectStore("conversationCheckpoints", { keyPath: "conversationId" });
+      if (!db.objectStoreNames.contains("conversationUnavailable")) {
+        db.createObjectStore("conversationUnavailable", { keyPath: "id" }).createIndex("conversation", "conversationId");
+      }
       if (!db.objectStoreNames.contains("messages")) {
         const messages = db.createObjectStore("messages", { keyPath: "id" });
         messages.createIndex("conversation", "conversationId");
@@ -515,6 +519,54 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
       request.onsuccess = guard(() => {
         const change = request.result?.value as MessageStateChange | undefined;
         result(change ? { eventId: change.eventId, sequence: change.sequence } : null);
+      });
+    });
+  }
+
+  async function getConversationCheckpoint(conversationId: string): Promise<ConversationHead | null> {
+    const id = uuid(conversationId);
+    return transaction("readonly", (tx, result, guard) => {
+      const request = tx.objectStore("conversationCheckpoints").get(id);
+      request.onsuccess = guard(() => {
+        const value = request.result === undefined ? null : copyConversationHead(request.result);
+        if (value && (value.accountId !== scope.accountId || value.conversationId !== id)) throw new Error("Conversation checkpoint scope mismatch");
+        result(value);
+      });
+    });
+  }
+
+  async function commitConversationCheckpoint(input: ConversationHead, expected: ConversationHead | null): Promise<void> {
+    const next = copyConversationHead(input);
+    return transaction("readwrite", (tx, result, guard) => {
+      const store = tx.objectStore("conversationCheckpoints"), request = store.get(next.conversationId);
+      request.onsuccess = guard(() => {
+        store.put(validateCheckpointCommit(scope.accountId, next, expected, request.result ?? null));
+        result(undefined);
+      });
+    });
+  }
+
+  async function recordConversationUnavailable(input: ConversationUnavailable): Promise<void> {
+    const value = copyConversationUnavailable(input);
+    if (value.accountId !== scope.accountId) throw new Error("Conversation scope mismatch");
+    return transaction("readwrite", (tx, result, guard) => {
+      const id = `${value.conversationId}:${value.streamId}:${value.position}`;
+      const store = tx.objectStore("conversationUnavailable"), request = store.get(id);
+      request.onsuccess = guard(() => {
+        if (request.result && JSON.stringify(copyConversationUnavailable(request.result)) !== JSON.stringify(value)) throw new Error("Conversation resolution conflict");
+        store.put({ id, ...value }); result(undefined);
+      });
+    });
+  }
+
+  async function listConversationUnavailable(conversationId: string): Promise<ConversationUnavailable[]> {
+    const id = uuid(conversationId);
+    return transaction("readonly", (tx, result, guard) => {
+      const request = tx.objectStore("conversationUnavailable").index("conversation").getAll(id);
+      request.onsuccess = guard(() => {
+        const values = request.result.map(copyConversationUnavailable);
+        if (values.some(value => value.accountId !== scope.accountId || value.conversationId !== id)) throw new Error("Conversation scope mismatch");
+        result(values.sort((a, b) => a.position - b.position));
       });
     });
   }
@@ -1043,6 +1095,8 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
   return { enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage), listMessages: serial(listMessages),
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
     markConversationRead: serial(markConversationRead), getStateCursor: serial(getStateCursor),
+    getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),
+    recordConversationUnavailable: serial(recordConversationUnavailable), listConversationUnavailable: serial(listConversationUnavailable),
     applyStateChange: serial(applyStateChange), listOutbox: serial(listOutbox), claimNextOutgoing: serial(claimNextOutgoing),
     retryOutgoing: serial(retryOutgoing), failOutgoing: serial(failOutgoing), persistInbound: serializedPersist, persistInboundAndAck, close,
     enqueueOutgoingWithMedia: serial(enqueueOutgoingWithMedia), claimNextMediaUpload: serial(claimNextMediaUpload),

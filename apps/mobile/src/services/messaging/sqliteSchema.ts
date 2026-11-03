@@ -46,7 +46,9 @@
  * place, so this is the same proven table rebuild as v5; existing rows keep
  * their classification and gain NULL payload columns.
  */
-export const MESSAGING_SQLITE_SCHEMA_VERSION = 9;
+// v10 fences executables which cannot honor local conversation checkpoints.
+// Checkpoints use existing scoped messaging_meta rows; they are never portable.
+export const MESSAGING_SQLITE_SCHEMA_VERSION = 10;
 
 /**
  * The v5 `messages` body CHECK, recognised in `sqlite_master`.
@@ -237,6 +239,7 @@ const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as dir
 
 export const MESSAGING_SQLITE_STATEMENTS = {
   getMeta: `select value from messaging_meta where key = ?`,
+  setMeta: `insert into messaging_meta(key,value) values(?,?) on conflict(key) do update set value=excluded.value`,
   purgeHistory: [
     "delete from media_attachments", "delete from outbox", "delete from mailbox_seen",
     "delete from tombstones", "delete from deleted_for_me", "delete from conversation_cleared",
