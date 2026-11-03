@@ -2,7 +2,20 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/node_modules/**", "**/android/**", "**/coverage/**", "tmp-*.mjs"] },
+  {
+    // Agent workspaces and their Vite render caches are not project source:
+    // they are untracked artefacts that otherwise make `npm run lint` fail with
+    // thousands of no-undef errors from bundled dependencies.
+    ignores: [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/android/**",
+      "**/coverage/**",
+      ".opencode/**",
+      ".playwright-mcp/**",
+      "tmp-*.mjs",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
