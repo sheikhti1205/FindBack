@@ -16,7 +16,35 @@ env var; `scripts/build-apk.mjs` loads it from the shell or root `.env`).
 Never paste, fetch, log, screenshot, or send a client secret to an agent. The
 owner enters the matching secret directly in Supabase's provider console.
 
-## Recovery status (2026-11-02 handoff; not login acceptance)
+## Resolution (2026-11-03, owner-reported + entry probe)
+
+The remaining blocker was a missing **Authorized JavaScript origin** in the Google
+Cloud console for the Web OAuth client. The owner added
+`https://findbackapp.social` to that client's authorized origins and reports Google
+sign-in now completes, including the Supabase code exchange that previously failed.
+
+Credential-free agent check of the deployed app (`c1c3c984`,
+`https://findbackapp.social/` → onboarding Skip → `/auth` → **Continue with Google**):
+the page is handed to `accounts.google.com/v3/signin/identifier` with
+`client_id` present, `redirect_uri=https://nfjhpigbsyyoaaktfaev.supabase.co/auth/v1/callback`,
+`scope="email profile"`, title "Sign in - Google Accounts" and body
+"Sign in to continue to nfjhpigbsyyoaaktfaev.supabase.co"; no `origin_mismatch`,
+`redirect_uri_mismatch`, `invalid_client` or "Access blocked" text. A direct
+authorize probe with the same client/redirect and `prompt=none` returns a 302 to the
+hosted callback (`error=interaction_required`), i.e. client and redirect are accepted
+without a session. Receipts:
+`FindBack-internal/01_ACTIVE/onboarding-root-integration-2026-11-03/sessions/A/production-google-entry.json`
+and `captures/production-google/google-entry.png`.
+
+Boundaries: no credentials were entered, so this proves the console/provider entry
+configuration, not an agent-observed successful login, identity linking, or a
+signed physical-device Google login. Those rest on the owner's report.
+
+**Lesson:** the JavaScript origin is part of the client configuration even though the
+authorization-code exchange happens server-side at Supabase. A missing origin can
+surface as a provider-side failure, so it is checked before re-entering a secret.
+
+## Recovery status (2026-11-02 handoff; historical)
 
 - Intended Web client:
   `961478941021-4hj634u50dug9mrjda769l7p98bh9hv1.apps.googleusercontent.com`.
@@ -50,8 +78,10 @@ Project with the Android app package `com.findback.app`:
 - [ ] Web client's **Authorized redirect URIs** includes exactly
       `https://nfjhpigbsyyoaaktfaev.supabase.co/auth/v1/callback`.
       This is Google's return to Supabase, not the app's `/auth/callback` route.
-- [ ] Authorized JavaScript origins include `https://findbackapp.social` and
+- [x] Authorized JavaScript origins include `https://findbackapp.social` and
       only the local development origins actually used (origin only, no path).
+      **Confirmed added by owner 2026-11-03** — its absence was the last blocker;
+      see "Resolution" above. Keep it in place for any new Web client.
 - [ ] **Android OAuth client exists** for package `com.findback.app` with the
       **release SHA-1** `61:E9:32:D5:14:A0:28:7B:7B:6E:49:F1:90:70:2C:F4:F7:CF:D1:8A`.
       (A debug SHA-1 only covers local debug builds, never the signed
