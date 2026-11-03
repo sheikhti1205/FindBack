@@ -308,6 +308,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [media, setMedia] = useState<MediaAttachment[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState("");
+  const draftRevision = useRef(0);
   // A report-linked entry carries the subject once; the first send consumes it so
   // a later ordinary message is never silently tagged with the same report.
   const route = useLocation();
@@ -350,7 +351,11 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [reportTarget, setReportTarget] = useState<"account" | "message" | null>(null);
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
-  const [receipt, setReceipt] = useState<{ projections: typeof chat.currentProjections; readIds: Set<string> } | null>(null);
+  // Projection object identity changes on harmless refresh. Receipt knowledge is
+  // monotonic only within this semantic authority AND the server receipt context.
+  const receiptAuthority = current ? JSON.stringify([accountId, conversationId, current.peerId,
+    current.epoch, current.mode, current.requestEpoch, current.ownBlocked]) : null;
+  const [receipt, setReceipt] = useState<{ authority: string; context: string; readIds: Set<string> } | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
@@ -474,11 +479,15 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   // This is live, disposable receipt authority, never the stored unread cursor.
   // A fetched context precedes a fresh geometric observation of an inbound bubble.
   useLayoutEffect(() => {
-    setReceipt(null);
     const area = scroll.current;
     const projections = chat.currentProjections;
+    if (chat.accountId !== accountId || (current && (current.mode !== "CONNECTED" || current.ownBlocked))) {
+      setReceipt(null);
+    } else if (receiptAuthority) {
+      setReceipt(previous => previous?.authority === receiptAuthority ? previous : null);
+    }
     if (!area || !loaded || !visible || sheet !== null || reportTarget || viewer || chat.accountId !== accountId || chat.status !== "ready"
-      || !projections || current?.mode !== "CONNECTED" || current.ownBlocked) return;
+      || !projections || !receiptAuthority || current?.mode !== "CONNECTED" || current.ownBlocked) return;
     const controller = new AbortController();
     let context: string | null = null;
     let lastObserved: string | null = null;
@@ -503,7 +512,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             if (controller.signal.aborted || ticket !== version || document.visibilityState !== "visible") break;
             if (batchContext === undefined) {
               batchContext = result.context;
-              if (context !== batchContext) { context = null; lastObserved = null; setReceipt(null); }
+              if (context !== batchContext) { context = null; lastObserved = null; }
             }
             else if (batchContext !== result.context) { mismatched = true; break; }
             for (const id of result.readIds) readIds.add(id);
@@ -519,13 +528,18 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
           }
           if (context !== batchContext) lastObserved = null;
           context = batchContext;
-          setReceipt({ projections, readIds });
+          setReceipt(previous => batchContext === null ? null : {
+            authority: receiptAuthority, context: batchContext!,
+            readIds: new Set([...(previous?.authority === receiptAuthority && previous.context === batchContext ? previous.readIds : []), ...readIds]),
+          });
           checkVisible();
           if (ticket !== version) continue;
           return;
         }
       } catch {
-        if (!controller.signal.aborted) { context = null; lastObserved = null; requestedKey = null; setReceipt(null); }
+        // A failed lookup is not evidence that the peer unread a message. It
+        // cannot authorize observation, but does not erase same-context knowledge.
+        if (!controller.signal.aborted) { context = null; lastObserved = null; requestedKey = null; }
       } finally { running = false; }
     };
     const checkVisible = () => {
@@ -575,7 +589,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       area.removeEventListener("load", schedule, true);
       window.removeEventListener("resize", schedule);
     };
-  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, loaded, messages, visible, sheet, reportTarget, viewer]);
+  }, [accountId, conversationId, chat.accountId, chat.status, chat.currentProjections, current, receiptAuthority, loaded, messages, visible, sheet, reportTarget, viewer]);
 
   async function setMuted(muted: boolean) {
     if (busy || chat.status !== "ready" || typeof current?.ownMuted !== "boolean") return;
@@ -599,7 +613,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   async function shareLocation(location: StaticLocation) {
     if (!row || !locationAllowed || !alive.current) throw new Error("Conversation unavailable");
     await sendMessagingLocation(accountId, conversationId, row.peerId, copyStaticLocation(location));
-    if (alive.current) { nearBottom.current = true; announce("Location shared."); }
+    if (alive.current) nearBottom.current = true;
   }
   /**
    * Normal conversation is not a form submission: the durable outbox admits the
@@ -609,7 +623,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   async function send() {
     if (!row || (!photo && !draft.trim())) return;
     if (photo && (!photo.prepared || view?.mode !== "CONNECTED" || view.ownBlocked)) return;
-    const body = draft, sendingPhoto = photo;
+    const body = draft, sendingPhoto = photo, sendingRevision = draftRevision.current;
     setError(null);
     try {
       if (sendingPhoto?.prepared) {
@@ -622,10 +636,10 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
         nearBottom.current = true;
         // Only clear what this admission owned: typing that arrived while it was
         // in flight is newer intent and must survive.
-        setDraft((current) => current === body ? "" : current);
+        if (draftRevision.current === sendingRevision) { draftRevision.current++; setDraft(""); }
         if (sendingPhoto) setPhoto((current) => current === sendingPhoto ? null : current);
         if (!sendingPhoto && reportContext) clearReportContext(reportContext);
-        admission.current = null; announce("Message saved. Sending.");
+        admission.current = null;
       }
     } catch { if (alive.current) setError("Your message could not be saved. Your draft is still here."); }
     finally { if (alive.current) composer.current?.focus(); }
@@ -640,7 +654,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     try {
       if (action === "send") await recoverMessagingText(accountId, conversationId, selectedMessage.id);
       else await removeMessagingMessage(accountId, conversationId, selectedMessage.id, false);
-      if (alive.current) { setSheet(null); setSelectedMessageId(null); announce(action === "send" ? "Text saved. Sending." : "Your copy was removed."); }
+      if (alive.current) { setSheet(null); setSelectedMessageId(null); if (action === "delete") announce("Your copy was removed."); }
     } catch { if (alive.current) setError("Could not confirm this change. Sync and check your chat before trying again."); }
     finally { if (alive.current) setBusy(false); }
   }
@@ -699,7 +713,8 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             {message.location && <ChatLocation location={message.location} />}
             {message.body ? <p dir="auto">{message.body}</p> : !attachment && message.messageType !== "LOCATION" && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
             {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
-              && message.unsentAt === undefined && receipt?.projections === chat.currentProjections && receipt.readIds.has(message.id) ? "Read" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
+              && message.unsentAt === undefined && receipt?.authority === receiptAuthority && receipt.readIds.has(message.id) ? "Read"
+              : receipt?.readIds.has(message.id) && (!visible || chat.status !== "ready" || !current) ? "" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
               {(attachment?.state === "FAILED" || (!message.server && pending?.status === "FAILED")) && pending?.status !== "NEEDS_REVIEW" && <button type="button" onClick={() => {
               // A refused send keeps its original boundary; re-flushing it can only
               // fail again. The message-level retry rebinds that boundary because a
@@ -742,7 +757,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
           const source = event.currentTarget.files?.[0]; event.currentTarget.value = "";
           if (source && Capacitor.getPlatform() !== "android") void preparePhoto(source);
         }} />}
-      <PeerChatComposer value={draft} onChange={setDraft} onSend={() => void send()} inputRef={composer}
+      <PeerChatComposer value={draft} onChange={value => { draftRevision.current++; setDraft(value); }} onSend={() => void send()} inputRef={composer}
         busy={false} locked={!!admission.current} canSend={photo ? photoAllowed && !!photo.prepared : !!draft.trim()}
         photoAllowed={view?.mode === "CONNECTED"} onPhoto={() => void choosePhoto()}
         locationAllowed={locationAllowed} onLocation={() => setSheet("location")} />

@@ -37,6 +37,7 @@ let mutationGate: ReturnType<typeof deferred> | null, mutationEntered: ReturnTyp
 let downloadStatus: number;
 let sent: Array<Record<string, unknown>>;
 let muted: Map<string, boolean>, muteFails: boolean;
+let wakes: Array<{ messageId: string; committed: boolean }>;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -53,7 +54,7 @@ beforeEach(async () => {
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
   mutationGate = null; mutationEntered = deferred(); connected = true;
-   downloadStatus = 200; sent = []; muted = new Map(); muteFails = false;
+    downloadStatus = 200; sent = []; muted = new Map(); muteFails = false; wakes = [];
   const items = new Map<string, string>([["findback.messaging.installation.v1", DEVICE]]);
   vi.stubGlobal("indexedDB", new IDBFactory());
   vi.stubGlobal("localStorage", { getItem: (key: string) => items.get(key) ?? null,
@@ -63,6 +64,11 @@ beforeEach(async () => {
   const network: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     if (!online) throw new Error("offline");
+    if (request.url.endsWith("/chat-wake")) {
+      const { message_id: messageId } = await request.json() as { message_id: string };
+      wakes.push({ messageId, committed: [...remote.values()].some(row => row.metadata.messageId === messageId) });
+      return Response.json({ ok: true });
+    }
     if (request.url.includes("/rpc/")) {
       const args = await request.json() as Record<string, unknown>;
        expect(args.p_account_id).toBe(account); expect(args.p_device_id).toBe(DEVICE);
@@ -441,6 +447,7 @@ describe("production messaging media owner", () => {
     await runtime.refreshMessaging(A); await waitForState((state) => state.status === "ready");
     expect((await runtime.readMessagingThreadState(A, CONV)).media.map((row) => row.state)).toEqual(["FAILED", "READY"]);
     expect(runtime.getMessagingRuntimeSnapshot().error).toMatch(/photo/i);
+    expect(wakes.filter(wake => wake.messageId === id(101)).every(wake => !wake.committed)).toBe(true);
   });
 
   it("switches A to B during GET without late A persistence, ACK or B contamination", async () => {
@@ -465,6 +472,29 @@ describe("production messaging media owner", () => {
 });
 
 describe("foreground fast path", () => {
+  it("discovers committed incoming photo bytes after a foreground hint without a focus or manual full refresh", async () => {
+    runtime.setMessagingAccount(A); await waitForState(state => state.status === "ready" && !!state.currentProjections);
+    requestLog.length = 0;
+    const inbound = await mediaFixture(id(202), id(102), { direction: "IN", expiresAt: Date.now() + 60_000 });
+    remote.set(id(202), inbound);
+    mail.push({ accountId: A, deviceId: DEVICE, mailboxId: id(402), event: { kind: "TEXT", eventId: id(302), sequence: 2,
+      message: { id: id(102), conversationId: CONV, authorId: B, recipientId: A, body: "Committed caption", messageType: "MEDIA" } } });
+    runtime.invalidateMessaging(A);
+    await vi.waitFor(async () => {
+      const state = await runtime.readMessagingThreadState(A, CONV);
+      expect(state.media[0]?.state).toBe("READY");
+    });
+    expect(await boundary.handles[0]!.history.readMedia(id(202))).toEqual(inbound.bytes);
+    expect(requestLog).toContain(`media-ack:${id(202)}`);
+  });
+  it("kicks the message-scoped photo wake again only after the upload has committed", async () => {
+    runtime.setMessagingAccount(A); await waitForState(state => state.status === "ready" && !!state.currentProjections);
+    const outgoing = await mediaFixture(id(201), id(101));
+    await runtime.sendMessagingMedia(A, CONV, B, "Photo", outgoing.metadata, outgoing.bytes);
+    await vi.waitFor(() => expect(wakes.filter(wake => wake.messageId === id(101))).toEqual([
+      { messageId: id(101), committed: false }, { messageId: id(101), committed: true },
+    ]));
+  });
   it("settles an outgoing text and a realtime hint without full reconciliation", async () => {
     runtime.setMessagingAccount(A);
     await waitForState((state) => state.status === "ready" && !!state.currentProjections);

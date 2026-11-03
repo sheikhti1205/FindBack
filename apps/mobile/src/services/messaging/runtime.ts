@@ -206,6 +206,10 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
         // rather than looping here and holding the hint open.
         owner.pendingRefresh = owner.pendingRefresh === "full" ? "full" : "fast";
       }
+      // A committed incoming MEDIA parent is durable now, but the fast path
+      // does not discover/download bytes. Publish catch-up promptly, then
+      // coalesce one bounded full recovery instead of leaving a loading ghost.
+      if (run === "fast" && owner.session.needsMediaDiscovery()) owner.pendingRefresh = "full";
       let mediaFailed = false;
       // Uploading already-admitted photos is bounded (10 per pass) and is a no-op
       // when nothing is queued: a photo must never wait for the next full sweep.

@@ -3,11 +3,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { MessagingThread } from "./Messaging";
+import { LiveRegion } from "../components/LiveRegion";
 import { Capacitor } from "@capacitor/core";
 import { PhotoUnavailableError } from "../services/messaging/mediaTransport";
 
 const m = vi.hoisted(() => {
-  const view = { mode: "CONNECTED", request: "OUTGOING", ownBlocked: false, ownMuted: false };
+  const view = { mode: "CONNECTED", request: "OUTGOING", ownBlocked: false, ownMuted: false, epoch: "relationship-a", revision: 1 };
   return { view, chat: { accountId: "account", status: "ready", revision: 1,
     conversations: [{ conversationId: "chat", peerId: "peer", cachedProjection: view }], currentProjections: { chat: view } },
     messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[],
@@ -27,6 +28,7 @@ beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { cr
   m.location.mockReset().mockResolvedValue("shared"); m.chat.accountId = "account";
   m.relationship.mockReset().mockResolvedValue(undefined);
   m.mute.mockReset().mockResolvedValue(undefined); m.view.ownMuted = false; m.chat.status = "ready";
+  m.view.epoch = "relationship-a"; m.view.revision = 1; m.chat.currentProjections = { chat: m.view };
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function open() {
@@ -35,7 +37,7 @@ async function open() {
   return rendered;
 }
 function RouteState() { return <output data-testid="query">{useLocation().search}</output>; }
-function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
+function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><LiveRegion /><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
 
 it("keeps the composer usable and preserves newer typing while a text is still being admitted", async () => {
   const resolvers: Array<(value: string) => void> = [];
@@ -56,6 +58,74 @@ it("keeps the composer usable and preserves newer typing while a text is still b
   await waitFor(() => expect(field.value).toBe("Second"));
   await act(async () => { resolvers[1]!("saved"); });
   await waitFor(() => expect(field.value).toBe(""));
+  expect(screen.queryAllByText("Message saved. Sending.")).toHaveLength(0);
+});
+it("preserves a newer draft even when its text equals the in-flight admission", async () => {
+  let finish!: (value: string) => void;
+  m.text.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  await open(); const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Same words" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  fireEvent.change(field, { target: { value: "A different thought" } });
+  fireEvent.change(field, { target: { value: "Same words" } });
+  await act(async () => { finish("saved"); });
+  expect(field).toHaveProperty("value", "Same words");
+});
+
+function sentText() {
+  m.messages = [{ id: "sent", conversationId: "chat", authorId: "account", recipientId: "peer", body: "Already read", messageType: "TEXT", server: { sequence: 1 } }];
+}
+it("keeps known Read through transcript refresh, projection copies and a failed receipt lookup", async () => {
+  sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
+  const rendered = await open(); await screen.findByText("Read");
+  let finish!: (value: { context: string; readIds: string[] }) => void;
+  m.receipt.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  m.chat.currentProjections = { chat: { ...m.view } }; m.chat.revision++;
+  rendered.rerender(thread());
+  await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("Read")).toBeTruthy(); expect(screen.queryByText("Sent")).toBeNull();
+  await act(async () => { finish({ context: "authority", readIds: [] }); });
+  expect(screen.getByText("Read")).toBeTruthy();
+  m.receipt.mockRejectedValue(new Error("temporary network failure"));
+  m.messages = [...m.messages]; m.chat.revision++; rendered.rerender(thread());
+  await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(3));
+  expect(screen.getByText("Read")).toBeTruthy();
+});
+it("keeps Read across mute-only member revisions while receipt lookup is pending or fails", async () => {
+  sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
+  const rendered = await open(); await screen.findByText("Read");
+  let fail!: (error: Error) => void;
+  m.receipt.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject; }));
+  m.chat.currentProjections = { chat: { ...m.view, ownMuted: true, revision: 2 } };
+  rendered.rerender(thread()); await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("Read")).toBeTruthy();
+  await act(async () => { fail(new Error("temporary failure")); });
+  expect(screen.getByText("Read")).toBeTruthy();
+});
+it.each([null, "new-consent"])("invalidates known Read on an authoritative receipt context %s", async context => {
+  sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
+  const rendered = await open(); await screen.findByText("Read");
+  m.receipt.mockResolvedValue({ context, readIds: [] });
+  m.messages = [...m.messages]; m.chat.revision++; rendered.rerender(thread());
+  await waitFor(() => expect(screen.queryByText("Read")).toBeNull());
+  expect(screen.getByText("Sent")).toBeTruthy();
+});
+it("does not restore old receipt knowledge in a new relationship while its lookup is pending", async () => {
+  sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
+  const rendered = await open(); await screen.findByText("Read");
+  m.receipt.mockImplementation(() => new Promise(() => {}));
+  m.chat.currentProjections = { chat: { ...m.view, epoch: "relationship-b", revision: 2 } };
+  rendered.rerender(thread());
+  expect(screen.queryByText("Read")).toBeNull();
+});
+it("hides read authority while offline without claiming Sent or forgetting the same-context read", async () => {
+  sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
+  const rendered = await open(); await screen.findByText("Read");
+  m.chat.status = "offline"; rendered.rerender(thread());
+  expect(screen.queryByText("Read")).toBeNull(); expect(screen.queryByText("Sent")).toBeNull();
+  m.chat.status = "ready";
+  m.receipt.mockResolvedValue({ context: "authority", readIds: [] });
+  rendered.rerender(thread()); await screen.findByText("Read");
 });
 
 it("attaches a report-origin subject to the first text only", async () => {
@@ -98,6 +168,7 @@ it("reviews an approximate or exact pin and sends only on a separate activation,
   await waitFor(() => expect(m.location).toHaveBeenCalledExactlyOnceWith("account", "chat", "peer", { lat: 23, lng: 90, accuracy: 25 }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(field).toHaveProperty("value", "Keep draft"); expect(m.text).not.toHaveBeenCalled();
+  expect(screen.queryAllByText("Location shared.")).toHaveLength(0);
 });
 it.each([0, -1, Number.NaN])("does not invent an accuracy estimate for location %s", async (accuracy) => {
   const geo = geolocation(); await open(); const picker = await locationPicker();
@@ -380,6 +451,7 @@ it("offers honest review instead of Sending or automatic retry for an unknown qu
   expect(m.recover).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Send text only" }));
   await waitFor(() => expect(m.recover).toHaveBeenCalledWith("account", "chat", "message"));
+  expect(screen.queryAllByText("Text saved. Sending.")).toHaveLength(0);
 });
 it("lets the user remove an unknown queued message without sending it", async () => {
   m.messages = [{ ...received(), authorId: "account", recipientId: "peer", server: undefined }];

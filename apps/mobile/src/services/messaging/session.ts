@@ -56,6 +56,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
   let mediaController = new AbortController();
   let mediaTransport: ReturnType<typeof createMediaTransport> | undefined;
   let mediaFlushing: Promise<void> | null = null, mediaSyncing: Promise<void> | null = null;
+  let mediaDiscoveryRevision = 0, discoveredMediaRevision = 0;
   function mediaContext() {
     assertOpen();
     if (!mediaFactory || mediaPaused) throw mediaUnavailable();
@@ -151,6 +152,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
         assertOpen();
         await call("ACK", { mailboxId: receipt.mailboxId });
       });
+      if (envelope.event.message.messageType === "MEDIA" && envelope.event.message.authorId !== scope.accountId) mediaDiscoveryRevision++;
     }
     return envelopes.length;
   };
@@ -324,6 +326,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     if (mediaSyncing) return mediaSyncing;
     const run = async () => {
       const context = mediaContext(), attempted = new Set<string>();
+      const discoveryRevision = mediaDiscoveryRevision;
       let failed = false;
       const receive = async (metadata: MediaMetadata) => {
         attempted.add(metadata.id);
@@ -360,6 +363,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
         if (deliveries.length < 100 || progress === 0) break;
       }
       if (failed) throw mediaUnavailable();
+      discoveredMediaRevision = discoveryRevision;
     };
     mediaSyncing = run().finally(() => { mediaSyncing = null; });
     return mediaSyncing;
@@ -478,6 +482,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       assertOpen();
     },
     sync, syncState, flush, refreshConversations, flushMedia, syncMedia,
+    needsMediaDiscovery: () => mediaDiscoveryRevision !== discoveredMediaRevision,
     close() { controller.abort(); mediaController.abort(); return Promise.resolve(history.close()); },
   };
 }

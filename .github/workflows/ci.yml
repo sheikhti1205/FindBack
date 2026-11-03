@@ -251,6 +251,10 @@ jobs:
         # Empty SELECT probes and SQL errors fail; fixtures run once and roll
         # back. Platform stubs are local-only, never hosted or JWT evidence.
         run: node scripts/sql-behavior.mjs --apply-chain --probe supabase/tests/verify_20261022143000_roles_capabilities.sql --probe supabase/tests/verify_roles_invitation_regressions.sql
+      - name: Photo commit publication and canonical chat regressions
+        # Same migrated disposable DB. Synthetic SQL actors are not real
+        # Storage bytes, OAuth or deployed two-account acceptance evidence.
+        run: node scripts/sql-behavior.mjs --probe supabase/tests/verify_norfold_photo_publication.sql --probe supabase/tests/verify_chat_r4.sql --probe supabase/tests/verify_m7p_chat_context_location.sql --probe supabase/tests/verify_m7p_chat_content_erasure_immutability.sql
       - name: Two-connection role-lock regression (queued caller re-authorized)
         # Single-transaction probes cannot express a waiter whose permission is
         # revoked while it blocks. Two real sessions; a queued grant must be

@@ -8,7 +8,7 @@ import { kickChatWake } from "./chatWake";
 /** Shares the caller's lifetime; does not create another session or scheduler. */
 export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal) {
   const accountId = uuid(scope.accountId);
-  return createMediaTransport(scope, signal, {
+  const transport = createMediaTransport(scope, signal, {
     request: (input) => fetchSupabaseFunction("chat-media", accountId, input),
     rpc: async ({ name, args, signal: requestSignal }) => {
       const { data, error } = await getSupabase().rpc(name, args).abortSignal(requestSignal);
@@ -16,6 +16,12 @@ export function createSupabaseMediaTransport(scope: MessagingScope, signal: Abor
       return data;
     },
   });
+  return { ...transport, async upload(...args: Parameters<typeof transport.upload>) {
+    await transport.upload(...args);
+    // The validated upload response follows the server attachment commit. The
+    // earlier parent SEND kick cannot dispatch a wake that did not exist yet.
+    if (!signal.aborted) kickChatWake(accountId, args[0].messageId);
+  } };
 }
 
 /** Uses the canonical auth SDK; server checks the captured account on every RPC. */
