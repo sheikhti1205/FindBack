@@ -145,7 +145,10 @@ it("successful creation reconciles through the authorized reader instead of appe
   render(tree()); await screen.findByText("Original comment");
   posts.addComment.mockResolvedValue(comment("new", "No longer authorized writer response"));
   posts.fetchComments.mockResolvedValue([]);
-  fireEvent.change(screen.getByRole("combobox", { name: "Comment" }), { target: { value: "New text" } });
+  // MentionAutocomplete attaches role="combobox" in an effect after mount, so
+  // a synchronous getByRole right after the list settles raced that effect and
+  // intermittently failed on loaded CI runners.
+  fireEvent.change(await screen.findByRole("combobox", { name: "Comment" }), { target: { value: "New text" } });
   fireEvent.click(screen.getByRole("button", { name: "Send comment" }));
   await waitFor(() => expect(posts.addComment).toHaveBeenCalledWith("p1", "New text", null));
   await waitFor(() => expect(posts.fetchComments).toHaveBeenCalledTimes(2));
