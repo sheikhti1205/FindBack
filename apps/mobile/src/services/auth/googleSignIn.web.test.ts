@@ -308,8 +308,8 @@ describe("W-E web parity hardening — one-time exchange, shape, routing", () =>
 
   it("remembers a safe returnTo across the OAuth navigation and ignores an open redirect", async () => {
     hoisted.signInWithOAuth.mockResolvedValue({ data: {}, error: null });
-    await signInWithGoogleWebOAuth({ returnTo: "/reports/123" });
-    expect(sessionStorage.getItem("findback.authReturnTo")).toContain("/reports/123");
+    await signInWithGoogleWebOAuth({ returnTo: "/posts/123" });
+    expect(sessionStorage.getItem("findback.authReturnTo")).toContain("/posts/123");
 
     sessionStorage.clear();
     await signInWithGoogleWebOAuth({ returnTo: "https://evil.example.com/phish" });

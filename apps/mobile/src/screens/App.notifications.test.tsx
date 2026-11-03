@@ -9,7 +9,7 @@ const { auth, native, fetchNotificationsMock, markReadMock } = vi.hoisted(() => 
   markReadMock: vi.fn(async () => 0),
 }));
 vi.mock("../auth", () => ({ AuthProvider: ({ children }: { children: React.ReactNode }) => children, useAuth: () => ({ user: auth.user, booting: false, bootError: null }) }));
-vi.mock("../theme", () => ({ ThemeProvider: ({ children }: { children: React.ReactNode }) => children }));
+vi.mock("../theme", async (importOriginal) => ({ ...await importOriginal<typeof import("../theme")>(), ThemeProvider: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true }, registerPlugin: () => ({}) }));
 vi.mock("@capacitor/app", () => ({ App: { getLaunchUrl: async () => undefined, addListener: (event: string, listener: () => void) => {
   if (event !== "backButton") return Promise.resolve({ remove: () => {} });
@@ -69,13 +69,17 @@ describe("/notifications", () => {
     expect(screen.queryByText(/minutes ago|yesterday/i)).toBeNull();
   });
 
-  it("requires authentication on a direct deep link (fresh guests start at onboarding)", async () => {
+  it("requires intentional authentication on a direct deep link and retains its destination", async () => {
     auth.user = null;
     localStorage.clear();
+    sessionStorage.clear();
     window.history.replaceState(null, "", "/#/notifications");
     renderApp();
 
-    await waitFor(() => expect(screen.getByText("Onboarding screen")).toBeTruthy());
+    expect(await screen.findByRole("heading", { name: "Welcome to Norfold" })).toBeTruthy();
+    expect(window.location.hash).toBe("#/auth");
+    expect(sessionStorage.getItem("findback.authReturnTo")).toContain("/notifications");
+    expect(localStorage.getItem("findback.onboarding.version")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Notifications" })).toBeNull();
     expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
   });

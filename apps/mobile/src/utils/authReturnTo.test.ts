@@ -4,7 +4,7 @@ import { clearAuthReturnTo, getAuthReturnRoute, rememberAuthReturnTo, safeAuthRe
 
 beforeEach(() => sessionStorage.clear());
 
-it.each(["/posts/p1?from=search", "/u/someone", "/chats/c1", "/settings/privacy", "/search?q=black%20wallet"])("keeps a protected internal destination %s", route => {
+it.each(["/posts/p1?from=search", "/u/someone", "/chats/c1", "/settings/privacy", "/search?q=black%20wallet", "/notifications", "/about", "/help", "/ai-connection", "/ai-models", "/offline-ai"])("keeps a protected internal destination %s", route => {
   expect(safeAuthReturnTo(route)).toBe(route);
   rememberAuthReturnTo(route);
   expect(getAuthReturnRoute()).toBe(route);

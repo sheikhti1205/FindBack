@@ -57,7 +57,7 @@ export function safeAuthReturnTo(route: unknown): string | null {
     if ([...decoded].some(char => char.charCodeAt(0) <= 0x1f || char.charCodeAt(0) === 0x7f || char === "\\")
       || /[?#&](?:access_token|refresh_token|id_token|code|token|token_hash|password)=/i.test(decoded)) return null;
     if (pathname.includes("//") || pathname.split("/").some(part => part === "." || part === "..")) return null;
-    if (!/^\/(?:$|(?:posts|u|chats|connections|search|saved|my|profile|report|settings)(?:\/|$))/.test(pathname)) return null;
+    if (!/^\/(?:$|(?:posts|u|chats|connections|search|saved|my|profile|report|settings)(?:\/|$)|(?:notifications|about|help|ai-connection|ai-models|offline-ai)$)/.test(pathname)) return null;
     return route;
   } catch { return null; }
 }
