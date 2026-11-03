@@ -5,7 +5,7 @@ Current authoritative schema is the immutable `supabase/migrations/` chain; do
 not recreate a second backend from this diagram. See
 [architecture](../ARCHITECTURE.md) and [retirement](../LEGACY_API_RETIREMENT.md).
 
-# FindBack — Database Schema & Entity Relationship Diagram (historical)
+# Norfold — Database Schema & Entity Relationship Diagram (historical)
 
 Source of truth: `supabase/migrations/20260912000000_init.sql` (production:
 Supabase PostgreSQL). The local/test mirror is

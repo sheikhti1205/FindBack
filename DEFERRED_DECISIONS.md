@@ -1,4 +1,4 @@
-# Decisions and remaining prerequisites — FindBack
+# Decisions and remaining prerequisites — Norfold
 
 Current host update 2026-10-14: independent AI/UI and auth/account-reset reviews
 passed; mobile host suite 4,841 tests passed with clean typecheck/lint. See

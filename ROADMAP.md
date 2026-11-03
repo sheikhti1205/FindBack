@@ -1,6 +1,6 @@
 # Roadmap
 
-FindBack is an internal beta: usable, but pre-public and still being validated. This
+Norfold is an internal beta: usable, but pre-public and still being validated. This
 roadmap describes direction, not promises. Items move only when they are implemented,
 tested and — where relevant — accepted on a real device.
 

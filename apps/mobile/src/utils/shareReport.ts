@@ -73,7 +73,7 @@ export async function shareReport(postId: string, _title: string): Promise<strin
   const url = reportUrl(postId);
   // The report's raw title may contain contact/address details. The server
   // supplies safe item-specific metadata; system share payloads stay generic.
-  const title = "FindBack report";
+  const title = "Norfold report";
   const native =
     nativeShareOverride ?? (Capacitor.isNativePlatform() ? shareThroughNativeSheet : null);
   if (native) {

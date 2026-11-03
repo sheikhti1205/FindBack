@@ -1,6 +1,6 @@
-# Google sign-in owner console checklist (FindBack)
+# Google sign-in owner console checklist (Norfold)
 
-FindBack preserves two distinct Google sign-in paths:
+Norfold preserves two distinct Google sign-in paths:
 
 - **Web:** Supabase `signInWithOAuth` → Google consent → hosted Supabase callback
   → `/auth/callback` → PKCE `exchangeCodeForSession`. Supabase needs the matching

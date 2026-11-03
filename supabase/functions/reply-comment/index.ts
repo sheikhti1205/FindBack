@@ -83,7 +83,7 @@ export function refusalFromRaisedError(
  * The reply insert is a public write, so a PROBATION author is spaced by the
  * public-interaction clock and capped by the same daily ceiling as a post; the
  * database raises `P0001 POST_COOLDOWN` or `P0001 POST_LIMIT_REACHED`. Answering
- * 500 there told the notification-shade action that FindBack was broken and
+ * 500 there told the notification-shade action that Norfold was broken and
  * invited an immediate retry that could never succeed. Only the clock refusal
  * carries `retry-after`, because only it is a wait; the daily ceiling is not,
  * and pretending otherwise would tell the user to try again in 30 seconds.

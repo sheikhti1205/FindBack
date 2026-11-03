@@ -17,7 +17,7 @@ export function MediaSettings() {
   return (
     <SettingsPage
       title="Media"
-      description="How FindBack handles your photos. Changes apply right away."
+      description="How Norfold handles your photos. Changes apply right away."
       backTo="/settings"
     >
       <SettingsGroup

@@ -180,7 +180,7 @@ describe("advertised Needle roles have real production generators", () => {
       .filter((tool): tool is Record<string, unknown> => tool !== undefined);
     const byName = new Map(tools.map((tool) => [tool["name"], tool]));
     // Extraction is partial by app contract: nothing required, so an
-    // ungrounded slot withholds nothing and FindBack validates the rest.
+    // ungrounded slot withholds nothing and Norfold validates the rest.
     for (const name of ["record_item", "search_filters"]) {
       const schema = byName.get(name)?.["parameters"] as { required?: unknown };
       expect(schema.required).toEqual([]);

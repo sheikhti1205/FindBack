@@ -112,7 +112,7 @@ describe("Notifications inbox", () => {
     renderNotifications();
     expect(await screen.findByText("Your account cannot publish new reports right now.")).toBeTruthy();
     expect(screen.getByText("review update")).toBeTruthy();
-    expect(screen.getByText("FindBack")).toBeTruthy();
+    expect(screen.getByText("Norfold")).toBeTruthy();
     expect(screen.queryByText("MODERATION")).toBeNull();
     expect(screen.queryByRole("link", { name: /your report/i })).toBeNull();
   });

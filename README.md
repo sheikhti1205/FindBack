@@ -1,16 +1,18 @@
-# FindBack
+# Norfold
 
-<img src="apps/mobile/src/assets/brand/brand-tile-dark.png" width="64" height="64" alt="FindBack bird and leaf emblem" />
+<img src="apps/mobile/src/assets/brand/brand-tile-dark.png" width="64" height="64" alt="Norfold bird and leaf emblem" />
 
-[![CI](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml/badge.svg)](https://github.com/sheikhti1205/FindBack/actions/workflows/ci.yml)
+[![CI](https://github.com/sheikhti1205/Norfold/actions/workflows/ci.yml/badge.svg)](https://github.com/sheikhti1205/Norfold/actions/workflows/ci.yml)
 
 **Status: internal beta (pre-public).** Not a public release; builds are only
 installable from a verified GitHub release, and an engineering checkpoint is not
 release approval.
 
-Lost something? Found something? Post it, and let people nearby help you get it back to its owner.
+Norfold (formerly FindBack) is a local-first lost-and-found network for reporting, matching and recovering lost items.
 
-FindBack is an Android app for reporting lost and found items. A report works like a normal post: photos, a short description, a date and a spot on the map. Other people can comment, share it, or tell you they've seen the item. The app also suggests lost and found reports that look like each other, so you don't have to scroll through everything.
+> **Website transition:** FindBack is now **Norfold**. The current production site remains [`findbackapp.social`](https://findbackapp.social) during the name transition. This address is scheduled to retire after a future Norfold domain is acquired and migration is ready. No replacement domain has been purchased or announced yet.
+
+Lost something? Found something? Post it, and let people nearby help you get it back to its owner. A report works like a normal post: photos, a short description, a date and a spot on the map. Other people can comment, share it, or tell you they've seen the item. The app also suggests lost and found reports that look like each other, so you don't have to scroll through everything.
 
 Web links to shared reports: <https://findbackapp.social>
 
@@ -55,7 +57,7 @@ Capture dimensions and checksums: [screenshot manifest](docs/screenshots/manifes
 - Optional AI Chat using your own API key from the provider you choose
 
 This is an internal beta under validation, not a public-ready release. The current
-source version is `0.13.0-beta.1`. Product Fit Reset migrations have exact hosted
+source version is `0.14.0-beta.1`. Product Fit Reset migrations have exact hosted
 readback; final CI and web deployment receipts are tracked separately. A source
 version is not an installable release or a real-device acceptance claim.
 
@@ -64,10 +66,10 @@ version is not an installable release or a real-device acceptance claim.
 The full text is in the app under Settings: Privacy Policy, Terms and Community Guidelines. Short version of how the app is built:
 
 - **Email and phone stay private.** Other users see your public profile (name, username, avatar, verification badges). They never see your email address or phone number.
-- **Reports are visible to FindBack users.** Photos, descriptions, comments and locations you post can be seen by signed-in users. Eligible shared links show a minimal anonymous preview without raw report text, photos, contact details or location; full reports and private actions require sign-in. You can withdraw a preview. Don't post anything you wouldn't want a stranger to read, and blur addresses, papers, faces and serial numbers before adding a photo. The app reminds you of this while you write.
+- **Reports are visible to Norfold users.** Photos, descriptions, comments and locations you post can be seen by signed-in users. Eligible shared links show a minimal anonymous preview without raw report text, photos, contact details or location; full reports and private actions require sign-in. You can withdraw a preview. Don't post anything you wouldn't want a stranger to read, and blur addresses, papers, faces and serial numbers before adding a photo. The app reminds you of this while you write.
 - **You choose how exact a location is.** You can pin an exact spot or an approximate one.
 - **Smart Search and match suggestions run on your phone.** What you type into Smart Search is not sent to a cloud model.
-- **AI Chat is separate and uses your own key.** Your key stays on your device. Messages you send in AI Chat go to the provider you picked, under that provider's terms, and charges depend on your account with them. FindBack does not run a server that relays them. Chat history is kept only while the app is open and is gone when you close it.
+- **AI Chat is separate and uses your own key.** Your key stays on your device. Messages you send in AI Chat go to the provider you picked, under that provider's terms, and charges depend on your account with them. Norfold does not run a server that relays them. Chat history is kept only while the app is open and is gone when you close it.
 - **Private messages are separate from AI Chat.** Accepted history is stored on each device, with temporary server delivery and private image storage. Messages are not end-to-end encrypted. Push notifications wake the app rather than carrying message text. There is no consumer Drive backup option in this beta.
 - **Chat location is a one-time choice, not live tracking.** Only connected conversations can send it. Review the exact or approximate pin before sending. Archive hides a conversation for you; it does not erase the other person's history.
 - **You can delete your account** from Settings. That removes your account, reports and photos. Limited safety records are retained: reported-content evidence for up to 90 days, and appeal, moderation and audit records after deletion. Deletion cannot remove another person's existing copies of messages or files.
@@ -83,7 +85,7 @@ Android is the primary target. Only builds explicitly verified and published on 
 
 ## Project status
 
-FindBack is a working internal beta. The consumer flows are implemented and covered by
+Norfold is a working internal beta. The consumer flows are implemented and covered by
 automated checks, but real two-account, multi-device, staff-session and phone-photo
 acceptance is still outstanding. Physical Android and Sentry ingestion acceptance
 also remain unpassed. M7-P is historical source closure; its four migrations were
@@ -112,15 +114,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Security problems go to
 
 ## License
 
-FindBack is **source-available, not OSI open source**. It is licensed under the
+Norfold is **source-available, not OSI open source**. It is licensed under the
 [PolyForm Noncommercial License 1.0.0](LICENSE.md); commercial use needs a separate
-written license ([COMMERCIAL.md](COMMERCIAL.md)). The FindBack name and branding are
+written license ([COMMERCIAL.md](COMMERCIAL.md)). The Norfold name and branding are
 reserved ([BRANDING.md](BRANDING.md)); third-party components keep their own licenses
 ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 
 ## Project origin
 
-FindBack started in 2026 as a university course project and grew into a real
+Norfold started in 2026 as a university course project and grew into a real
 lost-and-found product. Course-era requirements, plans and evaluation material are
 kept under [docs/course/](docs/course/) for provenance; they are not the current
 product specification and they are not acceptance evidence.

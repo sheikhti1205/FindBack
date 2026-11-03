@@ -260,7 +260,7 @@ function ScopedReturns({ userId }: { userId: string }) {
 
         {views?.map((view) => {
           const { row } = view;
-          const counterpart = view.counterpartName ?? (row.externalHelper ? "someone outside FindBack" : "another member");
+          const counterpart = view.counterpartName ?? (row.externalHelper ? "someone outside Norfold" : "another member");
           const canRate = canRateReturn(row);
           return (
             <div key={row.returnId} className="fb-settings-row fb-return-row" data-testid="returns-row">

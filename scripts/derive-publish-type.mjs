@@ -27,14 +27,14 @@ export function derivePublishType(tag) {
     return {
       prerelease: true,
       prereleaseFlag: "--prerelease",
-      title: `FindBack ${tag} (pre-release)`,
+      title: `Norfold ${tag} (pre-release)`,
       notes: "Pre-release signed beta. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.",
     };
   }
   return {
     prerelease: false,
     prereleaseFlag: "",
-    title: `FindBack ${tag}`,
+    title: `Norfold ${tag}`,
     notes: "Stable release. See release-manifest.json for versionCode, git SHA, and per-artifact checksums.",
   };
 }

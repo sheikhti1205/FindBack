@@ -97,11 +97,11 @@ class NominatimClientTest {
 
     @Test fun userAgentCarriesContact() {
         assertEquals(
-            "FindBack/1.0.0 (Android; contact: https://findbackapp.social)",
+            "Norfold/1.0.0 (Android; contact: https://findbackapp.social)",
             NominatimClient.userAgent("1.0.0", "https://findbackapp.social"),
         )
         assertEquals(
-            "FindBack/unknown (Android; contact: unknown)",
+            "Norfold/unknown (Android; contact: unknown)",
             NominatimClient.userAgent("", "  "),
         )
     }
@@ -111,7 +111,7 @@ class NominatimClientTest {
             NominatimClient.fetchResults(
                 endpoint = "https://nominatim.openstreetmap.org/search",
                 query = "   ",
-                userAgent = "FindBack/1.0.0 (Android)",
+                userAgent = "Norfold/1.0.0 (Android)",
             )
         }
     }

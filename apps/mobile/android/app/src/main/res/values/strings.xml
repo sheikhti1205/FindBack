@@ -1,12 +1,12 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">FindBack</string>
-    <string name="title_activity_main">FindBack</string>
+    <string name="app_name">Norfold</string>
+    <string name="title_activity_main">Norfold</string>
     <string name="package_name">com.findback.app</string>
     <string name="custom_url_scheme">com.findback.app</string>
-    <string name="findback_channel_name">FindBack updates</string>
+    <string name="findback_channel_name">Norfold updates</string>
     <string name="findback_channel_description">Likes, comments, mentions and status changes on your reports.</string>
-    <string name="findback_channel_group">FindBack</string>
+    <string name="findback_channel_group">Norfold</string>
     <string name="findback_channel_comments">Comments &amp; mentions</string>
     <string name="findback_channel_comments_description">Comments and @mentions on your reports.</string>
     <string name="findback_channel_activity">Report activity</string>
@@ -17,10 +17,10 @@
     <string name="findback_channel_chat_requests">Message requests</string>
     <string name="findback_channel_chat_requests_description">A quiet notification for a new message request.</string>
     <string name="findback_chat_request_title">Message request</string>
-    <string name="findback_chat_request_body">Open FindBack to view your requests.</string>
+    <string name="findback_chat_request_body">Open Norfold to view your requests.</string>
     <string name="findback_reply_sent">Reply sent</string>
-    <string name="findback_reply_failed">Reply failed — open FindBack to try again</string>
+    <string name="findback_reply_failed">Reply failed — open Norfold to try again</string>
     <string name="findback_reply_too_fast">Too fast — reply again in %1$ds</string>
-    <string name="findback_reply_limit_reached">That\'s all your replies for today — open FindBack</string>
-    <string name="findback_reply_restricted">Replying isn\'t available on your account right now — open FindBack</string>
+    <string name="findback_reply_limit_reached">That\'s all your replies for today — open Norfold</string>
+    <string name="findback_reply_restricted">Replying isn\'t available on your account right now — open Norfold</string>
 </resources>

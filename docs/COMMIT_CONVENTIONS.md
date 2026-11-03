@@ -1,4 +1,4 @@
-# FindBack commit-message convention (prospective)
+# Norfold commit-message convention (prospective)
 
 Applies to **new commits only** — enforced by
 `scripts/check-commit-messages.mjs` over the PR/push commit range in CI and

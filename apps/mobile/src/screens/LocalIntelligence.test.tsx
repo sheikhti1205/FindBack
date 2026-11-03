@@ -64,7 +64,7 @@ describe("Local intelligence", () => {
     });
     render(<MemoryRouter><LocalIntelligence service={service} /></MemoryRouter>);
     await screen.findByText(/couldn't check the downloaded files/i);
-    expect(screen.queryByText("Try reopening FindBack.")).toBeNull();
+    expect(screen.queryByText("Try reopening Norfold.")).toBeNull();
   });
   it("waits for compatibility instead of acting on the service's optimistic default", async () => {
     const service = nativeService();

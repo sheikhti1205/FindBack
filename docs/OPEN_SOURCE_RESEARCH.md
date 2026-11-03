@@ -1,4 +1,4 @@
-# Open-source research for FindBack
+# Open-source research for Norfold
 
 Verified 2026-09-09 via the GitHub API. Policy from the starter prompt: reuse only
 MIT/Apache-2.0/BSD/ISC code (or user-owned Norfold code); preserve notices; record
@@ -14,7 +14,7 @@ reuse in THIRD_PARTY_SOURCES.md; never copy an entire app and rebrand.
 | material-components/material-web | Apache-2.0 | Apache-2.0 | Inspect for Material 3 tokens; treat guidance as documentation, not copied source. |
 
 ## Notes
-- None of the reference apps are direct-sourced: FindBack uses its own original UI
+- None of the reference apps are direct-sourced: Norfold uses its own original UI
   and architecture (React+Vite+Tailwind+Capacitor front end; Node+SQLite API) which
   differs from every reference (Kotlin/Firebase, Node/Mongo, Flutter/Firebase, React).
 - Material 3 Expressive direction researched and reproduced through CSS tokens, not

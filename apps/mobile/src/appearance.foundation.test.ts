@@ -39,7 +39,7 @@ describe("consumer appearance migration", () => {
     expect(appearance.loadAppearance()).toEqual(appearance.DEFAULT_APPEARANCE);
   });
 
-  it("offers eight curated accents with FindBack Blue as the fresh default", () => {
+  it("offers eight curated accents with Blue as the fresh default", () => {
     const ids = appearance.ACCENT_OPTIONS.map((a) => a.id);
     expect(ids).toEqual([
       "blue", "indigo", "violet", "emerald", "teal", "rose", "orange", "mono",
@@ -47,7 +47,7 @@ describe("consumer appearance migration", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain(appearance.DEFAULT_APPEARANCE.accent);
     expect(appearance.DEFAULT_APPEARANCE.accent).toBe("blue");
-    expect(appearance.ACCENT_OPTIONS[0]?.label).toBe("FindBack Blue");
+    expect(appearance.ACCENT_OPTIONS[0]?.label).toBe("Blue");
   });
 
   it("emits light and dark pairs for each accent so a theme switch cannot leave stale colors", () => {

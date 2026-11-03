@@ -29,8 +29,8 @@ export interface HelpAssistantDeps {
   listCatalog?: () => Promise<readonly ModelRecord[]>;
 }
 
-const CHAT_POLICY = { version: "cloud-chat-2026-10-21", text: "You are a helpful conversational assistant. Answer the user's message. Never request, repeat or reveal API keys or credentials. Do not claim to perform actions inside FindBack." };
-const CHAT_KNOWLEDGE = { version: "cloud-chat-2026-10-21", text: "This is optional text chat. You have no access to FindBack accounts, reports, search, or application actions." };
+const CHAT_POLICY = { version: "cloud-chat-2026-10-21", text: "You are a helpful conversational assistant. Answer the user's message. Never request, repeat or reveal API keys or credentials. Do not claim to perform actions inside Norfold." };
+const CHAT_KNOWLEDGE = { version: "cloud-chat-2026-10-21", text: "This is optional text chat. You have no access to Norfold accounts, reports, search, or application actions." };
 
 /**
  * Starter prompts for the empty conversation. They are plain consumer

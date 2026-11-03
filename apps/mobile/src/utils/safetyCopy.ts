@@ -50,7 +50,7 @@ export const REPORT_REASON_HINTS: Readonly<Record<ReportReason, string>> = {
   SCAM_OR_MISLEADING: "Asks for money, or describes something that isn't real.",
   SPAM_OR_DUPLICATE: "Repeated, or posted many times.",
   HARASSMENT: "Targets a person, or is abusive.",
-  INAPPROPRIATE_CONTENT: "Not appropriate for FindBack.",
+  INAPPROPRIATE_CONTENT: "Not appropriate for Norfold.",
   PRIVATE_INFORMATION: "Shows an address, a phone number, or a document.",
   SUSPECTED_STOLEN_OR_ILLEGAL: "Looks like it was taken, or is not allowed to be sold.",
   OTHER: "Tell us in your own words.",
@@ -164,7 +164,7 @@ export const REPUTATION_TIER_SENTENCES: Readonly<Record<ReputationTier, string>>
  */
 export const RATING_REFUSAL_SENTENCES: Readonly<Record<string, string>> = {
   "23505": "You have already rated this recovery.",
-  "22023": "This recovery has no FindBack person to rate.",
+  "22023": "This recovery has no Norfold person to rate.",
   "42501": "Only the people in this recovery can rate it.",
 };
 

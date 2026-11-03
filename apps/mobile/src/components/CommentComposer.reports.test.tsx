@@ -108,7 +108,7 @@ describe("typed report references in the composer", () => {
     chooseAttachment("Report");
     fireEvent.change(screen.getByLabelText("Report link"), { target: { value: `https://other.example/r/${reportId}` } });
     fireEvent.click(screen.getByRole("button", { name: "Add report" }));
-    expect(screen.getByRole("alert").textContent).toBe("Paste a FindBack report link.");
+    expect(screen.getByRole("alert").textContent).toBe("Paste a Norfold report link.");
     expect(state.fetchPost).not.toHaveBeenCalled();
   });
 

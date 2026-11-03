@@ -15,7 +15,7 @@ afterEach(cleanup);
 describe("settings foundation semantics", () => {
   it("renders a page heading, grouped rows, and focuses the heading on entry", () => {
     render(<MemoryRouter><SettingsPage title="Settings">
-      <SettingsGroup title="Preferences" description="Make FindBack yours">
+      <SettingsGroup title="Preferences" description="Make Norfold yours">
         <SettingsRow title="Appearance" description="Theme and color" route="/settings/appearance" icon={Palette} iconTone="lavender" value="System" />
       </SettingsGroup>
     </SettingsPage></MemoryRouter>);
@@ -98,7 +98,7 @@ describe("settings foundation semantics", () => {
     expect(dark.name).toBe("theme");
     fireEvent.click(dark);
     expect(theme).toHaveBeenCalledWith("dark");
-    fireEvent.click(screen.getByRole("radio", { name: "FindBack Blue" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Blue" }));
     expect(accent).toHaveBeenCalledWith("blue");
     expect(screen.getByRole("radio", { name: "Emerald" }).getAttribute("name")).toBe("accent");
   });

@@ -3,7 +3,7 @@ package com.findback.app.push
 import org.json.JSONObject
 
 /**
- * Data-only FCM payload for one FindBack notification.
+ * Data-only FCM payload for one Norfold notification.
  *
  * push-dispatch deliberately sends no `notification` block so this app owns
  * presentation and can attach the RemoteInput reply action. These helpers are
@@ -39,14 +39,14 @@ data class PushData(
         const val TYPE_MENTION = "MENTION"
         const val TYPE_STATUS = "STATUS"
         const val MAX_REPLY_LENGTH = 1000
-        const val DEFAULT_TITLE = "FindBack"
+        const val DEFAULT_TITLE = "Norfold"
         const val DEFAULT_BODY = "New activity on your report"
         /** Canonical reaction kinds, mirroring push-dispatch + shared schema. */
         val REACTION_KINDS = setOf("LOVE", "HELPFUL", "SUPPORT", "WOW")
 
         /**
          * Parses a RemoteMessage data map. Returns null when the payload is not a
-         * FindBack report notification (no report id or no allowlisted URL), so a
+         * Norfold report notification (no report id or no allowlisted URL), so a
          * malformed or foreign message never produces a notification.
          */
         fun fromData(data: Map<String, String>): PushData? {

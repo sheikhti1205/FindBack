@@ -67,7 +67,7 @@ const BENCH_CLI_PATH = join(WEIGHTS_DIR, "needle-cli");
 
 // NDK link engine for arm64-v8a (devices). Upstream also publishes
 // android-armv7 and a desktop linux-x86_64 engine, but neither links into
-// an Android build: armv7 has no FindBack bridge target (32-bit builds stay
+// an Android build: armv7 has no Norfold bridge target (32-bit builds stay
 // Needle-unavailable, same as 64-bit-only vision) and the linux archive
 // targets desktop glibc/libstdc++ (undefined bcmp/locale symbols against
 // Bionic). The x86_64 emulator therefore reports Needle unavailable —

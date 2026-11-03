@@ -29,7 +29,7 @@ const SEARCH_MATRIX: ReadonlyArray<{ title: string; keywords: string; route: str
   { title: "Privacy & permissions", keywords: "privacy location permission sharing", route: "/settings/privacy" },
   { title: "Diagnostics", keywords: "debug build logs export support", route: "/settings/diagnostics" },
   { title: "Help & guide", keywords: "faq tutorial onboarding lost found search recover", route: "/settings/help" },
-  { title: "About FindBack", keywords: "version build application", route: "/settings/about" },
+  { title: "About Norfold", keywords: "version build application", route: "/settings/about" },
 ];
 
 describe("QA L: settings search index resolves every packet alias", () => {

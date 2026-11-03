@@ -62,7 +62,7 @@ function ScopedRoleOfferNotice() {
   if(deferred)return <div className={cls}><button ref={review} type="button" className="min-h-11 underline" onClick={()=>setDeferred(false)}>Review {title} offer</button></div>;
   return <section aria-labelledby="role-offer-title" className={cls}>
     <h2 id="role-offer-title" className="font-semibold">{title} access offered</h2>
-    <p className="mt-1 text-on-surface-variant">You'll receive {title} access only after you accept. You can keep using FindBack without it.</p>
+    <p className="mt-1 text-on-surface-variant">You'll receive {title} access only after you accept. You can keep using Norfold without it.</p>
     <p className="mt-1 text-on-surface-variant">{offer.role==='ADMIN'?'Admins manage the team and community safety.':offer.capabilities.length?`You can: ${offer.capabilities.map(capabilityLabel).join(', ')}.`:'Your team can assign moderation responsibilities later.'}</p>
     <div ref={actions} className="mt-2 flex flex-wrap gap-2">
       <Button loading={busy} className="max-w-full whitespace-normal" onClick={()=>void submit()}>Accept {title} access</Button>

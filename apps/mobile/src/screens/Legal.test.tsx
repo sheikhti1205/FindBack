@@ -90,7 +90,7 @@ describe("legal documents", () => {
     expect(copy).toMatch(/does not reveal contact details or exact location/i);
     expect(copy).toMatch(/does not compare photos or generate report fields/i);
     expect(copy).toMatch(/no consumer Drive backup option/i);
-    expect(copy).not.toMatch(/report-field suggestions|AI models you downloaded|shared report link requires a FindBack account/i);
+    expect(copy).not.toMatch(/report-field suggestions|AI models you downloaded|shared report link requires a Norfold account/i);
   });
 
   it("says how a reader removes their own data", () => {

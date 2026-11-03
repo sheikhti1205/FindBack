@@ -1,10 +1,10 @@
 # Commercial use
 
-FindBack is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+Norfold is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
 That license permits personal, research, educational, charitable and other
 noncommercial use. It does **not** permit commercial use.
 
-Commercial use includes, for example: running FindBack (or a modified version) as a
+Commercial use includes, for example: running Norfold (or a modified version) as a
 paid or ad-supported service, bundling it into a commercial product, or using it in
 the course of business where the use has a commercial purpose.
 
@@ -15,8 +15,8 @@ Nothing in this document grants rights; it only explains how to ask for them.
 Email **sheikhti1205@outlook.com** with:
 
 - who you are and the legal entity that would hold the license;
-- what you want to run or build with FindBack;
-- whether you need the FindBack name/branding, or only the code;
+- what you want to run or build with Norfold;
+- whether you need the Norfold name/branding, or only the code;
 - expected scale (users, deployments, distribution model).
 
 A commercial license is a separate written agreement. Until one is signed, no
@@ -25,7 +25,7 @@ releases implies commercial permission.
 
 ## What stays true either way
 
-- No license grants trademark rights to the FindBack name, logo or branding
+- No license grants trademark rights to the Norfold name, logo or branding
   (see [BRANDING.md](BRANDING.md)).
 - Third-party components keep their own licenses (see
   [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).

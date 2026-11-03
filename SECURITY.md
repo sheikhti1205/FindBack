@@ -1,6 +1,6 @@
 # Security policy
 
-FindBack is a pre-public beta. Security reports are welcome and are taken
+Norfold is a pre-public beta. Security reports are welcome and are taken
 seriously, but there is no bug-bounty programme and no guaranteed response time.
 
 ## Reporting a vulnerability

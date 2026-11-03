@@ -39,7 +39,7 @@ describe("AppearanceSettings", () => {
       expect(screen.getByRole("radio", { name: new RegExp(`^${name}`) })).toBeTruthy();
     }
     expect(screen.queryByRole("radio", { name: /^AMOLED/ })).toBeNull();
-    for (const name of ["FindBack Blue", "Indigo", "Violet", "Emerald", "Teal", "Rose", "Orange", "Mono"]) {
+    for (const name of ["Blue", "Indigo", "Violet", "Emerald", "Teal", "Rose", "Orange", "Mono"]) {
       expect(screen.getByRole("radio", { name })).toBeTruthy();
     }
     for (const name of ["Amber", "Cyan", "Lime", "Pink"]) expect(screen.queryByRole("radio", { name })).toBeNull();

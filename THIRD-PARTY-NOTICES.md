@@ -1,6 +1,6 @@
 # Third-party notices
 
-FindBack is built on open-source software. This file is the short, public notice
+Norfold is built on open-source software. This file is the short, public notice
 list; the detailed, version-pinned inventory (including model assets, provenance and
 recorded digests) is in [THIRD_PARTY_SOURCES.md](THIRD_PARTY_SOURCES.md).
 
@@ -40,5 +40,5 @@ Apache-2.0 as published by their maintainers.
 ## What this file does not do
 
 It does not replace the license text of any dependency, and it does not grant any
-right to the FindBack name or branding (see [BRANDING.md](BRANDING.md)). If you
+right to the Norfold name or branding (see [BRANDING.md](BRANDING.md)). If you
 redistribute a build, keep the notices of the dependencies you ship.

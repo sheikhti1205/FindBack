@@ -152,7 +152,7 @@ export function AdminTeam() {
   return (
     <SettingsPage
       title={"Team & permissions"}
-      description="Who can moderate FindBack, and what each of them may do."
+      description="Who can moderate Norfold, and what each of them may do."
       backTo="/settings"
     >
       <SettingsGroup title="People with a role">

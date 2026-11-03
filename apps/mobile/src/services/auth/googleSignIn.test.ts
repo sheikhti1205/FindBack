@@ -143,7 +143,7 @@ describe("signInWithGoogleIdToken — existing profile (path A)", () => {
   it("preserves a same-email password account: newer Google metadata never overwrites it", async () => {
     hoisted.signInWithIdToken.mockResolvedValue(sessionResult());
     // Google supplies newer display metadata for the linked identity, but the
-    // stored FindBack profile (old username/phone/avatar) must win verbatim.
+    // stored Norfold profile (old username/phone/avatar) must win verbatim.
     hoisted.getUser.mockResolvedValue({
       data: {
         user: {

@@ -54,7 +54,7 @@ describe("Splash", () => {
     authState.booting = true;
     authState.bootError = null;
     render(<MemoryRouter><Splash /></MemoryRouter>);
-    expect(screen.getByText("FindBack")).toBeTruthy();
+    expect(screen.getByText("Norfold")).toBeTruthy();
   });
 
   it("offers Retry without signing out when the backend is unreachable", () => {
@@ -63,7 +63,7 @@ describe("Splash", () => {
     authState.bootError = "unreachable";
     authState.retryBoot.mockClear();
     render(<MemoryRouter><Splash /></MemoryRouter>);
-    expect(screen.getByText(/couldn't connect to findback/i)).toBeTruthy();
+    expect(screen.getByText(/couldn't connect to norfold/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     expect(authState.retryBoot).toHaveBeenCalledTimes(1);
   });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bell, LifeBuoy, Sparkles } from "lucide-react";
 import { AdvancedDisclosure, SettingsGroup, SettingsPage, SettingsRow } from "../components/settings";
 import { BrandMark } from "../components/BrandMark";
+import { PRODUCT_NAME, WEBSITE_TRANSITION_NOTE } from "../brand";
 import { readBuildInfo, type BuildInfo } from "../services/buildInfo";
 import { APP_VERSION, BACKEND_SCHEMA_VERSION, CAPABILITIES_VERSION } from "../services/appCapabilities";
 import "./About.css";
@@ -38,17 +39,18 @@ export function About() {
 
   return (
     <SettingsPage title="About" backTo="/settings">
-      <SettingsGroup title="FindBack">
+      <SettingsGroup title={PRODUCT_NAME}>
         <div className="fb-about-brand">
           <BrandMark size={48} />
-          <p className="fb-about-name">FindBack {APP_VERSION}</p>
+          <p className="fb-about-name">{PRODUCT_NAME} {APP_VERSION}</p>
           <p className="fb-about-mission">
-            FindBack helps people report, discover and recover lost items without turning the
+            Norfold helps people report, discover and recover lost items without turning the
             experience into a public-data free-for-all.
           </p>
+          <p className="fb-about-transition">{WEBSITE_TRANSITION_NOTE}</p>
           <p className="fb-about-ai">
             Optional AI features use a provider key you add (Settings → AI & models → Providers).
-            The provider you choose receives the messages you send; FindBack's own servers never see them.
+            The provider you choose receives the messages you send; Norfold's own servers never see them.
             Local helpers can run on this phone: search and report-field suggestions stay on the device
             once the helper is downloaded (Settings → Local intelligence).
             Reports, search and other core features work without AI.

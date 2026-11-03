@@ -21,14 +21,14 @@ describe("MarkdownView", () => {
   it("renders bold/italic/list/link/table/breaks", () => {
     const { container } = render(
       <MarkdownView
-        text={"**bold** and *italic*\n\n- one\n- two\n\n[FindBack](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |"}
+        text={"**bold** and *italic*\n\n- one\n- two\n\n[Norfold](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |"}
       />,
     );
     expect(container.querySelector("strong")).toBeTruthy();
     expect(container.querySelector("em")).toBeTruthy();
     expect(container.querySelector("ul")).toBeTruthy();
     expect(container.querySelector("table")).toBeTruthy();
-    const link = screen.getByRole("link", { name: "FindBack" });
+    const link = screen.getByRole("link", { name: "Norfold" });
     expect(link.getAttribute("href")).toBe("https://example.com");
     expect(link.getAttribute("rel")).toContain("noopener");
   });
@@ -209,8 +209,8 @@ describe("stripMarkdown", () => {
 });
 
 describe("MarkdownView motion (Wave E)", () => {  it("acknowledges a press on an external link, then leaves the hand-off alone", async () => {
-    render(<MarkdownView text={"[FindBack](https://example.com)"} />);
-    const link = screen.getByRole("link", { name: "FindBack" }) as HTMLElement;
+    render(<MarkdownView text={"[Norfold](https://example.com)"} />);
+    const link = screen.getByRole("link", { name: "Norfold" }) as HTMLElement;
     // Light acknowledgement only: the anchor semantics are untouched.
     fireEvent.pointerDown(link, { pointerId: 1, isPrimary: true, buttons: 1 });
     await waitFor(() => expect(link.style.opacity).not.toBe(""), { timeout: 1500 });

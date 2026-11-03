@@ -5,7 +5,7 @@
  * EXISTING Supabase client + session owner. No second session store.
  *
  * Outcomes:
- * - existing FindBack profile (including identity-linked same-email password
+ * - existing Norfold profile (including identity-linked same-email password
  *   accounts) → `authenticated`, profile preserved untouched;
  * - valid session but no public.users row (the trigger skips creation when
  *   username+phone metadata are absent) → `needsProfile` with an editable
@@ -225,7 +225,7 @@ export async function signInWithGoogleIdToken(idToken: string, nonce: string): P
 /**
  * ONE resolver shared by both entry points (native ID-token exchange and web
  * OAuth callback): a valid Supabase Google session is either an existing
- * FindBack profile (authenticated) or a session with no `public.users` row
+ * Norfold profile (authenticated) or a session with no `public.users` row
  * (needsProfile, session KEPT). A password-created profile is never overwritten
  * — this only reads.
  */

@@ -35,7 +35,7 @@ export function AiConnection({ provider }: AiConnectionProps) {
   const routed = params.get("provider");
   const [selected, setSelected] = useState(() => resolveByokProvider(provider, routed));
   useEffect(() => { setSelected(resolveByokProvider(provider, routed)); }, [provider, routed]);
-  return <SettingsPage title="Providers" description="Use your own key for optional Chat. Your provider receives messages when you send; FindBack’s core features don’t need a key." backTo="/settings/ai" backLabel="Back to AI Chat">
+  return <SettingsPage title="Providers" description="Use your own key for optional Chat. Your provider receives messages when you send; Norfold’s core features don’t need a key." backTo="/settings/ai" backLabel="Back to AI Chat">
     <label className="flex flex-col gap-1 text-sm">Provider<select className={fieldClass} value={selected} onChange={(event) => setSelected(event.target.value as CloudProvider)}>{CLOUD_PROVIDERS.map((id) => <option key={id} value={id}>{CLOUD_PROVIDER_LABELS[id]}</option>)}</select></label>
     {user ? <ProviderKeyForm key={`${user.id}:${selected}`} accountId={user.id} provider={selected} /> : <p role="status" className="text-sm">Sign in to manage your provider keys.</p>}
     <Link to="/settings/ai/chat-models" className="flex min-h-[48px] items-center text-sm font-medium underline">Choose Chat models</Link>

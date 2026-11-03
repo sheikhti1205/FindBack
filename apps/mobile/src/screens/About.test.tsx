@@ -19,7 +19,7 @@ describe("About", () => {
       versionCode: 1234,
     });
     render(<MemoryRouter><About /></MemoryRouter>);
-    expect(await screen.findByText(`FindBack ${APP_VERSION}`)).toBeTruthy();
+    expect(await screen.findByText(`Norfold ${APP_VERSION}`)).toBeTruthy();
     expect(screen.getByText("fdbd355abc12")).toBeTruthy();
     expect(screen.getByText("1234")).toBeTruthy();
     expect(screen.getByText(BACKEND_SCHEMA_VERSION)).toBeTruthy();
@@ -29,7 +29,7 @@ describe("About", () => {
   it("degrades honestly when native identity is unavailable", async () => {
     bridge.getBuildInfo.mockRejectedValue(new Error("no bridge"));
     render(<MemoryRouter><About /></MemoryRouter>);
-    expect(await screen.findByText(`FindBack ${APP_VERSION}`)).toBeTruthy();
+    expect(await screen.findByText(`Norfold ${APP_VERSION}`)).toBeTruthy();
     expect(screen.getAllByText("unknown")).toHaveLength(2);
   });
 
@@ -52,7 +52,7 @@ describe("About", () => {
     render(<MemoryRouter><About /></MemoryRouter>);
     expect(
       await screen.findByText(
-        "FindBack helps people report, discover and recover lost items without turning the experience into a public-data free-for-all.",
+        "Norfold helps people report, discover and recover lost items without turning the experience into a public-data free-for-all.",
       ),
     ).toBeTruthy();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);

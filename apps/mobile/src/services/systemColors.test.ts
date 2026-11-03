@@ -34,7 +34,7 @@ describe("bounded read-only native System colors owner", () => {
     bridge.getColors.mockRejectedValueOnce(new Error("unavailable"));
     expect(await m.refreshSystemColors()).toEqual({ supported: false, palette: null });
   });
-  it("replaces only unsafe role groups with FindBack Blue, not an arbitrary last preset", async () => {
+  it("replaces only unsafe role groups with Blue, not an arbitrary last preset", async () => {
     const m = await import("./systemColors");
     const payload = structuredClone(good); payload.light.primary = "#eeeeee"; payload.light.link = "red; --fb-error: green";
     bridge.getColors.mockResolvedValue(payload);

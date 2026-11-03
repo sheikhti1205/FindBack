@@ -16,7 +16,7 @@
  * - ≤1 request/second via {@link NominatimThrottler} (default 1100 ms floor).
  * - A browser WebView cannot set the `User-Agent` header (it is a forbidden
  *   header), so browser builds identify via origin/Referer automatically.
- *   Native/proxy deployments MUST set `User-Agent: FindBack/<version> (...)`
+ *   Native/proxy deployments MUST set `User-Agent: Norfold/<version> (...)`
  *   plus a contact Referer on the outgoing request — that header belongs in
  *   the proxy (future work), never in WebView JS.
  * - Results carry the {@link DEFAULT_NOMINATIM_CONFIG.attribution} string;

@@ -1,7 +1,7 @@
 /** Owner-only, read-only Auth log classification. Never returns raw log text. */
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-const repo='sheikhti1205/FindBack',owner='sheikhti1205',project='nfjhpigbsyyoaaktfaev';
+const repo='sheikhti1205/Norfold',owner='sheikhti1205',project='nfjhpigbsyyoaaktfaev';
 const categories=['invalid_client','invalid_grant','redirect_mismatch','pkce_failure','oauth_state_failure','database_failure','identity_conflict','provider_exchange_failure','other_auth_error'];
 const sql=`select category, count(*) as count, max(timestamp) as latest from (
  select timestamp, case

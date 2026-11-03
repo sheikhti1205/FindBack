@@ -8,8 +8,8 @@ afterEach(cleanup);
 
 describe("shared auth branding", () => {
   it.each([false, true])("uses only the canonical mark with illustration=%s", illustration => {
-    const { container } = render(<ThemeProvider><AuthShell title="Welcome to FindBack" illustration={illustration}><p>Form content</p></AuthShell></ThemeProvider>);
-    expect(screen.getByRole("heading", { name: "Welcome to FindBack" })).toBeTruthy();
+    const { container } = render(<ThemeProvider><AuthShell title="Welcome to Norfold" illustration={illustration}><p>Form content</p></AuthShell></ThemeProvider>);
+    expect(screen.getByRole("heading", { name: "Welcome to Norfold" })).toBeTruthy();
     const marks = [...container.querySelectorAll("header img")];
     expect(marks).toHaveLength(illustration ? 2 : 1);
     for (const mark of marks) {

@@ -1,4 +1,4 @@
-# FindBack — comment-media cleanup scheduler (X11).
+# Norfold — comment-media cleanup scheduler (X11).
 #
 # Every 15 minutes, call the `cleanup-comment-media` Edge Function to drain the
 # orphaned bytes of deleted comment attachments: it claims a bounded batch from

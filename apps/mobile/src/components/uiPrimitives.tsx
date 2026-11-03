@@ -8,7 +8,7 @@
  * plain CSS pulse with `motion-reduce:animate-none`.
  *
  * Fixed block sizes are intentional: skeleton → content resolves without
- * reflow or flash (RailMate discipline, FindBack identity).
+ * reflow or flash (RailMate discipline, Norfold identity).
  */
 
 import type { ReactNode } from "react";

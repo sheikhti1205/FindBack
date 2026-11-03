@@ -30,7 +30,7 @@ class ReplyReceiver : BroadcastReceiver() {
                 val presenter = NotificationPresenter(context)
                 // A refusal is an answer, not a broken app: the clock can be waited
                 // out (so the reply action stays), the day's ceiling cannot (so the
-                // copy points at FindBack instead of inviting a retry).
+                // copy points at Norfold instead of inviting a retry).
                 val message: String
                 val keepReply: Boolean
                 when (outcome) {
@@ -73,7 +73,7 @@ class ReplyReceiver : BroadcastReceiver() {
         val url = getStringExtra(EXTRA_URL)?.takeIf { it.isNotBlank() } ?: return null
         val commentId = getStringExtra(EXTRA_COMMENT_ID)
         return PushData(
-            title = "FindBack",
+            title = "Norfold",
             body = "Reply",
             type = PushData.TYPE_COMMENT,
             postId = postId,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Canonical FindBack Firebase project identity.
+ * Canonical Norfold Firebase project identity.
  *
  * ONE source of truth for the Firebase *client* project id used by the Android
  * google-services.json materializer AND the *server* push-dispatch project id.

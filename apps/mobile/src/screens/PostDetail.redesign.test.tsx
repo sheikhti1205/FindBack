@@ -216,7 +216,7 @@ describe("PostDetail redesign (UXN-3)", () => {
     }
   });
 
-  it("honors the FindBack Reduce Motion override even when the OS reports full motion", async () => {
+  it("honors the Norfold Reduce Motion override even when the OS reports full motion", async () => {
     const scrollSpy = vi.fn();
     Element.prototype.scrollIntoView = scrollSpy as unknown as typeof Element.prototype.scrollIntoView;
     const previousMatchMedia = window.matchMedia;

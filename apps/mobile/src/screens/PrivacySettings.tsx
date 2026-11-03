@@ -73,7 +73,7 @@ export function PrivacySettings() {
     <SettingsPage
       title="Privacy"
       backTo="/settings"
-      description="What FindBack knows about you, and the real switches that control it."
+      description="What Norfold knows about you, and the real switches that control it."
     >
       <SettingsGroup title="Safety">
         <SettingsRow title="Messages" description="Contact requests and read receipts." icon={MessagesSquare} iconTone="privacy" route="/settings/privacy/messages" />
@@ -95,7 +95,7 @@ export function PrivacySettings() {
       </SettingsGroup>
       <SettingsGroup
         title="Location"
-        description="FindBack reads your location once when you choose it on a report — never in the background."
+        description="Norfold reads your location once when you choose it on a report — never in the background."
       >
         <SettingsRow
           title="Location services"
@@ -188,7 +188,7 @@ export function PrivacySettings() {
       <SettingsGroup title="AI">
         <SettingsRow
           title="AI privacy"
-          description="How FindBack handles optional AI requests."
+          description="How Norfold handles optional AI requests."
           icon={Sparkles}
           iconTone="ai"
           route="/settings/ai/privacy"

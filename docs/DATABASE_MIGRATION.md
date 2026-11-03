@@ -14,7 +14,7 @@ provider. Do not redeploy the retired server assistant from this narrative.
 
 # Database (historical)
 
-FindBack has exactly two persistence paths, and they never mix.
+Norfold has exactly two persistence paths, and they never mix.
 
 ```text
 Real application / deployment:

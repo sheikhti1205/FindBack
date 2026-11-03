@@ -9,7 +9,7 @@
 
 ## 1. Summary of the ask
 
-FindBack must be renamed. The owner is proposing `NORFOLD` as a parent/studio brand with
+Norfold must be renamed. The owner is proposing `NORFOLD` as a parent/studio brand with
 products underneath (`Norfold Find`, `Norfold ID`, `Norfold Campus`, …), rather than as a
 single app name.
 
@@ -164,9 +164,9 @@ collision; and the owner already has brand assets, an app id and a live pre-rele
 **Corrective actions (in order):**
 1. Confirm ownership of `norfold.app` and switch the public site off `norfold.pages.dev`.
 2. Have a BD agent run the TM-4 search in classes 9, 42 (and 45 if the lost-property service
-   is filed under Norfold) — **before** renaming FindBack everywhere.
+   is filed under Norfold) — **before** renaming Norfold everywhere.
 3. File `NORFOLD` as a **word mark** (not just logo) in BD; the word mark is the durable asset.
-4. Register the mark **before** the public launch of `FindBack` → `Norfold Find`.
+4. Register the mark **before** the public launch of `Norfold` → `Norfold Find`.
 5. Consider `norfold.io` / `norfold.dev` alongside `.app` for search and email identity.
 6. Keep dated first-use evidence: commits, releases, screenshots, store listings, domain invoices.
 7. Do **not** plan on Madrid from a BD entity; if multi-country protection is wanted, either file

@@ -83,7 +83,7 @@ export function AiSettings({ accountId }: { accountId?: string }) {
     >
       <SettingsGroup
         title="AI Chat"
-        description="Chat uses a cloud provider. Your provider receives the messages you send; FindBack's core features don't need a key."
+        description="Chat uses a cloud provider. Your provider receives the messages you send; Norfold's core features don't need a key."
       >
         <SettingsRow
           title="Providers"

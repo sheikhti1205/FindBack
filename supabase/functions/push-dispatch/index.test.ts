@@ -120,7 +120,7 @@ Deno.test("buildFcmMessage is data-only and carries the report URL, no content",
   };
   assertEquals(message.token, "tok");
   assertEquals(message.notification, undefined);
-  assertEquals(message.data.title, "FindBack");
+  assertEquals(message.data.title, "Norfold");
   assertEquals(message.data.url, "https://findbackapp.social/r/post-9");
   assertEquals(message.data.postId, "post-9");
   assertEquals(message.data.commentId, "c1");

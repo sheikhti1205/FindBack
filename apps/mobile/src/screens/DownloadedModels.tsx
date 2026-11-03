@@ -48,7 +48,7 @@ export function LocalSearchHelperRow({ service, descriptor, phase, onRemove, des
   // contradicts it. A verified file stays "Installed" even when this device
   // cannot run it — both facts in one honest line.
   const state = phase === "checking" ? "Checking downloads…"
-    : phase === "failed" ? "Couldn't check downloads. Try reopening FindBack."
+    : phase === "failed" ? "Couldn't check downloads. Try reopening Norfold."
       : phase === "storage-unverified" ? "Couldn't check the downloaded files on this device."
         : !descriptor ? "Unavailable in this app."
           : !service.android ? "Downloads need the Android app."
@@ -159,10 +159,10 @@ export function DownloadedModels({ service = getApplicationAi(), backTo = "/sett
           <p className="px-1 text-sm text-on-surface-variant">Photo matching isn't available in this app yet, so there's no matching download to manage.</p>
         </SettingsGroup>
         <SettingsGroup title="Built-in">
-          <SettingsRow title="Semantic text matching" description={service.android ? "Included with FindBack · Not removable separately" : "Included with the Android app · Unavailable here"} />
+          <SettingsRow title="Semantic text matching" description={service.android ? "Included with Norfold · Not removable separately" : "Included with the Android app · Unavailable here"} />
         </SettingsGroup>
         {phase !== "checking" && olderDownloads.length > 0 && <SettingsGroup title="Older downloads">
-          <p className="px-1 text-sm text-on-surface-variant">FindBack no longer uses these on-device chat and photo tools. Remove them to free space. Your local search helper stays.</p>
+          <p className="px-1 text-sm text-on-surface-variant">Norfold no longer uses these on-device chat and photo tools. Remove them to free space. Your local search helper stays.</p>
           <Button variant="text" onClick={() => confirm("older")}>Remove older downloads</Button>
         </SettingsGroup>}
         <p className="px-1 text-sm text-on-surface-variant">Downloaded tools stay on this device when you sign out.</p>

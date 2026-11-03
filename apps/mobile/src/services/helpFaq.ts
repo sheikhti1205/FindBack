@@ -11,11 +11,11 @@ import {
 
 /** Out-of-scope work (code, algorithms) — never the OTP or search FAQ. */
 const GENERAL_SCOPE_ANSWER =
-  "I only answer questions about the FindBack app. Try asking about reports, search, status changes, comments or photos.";
+  "I only answer questions about the Norfold app. Try asking about reports, search, status changes, comments or photos.";
 
 /** AI-01: Help never claims to look up accounts or contact details. */
 const LOOKUP_REFUSAL =
-  "FindBack can't look up accounts, email addresses or phone numbers. Search covers listings only, so use Search for items and the Profile tab for your own details.";
+  "Norfold can't look up accounts, email addresses or phone numbers. Search covers listings only, so use Search for items and the Profile tab for your own details.";
 
 /**
  * Unknown app claim: refuse to invent a feature AND refuse to deny one.
@@ -28,30 +28,30 @@ const LOOKUP_REFUSAL =
  * lacks anything (CF-070 R2 retry-7 R6-1).
  */
 const UNKNOWN_FEATURE_ANSWER =
-  "I can't place that term, so I won't guess whether FindBack has it. FindBack ships reports, search, status changes, comments, ratings, photos, location, notifications, account deletion, passwords and email verification — see the Help tab, or ask me about one of those.";
+  "I can't place that term, so I won't guess whether Norfold has it. Norfold ships reports, search, status changes, comments, ratings, photos, location, notifications, account deletion, passwords and email verification — see the Help tab, or ask me about one of those.";
 
 const DEFAULT_SCOPE_ANSWER =
-  "I can help with FindBack reports, search, status changes, comments, ratings, photos, location, notifications and account verification. Try asking about one of those features.";
+  "I can help with Norfold reports, search, status changes, comments, ratings, photos, location, notifications and account verification. Try asking about one of those features.";
 
 const OTP_ANSWER =
   "Email confirmation is required at signup: use the one-time code sent to your email. Phone verification is optional and available from the verification/account flow when SMS verification is configured.";
 
 /** The app named outright. Enough on its own, and it lifts the veto below. */
-const APP_NAME_RE = /\bfindback\b|\b(?:the|this)\s+app\b/i;
+const APP_NAME_RE = /\b(?:norfold|findback)\b|\b(?:the|this)\s+app\b/i;
 
 /** The same names, stripped out of the subject before it is judged. */
-const APP_NAME_STRIP_RE = /\bfindback\b|\b(?:the|this|our)\s+app\b/g;
+const APP_NAME_STRIP_RE = /\b(?:norfold|findback)\b|\b(?:the|this|our)\s+app\b/g;
 
 /**
  * A question that puts this app outside itself is not about it, whatever else
- * it says: "How do I upload a photo to Instagram, not FindBack?" (CF-070 R2
+ * it says: "How do I upload a photo to Instagram, not Norfold?" (CF-070 R2
  * retry-3 finding 1).
  */
-const NEGATED_APP_RE = /\bnot\s+findback\b|\bnot\s+(?:the|this)\s+app\b/i;
+const NEGATED_APP_RE = /\bnot\s+(?:norfold|findback)\b|\bnot\s+(?:the|this)\s+app\b/i;
 
 /**
  * Another app or platform, named as somewhere else the request happens:
- * "How do I turn off notifications from another app?". FindBack owns its own
+ * "How do I turn off notifications from another app?". Norfold owns its own
  * notifications, and a question that moves them onto a different product is
  * not about it (CF-070 R2 retry-4 MAJOR-1, the non-`report` member of the
  * family). Narrow on purpose: "another user" and "another report" stay app
@@ -74,7 +74,7 @@ const FOREIGN_PERSON_RE =
  * object someone owns, and it is still not about this app. A named platform is
  * the one subject that can rule a question out; the list is closed on purpose
  * (services, not topics), and it only applies when the question never says
- * "FindBack".
+ * "Norfold".
  */
 const FOREIGN_SERVICE_RE =
   /\b(?:gmail|google|outlook|hotmail|yahoo|icloud|apple|facebook|instagram|twitter|tiktok|snapchat|whatsapp|telegram|messenger|youtube|reddit|linkedin|discord|slack|zoom|netflix|spotify|amazon|ebay|paypal|dropbox|onedrive|notion|wordpress|wikipedia|chatgpt|openai|bing)\b/i;
@@ -82,7 +82,7 @@ const FOREIGN_SERVICE_RE =
 /**
  * Evidence that a question is about THIS app.
  *
- * Ownership: the question names FindBack (or "the app"), or an object the app
+ * Ownership: the question names Norfold (or "the app"), or an object the app
  * owns, next to the possessive: "my report", "another user". It is
  * adjacency-anchored, because "my Gmail account" owns an account and "another
  * person" owns nothing here (both are the R2 retry review's counterexamples).
@@ -101,7 +101,7 @@ const FOREIGN_SERVICE_RE =
  * draft and teaches the wrong thing.
  */
 const APP_OWNERSHIP_RE =
-  /\bfindback\b|\bthe app\b|\bthis app\b|\b(?:my|your)\s+(?:findback\s+)?(?:accounts?|reports?|items?|listings?|posts?|profile|drafts?|notifications?|comments?|photos?|matches?)\b|\banother (?:user|member)\b|\bother users?\b/i;
+  /\b(?:norfold|findback)\b|\bthe app\b|\bthis app\b|\b(?:my|your)\s+(?:(?:norfold|findback)\s+)?(?:accounts?|reports?|items?|listings?|posts?|profile|drafts?|notifications?|comments?|photos?|matches?)\b|\banother (?:user|member)\b|\bother users?\b/i;
 
 /** A request to do something — necessary, never sufficient, for a topic. */
 const APP_ACTIVITY_REQUEST_RE =
@@ -117,7 +117,7 @@ const SCAFFOLD_RE =
   /\b(?:please|the|a|an|my|your|our|their|its|it|them|this|that|these|those|to|for|on|in|into|at|of|with|from|me|us|i|you|we|can|could|would|should|explain|tell|show|help|do|does|did|is|are|was|be|being|been|get|got|have|has|some|any|again|properly|correctly|here|there|now|then|about|by|as|all|when|after|out|near|using|more|saved|made|per|than|good|clear|correct|right|five|use|offer|why)\b/g;
 
 /**
- * The closed vocabulary of this app: every word a question about FindBack's
+ * The closed vocabulary of this app: every word a question about Norfold's
  * features can be made of, on top of its own topic's words.
  *
  * Closed on purpose, and closed at the level of ordinary words rather than of
@@ -131,6 +131,8 @@ const SCAFFOLD_RE =
  */
 const APP_VOCAB: ReadonlySet<string> = new Set([
   // What the app owns.
+  "norfold",
+  // Legacy name: people who used the app before the rename still say it.
   "findback",
   "app",
   "report",
@@ -314,7 +316,7 @@ const SLOT_SCAFFOLD_RE =
  * True when the noun a slot matched is one the app's reports describe. The
  * exemption from the vocabulary veto is granted only here: an unrecognised
  * object noun stays in the subject, where it fails the question closed instead
- * of being silently deleted and answered with FindBack copy.
+ * of being silently deleted and answered with Norfold copy.
  */
 function slotObjectIsKnown(match: string): boolean {
   const nouns = match
@@ -336,7 +338,7 @@ function slotObjectIsKnown(match: string): boolean {
  * leaves `passport` and `application`, which no topic owns.
  *
  * The question is folded to lower case first, so a capitalised opening word
- * ("Does FindBack have …") is read as the word it is rather than as a script
+ * ("Does Norfold have …") is read as the word it is rather than as a script
  * the vocabulary cannot read. Punctuation and symbols are dropped, but letters
  * of any script are kept: a script the app's vocabulary cannot read has to be
  * able to veto the question instead of vanishing before it is judged (CF-070 R2
@@ -353,7 +355,7 @@ function significantWords(question: string): string[] {
     .filter((token) => token.length > 1);
 }
 
-/** Latin letters and digits only; anything else is a script FindBack can't read. */
+/** Latin letters and digits only; anything else is a script Norfold can't read. */
 const LATIN_TOKEN_RE = /^[a-z0-9]+$/;
 
 /**
@@ -383,7 +385,7 @@ function subjectWords(question: string, topic: HelpTopic): string[] {
 
 /**
  * True when the question uses a word that belongs to neither this topic nor
- * this app — the subject of the request is something FindBack does not own.
+ * this app — the subject of the request is something Norfold does not own.
  */
 export function hasForeignSubject(question: string, topic: HelpTopic): boolean {
   return subjectWords(question, topic).some(
@@ -409,7 +411,7 @@ function unrecognisedTerms(question: string): readonly string[] {
  *
  * This is one of the licences for saying anything about the app at all. A
  * question in another language is not one unknown term among recognised ones —
- * `Como elimino mi cuenta de FindBack?` is *entirely* outside the app's
+ * `Como elimino mi cuenta de Norfold?` is *entirely* outside the app's
  * vocabulary — so it gets no claim about the app's features at all, keeps the
  * draft, and falls back to ordinary Chat. Refusing is acceptable; telling a
  * user a shipped feature does not exist is not (CF-070 R2 retry-6 R2, L3).
@@ -418,12 +420,12 @@ function unrecognisedTerms(question: string): readonly string[] {
  * the question is fully written in this app's vocabulary, so the
  * unknown-feature answer — whose first sentence says it could not place the
  * term — would assert something about a term that does not exist.
- * `Does FindBack have a list?` is such a question (`list` is a vocabulary
+ * `Does Norfold have a list?` is such a question (`list` is a vocabulary
  * word), and it now keeps the draft and falls back to ordinary Chat
  * (CF-070 R2 retry-8 F-2).
  *
  * Deliberate, and pinned: a question whose single unreadable term is a *real*
- * word in another language ("Does FindBack have cuenta?") also consumes the
+ * word in another language ("Does Norfold have cuenta?") also consumes the
  * draft, so the app answers with this copy instead of the model's. That is a
  * product choice rather than a defect — the copy says it cannot place the term
  * and declines to guess, instead of denying a shipped feature — and it is pinned
@@ -496,11 +498,11 @@ function isNearMissOfAppConcept(word: string): boolean {
 
 /**
  * A yes/no question about whether the app has something: it opens with an
- * auxiliary and names a presence verb ("Does FindBack have …?", "Does FindBack
+ * auxiliary and names a presence verb ("Does Norfold have …?", "Does Norfold
  * offer …?", "Is a map available?").
  *
  * This is the shape that licenses answering with a statement about the app's
- * feature set at all. A request to do something ("How do I delete my FindBack
+ * feature set at all. A request to do something ("How do I delete my Norfold
  * cuenta?") has neither, so the one term the vocabulary cannot place there is
  * the object of a shipped action, not the name of an unknown feature: it is
  * refused neutrally and the draft is kept (CF-070 R2 retry-7 R6-1).
@@ -537,7 +539,7 @@ export type HelpTopicId =
 export interface HelpClassification {
   /** Which FAQ branch owns this question, "default-scope" when none does. */
   readonly topic: HelpTopicId;
-  /** What FindBack answers with, ready to render. */
+  /** What Norfold answers with, ready to render. */
   readonly answer: string;
   /** True when that answer really is guidance about THIS question. */
   readonly appHelp: boolean;
@@ -619,7 +621,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     examples: ["How do I filter by category?", "How do I search?"],
     objectSlots: [/\b(?:lost|found)\s+[A-Za-z]+/gi, /\blistings?\s+for\s+[^?]+/gi],
     answer:
-      "Open Search to search reports and filter by category, status, Lost or Found. Results come from FindBack listings, not from AI.",
+      "Open Search to search reports and filter by category, status, Lost or Found. Results come from Norfold listings, not from AI.",
   },
   {
     id: "report",
@@ -672,7 +674,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       /^(?:location|locations|map|maps|pin|pins|gps|choose|pick|select|set|add|change|edit|update|share|approximate|nearby)$/,
     examples: ["How do I choose a location?", "How do I add an approximate location?"],
     answer:
-      "Choose an approximate location from the map when reporting an item. FindBack does not track you in the background.",
+      "Choose an approximate location from the map when reporting an item. Norfold does not track you in the background.",
   },
   {
     id: "matches",
@@ -680,14 +682,14 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     ownWords: /^(?:possible|match|matches|check|see|view|find|show)$/,
     examples: ["How do I check for possible matches?", "How do I see my possible matches?"],
     answer:
-      "Possible Matches are the up to three similar listings FindBack shows next to your report by similarity, never by probability. Open your report to see them.",
+      "Possible Matches are the up to three similar listings Norfold shows next to your report by similarity, never by probability. Open your report to see them.",
   },
   {
     id: "account-deletion",
     pattern:
       /\bdelet(?:e|ed|ing|ion)\b\s+(?:my|your)\s+(?:findback\s+)?account\b|\bclos(?:e|ing)\b\s+(?:my|your)\s+(?:findback\s+)?account\b/,
-    ownWords: /^(?:delete|deleted|deleting|deletion|close|closing|account|accounts|findback)$/,
-    examples: ["How do I delete my account?", "How do I delete my FindBack account?"],
+    ownWords: /^(?:delete|deleted|deleting|deletion|close|closing|account|accounts|norfold|findback)$/,
+    examples: ["How do I delete my account?", "How do I delete my Norfold account?"],
     answer:
       "To delete your account, open Settings, then Account, then Delete account, and type your email to confirm. Deletion permanently removes your account, its reports and photos, and its data on our servers.",
   },
@@ -698,7 +700,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     ownWords: /^(?:password|passwords|reset|change|forgot|forgotten|recover|recovery|sign|signin|login)$/,
     examples: ["How do I reset my password?", "How do I change my password?"],
     answer:
-      "Open the sign-in screen and tap Forgot password, then enter your email. FindBack emails a reset link to that address; opening it lets you choose a new password and signs you in. The message is the same whether or not an account uses that email.",
+      "Open the sign-in screen and tap Forgot password, then enter your email. Norfold emails a reset link to that address; opening it lets you choose a new password and signs you in. The message is the same whether or not an account uses that email.",
   },
 ];
 
@@ -736,11 +738,11 @@ export function classifyHelpQuestion(question: string): HelpClassification {
   if (isModelIdentityQuestion(question)) return scope("model-identity", true, MODEL_IDENTITY_ANSWER);
 
   // 2. A question that excludes this app is not about it, even when it also
-  // names it: "How do I upload a photo to Instagram, not FindBack?"
+  // names it: "How do I upload a photo to Instagram, not Norfold?"
   if (NEGATED_APP_RE.test(q)) return exact("default-scope", DEFAULT_SCOPE_ANSWER);
 
   // 3. A named other platform is never this app — unless the question also
-  // says "FindBack" (CF-070 R2 retry-2: "How do I delete my Gmail account?"
+  // says "Norfold" (CF-070 R2 retry-2: "How do I delete my Gmail account?"
   // and "How do I turn off Gmail notifications?").
   if (!APP_NAME_RE.test(q) && FOREIGN_SERVICE_RE.test(q)) {
     return exact("default-scope", DEFAULT_SCOPE_ANSWER);
@@ -758,7 +760,7 @@ export function classifyHelpQuestion(question: string): HelpClassification {
     return scope(
       "unavailable-feature",
       owned,
-      `FindBack does not have ${unavailable}. It ships reports, search, status changes, comments, ratings, photos, location and email verification — see the Help tab for the list.`,
+      `Norfold does not have ${unavailable}. It ships reports, search, status changes, comments, ratings, photos, location and email verification — see the Help tab for the list.`,
     );
   }
 
@@ -777,7 +779,7 @@ export function classifyHelpQuestion(question: string): HelpClassification {
     return scope("verification", true, OTP_ANSWER);
   }
 
-  // 7. Account and contact lookup is refused (AI-01). Asking FindBack to look
+  // 7. Account and contact lookup is refused (AI-01). Asking Norfold to look
   // someone up is a request to the app, whatever it names — but a question
   // about one's own verification code was already answered above.
   if (isAccountLookupRequest(question)) return scope("lookup", true, LOOKUP_REFUSAL);
@@ -805,12 +807,12 @@ export function classifyHelpQuestion(question: string): HelpClassification {
   // 9. A claim about the app that the knowledge does not cover. Saying anything
   // about the app's feature set needs two things at once: the question must be
   // one this app's vocabulary can read apart from at most the single term it
-  // cannot place ("Does FindBack have a Pets category?", "Does FindBack offer
+  // cannot place ("Does Norfold have a Pets category?", "Does Norfold offer
   // teleportation?"), and that term must not be a bad spelling of a concept the
   // app already has ("passwrod", "notificatons", "profle", "pass"). Both
   // licences were measured as open on their own: one unplaceable token inside
   // an app question is exactly a shipped feature written in another language or
-  // misspelled ("How do I delete my FindBack cuenta?"), so the claim is also
+  // misspelled ("How do I delete my Norfold cuenta?"), so the claim is also
   // limited to the one shape that is a question about whether the app has
   // something at all. Everything else — another language, a typo of a shipped
   // concept, a request to do something with a term the vocabulary cannot place,
@@ -831,7 +833,7 @@ export function classifyHelpQuestion(question: string): HelpClassification {
 }
 
 /**
- * Deterministic, offline FindBack help; no provider or user credential required.
+ * Deterministic, offline Norfold help; no provider or user credential required.
  */
 export function builtInHelp(question: string): string {
   return classifyHelpQuestion(question).answer;

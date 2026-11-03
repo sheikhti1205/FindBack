@@ -58,7 +58,7 @@ const WITHHELD_KEY =
 
 /** Fixed label for the synthetic monitoring self-test signal (device proof). */
 export const MONITORING_TEST_SIGNAL_MESSAGE =
-  "FindBack monitoring test signal (synthetic self-test)";
+  "Norfold monitoring test signal (synthetic self-test)";
 export const MONITORING_TEST_SIGNAL_TAG_VALUE = "findback-monitoring-self-test";
 
 /**

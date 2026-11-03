@@ -1,5 +1,5 @@
 /**
- * Central clarification copy for FindBack on-device assistance.
+ * Central clarification copy for Norfold on-device assistance.
  *
  * Design decision: CENTRALIZE with contextual override. Defaults live here
  * keyed by ClarificationField; ops provide {field, context, options} and the

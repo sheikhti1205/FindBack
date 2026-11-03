@@ -476,7 +476,7 @@ function AccountNotifications({ preview, onNavigate }: NotificationsProps) {
                   if (!item.read) void handleMarkRead(item.id);
                   onNavigate?.();
                 }}
-                aria-label={`${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
+                aria-label={`${item.actorUsername ?? "Norfold"} ${typeLabel(item.type)}: ${item.postTitle ?? "your report"}`}
                 className="fb-notification-body"
               >
                 <NotificationBody item={item} />
@@ -598,7 +598,7 @@ function NotificationOverflow({
   // actor (the block bit is direction-free — it never says who blocked whom).
   const summary = item.blockedActor === true
     ? "a hidden notification"
-    : `${item.actorUsername ?? "FindBack"} ${typeLabel(item.type)}`;
+    : `${item.actorUsername ?? "Norfold"} ${typeLabel(item.type)}`;
 
   return (
     <div className="fb-notification-overflow" onPointerDown={(event) => event.stopPropagation()}>
@@ -637,7 +637,7 @@ function NotificationBody({ item }: { item: NotificationItem }) {
       </span>
       <div className="fb-notification-copy">
         <p className="fb-notification-summary">
-          <span className="font-semibold">{item.actorUsername ?? "FindBack"}</span>{" "}
+          <span className="font-semibold">{item.actorUsername ?? "Norfold"}</span>{" "}
           <span className="text-on-surface-variant">
             {item.type === "REACTION" && reactionKindLabel(item.reactionKind)
               ? (

@@ -18,7 +18,7 @@ describe("derivePublishType", () => {
       const r = derivePublishType(tag);
       assert.equal(r.prerelease, true, tag);
       assert.equal(r.prereleaseFlag, "--prerelease", tag);
-      assert.equal(r.title, `FindBack ${tag} (pre-release)`, tag);
+      assert.equal(r.title, `Norfold ${tag} (pre-release)`, tag);
       assert.equal(r.notes, PRERELEASE_NOTES, tag);
     }
   });
@@ -28,7 +28,7 @@ describe("derivePublishType", () => {
       const r = derivePublishType(tag);
       assert.equal(r.prerelease, true, tag);
       assert.equal(r.prereleaseFlag, "--prerelease", tag);
-      assert.equal(r.title, `FindBack ${tag} (pre-release)`, tag);
+      assert.equal(r.title, `Norfold ${tag} (pre-release)`, tag);
       assert.equal(r.notes, PRERELEASE_NOTES, tag);
     }
   });
@@ -37,7 +37,7 @@ describe("derivePublishType", () => {
     const r = derivePublishType("v1.0.0");
     assert.equal(r.prerelease, false);
     assert.equal(r.prereleaseFlag, "");
-    assert.equal(r.title, "FindBack v1.0.0");
+    assert.equal(r.title, "Norfold v1.0.0");
     assert.match(r.notes, /^Stable release\./);
     assert.match(r.notes, /release-manifest\.json/);
   });

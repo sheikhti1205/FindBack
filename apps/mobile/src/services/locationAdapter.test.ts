@@ -80,7 +80,7 @@ describe("locationAdapter core types and helpers", () => {
 
   it("FIX_MICROCOPY has exact strings from the packet", () => {
     expect(FIX_MICROCOPY.denied).toBe(
-      "Location access is off for FindBack. Enable it in Settings, or choose a place on the map.",
+      "Location access is off for Norfold. Enable it in Settings, or choose a place on the map.",
     );
     expect(FIX_MICROCOPY["services-off"]).toBe(
       "Device location is off. Turn it on or enter a place.",

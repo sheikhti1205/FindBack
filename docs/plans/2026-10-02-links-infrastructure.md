@@ -1,6 +1,6 @@
 # Canonical sharing and notification infrastructure
 
-Approved scope: owner-provided `FindBack_v0.3_Notifications_AppLinks_Web_Handoff.zip`,
+Approved scope: owner-provided `Norfold_v0.3_Notifications_AppLinks_Web_Handoff.zip`,
 phases 2–3 and notification credential provisioning. Baseline `90c9b31`.
 
 ## Contracts and constraints

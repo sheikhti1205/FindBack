@@ -1,7 +1,7 @@
 /**
  * R3 chat relationship/safety policy — pure functions, no storage or transport.
  *
- * Authority: FindBack_Agent_Supplement_2026-10-24_R3/04_CHAT_SYNC_BACKUP_DESIGN_R3.md
+ * Authority: Norfold_Agent_Supplement_2026-10-24_R3/04_CHAT_SYNC_BACKUP_DESIGN_R3.md
  * §2 (REQUEST/CONNECTED, BLOCK separate), §3 (status), §11 (reciprocal receipts).
  *
  * Three deliberate separations this module enforces:

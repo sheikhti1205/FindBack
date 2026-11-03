@@ -4,9 +4,10 @@ import brandMarkDark from "../assets/brand/brand-mark-dark.png";
 import brandMarkLight from "../assets/brand/brand-mark-light.png";
 import brandTileDark from "../assets/brand/brand-tile-dark.png";
 import brandTileLight from "../assets/brand/brand-tile-light.png";
+import { PRODUCT_NAME } from "../brand";
 
 /**
- * Canonical FindBack bird/leaf mark (owner 2026-10-19 master, derived from the source
+ * Canonical Norfold bird/leaf mark (owner 2026-10-19 master, derived from the source
  * asset — never redrawn). `dark` is the black glyph for light surfaces;
  * `light` is the white glyph for dark surfaces; `auto` (default) follows
  * the resolved app theme (documentElement `.dark`/`.amoled`, falling back
@@ -31,7 +32,7 @@ export interface BrandMarkProps {
   variant?: BrandMarkVariant;
   shape?: BrandMarkShape;
   /**
-   * Accessible name for the mark. Defaults to "FindBack" for the surfaces where
+   * Accessible name for the mark. Defaults to "Norfold" for the surfaces where
    * the mark *is* the brand (splash, about). Pass `""` where a visible wordmark
    * already carries the name beside it, so screen readers do not announce it
    * twice — a decorative mark beside its own label.
@@ -58,7 +59,7 @@ export function BrandMark({
   size = 32,
   variant = "auto",
   shape = "glyph",
-  alt = "FindBack",
+  alt = PRODUCT_NAME,
   className,
   style,
 }: BrandMarkProps) {

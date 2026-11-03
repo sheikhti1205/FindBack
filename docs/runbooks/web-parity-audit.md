@@ -13,7 +13,7 @@ gate, not by a separate web codebase.
 A previous cross-environment matrix reasoned about *technologies* rather than
 *product capabilities*: it marked Google Auth web = `NOT_APPLICABLE` and
 KLIPY web = `N/A` because the Android technologies (Credential Manager, an
-Android build) do not exist on the web. But FindBack ships a real production
+Android build) do not exist on the web. But Norfold ships a real production
 web app with comments, a location picker with map behaviour, reactions, etc.
 This audit re-classifies the WEB product surface feature-by-feature.
 

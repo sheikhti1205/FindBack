@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { BrandMark } from "../BrandMark";
+import { PRODUCT_NAME } from "../../brand";
 import { motionDurations, motionEasings } from "../uiMotion";
 import "./AuthShell.css";
 
@@ -30,7 +31,7 @@ export function AuthShell({
       <header className="flex flex-col gap-3">
         <span className="flex items-center gap-2.5" aria-hidden="true">
           <BrandMark size={44} shape="tile" alt="" />
-          <span className="text-lg font-semibold tracking-tight">FindBack</span>
+          <span className="text-lg font-semibold tracking-tight">{PRODUCT_NAME}</span>
         </span>
         {illustration && (
           <span
@@ -38,7 +39,7 @@ export function AuthShell({
             className="flex items-center gap-2 rounded-m3-md border border-outline-variant bg-surface-container-low px-4 py-3 text-sm text-on-surface-variant"
           >
             <BrandMark size={20} alt="" className="shrink-0" />
-            Lost something? FindBack helps it find its way back to you.
+            Lost something? Norfold helps it find its way back to you.
           </span>
         )}
         <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>

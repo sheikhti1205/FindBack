@@ -28,7 +28,7 @@ jobs:
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           test "$EVENT" = workflow_dispatch
-          test "$REPOSITORY" = sheikhti1205/FindBack
+          test "$REPOSITORY" = sheikhti1205/Norfold
           test "$REF" = refs/heads/main
           test "$ACTOR" = sheikhti1205
           test "$TRIGGERING_ACTOR" = sheikhti1205

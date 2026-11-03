@@ -128,7 +128,7 @@ describe("marking a report recovered", () => {
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 
-  it("refuses to name the caller as the FindBack helper", async () => {
+  it("refuses to name the caller as the Norfold helper", async () => {
     await expect(
       markRecovered({
         postId: "post-1",
@@ -282,7 +282,7 @@ describe("rating the other participant", () => {
     expect(clientMock.rpc).not.toHaveBeenCalled();
   });
 
-  it("refuses a recovery with no FindBack counterpart to rate", async () => {
+  it("refuses a recovery with no Norfold counterpart to rate", async () => {
     await expect(
       rateReturn({
         returnId: "ret-2",

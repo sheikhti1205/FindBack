@@ -88,7 +88,7 @@
         </provider>
 
         <!--
-          FindBack owns FCM presentation: the Capacitor plugin's service is
+          Norfold owns FCM presentation: the Capacitor plugin's service is
           removed so data-only messages can be shown with a RemoteInput reply
           action. The service still forwards to the plugin for foreground JS
           events and token registration.

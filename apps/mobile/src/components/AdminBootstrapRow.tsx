@@ -57,7 +57,7 @@ function EligibleBootstrapRow() {
     <SettingsGroup title="Administrator">
       <SettingsRow
         title="Become the administrator"
-        description="Set up this account as the admin of FindBack."
+        description="Set up this account as the admin of Norfold."
         icon={ShieldCheck}
         iconTone="privacy"
         route="/settings/administrator"

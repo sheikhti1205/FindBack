@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22.1)
 project("findback_needle")
 find_library(log-lib log)
 
-# FindBack Needle bridge over the pinned Cactus engine. The static engine
+# Norfold Needle bridge over the pinned Cactus engine. The static engine
 # archives are build inputs fetched by scripts/fetch-needle-model.mjs
 # (--engine-only, wired as the fetchNeedleEngine Gradle task) into
 # third_party/needle/<android-abi>/ (arm64-v8a). ABIs without a fetched

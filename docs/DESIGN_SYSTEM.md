@@ -22,7 +22,7 @@ owns light/dark/true-black and motion preferences across all surfaces.
 
 ### Colour, appearance and startup
 
-- `design/colorSystem.ts` owns palette values and role projection: FindBack Blue
+- `design/colorSystem.ts` owns palette values and role projection: Blue
   default, eight curated accents, graphite dark, calm light and true-black AMOLED.
   Lost/Found/Matched/Recovered/Warning/Danger remain fixed semantic roles.
 - `appearance.ts` owns persistence, legacy preset migration and CSS installation;

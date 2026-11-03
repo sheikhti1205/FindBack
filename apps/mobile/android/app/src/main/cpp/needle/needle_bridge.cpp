@@ -1,5 +1,5 @@
 /*
- * FindBack Needle JNI bridge over the pinned Cactus needle3 engine
+ * Norfold Needle JNI bridge over the pinned Cactus needle3 engine
  * (third_party/needle/<abi>/libneedle.a + needle.h).
  *
  * Threading: the engine is process-global and non-thread-safe (see

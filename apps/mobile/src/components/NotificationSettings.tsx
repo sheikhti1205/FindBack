@@ -247,7 +247,7 @@ function AccountNotificationSettings() {
               <p className="mt-1 text-xs text-on-surface-variant">
                 {deviceRegistered === false
                   ? "This phone is no longer registered for alerts."
-                  : "FindBack won't send push notifications to this phone."}
+                  : "Norfold won't send push notifications to this phone."}
               </p>
               {permission === "granted" ? (
                 <button
@@ -266,7 +266,7 @@ function AccountNotificationSettings() {
             <>
               <p className="text-sm font-medium text-on-surface">Turn on device notifications?</p>
               <p className="mt-1 text-xs text-on-surface-variant">
-                FindBack can alert you to comments, mentions and activity on your reports. Android asks for
+                Norfold can alert you to comments, mentions and activity on your reports. Android asks for
                 permission only when you tap the button below. The in-app inbox works either way.
               </p>
               <button

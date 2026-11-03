@@ -288,7 +288,7 @@ describe("neutral structural palette (v0.9.0-beta.1)", () => {
     }
   });
 
-  it("defaults to FindBack Blue with eight curated choices including Mono", () => {
+  it("defaults to Blue with eight curated choices including Mono", () => {
     expect(DEFAULT_APPEARANCE.accent).toBe("blue");
     const ids = ACCENT_OPTIONS.map((a) => a.id);
     expect(ids).toEqual([

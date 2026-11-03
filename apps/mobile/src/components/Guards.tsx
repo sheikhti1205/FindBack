@@ -62,7 +62,7 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   if (booting || (bootError && !user)) return <Splash />;
   if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
   // W0-C (W0-QA defect 1): restart-while-incomplete. A kept session with no
-  // FindBack profile must resume at completion, ahead of the pending-link and
+  // Norfold profile must resume at completion, ahead of the pending-link and
   // onboarding branches below (completion itself resumes the pending link).
   if (!user && needsProfile) return <Navigate to="/complete-profile" replace />;
   // A pending shared-report launch bypasses first-run flow: stay on the auth

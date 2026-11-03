@@ -1,4 +1,4 @@
-# FindBack — scheduled FCM dispatch.
+# Norfold — scheduled FCM dispatch.
 #
 # Every 10 minutes, call the `push-dispatch` Edge Function to drain unsent
 # notifications into FCM. The function is authenticated by the shared

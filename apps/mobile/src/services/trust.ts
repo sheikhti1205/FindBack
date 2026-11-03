@@ -97,8 +97,8 @@ export type RecoveryHelperKind = (typeof RECOVERY_HELPER_KINDS)[number];
 
 /** What the reader is told. A raw database word is never shown to a reader. */
 export const RECOVERY_HELPER_KIND_LABELS: Readonly<Record<RecoveryHelperKind, string>> = {
-  FINDBACK_USER: "Someone on FindBack",
-  OUTSIDE: "Someone outside FindBack",
+  FINDBACK_USER: "Someone on Norfold",
+  OUTSIDE: "Someone outside Norfold",
   SELF_OR_PRIVATE: "I found it myself",
 };
 
@@ -140,7 +140,7 @@ export interface MyRecovery {
    * recovery exists, the person is not named.
    */
   counterpartUserId: string | null;
-  /** `external_helper` — true when the helper was not a FindBack account. */
+  /** `external_helper` — true when the helper was not a Norfold account. */
   externalHelper: boolean;
   /** `recovered_at` — the server's instant, in the server's text format. */
   recoveredAt: string;
@@ -202,7 +202,7 @@ export interface MarkRecoveredInput {
   /**
    * The signed-in account's id, when the screen knows it (`fetchMe()` provides
    * it). It is used ONLY by the local guard that mirrors the server's "a
-   * FindBack helper must be another account" refusal and is never sent to the
+   * Norfold helper must be another account" refusal and is never sent to the
    * server.
    */
   selfUserId?: string | null;
@@ -347,10 +347,10 @@ export async function markRecovered(input: MarkRecoveredInput): Promise<string> 
   const helper = optionalId(input.helperUserId);
   const self = optionalId(input.selfUserId);
   if (input.helperKind === "FINDBACK_USER") {
-    if (!helper) throw new ApiError("A FindBack helper is required.", 400, "MISSING_HELPER_ID");
+    if (!helper) throw new ApiError("A Norfold helper is required.", 400, "MISSING_HELPER_ID");
     if (self && helper === self) {
       throw new ApiError(
-        "A FindBack helper must be another account; mark a self-recovery as self or private.",
+        "A Norfold helper must be another account; mark a self-recovery as self or private.",
         400,
         "SELF_HELPER",
       );
@@ -407,7 +407,7 @@ export async function listMyRecoveries(): Promise<MyRecovery[]> {
  * user from the recovery row, so this call has no rated-user parameter at all
  * and cannot name one. The local guards mirror the server's own refusals for
  * the cases that are certain without the server — a score outside 1–5, a
- * recovery with no FindBack counterpart, and a recovery record that names the
+ * recovery with no Norfold counterpart, and a recovery record that names the
  * caller as their own counterpart.
  *
  * What the client does NOT decide: whether the caller is a participant (the
@@ -425,9 +425,9 @@ export async function rateReturn(draft: ReturnRatingDraft): Promise<string> {
   const recovery = draft.recovery ?? null;
   if (recovery) {
     if (recovery.counterpartUserId === null) {
-      // An outside or private recovery has no FindBack counterpart: there is
+      // An outside or private recovery has no Norfold counterpart: there is
       // nothing to rate, and the server says so with 22023.
-      throw new ApiError("This recovery has no FindBack counterpart to rate.", 400, "NO_COUNTERPART");
+      throw new ApiError("This recovery has no Norfold counterpart to rate.", 400, "NO_COUNTERPART");
     }
     const self = optionalId(draft.selfUserId);
     if (self && recovery.counterpartUserId === self) {
@@ -450,7 +450,7 @@ export async function rateReturn(draft: ReturnRatingDraft): Promise<string> {
  * May the caller still rate this recovery?
  *
  * A HINT for the screen, not an authorization: the server decides. It mirrors
- * the server's own two rules — there must be a FindBack counterpart to rate,
+ * the server's own two rules — there must be a Norfold counterpart to rate,
  * and a direction can be rated once — so a screen does not offer a rating the
  * server would refuse. The write still goes to the server either way.
  */

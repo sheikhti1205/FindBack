@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   reset:
-    if: github.repository == 'sheikhti1205/FindBack' && github.ref == 'refs/heads/main' && github.actor == 'sheikhti1205' && github.triggering_actor == 'sheikhti1205'
+    if: github.repository == 'sheikhti1205/Norfold' && github.ref == 'refs/heads/main' && github.actor == 'sheikhti1205' && github.triggering_actor == 'sheikhti1205'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: backend

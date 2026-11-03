@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {runAuthDiagnostics} from './auth-error-diagnostics.mjs';
 const sha='a'.repeat(40);
-const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REPOSITORY:'sheikhti1205/FindBack',GITHUB_REF:'refs/heads/main',GITHUB_ACTOR:'sheikhti1205',GITHUB_TRIGGERING_ACTOR:'sheikhti1205',GITHUB_SHA:sha,GITHUB_WORKFLOW_REF:'sheikhti1205/FindBack/.github/workflows/auth-diagnostics.yml@refs/heads/main',SUPABASE_ACCESS_TOKEN:'disposable-fixture-only'};
+const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_REPOSITORY:'sheikhti1205/Norfold',GITHUB_REF:'refs/heads/main',GITHUB_ACTOR:'sheikhti1205',GITHUB_TRIGGERING_ACTOR:'sheikhti1205',GITHUB_SHA:sha,GITHUB_WORKFLOW_REF:'sheikhti1205/Norfold/.github/workflows/auth-diagnostics.yml@refs/heads/main',SUPABASE_ACCESS_TOKEN:'disposable-fixture-only'};
 test('queries only categorized recent Auth errors and emits no raw fields',async()=>{
  const reports=[];
  const code=await runAuthDiagnostics({env,headSha:sha,emit:r=>reports.push(r),fetchImpl:async(url,options)=>{

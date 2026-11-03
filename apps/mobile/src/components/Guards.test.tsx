@@ -86,12 +86,12 @@ describe("RequireAuth", () => {
   it("keeps the boot screen while booting or on boot error without a user", () => {
     auth.booting = true;
     renderGuard("/guarded", <RequireAuth><p>Secret</p></RequireAuth>);
-    expect(screen.getByText("FindBack")).toBeTruthy();
+    expect(screen.getByText("Norfold")).toBeTruthy();
     cleanup();
     auth.booting = false;
     auth.bootError = "unreachable";
     renderGuard("/guarded", <RequireAuth><p>Secret</p></RequireAuth>);
-    expect(screen.getByText(/couldn't connect to findback/i)).toBeTruthy();
+    expect(screen.getByText(/couldn't connect to norfold/i)).toBeTruthy();
   });
 });
 

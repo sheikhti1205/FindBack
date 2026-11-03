@@ -224,7 +224,7 @@ export interface AccentOption {
 }
 export const DEFAULT_ACCENT: AccentId = "blue";
 export const ACCENT_OPTIONS: readonly AccentOption[] = [
-  { id: "blue", label: "FindBack Blue", swatch: "#3568d4", onAccent: "#ffffff", darkSwatch: "#adc7ff", darkOnAccent: "#082b60", container: "#e8eeff", darkContainer: "#1c355c" },
+  { id: "blue", label: "Blue", swatch: "#3568d4", onAccent: "#ffffff", darkSwatch: "#adc7ff", darkOnAccent: "#082b60", container: "#e8eeff", darkContainer: "#1c355c" },
   { id: "indigo", label: "Indigo", swatch: "#4350b8", onAccent: "#ffffff", darkSwatch: "#b9c0ff", darkOnAccent: "#1a215e", container: "#e8ebff", darkContainer: "#232a5e" },
   { id: "violet", label: "Violet", swatch: "#7355b7", onAccent: "#ffffff", darkSwatch: "#cfbdff", darkOnAccent: "#2e1a61", container: "#f0eaff", darkContainer: "#38285c" },
   { id: "emerald", label: "Emerald", swatch: "#256c4a", onAccent: "#ffffff", darkSwatch: "#82d5aa", darkOnAccent: "#00391e", container: "#e1f2e8", darkContainer: "#153c29" },

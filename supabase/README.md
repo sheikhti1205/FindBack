@@ -1,6 +1,6 @@
 # Supabase
 
-This directory holds the Supabase side of FindBack: the PostgreSQL schema, RLS
+This directory holds the Supabase side of Norfold: the PostgreSQL schema, RLS
 hardening, and the backend RPCs. It is applied with the **Supabase CLI** to the
 remote project.
 

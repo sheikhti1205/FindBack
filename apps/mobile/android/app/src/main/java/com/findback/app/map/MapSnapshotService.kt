@@ -18,7 +18,7 @@ import org.maplibre.android.snapshotter.MapSnapshotter
  * MapView embedded in the WebView (no compositing contract, no leaked views).
  *
  * Flow: validate → clamp → bounded cache lookup (`cacheDir` only, LRU-by-mtime
- * eviction) → snapshot with the same style URL as the picker → FindBack pin
+ * eviction) → snapshot with the same style URL as the picker → Norfold pin
  * drawn over the bitmap center → PNG in app cache → file URI for
  * `Capacitor.convertFileSrc()`. Stale requests cancel cleanly; failures carry
  * kinds the bridge maps to consumer copy (no stack traces, no paths).
@@ -197,7 +197,7 @@ object MapSnapshotService {
     }
 
     /**
-     * FindBack pin over the bitmap center: white disc, dark ring, dark hub.
+     * Norfold pin over the bitmap center: white disc, dark ring, dark hub.
      * Drawn in bitmap space (no drawable/resources needed off-Activity).
      */
     fun drawPin(bitmap: Bitmap) {

@@ -9,7 +9,7 @@ import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 
 /**
- * FindBack reactions — backend/service layer, no UI.
+ * Norfold reactions — backend/service layer, no UI.
  *
  * The stored vocabulary is LOVE / HELPFUL / SUPPORT / WOW with legacy
  * LIKE/DISLIKE still valid on the wire. Since packet `08` §2 the **UI writes

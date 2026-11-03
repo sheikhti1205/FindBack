@@ -7,7 +7,7 @@ export type PushPermissionState = "granted" | "denied" | "prompt" | "unsupported
 
 /**
  * Android notification channels are owned natively (`PushChannels` /
- * `FindbackApp.onCreate`): one channel per category under the "FindBack" group,
+ * `FindbackApp.onCreate`): one channel per category under the "Norfold" group,
  * created before the first push so Android Settings shows them immediately.
  * The JS layer deliberately does not create channels.
  */

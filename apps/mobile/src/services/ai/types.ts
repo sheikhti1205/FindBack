@@ -1,5 +1,5 @@
 /**
- * AI common contract for FindBack on-device assistance.
+ * AI common contract for Norfold on-device assistance.
  *
  * Evidence: external coded evaluation corpus (93 text rows, 31 per text
  * model; 36 vision rows, 12 per vision model — corpus files are lab records,

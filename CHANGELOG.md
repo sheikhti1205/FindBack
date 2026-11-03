@@ -1,15 +1,29 @@
 # Changelog
 
-FindBack is **beta / pre-public**. Versions below are the derived pre-1.0 line
+Norfold is **beta / pre-public**. Versions below are the derived pre-1.0 line
 described in [docs/history/VERSION_HISTORY.md](docs/history/VERSION_HISTORY.md). They
 track real evolution and do not imply a stable release. The per-commit mapping is in
 [docs/history/VERSION_HISTORY.csv](docs/history/VERSION_HISTORY.csv).
+
+## 0.14.0-beta.1 — Norfold rebrand
+
+- The consumer product is now **Norfold**; the bird/leaf logo and the current
+  production site (`findbackapp.social`) are unchanged. No replacement domain
+  was purchased or announced.
+- Consumer name, app label, metadata, auth/help/legal/About copy, share
+  previews and the README now say Norfold. The accent previously named
+  "FindBack Blue" is now "Blue".
+- Workspace packages moved to `@norfold/*`; technical identifiers (Android
+  application id, Supabase project, `findback_*` SQL, storage buckets,
+  migrations) were intentionally kept.
+- Beta/source checkpoint, not a GitHub Release, device acceptance or domain
+  migration. See [the rebrand record](docs/releases/NORFOLD_REBRAND_2026-11-03.md).
 
 ## 0.13.0-beta.1 — product fit reset (beta checkpoint)
 
 - Relevance-aware server candidate retrieval before the bounded pool; retained
   local Needle/USE ranking and useful web matching.
-- Canonical colour roles, FindBack Blue default, graphite/light/AMOLED surfaces,
+- Canonical colour roles, Blue default, graphite/light/AMOLED surfaces,
   optional Android12+ System colours and per-device wide navigation choice.
 - Truthful recovery journey, sanitized same-domain anonymous report previews,
   explicit privileged role acceptance and launch-gated one-time local reset.

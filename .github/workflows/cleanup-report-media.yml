@@ -1,4 +1,4 @@
-# FindBack — report-media cleanup scheduler (P11).
+# Norfold — report-media cleanup scheduler (P11).
 #
 # Every 15 minutes, call the `cleanup-report-media` Edge Function to drain the
 # orphaned bytes of deleted report photos. It claims a bounded batch from

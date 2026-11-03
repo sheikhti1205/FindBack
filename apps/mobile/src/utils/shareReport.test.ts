@@ -39,7 +39,7 @@ describe("shareReport", () => {
 
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
 
-    expect(share).toHaveBeenCalledWith({ title: "FindBack report", url });
+    expect(share).toHaveBeenCalledWith({ title: "Norfold report", url });
   });
 
   it("treats a user-dismissed sheet as a cancellation, not a failure", async () => {
@@ -95,7 +95,7 @@ describe("shareReport on a device (native system sheet)", () => {
     vi.mocked(Share.share).mockResolvedValue({ activityType: "test-target" });
     stubNavigator();
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
-    expect(Share.share).toHaveBeenCalledWith({ title: "FindBack report", url });
+    expect(Share.share).toHaveBeenCalledWith({ title: "Norfold report", url });
   });
 
   it("recognizes the installed Android plugin's cancellation error without copying", async () => {
@@ -113,7 +113,7 @@ describe("shareReport on a device (native system sheet)", () => {
 
     await expect(shareReport(id, "Lost keys")).resolves.toBe("Link shared.");
 
-    expect(native).toHaveBeenCalledWith({ title: "FindBack report", url });
+    expect(native).toHaveBeenCalledWith({ title: "Norfold report", url });
   });
 
   it("reports a dismissed native sheet as a cancellation and copies nothing", async () => {

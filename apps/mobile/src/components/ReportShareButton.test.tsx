@@ -151,7 +151,7 @@ describe("ReportShareButton", () => {
 
       choose("Share report");
 
-      await waitFor(() => expect(share).toHaveBeenCalledWith({ title: "FindBack report", url }));
+      await waitFor(() => expect(share).toHaveBeenCalledWith({ title: "Norfold report", url }));
       await waitFor(() => expect(heard).toContain("Link shared."));
     } finally {
       stop();
@@ -168,7 +168,7 @@ describe("ReportShareButton", () => {
 
       choose("Share report");
 
-      await waitFor(() => expect(native).toHaveBeenCalledWith({ title: "FindBack report", url }));
+      await waitFor(() => expect(native).toHaveBeenCalledWith({ title: "Norfold report", url }));
       await waitFor(() => expect(heard).toContain("Link shared."));
     } finally {
       stop();

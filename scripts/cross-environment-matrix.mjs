@@ -35,7 +35,7 @@ export const MATRIX = [
     notes:
       "Google login IS a web product feature (capability rule). The web OAuth path is IMPLEMENTED in source this wave (signInWithOAuth → /auth/callback bridge → shared resolver); it stays CONFIG_REQUIRED until the Supabase Google provider carries the web client + the redirect URL allowlist.",
     justification:
-      "LIVE N/A because OAuth is a client capability, not a live FindBack service.",
+      "LIVE N/A because OAuth is a client capability, not a live Norfold service.",
   },
   {
     id: "klipy",
@@ -45,7 +45,7 @@ export const MATRIX = [
     notes:
       "KLIPY IS a web product feature because web has comments. Adapter live-VALIDATED with a real key; VITE_KLIPY_API_KEY now flows to web.yml/release.yml from a repo secret — the secret must be set or the picker hides.",
     justification:
-      "LIVE N/A because KLIPY is a client adapter against a third-party API, not a FindBack backend service.",
+      "LIVE N/A because KLIPY is a client adapter against a third-party API, not a Norfold backend service.",
   },
   {
     id: "sentry-release-dist",

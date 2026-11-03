@@ -127,7 +127,7 @@ describe("QA L: every settings backTo lands on a mounted route", () => {
     await waitFor(() => {
       expect(document.body.textContent!.length).toBeGreaterThan(0);
     });
-    expect(screen.queryByText("Loading FindBack…")).toBeNull();
+    expect(screen.queryByText("Loading Norfold…")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Something went wrong" })).toBeNull();
   });
 });

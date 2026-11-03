@@ -416,7 +416,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
                 route="/onboarding?replay=1"
               />
               <SettingsRow
-                title="About FindBack"
+                title="About Norfold"
                 icon={Info}
                 iconTone="about"
                 value={APP_VERSION}

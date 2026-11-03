@@ -98,7 +98,7 @@ object NominatimClient {
     fun userAgent(appVersion: String, contact: String): String {
         val version = appVersion.trim().ifEmpty { "unknown" }
         val contactValue = contact.trim().ifEmpty { "unknown" }
-        return "FindBack/$version (Android; contact: $contactValue)"
+        return "Norfold/$version (Android; contact: $contactValue)"
     }
 
     fun buildSearchUrl(endpoint: String, query: String, limit: Int = MAX_RESULTS): String {
@@ -171,7 +171,7 @@ object NominatimClient {
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 setRequestProperty("Accept", "application/json")
-                setRequestProperty("User-Agent", userAgent.ifBlank { "FindBack (Android)" })
+                setRequestProperty("User-Agent", userAgent.ifBlank { "Norfold (Android)" })
                 instanceFollowRedirects = true
             }
         } catch (e: Exception) {

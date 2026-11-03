@@ -231,7 +231,7 @@ describe("Home realtime", () => {
     // The bar itself is still on screen — this stage is not the chrome collapse,
     // and the wordmark keeps its box so nothing in the row reflows.
     expect(chrome().getAttribute("data-collapsed")).toBe("false");
-    expect(wordmark().textContent).toBe("FindBack");
+    expect(wordmark().textContent).toBe("Norfold");
     // The control keeps its name and its mark: only the word's ink is gone.
     expect(screen.getByRole("button", { name: /scroll the feed to the top/i })).toBeTruthy();
 
@@ -706,7 +706,7 @@ describe("Home scroll-reactive chrome (CF-010)", () => {
       const brand = screen.getByTestId("home-brand");
       // The visible label is in the accessible name (WCAG 2.5.3) and the action
       // is announced, since the mark itself is not a control label.
-      expect(brand.getAttribute("aria-label")).toContain("FindBack");
+      expect(brand.getAttribute("aria-label")).toContain("Norfold");
       fireEvent.click(brand);
 
       expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
@@ -864,7 +864,7 @@ describe("Home feed redesign (reference-inspired)", () => {
     // second line of chrome, so the feed keeps the space.
     expect(screen.queryByLabelText("Search posts")).toBeNull();
     expect(screen.getByTestId("home-toolbar").textContent).not.toMatch(/signed in as/);
-    expect(screen.getByTestId("home-brand").textContent).toContain("FindBack");
+    expect(screen.getByTestId("home-brand").textContent).toContain("Norfold");
 
     // The actions trail the title unit, and the field reuses the same copy.
     expect(screen.getByRole("button", { name: /^filters/i })).toBeTruthy();
@@ -1094,17 +1094,17 @@ describe("Home feed redesign (reference-inspired)", () => {
     await waitFor(() =>
       expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1),
     );
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("FindBack");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Norfold");
     // NIT: the heading wraps the brand button, whose label is an instruction.
     // The page's H1 must announce the page's name, not the control's hint.
-    expect(screen.getByRole("heading", { level: 1, name: "FindBack" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Norfold" })).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("home-search-open"));
     await waitFor(() => expect(screen.getByLabelText("Search posts")).toBeTruthy());
     await waitFor(() =>
       expect(screen.getAllByRole("heading", { level: 1 }).length).toBe(1),
     );
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("FindBack");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Norfold");
   });
 
   it("restores a query from the URL without raising the keyboard", async () => {

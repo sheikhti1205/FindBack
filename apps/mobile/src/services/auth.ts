@@ -607,7 +607,7 @@ export async function askAiHelp(
     const prefix = code === "DAILY_LIMIT"
       ? "Your OpenRouter free allowance is exhausted. Built-in answer: "
       : code === "PAYMENT_OR_POLICY_BLOCKED"
-        ? "OpenRouter blocked this free request (payment or policy); FindBack never uses paid models. Built-in answer: "
+        ? "OpenRouter blocked this free request (payment or policy); Norfold never uses paid models. Built-in answer: "
         : "";
     return { text: prefix + builtInHelp(q), source: "fallback" };
   }

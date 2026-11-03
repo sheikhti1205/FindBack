@@ -21,7 +21,7 @@ import {
 } from "./openai";
 
 const FAKE_KEY = "sk-test-not-a-real-key-0000";
-const SYSTEM_TEXT = "You are the FindBack assistant.";
+const SYSTEM_TEXT = "You are the Norfold assistant.";
 
 function makeRequest(overrides: Partial<NormalizedRequest> = {}): NormalizedRequest {
   return {

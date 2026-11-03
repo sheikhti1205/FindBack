@@ -9,7 +9,7 @@ import org.junit.Test
 class PushDataTest {
 
     private fun valid() = mapOf(
-        "title" to "FindBack",
+        "title" to "Norfold",
         "body" to "New comment on your report",
         "type" to "COMMENT",
         "postId" to "p1",

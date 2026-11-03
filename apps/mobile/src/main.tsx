@@ -33,7 +33,7 @@ async function boot(){
     title.className='text-xl font-semibold';title.textContent='Preparing your fresh start';
     const message=document.createElement('p');
     message.setAttribute('role','alert');message.className='mt-3 text-on-surface-variant';
-    message.textContent="Couldn't finish clearing old app data. Close other FindBack tabs, then try again.";
+    message.textContent="Couldn't finish clearing old app data. Close other Norfold tabs, then try again.";
     const retry=document.createElement('button');
     retry.type='button';retry.className='fb-button-primary mt-5 min-h-11 rounded-full bg-primary px-5 py-2 text-on-primary';
     retry.textContent='Try again';retry.addEventListener('click',()=>location.reload());

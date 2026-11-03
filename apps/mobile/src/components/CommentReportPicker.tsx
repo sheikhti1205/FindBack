@@ -31,7 +31,7 @@ export function CommentReportPicker({ disabled, onPick, onClose }: {
   async function addReport() {
     if (disabled || loading) return;
     const parsed = parseReportLink(link.trim());
-    if (!parsed) { setError("Paste a FindBack report link."); return; }
+    if (!parsed) { setError("Paste a Norfold report link."); return; }
     const ticket = ++request.current;
     setError(null);
     setLoading(true);
@@ -63,7 +63,7 @@ export function CommentReportPicker({ disabled, onPick, onClose }: {
       </div>
       <div className="flex min-w-0 flex-wrap gap-2">
         <input ref={inputRef} id={inputId} type="url" value={link} disabled={disabled || loading}
-          placeholder="Paste a FindBack report link" autoComplete="off"
+          placeholder="Paste a Norfold report link" autoComplete="off"
           onChange={(event) => { setLink(event.target.value); setError(null); }}
           onKeyDown={(event) => {
             if (event.key === "Enter") { event.preventDefault(); void addReport(); }

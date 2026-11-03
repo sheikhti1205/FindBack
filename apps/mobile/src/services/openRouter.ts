@@ -29,7 +29,7 @@ const COPY: Record<OpenRouterErrorCode, string> = {
   MISSING_KEY: "Connect your OpenRouter API key to use AI.",
   INVALID_KEY: "Your OpenRouter key was rejected. Check the key in AI Connection.",
   PERMISSION_DENIED: "OpenRouter refused this key for the free route. Check your OpenRouter account and key permissions.",
-  PAYMENT_OR_POLICY_BLOCKED: "OpenRouter blocked this free request for payment or policy reasons. FindBack stays on free models only and never switches to a paid model. Check your OpenRouter account.",
+  PAYMENT_OR_POLICY_BLOCKED: "OpenRouter blocked this free request for payment or policy reasons. Norfold stays on free models only and never switches to a paid model. Check your OpenRouter account.",
   DAILY_LIMIT: "Your OpenRouter free allowance is exhausted. Try again after it resets.",
   RATE_LIMITED: "OpenRouter is limiting requests. Please try again later.",
   FREE_CAPABILITY_UNAVAILABLE: "No compatible free model supports this request right now. Please try again later or use the manual form.",

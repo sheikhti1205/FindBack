@@ -118,7 +118,7 @@ function AdminBootstrapAccount() {
   return (
     <SettingsPage
       title="Administrator"
-      description="Set up this account as the administrator of FindBack."
+      description="Set up this account as the administrator of Norfold."
       backTo="/settings"
     >
       <SettingsGroup title="Administrator setup">
@@ -182,7 +182,7 @@ function AdminBootstrapAccount() {
         {!claimed && !loading && !readError && !refusal && mayClaim && !confirming && (
           <>
             <p className="fb-admin-note">
-              Claiming makes this account the administrator of FindBack: the
+              Claiming makes this account the administrator of Norfold: the
               person who manages moderators, reviews reports and changes app
               settings.
             </p>
@@ -199,7 +199,7 @@ function AdminBootstrapAccount() {
         {!claimed && !loading && !readError && !refusal && mayClaim && confirming && (
           <div className="fb-admin-confirm">
             <p ref={confirmation} tabIndex={-1} className="fb-admin-note">
-              Set up this account as the administrator of FindBack now? This
+              Set up this account as the administrator of Norfold now? This
               cannot be undone.
             </p>
             <div className="fb-admin-actions">

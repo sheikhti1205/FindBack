@@ -74,7 +74,7 @@ export interface ModelDescriptor {
   readonly url: string;
   readonly bytes: number;
   readonly capabilities: readonly ModelCapability[];
-  /** FindBack task roles this model may serve in production. */
+  /** Norfold task roles this model may serve in production. */
   readonly taskRoles: readonly AiTaskId[];
   readonly maturity: ModelMaturity;
   readonly trust: ModelTrust;
@@ -93,7 +93,7 @@ export interface ModelDescriptor {
   readonly tier?: ModelTier;
   /**
    * True when the model's license would permit running a user-supplied local
-   * copy (LFM license arms). This is a license fact only: FindBack ships no
+   * copy (LFM license arms). This is a license fact only: Norfold ships no
    * download or import action for it, so the UI must show the restriction and
    * offer nothing.
    */

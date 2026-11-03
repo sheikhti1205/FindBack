@@ -60,7 +60,7 @@ function NotificationRows() {
           />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold">
-              {row.displayName ?? "FindBack"}
+              {row.displayName ?? "Norfold"}
             </p>
             <p className="text-sm">{row.text}</p>
             <p className="text-xs text-on-surface-variant">{row.time}</p>

@@ -9,7 +9,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.findback.app.R
 
 /**
- * Android notification channels for FindBack.
+ * Android notification channels for Norfold.
  *
  * One channel per notification category so Android Settings lets the user mute
  * comments without losing report-activity alerts. Channel ids are stable and

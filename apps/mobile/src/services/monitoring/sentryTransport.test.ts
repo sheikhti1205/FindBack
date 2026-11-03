@@ -40,7 +40,7 @@ it("delivers real SDK cloud and browser transaction envelopes through production
   trace.finish("complete", { inputTokens: 50, outputTokens: 10 });
   const browserSpan = react.startInactiveSpan({ name: "browser-test", op: "navigation", forceTransaction: true, parentSpan: null });
   browserSpan.end();
-  react.captureMessage("FindBack telemetry integration test (synthetic)");
+  react.captureMessage("Norfold telemetry integration test (synthetic)");
   await react.flush(2000);
   expect(dropped).toEqual([]);
   const events = sent.flatMap((envelope) => envelope[1].filter(([header]) => header.type === "transaction").map(([, payload]) => payload as Record<string, unknown>));

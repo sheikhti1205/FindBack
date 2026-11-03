@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the FindBack ERD as a scalable vector PDF.
+"""Render the Norfold ERD as a scalable vector PDF.
 
 Generates docs/erd/ERD.pdf. The diagram shows the eight core tables with
 their attributes (PK/FK/UQ tags) plus a relationship map. The authoritative,
@@ -171,7 +171,7 @@ def entity_card(name: str) -> Table:
 
 
 def build_story():
-    parts = [Paragraph("FindBack — Entity Relationship Diagram", H1)]
+    parts = [Paragraph("Norfold — Entity Relationship Diagram", H1)]
     parts.append(Paragraph(
         "Schema source of truth: supabase/migrations/20260912000000_init.sql "
         "(Supabase PostgreSQL); legacy course diagram, not a current schema inventory. "
@@ -241,8 +241,8 @@ def main() -> None:
         rightMargin=12 * mm,
         topMargin=12 * mm,
         bottomMargin=12 * mm,
-        title="FindBack ERD",
-        author="FindBack (Mobile App Development Lab)",
+        title="Norfold ERD",
+        author="Norfold (Mobile App Development Lab)",
     )
     doc.build(build_story())
     print(f"Wrote {OUT}")

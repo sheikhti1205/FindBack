@@ -37,7 +37,7 @@ export function SignUpForm({
   const [busy, setBusy] = useState(false);
   const checkSeq = useRef(0);
 
-  // Live, debounced username availability against the FindBack database.
+  // Live, debounced username availability against the Norfold database.
   useEffect(() => {
     const raw = username.trim();
     const seq = ++checkSeq.current;

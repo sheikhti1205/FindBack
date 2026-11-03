@@ -306,7 +306,7 @@ describe("generic complete — happy path wire format", () => {
       baseURL: BASE_URL,
       getApiKey: async () => null,
       fetchImpl,
-      extraHeaders: { "HTTP-Referer": "https://example.test", "X-Title": "FindBack" },
+      extraHeaders: { "HTTP-Referer": "https://example.test", "X-Title": "Norfold" },
     });
     const { request } = baseRequest();
     const events = await collect(adapter.complete(request));
@@ -314,7 +314,7 @@ describe("generic complete — happy path wire format", () => {
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers["Authorization"]).toBeUndefined();
     expect(headers["HTTP-Referer"]).toBe("https://example.test");
-    expect(headers["X-Title"]).toBe("FindBack");
+    expect(headers["X-Title"]).toBe("Norfold");
   });
 });
 

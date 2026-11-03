@@ -1,4 +1,4 @@
-# FindBack — chat media maintenance scheduler (R4).
+# Norfold — chat media maintenance scheduler (R4).
 #
 # Every 15 minutes, drain the two internal chat work queues:
 #   1. `cleanup-chat-media` removes bytes of deleted/expired chat attachments and

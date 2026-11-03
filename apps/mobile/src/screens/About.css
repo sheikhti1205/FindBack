@@ -25,6 +25,13 @@
   color: var(--fb-on-surface-variant);
 }
 
+/* One quiet line: the product was renamed, the current address has not moved. */
+.fb-about-transition {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--fb-on-surface-variant);
+}
+
 .fb-about-technical {
   display: flex;
   flex-direction: column;

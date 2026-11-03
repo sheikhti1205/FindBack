@@ -95,7 +95,7 @@ afterEach(cleanup);
 describe("AuthGateway stage A (email)", () => {
   it("shows the canonical Welcome title with a syntax-only Continue", () => {
     renderGateway();
-    expect(screen.getByRole("heading", { level: 1, name: "Welcome to FindBack" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1, name: "Welcome to Norfold" })).toBeTruthy();
     expect(screen.getByLabelText("Email")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
   });

@@ -621,7 +621,7 @@ class ModelDownloadPlugin : Plugin() {
         private const val PROGRESS_THROTTLE_MS = 100L
         private const val MAX_REDIRECTS = 3
         private const val DEFAULT_MAX_BYTES = 4L * 1024L * 1024L * 1024L
-        private const val USER_AGENT = "FindBack-model-download/1.0"
+        private const val USER_AGENT = "Norfold-model-download/1.0"
         private const val MAX_TEXT_READ = 64 * 1024
         private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
     }

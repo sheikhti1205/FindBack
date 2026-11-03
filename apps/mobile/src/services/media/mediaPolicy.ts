@@ -1,5 +1,5 @@
 /**
- * Single semantic source-acceptance policy for every FindBack photo path.
+ * Single semantic source-acceptance policy for every Norfold photo path.
  *
  * The JS intake path (`photo.ts`, `importImage.ts`) and the Android native
  * processor (`com.findback.app.media.MediaPolicy`) enforce the SAME source

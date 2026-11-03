@@ -7,7 +7,7 @@ import com.findback.app.push.PushChannels
 import org.maplibre.android.MapLibre
 
 /**
- * Tracks whether any FindBack activity is currently started.
+ * Tracks whether any Norfold activity is currently started.
  *
  * The FCM service must distinguish a foreground app (where the JS layer shows
  * the event) from a warm app sitting in the background (where no activity is

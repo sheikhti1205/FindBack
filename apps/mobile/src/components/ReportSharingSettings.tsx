@@ -42,7 +42,7 @@ export function ReportSharingSettings({ postId, disabled = false }: { postId: st
         onChange={event => { void change(event.target.checked); }} className="h-4 w-4 shrink-0 accent-primary" />
       Public link preview
     </label>
-    <p className="text-xs leading-relaxed text-on-surface-variant">Show a short item summary to people without an account. Full details stay in FindBack.</p>
+    <p className="text-xs leading-relaxed text-on-surface-variant">Show a short item summary to people without an account. Full details stay in Norfold.</p>
     <p role="status" className="mt-1 text-xs leading-relaxed text-on-surface-variant">{current.busy ? "Updating preview…" : current.enabled === null ? "Preview setting is unavailable." : current.enabled ? "Public preview is on." : "Public preview is off. Signed-in members can still view the report. Previously cached previews may remain."}</p>
     {current.error && <div role="alert" className="mt-2 text-sm text-error">Couldn't update the preview setting. <button type="button" onClick={() => setRetry(v => v + 1)} className="min-h-11 px-2 underline">Try again</button></div>}
   </div>;

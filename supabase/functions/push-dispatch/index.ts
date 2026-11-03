@@ -223,7 +223,7 @@ export function buildFcmMessage(
   replyToken?: string,
 ): Record<string, unknown> {
   const data: Record<string, string> = {
-    title: "FindBack",
+    title: "Norfold",
     body: BODY[delivery.type] ?? "New activity on your report",
     type: delivery.type,
     postId: delivery.postId,

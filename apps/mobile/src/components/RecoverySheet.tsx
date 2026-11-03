@@ -43,7 +43,7 @@ export interface RecoverySheetProps {
  * ONE recovery sheet for a lost report.
  *
  * The recovery relationship is the durable fact (MC D25), so the owner is
- * asked who returned the item before anything is written: another FindBack
+ * asked who returned the item before anything is written: another Norfold
  * account, somebody outside the app, or the owner themselves. The server owns
  * the rules — only the report owner, only a LOST report, one recovery per
  * report — and the client mirrors only the choices that need no round trip.
@@ -138,7 +138,7 @@ export function RecoverySheet({
       void searchProfilesByPrefix(trimmed)
         .then((profiles) => {
           if (!alive.current || searchSeq.current !== seq) return;
-          // Never offer the owner's own account as a FindBack helper: that is
+          // Never offer the owner's own account as a Norfold helper: that is
           // a self-recovery, and the server refuses it.
           setResults(profiles.filter((profile) => profile.id !== user?.id));
           setCompletedQuery(trimmed);
@@ -200,8 +200,8 @@ export function RecoverySheet({
       return;
     }
     if (needsHelper && !helper) {
-      setError("Choose the FindBack account that returned it.");
-      announce("Choose the FindBack account that returned it.");
+      setError("Choose the Norfold account that returned it.");
+      announce("Choose the Norfold account that returned it.");
       return;
     }
     const requestGeneration = generation.current;
@@ -274,7 +274,7 @@ export function RecoverySheet({
                     value === "FINDBACK_USER"
                       ? "Name the account that returned it."
                       : value === "OUTSIDE"
-                        ? "They do not need a FindBack account."
+                        ? "They do not need a Norfold account."
                         : "No other person is named."
                   }
                   checked={helperKind === value}
@@ -400,7 +400,7 @@ function recoveryFailure(err: unknown): string {
     if (/unknown helper kind/i.test(raw)) return "Choose who returned the item again.";
     if (/lost-item/i.test(raw)) return "Only a lost-item report can be marked recovered.";
     if (/another account|self-recovery/i.test(raw)) return "Choose another account, or mark it as found yourself.";
-    if (/helper/i.test(raw)) return "Choose the FindBack account that returned it.";
+    if (/helper/i.test(raw)) return "Choose the Norfold account that returned it.";
     return "That recovery could not be saved. Check the details and try again.";
   }
   if (code === "P0002") {

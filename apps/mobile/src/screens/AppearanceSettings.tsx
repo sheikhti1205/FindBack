@@ -31,7 +31,7 @@ export function AppearanceSettings() {
   const { settings, update } = useAppearance();
   const systemColorsSupported = useSystemColorsSupported();
   const accentLabel = settings.accentSource === "system"
-    ? systemColorsSupported ? "System colors" : "FindBack Blue"
+    ? systemColorsSupported ? "System colors" : "Blue"
     : ACCENT_OPTIONS.find((option) => option.id === settings.accent)?.label ?? ACCENT_OPTIONS[0]!.label;
   // Light can never resolve dark, so the modifier is irrelevant (and hidden).
   const trueBlackRelevant = theme !== "light";
@@ -40,7 +40,7 @@ export function AppearanceSettings() {
   return (
     <SettingsPage
       title="Appearance"
-      description="Make FindBack look yours. Changes apply right away."
+      description="Make Norfold look yours. Changes apply right away."
       backTo="/settings"
     >
       <SettingsGroup

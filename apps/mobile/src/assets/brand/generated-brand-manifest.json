@@ -6,7 +6,7 @@
   },
   "generator": {
     "path": "scripts/generate-brand-assets.py",
-    "sha256": "5ae99b608c6923a0a64f432b94810cc57751aae725eb37593cc0eebf768acdf1",
+    "sha256": "bb38315c5608c9541c60ca5147ee5aa17b907ed930bed1af813b4801f2bfd2eb",
     "pillow": "11.1.0"
   },
   "historical_master": "apps/mobile/src/assets/brand/logo2-master.jpg",

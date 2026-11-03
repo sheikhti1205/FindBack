@@ -1,6 +1,6 @@
 # Architecture
 
-FindBack is a monorepo: one React/Capacitor client, a shared validation package,
+Norfold is a monorepo: one React/Capacitor client, a shared validation package,
 and one Supabase backend (Postgres, row-level security, Edge Functions, storage).
 The course-era Node/Express/GraphQL API and its reference container were retired
 after source/workflow non-use proof. Git retains their history, not an active
@@ -29,7 +29,7 @@ scripts/              Build, verification and release tooling
 - On-device Needle/USE retain Smart Search, structured text tools and stage-two
   matching. No retired local-generative/photo-analysis runtime is reintroduced.
   Optional cloud AI Chat is a separate secondary surface using the user's own
-  provider key, not a FindBack server relay.
+  provider key, not a Norfold server relay.
 - Startup waits for the one-time data epoch before importing auth, AI, messaging
   or other persisted owners. Native cleanup and the web marker commit last;
   failure stops startup rather than restoring deleted-account history.

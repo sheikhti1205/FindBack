@@ -1,6 +1,6 @@
 # API demonstration — REST, GraphQL, reporting
 
-FindBack's real API is the hosted Supabase project. PostgREST serves the REST
+Norfold's real API is the hosted Supabase project. PostgREST serves the REST
 (Data API) endpoints and `pg_graphql` serves GraphQL, both resolving every
 request **as the JWT role** so grants + Row Level Security are enforced in the
 database. The legacy Express REST + GraphQL-Yoga server remains in the repo as a

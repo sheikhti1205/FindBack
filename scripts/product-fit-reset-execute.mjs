@@ -42,7 +42,7 @@ async function sweep(){
 }
 try{
  const e=process.env;
- check(e.GITHUB_REPOSITORY==='sheikhti1205/FindBack'&&e.GITHUB_REF==='refs/heads/main'&&e.GITHUB_EVENT_NAME==='workflow_dispatch'&&e.GITHUB_ACTOR==='sheikhti1205'&&e.GITHUB_TRIGGERING_ACTOR==='sheikhti1205','CONTEXT');
+ check(e.GITHUB_REPOSITORY==='sheikhti1205/Norfold'&&e.GITHUB_REF==='refs/heads/main'&&e.GITHUB_EVENT_NAME==='workflow_dispatch'&&e.GITHUB_ACTOR==='sheikhti1205'&&e.GITHUB_TRIGGERING_ACTOR==='sheikhti1205','CONTEXT');
  check(execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()===e.GITHUB_SHA,'SOURCE');
  check(e.SUPABASE_ACCESS_TOKEN&&/^sb_secret_\S+$/.test(e.SUPABASE_SECRET_KEY??''),'CREDENTIALS');
  stage='identity';

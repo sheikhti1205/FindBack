@@ -1,4 +1,4 @@
-# FindBack — Agent Rules (always loaded)
+# Norfold — Agent Rules (always loaded)
 
 ## Proportional execution — owner order 2026-11-02
 
@@ -17,7 +17,7 @@
 ## Hard rules
 
 1. **No secrets.** Never commit API keys, tokens, passwords, or credentials.
-2. **FindBack server URL is mandatory on every build.** Any web build, APK build, or device-bound artifact REQUIRES `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` present and non-empty pre-build, plus post-build proof via `scripts/check-release-config.mjs`. Missing URL = build failure, not a warning.
+2. **Norfold server URL is mandatory on every build.** Any web build, APK build, or device-bound artifact REQUIRES `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` present and non-empty pre-build, plus post-build proof via `scripts/check-release-config.mjs`. Missing URL = build failure, not a warning.
 3. **Evidence before claims.** No completion claims without fresh verification.
 4. **No cheap UI.** Never ship a generic card-grid, oversized controls, text where an icon is expected, developer-facing copy on consumer surfaces, abrupt list replacement, or fake/native-looking controls without rendered review. UI work must load `findback-ui-quality` and `findback-mobile-interactions`.
 5. **Milestone acceptance, not per-slice review loops.** Substantive work is accepted at milestone boundaries using the active programme's acceptance matrix. An independent read-only audit is used once per milestone when available; it is not required after every implementation slice. Material security/data-loss findings must be fixed before milestone closure. Do not create repeated review loops for minor/nit findings.

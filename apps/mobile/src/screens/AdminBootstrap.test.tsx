@@ -74,7 +74,7 @@ describe("the administrator setup screen", () => {
     renderScreen();
 
     expect(
-      await screen.findByText(/this account the administrator of FindBack/i),
+      await screen.findByText(/this account the administrator of Norfold/i),
     ).toBeTruthy();
     expect(screen.getByText(/one-time setup/i)).toBeTruthy();
   });

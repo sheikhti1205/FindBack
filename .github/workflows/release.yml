@@ -1,4 +1,4 @@
-# FindBack — signed beta release build (per-ABI APKs + universal APK + AAB).
+# Norfold — signed beta release build (per-ABI APKs + universal APK + AAB).
 #
 # TWO MODES:
 #   workflow_dispatch = signed-candidate DRY path for owner testing. Runs the
@@ -387,7 +387,7 @@ jobs:
                 apps/mobile/android/app/build/outputs/bundle/release/*.aab
       - name: Stage release files (friendly names, flat dir)
         # Gradle split names (app-<abi>-release.apk, app-universal-release.apk)
-        # become FindBack-<TAG>-<abi|universal>.apk so the Release page and the
+        # become Norfold-<TAG>-<abi|universal>.apk so the Release page and the
         # manifest agree. Unexpected APK names fail closed here.
         run: |
           OUT=apps/mobile/android/app/build/outputs
@@ -397,15 +397,15 @@ jobs:
           for APK in "$OUT"/apk/release/*.apk; do
             BASE="$(basename "$APK")"
             case "$BASE" in
-              app-arm64-v8a-release.apk)     DEST="FindBack-${TAG}-arm64-v8a.apk" ;;
-              app-armeabi-v7a-release.apk)   DEST="FindBack-${TAG}-armeabi-v7a.apk" ;;
-              app-x86_64-release.apk)        DEST="FindBack-${TAG}-x86_64.apk" ;;
-              app-universal-release.apk)     DEST="FindBack-${TAG}-universal.apk" ;;
+              app-arm64-v8a-release.apk)     DEST="Norfold-${TAG}-arm64-v8a.apk" ;;
+              app-armeabi-v7a-release.apk)   DEST="Norfold-${TAG}-armeabi-v7a.apk" ;;
+              app-x86_64-release.apk)        DEST="Norfold-${TAG}-x86_64.apk" ;;
+              app-universal-release.apk)     DEST="Norfold-${TAG}-universal.apk" ;;
               *) echo "unexpected release APK name: $BASE" >&2; exit 1 ;;
             esac
             cp "$APK" "release-stage/$DEST"
           done
-          cp "$OUT/bundle/release/app-release.aab" "release-stage/FindBack-${TAG}.aab"
+          cp "$OUT/bundle/release/app-release.aab" "release-stage/Norfold-${TAG}.aab"
           ls -l release-stage/
       - name: Checksums + release-manifest.json
         run: |
@@ -416,7 +416,7 @@ jobs:
           node scripts/generate-release-manifest.mjs \
             --tag "$ART_TAG" \
             --apk-dir release-stage \
-            --aab "release-stage/FindBack-${ART_TAG}.aab" \
+            --aab "release-stage/Norfold-${ART_TAG}.aab" \
             --version-code "$VCODE" \
             --git-sha "$SHA" \
             --min-sdk "$MIN_SDK" \

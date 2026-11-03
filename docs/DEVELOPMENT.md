@@ -1,6 +1,6 @@
 # Development guide
 
-FindBack is a monorepo with a React/Capacitor client, a shared package and one
+Norfold is a monorepo with a React/Capacitor client, a shared package and one
 Supabase backend. This page is the practical setup and check reference; the design is
 in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -17,8 +17,8 @@ in [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Setup
 
 ```bash
-git clone https://github.com/sheikhti1205/FindBack.git
-cd FindBack
+git clone https://github.com/sheikhti1205/Norfold.git
+cd Norfold
 npm install
 ```
 

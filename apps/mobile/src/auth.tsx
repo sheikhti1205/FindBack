@@ -97,7 +97,7 @@ interface AuthContextValue {
   /** W0-B (S2, additive): bridge token → Supabase session. Returns the user
    *  when authenticated, or null when routed to completion (see needsProfile). */
   signInWithGoogle: (mode: "signin" | "signup") => Promise<PublicUser | null>;
-  /** W0-B (S2, additive): set when a valid session has no FindBack profile
+  /** W0-B (S2, additive): set when a valid session has no Norfold profile
    *  (new Google account or interrupted completion). The session is KEPT —
    *  this state never signs the user out. */
   needsProfile: GoogleProfileSeed | null;
@@ -175,7 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setBootError("unreachable");
         } else {
           if (err instanceof ApiError && err.status === 401 && hadStoredSession.current && !intentionalSignOut.current.has(currentUser.current?.id ?? sdkAccount.current)) markSessionExpired();
-          // W0-B (S2, additive): a valid session without a FindBack profile
+          // W0-B (S2, additive): a valid session without a Norfold profile
           // (new Google account or interrupted completion) routes to
           // completion — the session is KEPT, clearAllAuth is NOT called.
           const seed = await getNeedsProfileSeed().catch(() => null);

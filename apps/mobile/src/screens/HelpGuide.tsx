@@ -135,7 +135,7 @@ export function HelpGuide() {
     <SettingsPage
       title="Help & guide"
       backTo="/settings"
-      description="Short guides for the everyday jobs in FindBack."
+      description="Short guides for the everyday jobs in Norfold."
     >
       <SettingsSearch
         query={query}

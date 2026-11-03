@@ -8,14 +8,14 @@ import {
 } from "./helpFaq";
 
 describe("builtInHelp", () => {
-  it("keeps answering the shipped FindBack FAQ topics", () => {
+  it("keeps answering the shipped Norfold FAQ topics", () => {
     expect(builtInHelp("how do I report a lost item?")).toContain("Report tab");
     expect(builtInHelp("how do I search?")).toContain("filter by category");
     expect(builtInHelp("how do I change status?")).toContain("Recovered");
     expect(builtInHelp("how do I upload a photo?")).toContain("photo");
     expect(builtInHelp("how do I leave a comment?")).toContain("comment");
     expect(builtInHelp("how do I choose a location?")).toContain("map");
-    expect(builtInHelp("")).toContain("I can help with FindBack");
+    expect(builtInHelp("")).toContain("I can help with Norfold");
   });
 
   it("still answers an explicit one-time-code question (AI-03 pair)", () => {
@@ -32,7 +32,7 @@ describe("builtInHelp", () => {
     // contact-details refusal instead of the signup instructions.
     for (const question of [
       "Where is my email verification code?",
-      "Where is my FindBack email verification code?",
+      "Where is my Norfold email verification code?",
       "How do I get my email verification code?",
       "Where is my Gmail verification email for this app?",
     ]) {
@@ -52,7 +52,7 @@ describe("builtInHelp", () => {
     expect(reply.toLowerCase()).not.toContain("one-time code");
     expect(reply.toLowerCase()).not.toContain("verification");
     expect(reply.toLowerCase()).not.toContain("signup");
-    expect(reply).toMatch(/only answer questions about the findback app/i);
+    expect(reply).toMatch(/only answer questions about the norfold app/i);
   });
 
   it("routes other general-code phrasings away from the OTP branch as well (AI-03)", () => {
@@ -104,29 +104,29 @@ describe("builtInHelp", () => {
     // nothing, so it is ambiguous ("How do I bake sourdough bread?" has the
     // same shape). The FAQ prefers the scope note over a guessed answer
     // (CF-070 R2 finding 1-retry).
-    expect(builtInHelp("What notifications will I get?")).toContain("I can help with FindBack");
+    expect(builtInHelp("What notifications will I get?")).toContain("I can help with Norfold");
   });
 
   it("answers the shipped account-deletion flow and keeps negatives for the rest", () => {
-    const deletion = builtInHelp("How do I delete my FindBack account?");
+    const deletion = builtInHelp("How do I delete my Norfold account?");
     expect(deletion).toMatch(/Settings.*Account.*Delete account/i);
     expect(deletion).toMatch(/type your email/i);
     expect(deletion).toMatch(/permanently removes/i);
 
-    const unsupported = builtInHelp("Does FindBack have face recognition?");
+    const unsupported = builtInHelp("Does Norfold have face recognition?");
     expect(unsupported.toLowerCase()).toMatch(/face recognition/);
     expect(unsupported).toMatch(/does not have|not available|not in this build/i);
   });
 
   it("refuses to invent a feature that is not in the knowledge", () => {
-    const reply = builtInHelp("Does FindBack have a Pets category?");
+    const reply = builtInHelp("Does Norfold have a Pets category?");
     expect(reply).toMatch(/won't guess|don't guess|do not know|not in this build/i);
     expect(reply.toLowerCase()).not.toContain("pets category");
     expect(reply.toLowerCase().split("yes").length).toBe(1);
   });
 
   it("keeps the generic app-scope default for an unrelated question", () => {
-    expect(builtInHelp("what is the capital of France?")).toContain("I can help with FindBack");
+    expect(builtInHelp("what is the capital of France?")).toContain("I can help with Norfold");
   });
 
   it("answers account recovery as app help (CF-070 R2 retry-6 R1)", () => {
@@ -141,7 +141,7 @@ describe("builtInHelp", () => {
     const reset = builtInHelp("How do I reset my password?");
     expect(reset).toMatch(/Forgot password/i);
     expect(reset.toLowerCase()).toContain("reset link");
-    expect(reset).not.toContain("I can help with FindBack");
+    expect(reset).not.toContain("I can help with Norfold");
     expect(reset).not.toMatch(/don't know|does not have|not in this build/i);
 
     const change = builtInHelp("how do I change my password?");
@@ -178,19 +178,19 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I comment on a post?",
     "Where is my verification code?",
     "How do I delete my account?",
-    "Does FindBack have a Pets category?",
-    "Does FindBack have face recognition?",
+    "Does Norfold have a Pets category?",
+    "Does Norfold have face recognition?",
     "Search for the email address of user amir",
     "Which AI model are you?",
     // The retry review's positive classes, verbatim.
     "How can I report my lost backpack?",
-    "How do I search FindBack listings?",
+    "How do I search Norfold listings?",
     "Can I attach a photo to my report?",
     "How do I turn on notifications?",
     "How do I leave a comment?",
-    "How do I delete my FindBack account?",
-    "Does FindBack offer teleportation?",
-    "Does FindBack offer face detection?",
+    "How do I delete my Norfold account?",
+    "Does Norfold offer teleportation?",
+    "Does Norfold offer face detection?",
     // The bare FAQ questions the app still owns by shape alone, so tightening
     // the topic phrases does not cost the person the answer they asked for.
     "How do I change status?",
@@ -247,7 +247,7 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I leave a comment in a PDF?",
     "How do I edit my draft for a school essay?",
     "How do I delete my account with my bank?",
-    "How do I upload a photo to Instagram, not FindBack?",
+    "How do I upload a photo to Instagram, not Norfold?",
     // Same classes, nouns the review never used.
     "How do I search for a job report?",
     "How do I write a book report?",
@@ -256,7 +256,7 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
     "How do I find my package status?",
     "How do I react to a bad review at work?",
     "How do I set my status on Slack?",
-    "How do I use FindBack to search Google for medical reports?",
+    "How do I use Norfold to search Google for medical reports?",
   ];
 
   it("recognises concise app-help prompts", () => {
@@ -274,16 +274,16 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
   });
 
   it("answers a colliding question with the scope note instead of the collided copy", () => {
-    expect(builtInHelp("What is photosynthesis?")).toContain("I can help with FindBack");
+    expect(builtInHelp("What is photosynthesis?")).toContain("I can help with Norfold");
     expect(builtInHelp("What is photosynthesis?")).not.toContain("attach a photo");
     expect(builtInHelp("How do map projections distort Greenland?")).toContain(
-      "I can help with FindBack",
+      "I can help with Norfold",
     );
-    expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with FindBack");
-    expect(builtInHelp("How does face recognition work?")).toContain("I can help with FindBack");
+    expect(builtInHelp("What does a solar eclipse look like?")).toContain("I can help with Norfold");
+    expect(builtInHelp("How does face recognition work?")).toContain("I can help with Norfold");
 
     // CF-070 R2 finding 1-retry, retry-2 and retry-3: a grammatical request
-    // about the world gets the scope note, never FindBack FAQ copy.
+    // about the world gets the scope note, never Norfold FAQ copy.
     for (const question of [
       "How do I bake sourdough bread?",
       "Can I freeze leftover soup?",
@@ -304,10 +304,10 @@ describe("isAppHelpQuestion intent matrix (CF-070 R2 finding 1)", () => {
       "How do I leave a comment in a PDF?",
       "How do I edit my draft for a school essay?",
       "How do I delete my account with my bank?",
-      "How do I upload a photo to Instagram, not FindBack?",
+      "How do I upload a photo to Instagram, not Norfold?",
     ]) {
       const reply = builtInHelp(question);
-      expect(reply, question).toContain("I can help with FindBack");
+      expect(reply, question).toContain("I can help with Norfold");
       expect(reply, question).not.toContain("attach a photo");
       expect(reply, question).not.toContain("bell");
       expect(reply, question).not.toContain("Search to search reports");
@@ -363,7 +363,7 @@ describe("FAQ topic coverage (CF-070 R2 retry-4 MAJOR-2)", () => {
 describe("CF-070 R2 retry-4 — measured world rows stay refused", () => {
   it.each([
     // MAJOR-1: a self-bound report question whose destination or authority is
-    // not FindBack. Only the word "lost" separates these from the retry-2
+    // not Norfold. Only the word "lost" separates these from the retry-2
     // positive, so the exemption must not carry them.
     "How do I report a lost wallet to the police?",
     "How do I report a wallet to the police?",
@@ -388,13 +388,13 @@ describe("CF-070 R2 retry-4 — measured world rows stay refused", () => {
     "How do I upload my \u0444\u043e\u0442\u043e\u0433\u0440\u0430\u0444\u0438\u044f?",
     "How do I report my \u4e22\u5931 backpack?",
     // CF-070 R2 retry-4 group C/G worlds that share their words with an app topic.
-    "How do I upload a photo to Instagram instead of FindBack?",
+    "How do I upload a photo to Instagram instead of Norfold?",
     "How do I verify my phone?",
   ])("keeps the draft for %s", (question) => {
     expect(isAppHelpQuestion(question), question).toBe(false);
     expect(classifyHelpQuestion(question).appHelp, question).toBe(false);
     // Fail closed: the scope note, never a topic answer substituted for it.
-    expect(builtInHelp(question), question).toContain("I can help with FindBack");
+    expect(builtInHelp(question), question).toContain("I can help with Norfold");
   });
 });
 
@@ -440,7 +440,7 @@ describe("CF-070 R2 retry-4 — measured app rows are answered", () => {
   ])("answers %s", (question) => {
     expect(isAppHelpQuestion(question), question).toBe(true);
     expect(classifyHelpQuestion(question).appHelp, question).toBe(true);
-    expect(builtInHelp(question), question).not.toContain("I can help with FindBack");
+    expect(builtInHelp(question), question).not.toContain("I can help with Norfold");
   });
 
   it("records the NIT-3 residual and its retry-6 change", () => {
@@ -469,7 +469,7 @@ describe("CF-070 R2 retry-4 — measured app rows are answered", () => {
  * CF-070 R2 retry-6 closed three classes the retry-5 review measured: R1 an
  * answered password row (§4a), R2 a false feature denial for questions the
  * vocabulary cannot read (§3a), R3 an unbounded object-slot exemption that
- * answered world questions with FindBack copy (§2). These tests pin the
+ * answered world questions with Norfold copy (§2). These tests pin the
  * classes, not the individual rows: the same request shape is asserted to
  * answer with an in-vocabulary object and to fail closed with any other noun.
  */
@@ -478,14 +478,14 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
     // The measured false denial: account deletion is shipped and is a modelled
     // topic (`account-deletion`), so telling the person it does not exist is a
     // false statement, and consuming the draft removed their ability to retry.
-    const denied = classifyHelpQuestion("Como elimino mi cuenta de FindBack?");
+    const denied = classifyHelpQuestion("Como elimino mi cuenta de Norfold?");
     expect(denied.topic).toBe("default-scope");
     expect(denied.appHelp).toBe(false);
-    expect(builtInHelp("Como elimino mi cuenta de FindBack?")).toContain("I can help with FindBack");
+    expect(builtInHelp("Como elimino mi cuenta de Norfold?")).toContain("I can help with Norfold");
 
     for (const question of [
-      "Comment puis-je supprimer mon compte FindBack ?",
-      "FindBack mein apna account kaise delete karun?",
+      "Comment puis-je supprimer mon compte Norfold ?",
+      "Norfold mein apna account kaise delete karun?",
       "How do I upload my tasveer? ",
       "Comment allez-vous aujourd'hui?",
       "Quel temps fait-il a Paris?",
@@ -493,20 +493,20 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
     ]) {
       const classification = classifyHelpQuestion(question);
       expect(classification.appHelp, question).toBe(false);
-      expect(builtInHelp(question), question).toContain("I can help with FindBack");
+      expect(builtInHelp(question), question).toContain("I can help with Norfold");
       expect(builtInHelp(question), question).not.toMatch(/don't know.*won't guess/i);
     }
   });
 
   it("R2 keeps an answer for a readable availability question, without claiming absence", () => {
     // The fail-closed rule must not silence a question the vocabulary CAN read
-    // end to end: an availability question ("Does FindBack have/offer …?") is
+    // end to end: an availability question ("Does Norfold have/offer …?") is
     // answered, so the two effects are distinguishable. The answer still may
     // not say the app lacks the feature — the term may be a shipped feature
     // written badly (retry-7 R6-1).
     for (const question of [
-      "Does FindBack have a Pets category?",
-      "Does FindBack offer teleportation?",
+      "Does Norfold have a Pets category?",
+      "Does Norfold offer teleportation?",
     ]) {
       const classification = classifyHelpQuestion(question);
       expect(classification.topic, question).toBe("unknown-feature");
@@ -553,7 +553,7 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
     for (const question of refused) {
       const classification = classifyHelpQuestion(question);
       expect(classification.appHelp, question).toBe(false);
-      expect(builtInHelp(question), question).toContain("I can help with FindBack");
+      expect(builtInHelp(question), question).toContain("I can help with Norfold");
       expect(builtInHelp(question), question).not.toContain("Report tab");
     }
   });
@@ -575,8 +575,8 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
     // `significantWords` folds case before the scaffold and app-name scrub, so a
     // sentence-case question is not triaged as unreadable Latin text.
     for (const question of [
-      "Does FindBack have a Pets category?",
-      "Does FindBack offer teleportation?",
+      "Does Norfold have a Pets category?",
+      "Does Norfold offer teleportation?",
       "How Do I Report A Lost Backpack?",
     ]) {
       const classification = classifyHelpQuestion(question);
@@ -589,7 +589,7 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
  * CF-070 R2 retry-7 — R6-1. The retry-6 licence to say anything about the app
  * was "the app is named and at most one term is unreadable", and the retry-6
  * review measured that licence as the harm: app-owned questions carrying one
- * unreadable token (`How do I delete my FindBack cuenta?`, `FindBack cuenta?`,
+ * unreadable token (`How do I delete my Norfold cuenta?`, `Norfold cuenta?`,
  * `passwrod`, `pass`, `notificatons`, `profle`, `acount`) were answered "I don't
  * know of that feature" — a false statement about features the app ships
  * (`account-deletion`, `password`, `profile`, `notifications`) — and the draft
@@ -603,16 +603,16 @@ describe("CF-070 R2 retry-6 — the repaired classes", () => {
  */
 describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown feature", () => {
   const shapes: ReadonlyArray<readonly [string, string]> = [
-    ["How do I delete my FindBack acount?", "misspelling of `account`"],
-    ["FindBack profle settings?", "misspelling of `profile`"],
-    ["Does FindBack offer notificatons?", "misspelling of `notifications`, in an availability question"],
-    ["How do I reset my FindBack passwrod?", "transposition of `password`"],
-    ["FindBack pasword recovery?", "transposition of `password`"],
-    ["How do I reset my FindBack pass?", "truncation of `password`"],
-    ["How do I see my FindBack notificat?", "truncation of `notifications`"],
-    ["Wie kann ich mein FindBack Passwort andern?", "German `Passwort`: the question is outside the vocabulary"],
-    ["Como elimino mi cuenta de FindBack?", "Spanish `cuenta`, tombstone row of the retry-6 review"],
-    ["FindBack cuenta?", "Spanish `cuenta` alone: no request, no availability question"],
+    ["How do I delete my Norfold acount?", "misspelling of `account`"],
+    ["Norfold profle settings?", "misspelling of `profile`"],
+    ["Does Norfold offer notificatons?", "misspelling of `notifications`, in an availability question"],
+    ["How do I reset my Norfold passwrod?", "transposition of `password`"],
+    ["Norfold pasword recovery?", "transposition of `password`"],
+    ["How do I reset my Norfold pass?", "truncation of `password`"],
+    ["How do I see my Norfold notificat?", "truncation of `notifications`"],
+    ["Wie kann ich mein Norfold Passwort andern?", "German `Passwort`: the question is outside the vocabulary"],
+    ["Como elimino mi cuenta de Norfold?", "Spanish `cuenta`, tombstone row of the retry-6 review"],
+    ["Norfold cuenta?", "Spanish `cuenta` alone: no request, no availability question"],
   ];
 
   it("asserts nothing about the app for any question carrying one unreadable token", () => {
@@ -625,7 +625,7 @@ describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown fea
       expect(classification.answer, question).not.toMatch(
         /don't know of that feature|does not have|not in this build/i,
       );
-      expect(builtInHelp(question), question).toContain("I can help with FindBack");
+      expect(builtInHelp(question), question).toContain("I can help with Norfold");
       expect(builtInHelp(question), question).not.toMatch(/does not have|not in this build/i);
     }
   });
@@ -641,9 +641,9 @@ describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown fea
   it("reads a request in another language as unreadable, not as an unknown feature", () => {
     for (const question of [
       "Wie kann ich mein Konto loschen?",
-      "Comment supprimer mon compte FindBack ?",
-      "Come posso eliminare il mio account FindBack?",
-      "Cuenta de FindBack?",
+      "Comment supprimer mon compte Norfold ?",
+      "Come posso eliminare il mio account Norfold?",
+      "Cuenta de Norfold?",
     ]) {
       expect(classifyHelpQuestion(question).topic, question).toBe("default-scope");
       expect(classifyHelpQuestion(question).appHelp, question).toBe(false);
@@ -651,11 +651,11 @@ describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown fea
   });
 
   it("still answers a readable availability question, without claiming absence", () => {
-    // The corpus pins `Does FindBack offer teleportation?` as app help
+    // The corpus pins `Does Norfold offer teleportation?` as app help
     // (probes.mjs A-positive), and the two invariants must not trade it away.
     for (const question of [
-      "Does FindBack offer teleportation?",
-      "Does FindBack have a Pets category?",
+      "Does Norfold offer teleportation?",
+      "Does Norfold have a Pets category?",
     ]) {
       const classification = classifyHelpQuestion(question);
       expect(classification.appHelp, question).toBe(true);
@@ -669,9 +669,9 @@ describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown fea
  * CF-070 R2 retry-8 — F-2. The retry-7 review measured the licence's boundary
  * from outside: `namesOneUnknownTerm` was `<= 1`, so a probe question with
  * **zero** unreadable terms reached the branch whose first sentence names a
- * term it could not place. `Does FindBack have a list?` is fully in the app's
+ * term it could not place. `Does Norfold have a list?` is fully in the app's
  * vocabulary (`list` is an `APP_VOCAB` word) and was answered "I can't place
- * that term, so I won't guess whether FindBack has it" while consuming the
+ * that term, so I won't guess whether Norfold has it" while consuming the
  * draft — a statement about a term that does not exist, and the wrong product
  * answer, because the app does have search and lists.
  *
@@ -680,12 +680,12 @@ describe("CF-070 R2 retry-7 — R6-1: one unreadable token is not an unknown fea
  * decision: an availability question naming one unplaceable term is a shipped
  * feature under another name) keeps its answer. Both shapes are pinned here,
  * because the retry-7 list exercised neither: its only probe-shaped row
- * (`Does FindBack offer notificatons?`) is blocked by the near-miss rule.
+ * (`Does Norfold offer notificatons?`) is blocked by the near-miss rule.
  */
 describe("CF-070 R2 retry-8 — F-2: the probe band's boundary is pinned on both sides", () => {
   const oneUnreadable: ReadonlyArray<readonly [string, string]> = [
-    ["Does FindBack have cuenta?", "Spanish `cuenta` inside availability-probe grammar"],
-    ["Does FindBack offer teletransportación?", "accented non-English term inside availability-probe grammar"],
+    ["Does Norfold have cuenta?", "Spanish `cuenta` inside availability-probe grammar"],
+    ["Does Norfold offer teletransportación?", "accented non-English term inside availability-probe grammar"],
   ];
 
   it("keeps the one-unreadable probe a non-asserting claim about the named term", () => {
@@ -708,11 +708,11 @@ describe("CF-070 R2 retry-8 — F-2: the probe band's boundary is pinned on both
     // Zero unreadable terms: the question is in this app's vocabulary, so there
     // is no term to name. It falls back to ordinary Chat and the person's draft
     // survives.
-    const question = "Does FindBack have a list?";
+    const question = "Does Norfold have a list?";
     const classification = classifyHelpQuestion(question);
     expect(classification.appHelp, question).toBe(false);
     expect(classification.topic, question).toBe("default-scope");
     expect(classification.answer, question).not.toMatch(/I can't place that term/i);
-    expect(builtInHelp(question), question).toContain("I can help with FindBack");
+    expect(builtInHelp(question), question).toContain("I can help with Norfold");
   });
 });

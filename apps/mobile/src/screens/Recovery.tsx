@@ -125,7 +125,7 @@ export function Recovery() {
         <>
           <p role="status" className="text-sm text-on-surface-variant">{RECOVERY_SUCCESS}</p>
           <Button type="button" size="lg" onClick={() => navigate("/", { replace: true })}>
-            Continue to FindBack
+            Continue to Norfold
           </Button>
         </>
       )}

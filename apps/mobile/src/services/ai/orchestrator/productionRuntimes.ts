@@ -1,7 +1,7 @@
 /**
  * Production runtime registration for the retained local tools.
  *
- * FindBack's on-device surface is two narrow capabilities: Needle's
+ * Norfold's on-device surface is two narrow capabilities: Needle's
  * tool-constrained structured extraction and Needle's text embeddings. This
  * module registers exactly those two runtime ids — there is no local prose,
  * photo-analysis, or general-purpose generative runtime, and no lab channel

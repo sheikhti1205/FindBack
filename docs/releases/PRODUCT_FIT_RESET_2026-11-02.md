@@ -10,7 +10,7 @@ local Needle/USE/visual ranking and non-native web baseline remain. Visibility,
 moderation and block owners are not replaced.
 
 `design/colorSystem.ts` is the colour-value owner; appearance persistence and
-theme runtime stay separate. Fresh default is FindBack Blue. Android12+ optional
+theme runtime stay separate. Fresh default is Blue. Android12+ optional
 System colours are device-local with contrast/fallback/lifecycle guards. Graphite
 dark, calm light and true-black AMOLED retain fixed semantic roles. Wide devices
 choose rail/bottom locally; phones keep bottom navigation without a prompt.

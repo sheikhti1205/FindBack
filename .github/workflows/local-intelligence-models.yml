@@ -1,4 +1,4 @@
-# FindBack — retained search-helper / semantic-matching model smoke.
+# Norfold — retained search-helper / semantic-matching model smoke.
 #
 # Pinned-checksum smoke for the on-device model scope:
 #   * fetch-use-model --check (pinned USE bytes + SHA-256)

@@ -127,7 +127,7 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
 
   return (
     <AuthShell
-      title={stage === "email" ? "Welcome to FindBack" : stage === "signin" ? "Sign in" : "Create your account"}
+      title={stage === "email" ? "Welcome to Norfold" : stage === "signin" ? "Sign in" : "Create your account"}
       supporting={
         stage === "email"
           ? "Sign in or create an account to report and recover lost items."

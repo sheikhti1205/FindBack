@@ -31,7 +31,7 @@ function baseInput() {
   return {
     selection,
     task: "app-help" as const,
-    systemPolicy: { version: "policy-7", text: "You are FindBack help. Never invent listings." },
+    systemPolicy: { version: "policy-7", text: "You are Norfold help. Never invent listings." },
     knowledge: { version: "kb-2026-09-25", text: "Report tab creates reports. Search tab finds items." },
     summary,
     recentTurns: [turn("t1", "user", "How do I report?"), turn("t2", "assistant", "Open the Report tab.")],

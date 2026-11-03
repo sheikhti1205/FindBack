@@ -12,7 +12,7 @@ import com.findback.app.push.ChatPushData;
 import com.findback.app.push.ChatPushState;
 
 /**
- * Opens the OS-level FindBack notification settings so a user who denied the
+ * Opens the OS-level Norfold notification settings so a user who denied the
  * Android 13+ permission can re-enable it. The in-app inbox never depends on
  * this; it is purely a recovery path from the notification settings UI.
  */

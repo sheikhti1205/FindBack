@@ -23,18 +23,18 @@ export function Terms() {
   return (
     <SettingsPage
       title="Terms of use"
-      description="What FindBack is, and what each of us is responsible for."
+      description="What Norfold is, and what each of us is responsible for."
       backTo="/settings"
     >
-      <SettingsGroup title="What FindBack is">
+      <SettingsGroup title="What Norfold is">
         <Paragraph>
-          FindBack is a place to report a lost or found item, to search what other people have
+          Norfold is a place to report a lost or found item, to search what other people have
           reported, and to discuss those reports. It is a record of what people say they have lost
           or found — it is not a guarantee that any item is really lost, really found, or really
           yours.
         </Paragraph>
         <Paragraph>
-          These terms apply to everyone who uses FindBack, and this page is the full text of the
+          These terms apply to everyone who uses Norfold, and this page is the full text of the
           terms that apply to you.
         </Paragraph>
       </SettingsGroup>
@@ -97,7 +97,7 @@ export function PrivacyPolicy() {
   return (
     <SettingsPage
       title="Privacy policy"
-      description="What FindBack keeps, where it keeps it, and what you can remove."
+      description="What Norfold keeps, where it keeps it, and what you can remove."
       backTo="/settings"
     >
       <SettingsGroup title="What stays on your phone">
@@ -111,9 +111,9 @@ export function PrivacyPolicy() {
         </Paragraph>
       </SettingsGroup>
 
-      <SettingsGroup title="What FindBack stores on its servers">
+      <SettingsGroup title="What Norfold stores on its servers">
         <Paragraph>
-          Your account is stored on FindBack's servers. The reports you publish with their photos,
+          Your account is stored on Norfold's servers. The reports you publish with their photos,
           and the comments people leave, are stored there so that other readers can see them and so
           you can use them on another device. The notifications sent to you are stored there too,
           for your account only. The list of reports you save is stored with your account when you
@@ -124,11 +124,11 @@ export function PrivacyPolicy() {
 
       <SettingsGroup title="Private messages">
         <Paragraph>
-          FindBack uses temporary server delivery to your registered devices and private storage
+          Norfold uses temporary server delivery to your registered devices and private storage
           for shared images. Delivery copies are removed as devices acknowledge them or they
           expire; this is not a permanent server archive of your conversations. Push notifications
           wake the app without carrying message text. Messages are not end-to-end encrypted.
-          The other person may keep copies, screenshots or saved files that FindBack cannot erase.
+          The other person may keep copies, screenshots or saved files that Norfold cannot erase.
         </Paragraph>
       </SettingsGroup>
 
@@ -137,13 +137,13 @@ export function PrivacyPolicy() {
           Only when you write to the assistant: the message you send and the conversation context
           needed to reply go to the provider you chose, which handles them under its own terms.
           Optional on-device text similarity runs locally. Searching published reports still queries
-          FindBack's servers. This beta has no local generative assistant or photo matcher.
+          Norfold's servers. This beta has no local generative assistant or photo matcher.
         </Paragraph>
       </SettingsGroup>
 
       <SettingsGroup title="Who can see your reports">
         <Paragraph>
-          Reports are meant to be found by other people, so other FindBack users can see your
+          Reports are meant to be found by other people, so other Norfold users can see your
           report, its photos and the comments on it when they have access. A shared report link can
           show a limited public preview without an account; it does not reveal contact details or
           exact location. Full details and private actions require sign-in and report access.
@@ -188,7 +188,7 @@ export function CommunityGuidelines() {
   return (
     <SettingsPage
       title="Community guidelines"
-      description="How to post so that FindBack stays useful for everyone."
+      description="How to post so that Norfold stays useful for everyone."
       backTo="/settings"
     >
       <SettingsGroup title="Search before you post">

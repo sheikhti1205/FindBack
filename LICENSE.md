@@ -1,4 +1,4 @@
-FindBack is source-available. It is **not** OSI open source.
+Norfold is source-available. It is **not** OSI open source.
 
 Copyright (c) 2026 Sheikh Tawsif Bin Aftab. All rights reserved except as
 expressly granted below.
@@ -7,7 +7,7 @@ The software is licensed under the PolyForm Noncommercial License 1.0.0.
 Noncommercial use is permitted under those terms. **Commercial use requires a
 separate written license** — see [COMMERCIAL.md](COMMERCIAL.md).
 
-The FindBack name, logo and branding are reserved — see [BRANDING.md](BRANDING.md).
+The Norfold name, logo and branding are reserved — see [BRANDING.md](BRANDING.md).
 Third-party components remain under their own licenses — see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 

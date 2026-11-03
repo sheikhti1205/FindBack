@@ -121,7 +121,7 @@ export function Onboarding({ onComplete, initialPage = 0 }: OnboardingProps) {
       }}
     >
       <header className="fb-onboarding-header">
-        <div className="fb-onboarding-brand"><BrandMark size={28} shape="tile" alt="" /><span>FindBack</span></div>
+        <div className="fb-onboarding-brand"><BrandMark size={28} shape="tile" alt="" /><span>Norfold</span></div>
         {!last && <button type="button" onClick={finish} className="fb-onboarding-btn fb-onboarding-btn--quiet">Skip</button>}
       </header>
 

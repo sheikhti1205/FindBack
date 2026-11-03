@@ -1,4 +1,4 @@
-# FindBack — release keep rules.
+# Norfold — release keep rules.
 #
 # Release currently ships with minifyEnabled false, so these rules are dormant
 # insurance: if shrinking is ever enabled, the Capacitor bridge entry points

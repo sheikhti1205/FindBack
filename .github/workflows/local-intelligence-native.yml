@@ -1,4 +1,4 @@
-# FindBack — retained Needle/USE native integration, not generative AI.
+# Norfold — retained Needle/USE native integration, not generative AI.
 #
 # Compile + JVM Kotlin unit tests + Capacitor sync check for the retained helper.
 # Tests use fakes/stubs. Gradle preBuild may fetch the pinned bundled USE asset

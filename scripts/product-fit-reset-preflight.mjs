@@ -3,7 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 
 const PROJECT='nfjhpigbsyyoaaktfaev';
-const REPOSITORY='sheikhti1205/FindBack';
+const REPOSITORY='sheikhti1205/Norfold';
 const OWNER='sheikhti1205';
 const TABLES=`account_deletion_fences account_sanctions admin_audit_log appeal_notifications appeals attachments bootstrap_admins chat_conversations chat_devices chat_external_wake_devices chat_external_wakes chat_mailbox chat_media_attachments chat_media_cleanup_queue chat_media_delivery_receipts chat_media_report_evidence chat_media_report_sources chat_member_state chat_message_audience chat_messages chat_preferences chat_state_audience chat_state_events comment_attachments comment_media_cleanup_queue comment_reactions comments content_reports device_tokens feedback item_posts match_confirmations match_handovers moderation_case_audits moderation_case_decisions notification_preferences notifications post_saves public_action_admissions push_reply_tokens ratings reactions report_match_occupancy report_matches return_ratings role_invitations successful_returns uploads user_blocks user_role_capabilities user_roles users verification_challenges`.split(' ');
 const BUCKETS=new Map([['findback-images',true],['findback-comment-media',true],['findback-chat-media',false],['findback-chat-moderation-evidence',false]]);

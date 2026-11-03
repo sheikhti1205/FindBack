@@ -66,7 +66,7 @@ describe("public shared-report gate", () => {
     for (const token of ["bg-surface", "text-on-surface"]) {
       expect(main.className.split(/\s+/)).toContain(token);
     }
-    const back = screen.getByRole("link", {name: "Back to FindBack"});
+    const back = screen.getByRole("link", {name: "Back to Norfold"});
     expect(back.getAttribute("href")).toBe("/");
     expect(back.className.split(/\s+/)).toContain("bg-on-surface");
   });

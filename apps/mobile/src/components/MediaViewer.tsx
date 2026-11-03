@@ -35,7 +35,7 @@ export interface MediaViewerProps {
 function ViewerFocusScope({ children }: ComponentProps) {
   return <FocusScope contain restoreFocus>{children}</FocusScope>;
 }
-const focusScopeModule = createModule("FindBackFocusScope", ViewerFocusScope);
+const focusScopeModule = createModule("NorfoldFocusScope", ViewerFocusScope);
 const containFocus: Plugin = ({ addParent }) => addParent(MODULE_NO_SCROLL, focusScopeModule);
 const plugins = [Zoom, Fullscreen, Thumbnails, containFocus];
 const RetryPhoto = createContext<(() => void) | null>(null);

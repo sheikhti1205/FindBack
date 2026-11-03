@@ -41,7 +41,7 @@ function deleteDatabase(factory:IDBFactory,name:string):Promise<void>{
     const request=factory.deleteDatabase(name);
     request.onsuccess=()=>resolve();
     request.onerror=()=>reject(new Error('Local database reset failed'));
-    request.onblocked=()=>reject(new Error('Close other FindBack tabs before retrying'));
+    request.onblocked=()=>reject(new Error('Close other Norfold tabs before retrying'));
   });
 }
 

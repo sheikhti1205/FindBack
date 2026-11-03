@@ -1,8 +1,8 @@
 {
   "name": "norfold",
   "private": true,
-  "version": "0.13.0-beta.1",
-  "description": "FindBack — a local-first lost-and-found network for reporting, matching and recovering lost items.",
+  "version": "0.14.0-beta.1",
+  "description": "Norfold — a local-first lost-and-found network for reporting, matching and recovering lost items.",
   "workspaces": [
     "apps/mobile",
     "packages/shared"

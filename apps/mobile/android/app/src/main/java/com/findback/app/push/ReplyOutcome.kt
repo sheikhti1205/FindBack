@@ -5,7 +5,7 @@ import org.json.JSONObject
 /**
  * What the reply endpoint answered.
  *
- * The direct-reply action used to treat every non-2xx as "FindBack is broken",
+ * The direct-reply action used to treat every non-2xx as "Norfold is broken",
  * so the two refusals the interaction-limit guard can now produce — the 30 s
  * public-interaction clock and the day's ceiling — were invisible and invited a
  * retry that could not succeed. Both are answers, and they are different answers:

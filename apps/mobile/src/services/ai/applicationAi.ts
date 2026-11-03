@@ -112,11 +112,11 @@ const STRUCTURED_STRATEGIES: Readonly<Record<string, StructuredStrategy>> = {
   "classify-category": {
     toolName: "item_category",
     system: "Lost-and-found item description for classification.",
-    toolDescription: "Classify the described lost-or-found item into one FindBack category.",
+    toolDescription: "Classify the described lost-or-found item into one Norfold category.",
     schema: {
       type: "object",
       properties: {
-        category: { type: "string", description: "The single FindBack category for the described item", enum: ITEM_CATEGORIES },
+        category: { type: "string", description: "The single Norfold category for the described item", enum: ITEM_CATEGORIES },
       },
       required: ["category"],
     },

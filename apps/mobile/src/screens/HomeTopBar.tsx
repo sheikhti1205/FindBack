@@ -127,7 +127,7 @@ export function HomeTopBar({
           >
             {/* The field replaces the wordmark, so the screen would otherwise
                 lose its only heading while searching. */}
-            <h1 className="sr-only">FindBack</h1>
+            <h1 className="sr-only">Norfold</h1>
             <button
               type="button"
               data-testid="home-search-close"
@@ -197,11 +197,11 @@ export function HomeTopBar({
             transition={swap}
             className="flex min-w-0 flex-1 items-center"
           >
-            <h1 aria-label="FindBack" className="min-w-0 text-base font-semibold tracking-tight">
+            <h1 aria-label="Norfold" className="min-w-0 text-base font-semibold tracking-tight">
               <button
                 type="button"
                 data-testid="home-brand"
-                aria-label="FindBack — scroll the feed to the top"
+                aria-label="Norfold — scroll the feed to the top"
                 onClick={onBrandTap}
                 className="-ml-1 flex min-h-[48px] min-w-0 items-center gap-2 rounded-m3-sm px-1"
               >
@@ -223,7 +223,7 @@ export function HomeTopBar({
                   transition={swap}
                   className="truncate"
                 >
-                  FindBack
+                  Norfold
                 </motion.span>
               </button>
             </h1>

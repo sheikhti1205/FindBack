@@ -6,15 +6,15 @@ not a supported service, login path or current setup instruction. Current produc
 reporting/moderation lives in the role-gated same-app staff console and Supabase.
 See [legacy API retirement](../LEGACY_API_RETIREMENT.md).
 
-# FindBack — Reporting Guide (historical)
+# Norfold — Reporting Guide (historical)
 
-This document describes how to produce reports from FindBack data for the course's
+This document describes how to produce reports from Norfold data for the course's
 "Crystal Reports" style requirement.
 
 ## Decision log
 
 - The app cannot ship a proprietary `.rpt` engine or run Windows-only tooling from this
-  environment. Per `DEFERRED_DECISIONS.md`, FindBack provides:
+  environment. Per `DEFERRED_DECISIONS.md`, Norfold provides:
   1. a first-class, documented **REST reporting API** that returns JSON or CSV, and
   2. the exact **schema + queries** needed to connect a desktop reporting tool
      (Crystal Reports, Microsoft Report Builder, Excel/Power Query) to the same database.

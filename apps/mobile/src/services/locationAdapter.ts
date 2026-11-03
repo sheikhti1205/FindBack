@@ -59,7 +59,7 @@ export const FIX_MICROCOPY: Record<
   string
 > = {
   denied:
-    "Location access is off for FindBack. Enable it in Settings, or choose a place on the map.",
+    "Location access is off for Norfold. Enable it in Settings, or choose a place on the map.",
   "services-off":
     "Device location is off. Turn it on or enter a place.",
   timeout:

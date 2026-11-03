@@ -177,7 +177,7 @@ function buildAdversarialEvent(): Record<string, unknown> {
     tags: { route: `home?token=${FIX_OR_KEY}` },
     transaction: `open?key=${FIX_SUPA_SECRET}`,
     contexts: {
-      app: { app_name: "FindBack" },
+      app: { app_name: "Norfold" },
       custom: { note: `leaked ${FIX_JWT}` },
     },
     extra: {

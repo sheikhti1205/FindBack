@@ -106,7 +106,7 @@ describe("the administrator setup row", () => {
     renderRow();
 
     expect(await screen.findByText("Become the administrator")).toBeTruthy();
-    expect(screen.getByText("Set up this account as the admin of FindBack.")).toBeTruthy();
+    expect(screen.getByText("Set up this account as the admin of Norfold.")).toBeTruthy();
   });
 
   it("asks the SERVER, once, and never guesses", async () => {

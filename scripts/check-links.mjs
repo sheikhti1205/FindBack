@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Link validation script for FindBack docs and README
+// Link validation script for Norfold docs and README
 // Usage: node scripts/check-links.mjs [directory]
 // Checks all markdown links for broken internal references.
 

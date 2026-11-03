@@ -1,4 +1,4 @@
-# MapLibre Native runbook (FindBack keyless map)
+# MapLibre Native runbook (Norfold keyless map)
 
 The report picker, the post viewer, and the post map preview render with
 **MapLibre Native Android** (pinned `org.maplibre.gl:android-sdk-opengl`,
@@ -43,7 +43,7 @@ FINDBACK_MAP_CONTACT=https://your-public-contact-page
 ```
 
 Default is the app's public site. It goes into the native search
-`User-Agent` (`FindBack/<version> (Android; contact: <contact>)`) per the
+`User-Agent` (`Norfold/<version> (Android; contact: <contact>)`) per the
 Nominatim usage policy — keep it a working public contact.
 
 ## Search policy (do not "improve" into autocomplete)
@@ -51,7 +51,7 @@ Nominatim usage policy — keep it a working public contact.
 - Explicit Search-button submit only — never per keystroke.
 - ≤1 request/second (native `NominatimGate`, web `NominatimThrottler`).
 - Max 5 results; sanitized (name + finite in-range coordinates).
-- Native requests carry `User-Agent: FindBack/<version> (Android)` per the
+- Native requests carry `User-Agent: Norfold/<version> (Android)` per the
   Nominatim usage policy.
 - A result recenters the camera but never commits until Confirm.
 

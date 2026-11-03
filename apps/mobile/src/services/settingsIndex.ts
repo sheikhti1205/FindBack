@@ -229,7 +229,7 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
   },
   {
     id: "about",
-    title: "About FindBack",
+    title: "About Norfold",
     keywords: "version build application",
     group: "Help & about",
     route: "/settings/about",

@@ -82,7 +82,7 @@ export function useSnapPager(count: number): SnapPager {
    * One gesture, one photo (owner decision).
    *
    * Native momentum decides where a fling lands, and a strong fling can cross
-   * several widths. FindBack limits photo counts, so predictability beats free
+   * several widths. Norfold limits photo counts, so predictability beats free
    * scrolling: the page the person was on when the finger/wheel took the track
    * is remembered, and the landed page is clamped to that page ±1. Programmatic
    * jumps (`goTo`) and keyboard/AT scrolling are explicit choices, so they are

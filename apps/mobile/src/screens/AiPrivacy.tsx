@@ -10,7 +10,7 @@ import { AdvancedDisclosure, SettingsGroup, SettingsPage } from "../components/s
  * Cloud-only switch is not described as if it still existed.
  */
 export function AiPrivacy() {
-  return <SettingsPage title="AI & privacy" backTo="/settings/help" description="How FindBack handles optional AI requests.">
+  return <SettingsPage title="AI & privacy" backTo="/settings/help" description="How Norfold handles optional AI requests.">
     <SettingsGroup title="How answers work">
       <p className="text-sm leading-relaxed">Chat answers come from the cloud provider you pick in Settings → AI & models → Providers. That provider receives the messages you send and the conversation context needed to reply.</p>
       <p className="text-sm leading-relaxed">Search and report-field suggestions can run on this phone. Those requests stay on the device and are never sent to a provider.</p>

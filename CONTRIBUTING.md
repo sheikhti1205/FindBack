@@ -1,6 +1,6 @@
 # Contributing
 
-FindBack is a pre-public beta maintained by a single owner. Contributions are
+Norfold is a pre-public beta maintained by a single owner. Contributions are
 welcome as issues and focused pull requests, but the project does not promise
 review timelines, and large unsolicited changes are likely to be declined.
 

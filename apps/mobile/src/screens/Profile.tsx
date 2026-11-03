@@ -85,7 +85,7 @@ export function Profile() {
         </Link>
       </section>
 
-      <SettingsGroup title="Reputation" description="Worked out by FindBack from your returns and ratings. Not a score you raise directly.">
+      <SettingsGroup title="Reputation" description="Worked out by Norfold from your returns and ratings. Not a score you raise directly.">
         {reputation.status === "loading" && <p role="status" className="fb-settings-row-description">Checking your reputation…</p>}
         {reputation.status === "unavailable" && <p role="status" className="fb-settings-row-description">Your reputation is unavailable right now.</p>}
         {reputation.status === "ready" && (

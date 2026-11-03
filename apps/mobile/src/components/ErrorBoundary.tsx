@@ -29,7 +29,7 @@ class ErrorBoundaryInner extends Component<InnerProps, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    logError("FindBack screen error:", error, info.componentStack);
+    logError("Norfold screen error:", error, info.componentStack);
     reportErrorToMonitoring(error, { route: this.props.resetKey });
   }
 

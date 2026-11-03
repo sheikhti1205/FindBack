@@ -184,10 +184,10 @@ describe("deterministic intent checks", () => {
     expect(notifications.status).toBe("supported");
     expect(notifications.status === "supported" && notifications.topics).toContain("notifications");
 
-    const deleteAccount = checkAppClaim("How do I delete my FindBack account?");
+    const deleteAccount = checkAppClaim("How do I delete my Norfold account?");
     expect(deleteAccount.status).toBe("supported");
 
-    expect(checkAppClaim("Does FindBack have a Pets category?").status).toBe("unknown");
+    expect(checkAppClaim("Does Norfold have a Pets category?").status).toBe("unknown");
     expect(checkAppClaim("what is the capital of France?").status).toBe("unknown");
   });
 });

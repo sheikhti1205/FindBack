@@ -26,7 +26,7 @@ export function Splash() {
         >
           <BrandMark size={64} />
         </motion.div>
-        <p className="text-sm text-on-surface-variant">FindBack</p>
+        <p className="text-sm text-on-surface-variant">Norfold</p>
       </div>
     );
   }
@@ -35,7 +35,7 @@ export function Splash() {
     const stages = getBootDiagnostics();
     return (
       <div className="flex min-h-full flex-col items-center justify-center gap-4 bg-surface px-6 text-center text-on-surface pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-        <p className="text-lg font-semibold">Couldn't connect to FindBack.</p>
+        <p className="text-lg font-semibold">Couldn't connect to Norfold.</p>
         <p className="max-w-xs text-sm text-on-surface-variant">
           Your saved sign-in is kept. Check your connection and try again.
         </p>

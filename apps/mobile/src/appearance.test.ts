@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("appearance settings module (AI-011 Quick Appearance)", () => {
-  it("exposes defaults: FindBack Blue, standard scale, system motion, standard photo, bottom bar", () => {
+  it("exposes defaults: Blue, standard scale, system motion, standard photo, bottom bar", () => {
     expect(DEFAULT_APPEARANCE).toEqual({
       accent: "blue",
       accentSource: "preset",
@@ -198,7 +198,7 @@ describe("appearance accent scope (W5: accent never recolors semantics)", () => 
     }
   });
 
-  it("keeps Mono selectable without overriding the FindBack Blue fresh default", () => {
+  it("keeps Mono selectable without overriding the Blue fresh default", () => {
     expect(DEFAULT_APPEARANCE.accent).toBe("blue");
     expect(ACCENT_OPTIONS.some((a) => a.id === "mono")).toBe(true);
   });

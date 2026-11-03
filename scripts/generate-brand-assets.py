@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic current FindBack derivatives. No tracing or invented geometry.
+"""Deterministic current Norfold derivatives. No tracing or invented geometry.
 
 The Oct19 owner master supersedes the historical Oct09 logo2-master.jpg.
 Tile keying is promoted verbatim in algorithm from the private home-chrome

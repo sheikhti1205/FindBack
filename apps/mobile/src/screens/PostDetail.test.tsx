@@ -1094,7 +1094,7 @@ describe("PostDetail recovery route lifetime", () => {
     fireEvent.click(recoveryLauncher);
     let helperChoice: HTMLElement;
     try {
-      helperChoice = await screen.findByRole("radio", { name: /someone outside findback/i });
+      helperChoice = await screen.findByRole("radio", { name: /someone outside norfold/i });
     } catch (error) {
       throw new Error(`RECOVERY_OPEN_DIAGNOSTIC ${JSON.stringify({
         launcherConnected: recoveryLauncher.isConnected,

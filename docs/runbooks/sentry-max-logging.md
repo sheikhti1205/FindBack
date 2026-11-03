@@ -128,7 +128,7 @@ simulator crash. The observed stack suggests a WebView/platform failure, but
 does not establish that application involvement is impossible:
 
 - Fatal signal is `SIGILL` in `WebViewGoogle.apk` native Chromium frames
-  (triggered via ART/JNI), with no FindBack frames on stack.
+  (triggered via ART/JNI), with no Norfold frames on stack.
 - The recorded occurrence is on preview Android 17 `sdk_gphone16k_x86_64` while app lifecycle
   transitions to background after Google sign-in attempts report unavailable.
 - Chromium can use deliberate `ud2` crash traps (`CHECK`/`IMMEDIATE_CRASH`)
@@ -137,7 +137,7 @@ does not establish that application involvement is impossible:
 Owner action for this issue:
 
 1. Do not change app behavior or suppress native signal capture solely from this
-   single platform-only stack. No FindBack frames is not an app-exoneration proof.
+   single platform-only stack. No Norfold frames is not an app-exoneration proof.
 2. Update Android System WebView on the emulator (or use a stable API image).
 3. The issue was already resolved at the October 30 readback; monitor recurrence.
 4. Reinvestigate recurrence on stable emulator images or physical devices, or

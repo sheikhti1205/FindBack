@@ -24,7 +24,7 @@ describe('cold-launch reset boundary',()=>{
     f.prepare.mockRejectedValue(new Error('synthetic private stored state'));
     await import('./main');
     await waitFor(()=>expect(document.querySelector('button')?.textContent).toBe('Try again'));
-    expect(document.body.textContent).toContain('Close other FindBack tabs');
+    expect(document.body.textContent).toContain('Close other Norfold tabs');
     expect(document.body.textContent).not.toContain('synthetic private');
     expect(document.documentElement.style.getPropertyValue('--fb-surface')).not.toBe('');
     expect(document.documentElement.style.getPropertyValue('--fb-primary')).not.toBe('');

@@ -251,7 +251,7 @@ describe("Home nearby discovery (UXN-1)", () => {
     renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
     fireEvent.click(nearbyToggle());
-    expect(await screen.findByText(/location access is off for findback/i)).toBeTruthy();
+    expect(await screen.findByText(/location access is off for norfold/i)).toBeTruthy();
     expect(nearbyToggle().getAttribute("aria-pressed")).toBe("false");
     expect(fetchFeedMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ radiusM: expect.anything() }),

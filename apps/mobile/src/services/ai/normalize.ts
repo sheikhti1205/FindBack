@@ -1,5 +1,5 @@
 /**
- * Output normalization for FindBack on-device assistance.
+ * Output normalization for Norfold on-device assistance.
  *
  * Application-owned rules implemented here (this module owns R1/R2/R4/R5/R6):
  * R1 de-fence: reuse extractSingleJsonObject() from the stable

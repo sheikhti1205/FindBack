@@ -1,4 +1,4 @@
-# FindBack — manual backend deploy (migrations + Edge Functions).
+# Norfold — manual backend deploy (migrations + Edge Functions).
 #
 # Kept separate from both CI and the app release pipeline on purpose: backend
 # mutations are explicit, one at a time, with live verification after each.

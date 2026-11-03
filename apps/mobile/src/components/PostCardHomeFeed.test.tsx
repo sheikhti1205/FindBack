@@ -207,7 +207,7 @@ describe("PostCardContent home-feed (content-first Home layout)", () => {
     fireEvent.click(screen.getByRole("button", { name: /share report/i }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /share report/i }));
     await waitFor(() => expect(share).toHaveBeenCalledWith({
-      title: "FindBack report",
+      title: "Norfold report",
       url: "https://findback.test/api/share/p1",
     }));
   });

@@ -2,7 +2,7 @@
 
 ## Status and ownership
 
-Media-lane implementation, review corrections, and host verification are ready for the main agent to integrate. **This is not physical-device acceptance or U6 completion.** Work stayed on `main` in `/home/sheikh/GitHub/FindBack`. No commits, branches, APK/web builds, installs, or device mutations were performed. No `Help.tsx`, `ChatComposer.tsx`, model metadata, or streaming implementation was edited by this builder. Other agents' shared-workspace changes were left intact.
+Media-lane implementation, review corrections, and host verification are ready for the main agent to integrate. **This is not physical-device acceptance or U6 completion.** Work stayed on `main` in `/home/sheikh/GitHub/Norfold`. No commits, branches, APK/web builds, installs, or device mutations were performed. No `Help.tsx`, `ChatComposer.tsx`, model metadata, or streaming implementation was edited by this builder. Other agents' shared-workspace changes were left intact.
 
 The requested master plan §§12–16 was read, along with its media acceptance matrix. No output filename was supplied in the delegation, so this owned media-path file is the durable handoff.
 

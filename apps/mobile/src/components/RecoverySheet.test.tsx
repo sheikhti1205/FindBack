@@ -101,8 +101,8 @@ function announcements(): string[] {
 describe("RecoverySheet", () => {
   it("asks who returned the item in reader words, with no server vocabulary", () => {
     renderSheet();
-    expect(screen.getByRole("radio", { name: /someone on findback/i })).toBeTruthy();
-    expect(screen.getByRole("radio", { name: /someone outside findback/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /someone on norfold/i })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /someone outside norfold/i })).toBeTruthy();
     expect(screen.getByRole("radio", { name: /i found it myself/i })).toBeTruthy();
     const text = document.body.textContent ?? "";
     expect(text).not.toContain("FINDBACK_USER");
@@ -121,7 +121,7 @@ describe("RecoverySheet", () => {
   it("marks an outside return without naming an account", async () => {
     const onRecovered = vi.fn();
     renderSheet({ onRecovered });
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
 
     await waitFor(() => expect(mockMarkRecovered).toHaveBeenCalledTimes(1));
@@ -150,7 +150,7 @@ describe("RecoverySheet", () => {
 
   it("finds another account and sends its id", async () => {
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     const search = screen.getByLabelText(/find the account/i);
     fireEvent.change(search, { target: { value: "ali" } });
 
@@ -167,9 +167,9 @@ describe("RecoverySheet", () => {
     });
   });
 
-  it("refuses to send a FindBack return without a selected account", async () => {
+  it("refuses to send a Norfold return without a selected account", async () => {
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     fireEvent.change(screen.getByLabelText(/find the account/i), { target: { value: "ali" } });
     await screen.findByRole("button", { name: /alice khan.*@alice/i });
     // No result selected yet: the action stays disabled rather than sending a
@@ -184,7 +184,7 @@ describe("RecoverySheet", () => {
     mockMarkRecovered.mockRejectedValueOnce(new ApiError("duplicate key", 409, "23505"));
     const onRecovered = vi.fn();
     renderSheet({ onRecovered });
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
 
     expect(await screen.findByTestId("recovery-error")).toBeTruthy();
@@ -200,7 +200,7 @@ describe("RecoverySheet", () => {
       new ApiError("This report is linked to a confirmed match; complete the handover instead", 400, "P0001"),
     );
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(await screen.findByText(/part of a match, so it can.t be marked recovered here/i)).toBeTruthy();
     expect(document.body.textContent ?? "").not.toMatch(/P0001|linked to a confirmed match/i);
@@ -209,7 +209,7 @@ describe("RecoverySheet", () => {
   it("phrases an ownership refusal without echoing the server", async () => {
     mockMarkRecovered.mockRejectedValueOnce(new ApiError("42501 permission denied", 403, "42501"));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(await screen.findByText(/only the owner of a report/i)).toBeTruthy();
     expect(document.body.textContent ?? "").not.toMatch(/42501|permission denied/i);
@@ -217,10 +217,10 @@ describe("RecoverySheet", () => {
 
   it("tells a self-helper apart from a FOUND report refusal", async () => {
     mockMarkRecovered.mockRejectedValueOnce(
-      new ApiError("A FindBack helper must be another account; mark a self-recovery as self or private", 400, "22023"),
+      new ApiError("A Norfold helper must be another account; mark a self-recovery as self or private", 400, "22023"),
     );
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     fireEvent.change(screen.getByLabelText(/find the account/i), { target: { value: "ali" } });
     fireEvent.click(await screen.findByRole("button", { name: /alice khan.*@alice/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
@@ -232,7 +232,7 @@ describe("RecoverySheet", () => {
     const onRate = vi.fn();
     const onClose = vi.fn();
     renderSheet({ onRate, onClose });
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     fireEvent.change(screen.getByLabelText(/find the account/i), { target: { value: "ali" } });
     fireEvent.click(await screen.findByRole("button", { name: /alice khan.*@alice/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
@@ -248,7 +248,7 @@ describe("RecoverySheet", () => {
   it("does not promise a rating for an outside or private return", async () => {
     const onRate = vi.fn();
     renderSheet({ onRate });
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     await screen.findByTestId("recovery-receipt");
     expect(screen.queryByRole("button", { name: /rate the return/i })).toBeNull();
@@ -265,7 +265,7 @@ describe("RecoverySheet", () => {
     const heard = announcements();
     const view = renderSheet({ onRecovered });
 
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(mockMarkRecovered).toHaveBeenCalledTimes(1);
 
@@ -292,7 +292,7 @@ describe("RecoverySheet", () => {
       <RecoverySheet open post={first} onClose={() => {}} onRecovered={onRecovered} />,
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     view.rerender(
       <RecoverySheet open post={second} onClose={() => {}} onRecovered={onRecovered} />,
@@ -309,7 +309,7 @@ describe("RecoverySheet", () => {
   it("announces the saved recovery once", async () => {
     const heard = announcements();
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     await screen.findByTestId("recovery-receipt");
     expect(heard).toEqual(["Recovery saved."]);
@@ -322,7 +322,7 @@ describe("RecoverySheet", () => {
     const heard = announcements();
     const view = renderSheet({ onRecovered });
 
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     view.rerender(
       <RecoverySheet open={false} post={view.post} onClose={() => {}} onRecovered={onRecovered} />,
@@ -348,7 +348,7 @@ describe("RecoverySheet", () => {
       <RecoverySheet open post={post} scopeKey="route:p1" onClose={() => {}} onRecovered={onRecovered} />,
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     view.rerender(
       <RecoverySheet open post={post} scopeKey="route:p2" onClose={() => {}} onRecovered={onRecovered} />,
@@ -380,12 +380,12 @@ describe("RecoverySheet", () => {
     let resolveMark: (value: string) => void = () => {};
     mockMarkRecovered.mockReturnValueOnce(new Promise<string>((resolve) => { resolveMark = resolve; }));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     const confirm = screen.getByRole("button", { name: /mark recovered/i });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(mockMarkRecovered).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("radio", { name: /someone outside findback/i }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("radio", { name: /someone outside norfold/i }).hasAttribute("disabled")).toBe(true);
     await act(async () => {
       resolveMark("ret-1");
       await Promise.resolve();
@@ -395,7 +395,7 @@ describe("RecoverySheet", () => {
   it("tells a missing helper apart from a missing report", async () => {
     mockMarkRecovered.mockRejectedValueOnce(new ApiError("Helper not found", 404, "P0002"));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(await screen.findByText(/that account is no longer available/i)).toBeTruthy();
     expect(screen.queryByText(/that report is no longer available/i)).toBeNull();
@@ -404,7 +404,7 @@ describe("RecoverySheet", () => {
   it("asks for the helper choice again on an unknown kind", async () => {
     mockMarkRecovered.mockRejectedValueOnce(new ApiError("Unknown helper kind", 400, "22023"));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     fireEvent.click(screen.getByRole("button", { name: /mark recovered/i }));
     expect(await screen.findByText(/choose who returned the item again/i)).toBeTruthy();
   });
@@ -418,7 +418,7 @@ describe("RecoverySheet", () => {
         : new Promise((resolve) => { resolveBob = resolve; }),
     );
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     const search = screen.getByLabelText(/find the account/i);
     fireEvent.change(search, { target: { value: "ali" } });
     await waitFor(() => expect(mockSearchProfiles).toHaveBeenCalledWith("ali"));
@@ -443,7 +443,7 @@ describe("RecoverySheet", () => {
     let resolveAli: (value: unknown[]) => void = () => {};
     mockSearchProfiles.mockImplementation(() => new Promise((resolve) => { resolveAli = resolve; }));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     const search = screen.getByLabelText(/find the account/i);
     fireEvent.change(search, { target: { value: "ali" } });
     await waitFor(() => expect(mockSearchProfiles).toHaveBeenCalledWith("ali"));
@@ -464,7 +464,7 @@ describe("RecoverySheet", () => {
         : new Promise((resolve) => { resolveBob = resolve; }),
     );
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     const search = screen.getByLabelText(/find the account/i);
     fireEvent.change(search, { target: { value: "ali" } });
     await waitFor(() => expect(mockSearchProfiles).toHaveBeenCalledWith("ali"));
@@ -491,13 +491,13 @@ describe("RecoverySheet", () => {
     let resolveAli: (value: unknown[]) => void = () => {};
     mockSearchProfiles.mockImplementation(() => new Promise((resolve) => { resolveAli = resolve; }));
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     fireEvent.change(screen.getByLabelText(/find the account/i), { target: { value: "ali" } });
     await waitFor(() => expect(mockSearchProfiles).toHaveBeenCalledWith("ali"));
-    fireEvent.click(screen.getByRole("radio", { name: /someone outside findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone outside norfold/i }));
     // Switch back BEFORE the old request settles. The visible account branch
     // now owns an empty query; the old response must not publish anything.
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     await act(async () => {
       resolveAli([{ id: "u2", username: "alice", displayName: "Alice Khan", avatarUrl: null }]);
       await Promise.resolve();
@@ -511,7 +511,7 @@ describe("RecoverySheet", () => {
   it("does not announce an empty result before the search actually runs", async () => {
     mockSearchProfiles.mockResolvedValueOnce([]);
     renderSheet();
-    fireEvent.click(screen.getByRole("radio", { name: /someone on findback/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /someone on norfold/i }));
     fireEvent.change(screen.getByLabelText(/find the account/i), { target: { value: "ali" } });
     expect(screen.queryByText("No matching accounts.")).toBeNull();
     expect(screen.getByText("Searching…")).toBeTruthy();
