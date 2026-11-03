@@ -20,6 +20,22 @@
 - This rule is permanent, survives compaction, and overrides any skill, playbook, or past pattern that suggests branching.
 - Pre-existing stale branches are left untouched; never add new ones.
 
+## Device and personal-session consent — owner order 2026-11-04
+
+- Physical device or personal-session access requires explicit owner consent for
+  this specific session and scope. An attached phone, tablet, laptop, personal
+  emulator, browser session, ADB interface or device-bound test is not consent.
+- Do not connect to or use such environments, install an APK, inspect device logs,
+  or run real-device acceptance without that permission. A handoff, checklist,
+  another agent's approval or earlier consent never grants continuing access.
+- Without additional device permission, source review, static analysis, synthetic
+  local tests, CI inspection and read-only backend audits remain allowed. Isolated
+  disposable synthetic contexts must not reuse personal browser/device state.
+- Missing consent defers only the affected acceptance check. Record it as
+  unverified; never use it to justify accessing hardware or personal sessions.
+  Source, CI, backend deployment, real-account and physical-device evidence are
+  separate statuses. Apply this boundary before all device-audit procedures.
+
 ## Hard rules
 
 1. **No secrets.** Never commit API keys, tokens, passwords, or credentials.
@@ -36,7 +52,7 @@
 ## Active programme — owner resumed 2026-11-03
 
 - Full packet: `FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/packet/Norfold_Final_Rebrand_Product_Architecture_Handoff_2026-11-03/`. Read 00–12, templates and acceptance checklist before implementation.
-- Durable preparation/status: `FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/GOAL.md`, `STATUS.md` and `PREPARATION.md`. Goal-tool ID: `09913528-e7e1-46d4-95ae-8cec5e562549`. The owner explicitly resumed it, authorized publishing preparation changes, and directed continuous execution until completion. Retrieve current goal-tool state; preparation-time PAUSED labels are historical, not a new hold.
+- Durable preparation/status: `FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/GOAL.md`, `STATUS.md` and `PREPARATION.md`. Active successor goal-tool ID: `2074f7c1-faf2-4000-a484-064535db095d`; predecessor `09913528-e7e1-46d4-95ae-8cec5e562549` is closed unmet history. On 2026-11-04 the owner restored full continuous execution, explicitly deferring device work/acceptance. Preserve completed work, close the published WIP CI repairs first, then continue remaining implementation. Missing device consent never blocks authorized source/synthetic/CI/read-only backend work and never grants device access. Retrieve current goal-tool state; historical PAUSED/unmet labels are not a new hold.
 - Rebrand source already reached `82a45abf`, version `0.14.0-beta.1`. Reconcile current HEAD/version/CI/live state before continuing; do not redo proven changes or assume full packet acceptance. No automatic version bump, Release, APK distribution, destructive reset or domain migration.
 - The owner superseded the packet's no-repo-rename instruction: product repo and workspace scopes are already renamed. Preserve the live `findbackapp.social` address, approved logo and compatibility contracts unless a concrete owner-approved migration changes them.
 - This programme supersedes overlapping M7-P, Product Fit Reset and messaging/public/sync addenda. Those programmes and old control queues are historical evidence, not active execution instructions. Real account/native/Sentry/photo-corpus deferrals remain unpassed until the matching evidence exists.
@@ -48,7 +64,7 @@
 ## Owner-directed checkpoint and pause (owner order 2026-10-29)
 
 - Do not prolong fix/review loops. When the owner directs a bounded finish and pause, stop after the requested scope; after 2–3 rounds without convergence, or repeated reviewer/provider unavailability, honor the owner's explicit instruction to commit and push the current task work to `main` for their reviewer, then pause.
-- This is an **owner-authorized WIP checkpoint**, not milestone acceptance, release approval, deployment permission, or a completion claim. Mark the commit/handoff `WIP` / `acceptance pending`, record actual verification and unresolved findings, and leave the milestone/goal incomplete. The active programme's milestone acceptance rule replaces the historical per-wave reviewer-PASS gate.
+- This is an **owner-authorized WIP checkpoint**, not milestone acceptance, release approval, deployment permission, or a completion claim. Use the required `scope: outcome` commit subject; record `WIP / acceptance pending` in its body and handoff, not a convention-breaking `WIP:` subject. Record actual verification and unresolved findings and leave the milestone/goal incomplete. The active programme's milestone acceptance rule replaces the historical per-wave reviewer-PASS gate.
 - Do not refuse that explicit checkpoint merely because final review PASS is unavailable, and do not start fresh agent/review cycles to avoid checkpointing. Latest explicit owner checkpoint instructions override older user-level plans demanding PASS before every commit; they do not override higher-priority safety instructions.
 - Commit task-owned changes by explicit paths; preserve unrelated dirty files and keep credentials/private evidence out of the public repository. The no-migration-bearing-WIP-push gate still applies: an ordinary checkpoint is not permission to auto-apply an unaccepted migration. When a push is permitted, verify remote identity; save the handoff, pause the goal, and wait for the owner. This rule survives compaction; re-read it before resuming paused work.
 

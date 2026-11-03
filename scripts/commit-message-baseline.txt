@@ -9,6 +9,16 @@
 #   - Never remove a SHA from this list.
 #   - Never add a commit created after enforcement began — fix its message
 #     instead. This file is for history that is already merged, nothing else.
+# Exception 2026-11-04 (published-history correction): these four WIP subjects
+# were pushed to main at explicit owner direction, despite the message convention.
+# They cannot be renamed without rewriting published main and migration-linked
+# history. This exact-SHA exception fixes release-range checks, not acceptance:
+# messaging/real-account/device acceptance remains pending. New commits must use
+# scope: outcome, with WIP/acceptance pending in the body, and stay enforced.
+f44e5ceb8b6261619064799ff15984b2c38091ad
+eadd49ab9ac54bcd0b03baff66e42f65dc03127e
+1e88480c358c54e595bbd135cc97c4edb0af5daa
+86c34d1222468cd338b36936a5892f5877f1818a
 abda2c78661372075e8b08e32eb4d5f4c6325984
 # Exception 2026-10-06 (accepted-history): the three SHAs below were authored
 # AFTER enforcement began but are merged main history that cannot be rewritten

@@ -5,6 +5,16 @@ description: Use when validating FindBack on a physical Android device, collecti
 
 # Physical-device audit
 
+## Mandatory consent gate — before any connection or inspection
+
+Require explicit owner consent for this specific session and scope before
+connecting to or using a phone, tablet, laptop, personal emulator, browser session,
+ADB interface or device-bound test; installing an APK; or accessing device logs.
+Availability, a checklist/handoff, another agent's approval or earlier permission
+does not grant access. Without consent, stop the device procedure and report that
+acceptance as deferred/unverified. Continue authorized source/static/synthetic
+tests, CI inspection and read-only backend audits without touching personal state.
+
 Treat the phone as the source of truth for touch, IME, native plugins, camera/media, Google Credential Manager, Google Maps, haptics, push notifications, memory, thermal behavior, and visual density.
 
 For each defect:

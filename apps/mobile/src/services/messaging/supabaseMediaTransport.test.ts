@@ -23,6 +23,7 @@ describe("canonical Supabase media composition", () => {
       bytes: metadata.byteSize, width: metadata.width, height: metadata.height };
     const network: typeof fetch = async (input, init) => {
       const req = new Request(input, init); requests.push(req);
+      if (req.url.endsWith("/chat-wake")) return Response.json({ ok: true });
       if (req.url.endsWith("findback_fetch_chat_media_delivery")) return Response.json([{ version: 1, ...publicMetadata,
         messageId: id(4), expiresAt: new Date(metadata.expiresAt!).toISOString() }]);
       if (req.url.endsWith("findback_ack_chat_media_delivery")) return new Response(null, { status: 204 });
@@ -39,12 +40,19 @@ describe("canonical Supabase media composition", () => {
     expect(await media.download(metadata)).toEqual(bytes);
     expect(await media.fetchDeliveries()).toHaveLength(1);
     await media.ack(id(3));
-    expect(requests).toHaveLength(4);
+    // Attachment upload commits before the recipient wake. Keep that side effect
+    // explicit rather than merely increasing the old transport request count.
+    expect(requests.map(req => new URL(req.url).pathname)).toEqual([
+      "/functions/v1/chat-media", "/functions/v1/chat-wake", "/functions/v1/chat-media",
+      "/rest/v1/rpc/findback_fetch_chat_media_delivery", "/rest/v1/rpc/findback_ack_chat_media_delivery",
+    ]);
     expect(await requests[0]!.arrayBuffer()).toEqual(bytes);
+    expect(requests[1]!.method).toBe("POST");
+    expect(await requests[1]!.json()).toEqual({ message_id: id(4) });
     for (const req of requests) expect(req.headers.get("authorization")).toBe("Bearer synthetic-token-a");
-    expect(await requests[2]!.json()).toEqual({ p_account_id: id(1), p_device_id: id(2) });
-    expect(await requests[3]!.json()).toEqual({ p_account_id: id(1), p_device_id: id(2), p_attachment_id: id(3) });
+    expect(await requests[3]!.json()).toEqual({ p_account_id: id(1), p_device_id: id(2) });
+    expect(await requests[4]!.json()).toEqual({ p_account_id: id(1), p_device_id: id(2), p_attachment_id: id(3) });
     controller.abort();
-    await expect(media.ack(id(3))).rejects.toThrow(); expect(requests).toHaveLength(4);
+    await expect(media.ack(id(3))).rejects.toThrow(); expect(requests).toHaveLength(5);
   });
 });

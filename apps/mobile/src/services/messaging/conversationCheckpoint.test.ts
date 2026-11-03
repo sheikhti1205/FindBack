@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,7 +22,8 @@ async function fixture(kind: "IndexedDB" | "SQLite") {
   const handles = new Set<MessagingHistory>();
   const factory = new IDBFactory();
   const mediaBytes = new FakeMediaBytes();
-  const dir = kind === "SQLite" ? mkdtempSync("/home/sheikh/fb-work/norfold-head-") : null;
+  // Disposable per-test DB, not a worktree, harness or retained evidence.
+  const dir = kind === "SQLite" ? mkdtempSync(join(tmpdir(), "norfold-head-")) : null;
   cleanups.push(async () => { for (const handle of handles) await handle.close(); if (dir) rmSync(dir, { recursive: true }); });
   async function open() {
     let history: MessagingHistory;
