@@ -24,7 +24,9 @@ for (const [file, job] of [["ci.yml", "check"], ["release.yml", "gate"]]) {
     const jobs = workflow.split(/(?=^ {2}[a-zA-Z0-9_-]+:\s*$)/m);
     const lane = jobs.find((part) => part.startsWith(`  ${job}:`));
     assert.ok(lane, `missing ${job} job`);
-    assert.match(lane, /npm test -w @findback\/mobile/);
+    const mobilePackage = JSON.parse(readFileSync("apps/mobile/package.json", "utf8")).name;
+    assert.ok(lane.includes(`npm test -w ${mobilePackage}`),
+      "the full suite must target the current mobile workspace");
     assert.ok(/node-version: 24\b/.test(lane),
       "the full suite requires Node 24.5+ navigator.locks and worker_threads.locks");
   });
