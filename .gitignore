@@ -58,6 +58,13 @@ tmp-*.mjs
 .serena/
 .superpowers/
 
+# Private coordination link/data: local only, never public product content.
+/FindBack-internal
+/FindBack-internal/
+
+# Local assistant alias uses AGENTS.md as the single rules source.
+/CLAUDE.md
+
 # Generated same-domain read-only share function + public configuration
 apps/share-preview-dist/
 

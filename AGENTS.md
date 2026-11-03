@@ -1,5 +1,11 @@
 # Norfold — Agent Rules (always loaded)
 
+## Project identity and private context — owner update 2026-11-03
+
+- This is `sheikhti1205/Norfold`, the former FindBack React/Capacitor lost-and-found product. It is NOT the retired Compose workspace `Norfold-App/norfold-compose-legacy`.
+- Read `FindBack-internal/00_CONTROL/START_HERE.md` inside this checkout. This ignored private-folder link points to the existing Drive data; never stage, force-add, copy into tracked files, or publish its contents.
+- Do not import the retired project's `Norfold-internal` coordination, Compose/editor phase rules or post-pass policy based on the Norfold name. Current source, the latest owner direction and this product's own control tree govern.
+
 ## Proportional execution — owner order 2026-11-02
 
 **Do the fucking task. Do not manufacture complexity and waste the owner's tokens.**
@@ -27,21 +33,15 @@
 9. **Resource discipline (owner order 2026-10-20).** Parallel subagents are allowed; parallel heavy commands are not. Run every npm/npx/vitest/tsc/eslint/gradle/build/Playwright command through `~/.config/opencode/bin/heavy-run` (machine-wide `heavy.lock`, vitest pools capped at 3, heap capped, niced); at most one heavy command machine-wide across all sessions; device proofs and heavy gates never overlap; children never fan out their own subagents; check `uptime`/`free -g` before launching. This machine has ~11 GiB RAM and 18 cores, and an unthrottled `vitest run <one file>` has already driven load past 24 and rebooted it.
 10. **No migration-bearing WIP push.** Migration-bearing WIP must not be pushed to main before milestone acceptance because linked Supabase automation may apply migrations on push. Keep the entire backend-dependent milestone local until migration + dependent code acceptance is green. Applied migrations are immutable; fix forward. After an accepted push, immediately verify the live migration state and relevant behavior. Pushing source does not deploy Edge Functions; verify their inventory/version and smoke separately.
 
-## Active programme — owner order 2026-10-29
+## Active programme — owner resumed 2026-11-03
 
-- **M7-P is the active milestone (owner order 2026-10-30/31).** Product Coherence,
-  Repository Simplification & Adaptive UI. Canonical spec:
-  `FindBack-internal/01_ACTIVE/beta-closure-2026-10-29/M7-P/` (packet + GOAL +
-  PREFLIGHT). Execute P0–P10 linearly. The packet supersedes the earlier product
-  REVIEW HOLD for M7-P scope only. Real browser/account, physical-device/native,
-  Sentry and owner phone-photo matching-corpus acceptance stay deferred and
-  unpassed. No per-screen review loops: one integrated P9 audit plus one material
-  repair verification. Backend additions are limited to safe public people search,
-  chat mute, report-linked message context and connected-only static location.
-
-- `FB-BETA-CLOSE-2026-10-29` replaces the old consumer-final, AI/motion and standalone chat execution queues. Canonical private entry: `FindBack-internal/01_ACTIVE/beta-closure-2026-10-29/GOAL.md`; start with `FindBack-internal/00_CONTROL/START_HERE.md`.
+- Full packet: `FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/packet/Norfold_Final_Rebrand_Product_Architecture_Handoff_2026-11-03/`. Read 00–12, templates and acceptance checklist before implementation.
+- Durable preparation/status: `FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/GOAL.md`, `STATUS.md` and `PREPARATION.md`. Goal-tool ID: `09913528-e7e1-46d4-95ae-8cec5e562549`. The owner explicitly resumed it, authorized publishing preparation changes, and directed continuous execution until completion. Retrieve current goal-tool state; preparation-time PAUSED labels are historical, not a new hold.
+- Rebrand source already reached `82a45abf`, version `0.14.0-beta.1`. Reconcile current HEAD/version/CI/live state before continuing; do not redo proven changes or assume full packet acceptance. No automatic version bump, Release, APK distribution, destructive reset or domain migration.
+- The owner superseded the packet's no-repo-rename instruction: product repo and workspace scopes are already renamed. Preserve the live `findbackapp.social` address, approved logo and compatibility contracts unless a concrete owner-approved migration changes them.
+- This programme supersedes overlapping M7-P, Product Fit Reset and messaging/public/sync addenda. Those programmes and old control queues are historical evidence, not active execution instructions. Real account/native/Sentry/photo-corpus deferrals remain unpassed until the matching evidence exists.
 - One active writer/coordinator on main. Read-only workers may support bounded research/audits; no independent writers or child fan-out.
-- Execute M0–M7 in order. Do not advance with unresolved current-milestone source/live/docs parity. Historical evidence remains reference, not a competing task queue or acceptance claim.
+- Follow the saved ZIP plan in order without routine pauses; escalate concrete access/safety/external-action blockers. Do not advance with unresolved current-milestone source/live/docs parity. Historical evidence remains reference, not a competing task queue or acceptance claim.
 - One bounded milestone audit, then material repairs and affected acceptance. A second audit only for a genuine P0/P1 security/data-integrity fix materially changing architecture; no third cycle without owner instruction. Reviewer/provider absence does not block ordinary code progress.
 - Keep the role-gated same-app staff console for this beta. Version reconstruction tracks every commit using DAG/version intervals/metadata/paths and targeted boundary diffs, not exhaustive adversarial re-review of every historical diff.
 
