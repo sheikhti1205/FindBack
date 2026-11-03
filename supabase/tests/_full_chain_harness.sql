@@ -59,6 +59,9 @@ create table auth.identities(
   identity_data jsonb,
   created_at timestamptz default now()
 );
+-- Only the columns used by application session admission. Synthetic rows do not
+-- establish JWT validation, GoTrue revocation or hosted session acceptance.
+create table auth.sessions(id uuid primary key, user_id uuid references auth.users(id) on delete cascade);
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 create function auth.role() returns text language sql stable as

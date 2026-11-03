@@ -1,28 +1,6 @@
-import { uuid } from "./validation";
-
-export interface DeviceIdentityScope {
-  backendUrl: string;
-  accountId: string;
-  deviceId: string;
-}
-
-/** Fixed metadata only: never a message, offer, credential or arbitrary signing oracle.
- * A server-issued single-use nonce and current roster must ALSO be validated by
- * the session owner. A valid signature alone is not current authorization. */
-export interface DeviceChallenge {
-  version: 1;
-  purpose: "REGISTER" | "PEER";
-  accountId: string;
-  signerDeviceId: string;
-  peerDeviceId: string;
-  sessionId: string;
-  nonce: string;
-  /** Hash of both actual DTLS certificate fingerprints, computed by the local
-   * transport owner. REGISTER uses all zeroes (no channel exists yet). */
-  channelBinding: string;
-  issuedAt: number;
-  expiresAt: number;
-}
+import { deviceChallengeBytes as challengeBytes, normalizeDeviceScope as normalizeScope,
+  type DeviceChallenge, type DeviceIdentityScope } from "../../../../../supabase/functions/_shared/deviceProof";
+export { verifyDeviceProof, type DeviceChallenge, type DeviceIdentityScope } from "../../../../../supabase/functions/_shared/deviceProof";
 
 export interface WebDeviceIdentity {
   /** Hex SEC1 public P-256 point. The private CryptoKey is never returned/exported. */
@@ -33,59 +11,11 @@ export interface WebDeviceIdentity {
 
 const KEY_ALGORITHM = { name: "ECDSA", namedCurve: "P-256" } as const;
 const SIGN_ALGORITHM = { name: "ECDSA", hash: "SHA-256" } as const;
-const CHALLENGE_FIELDS = ["version", "purpose", "accountId", "signerDeviceId", "peerDeviceId",
-  "sessionId", "nonce", "channelBinding", "issuedAt", "expiresAt"] as const;
-
-function normalizeScope(scope: DeviceIdentityScope): DeviceIdentityScope {
-  const url = new URL(scope.backendUrl);
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
-    || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error("Invalid device backend");
-  }
-  return { backendUrl: url.origin, accountId: uuid(scope.accountId), deviceId: uuid(scope.deviceId) };
-}
-
-function challengeBytes(scope: DeviceIdentityScope, proof: DeviceChallenge, now: number): Uint8Array<ArrayBuffer> {
-  if (!proof || typeof proof !== "object" || Object.keys(proof).length !== CHALLENGE_FIELDS.length
-    || CHALLENGE_FIELDS.some(field => !Object.hasOwn(proof, field))
-    || proof.version !== 1 || !["REGISTER", "PEER"].includes(proof.purpose)
-    || proof.accountId !== scope.accountId || proof.signerDeviceId !== scope.deviceId
-    || typeof proof.nonce !== "string" || !/^[0-9a-f]{64}$/.test(proof.nonce) || !Number.isSafeInteger(now)
-    || typeof proof.channelBinding !== "string" || !/^[0-9a-f]{64}$/.test(proof.channelBinding)
-    || !Number.isSafeInteger(proof.issuedAt) || proof.issuedAt < 0
-    || !Number.isSafeInteger(proof.expiresAt) || proof.expiresAt <= proof.issuedAt
-    || proof.expiresAt - proof.issuedAt > 120_000 || proof.issuedAt > now + 5_000
-    || proof.expiresAt <= now) throw new Error("Invalid device challenge");
-  uuid(proof.sessionId); uuid(proof.peerDeviceId);
-  if ((proof.purpose === "PEER") === (proof.peerDeviceId === scope.deviceId)) {
-    throw new Error("Invalid device challenge");
-  }
-  if ((proof.purpose === "REGISTER") !== (proof.channelBinding === "0".repeat(64))) {
-    throw new Error("Invalid device channel binding");
-  }
-  return new TextEncoder().encode(JSON.stringify(["norfold-device-proof", 1, scope.backendUrl,
-    proof.purpose, proof.accountId, proof.signerDeviceId, proof.peerDeviceId,
-    proof.sessionId, proof.nonce, proof.channelBinding, proof.issuedAt, proof.expiresAt]));
-}
 
 function hex(bytes: ArrayBuffer): string {
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** The scope/public key must come from the authenticated current registry, not
- * from a peer's claimed identity. Replay/roster/revocation checks remain mandatory. */
-export async function verifyDeviceProof(scope: DeviceIdentityScope, publicKey: string,
-  challenge: DeviceChallenge, signature: ArrayBuffer, options: { crypto?: Crypto; now: number }): Promise<boolean> {
-  try {
-    const bytes = challengeBytes(normalizeScope(scope), challenge, options.now);
-    if (!/^04[0-9a-f]{128}$/.test(publicKey) || !(signature instanceof ArrayBuffer) || signature.byteLength !== 64) return false;
-    const crypto = options.crypto ?? globalThis.crypto;
-    const raw = Uint8Array.from(publicKey.match(/../g)!, pair => Number.parseInt(pair, 16));
-    const key = await crypto.subtle.importKey("raw", raw, KEY_ALGORITHM, true, ["verify"]);
-    return await crypto.subtle.verify(SIGN_ALGORITHM, key, signature, bytes);
-  } catch { return false; }
-}
 
 function openKeys(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
