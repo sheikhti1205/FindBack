@@ -118,7 +118,7 @@ jobs:
           java-version: "21"
       - run: npm ci
       - name: Build shared package (client schemas and contracts)
-        run: npm run build -w @findback/shared
+        run: npm run build -w @norfold/shared
       - name: Typecheck all workspaces
         run: npm run typecheck
       - name: Lint
@@ -134,7 +134,7 @@ jobs:
       - name: Keyless map provider gate (no Google Maps/Places, MapLibre pin intact)
         run: node scripts/check-map-provider.mjs
       - name: Mobile tests
-        run: npm test -w @findback/mobile
+        run: npm test -w @norfold/mobile
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Same suites CI gates; enforced here too so a tag build cannot sign
         # with a verifier that has drifted from the ABI/signing contract.
@@ -148,13 +148,13 @@ jobs:
       - name: Strict installable-build config preflight
         run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs
       - name: Build mobile web dist (Capacitor webDir)
-        run: npm run build -w @findback/mobile
+        run: npm run build -w @norfold/mobile
         env:
           CI: true
       - name: Assert client config in gate bundle
         run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets
       - name: Capacitor sync
-        run: npm run cap:sync -w @findback/mobile
+        run: npm run cap:sync -w @norfold/mobile
       - name: Install pinned NDK + CMake (findback_probe native lib)
         # The native VLM/probe build pins NDK 29.0.13113456 + CMake 3.31.6
         # (variables.gradle). A clean runner has no NDK and no accepted
@@ -233,7 +233,7 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Build shared package
-        run: npm run build -w @findback/shared
+        run: npm run build -w @norfold/shared
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
       - name: Compute Sentry release identity (S3)
@@ -261,7 +261,7 @@ jobs:
           node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
           echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
       - name: Build mobile web dist (Capacitor webDir)
-        run: npm run build -w @findback/mobile
+        run: npm run build -w @norfold/mobile
         env:
           CI: true
           # S3 companion: opt in to hidden-sourcemap emission for this build ONLY.
@@ -318,7 +318,7 @@ jobs:
           fi
           echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Capacitor sync
-        run: npm run cap:sync -w @findback/mobile
+        run: npm run cap:sync -w @norfold/mobile
       - name: Install pinned NDK + CMake (findback_probe native lib)
         # Same pinned toolchain as the gate/CI: the signed build links the
         # native probe/VLM libraries, so a clean runner must have NDK

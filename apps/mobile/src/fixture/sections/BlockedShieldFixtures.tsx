@@ -1,4 +1,4 @@
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { BlockedByViewerShield } from "../../components/BlockedByViewerShield";
 import { PostList } from "../../components/PostList";
 import { SettingsGroup, SettingsRow } from "../../components/settings";

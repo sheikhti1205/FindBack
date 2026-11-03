@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Search, X } from "lucide-react";
 import { useSearchParams } from "react-router";
 import { useAuth } from "../auth";
-import type { PostType } from "@findback/shared";
+import type { PostType } from "@norfold/shared";
 import { Segmented } from "../components/Segmented";
 import { EmptyState } from "../components/PostCard";
 import { PostList } from "../components/PostList";

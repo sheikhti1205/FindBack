@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Heart } from "lucide-react";
-import type { ReactionKind, ReactionSummary } from "@findback/shared";
+import type { ReactionKind, ReactionSummary } from "@norfold/shared";
 import { announce } from "./LiveRegion";
 import { useFeedLove } from "../hooks/useFeedLove";
 import { likeMine, likeState, nextLikeReaction } from "../services/reactions";

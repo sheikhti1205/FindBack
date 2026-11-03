@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { extractYouTubeId, isReleasedCategory, type Category, type PostType } from "@findback/shared";
+import { extractYouTubeId, isReleasedCategory, type Category, type PostType } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { tiptapToMarkdown } from "../components/RichTextEditor";

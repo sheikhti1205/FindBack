@@ -24,7 +24,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { useAuth } from "../auth";
 import {
   ACCENT_OPTIONS,

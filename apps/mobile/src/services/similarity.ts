@@ -1,4 +1,4 @@
-import type { Category, PostType } from "@findback/shared";
+import type { Category, PostType } from "@norfold/shared";
 
 /** Bonus applied when the candidate shares the same category as the target. */
 export const CATEGORY_BONUS = 0.15;

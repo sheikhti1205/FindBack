@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 
 const { fetchPost } = vi.hoisted(() => ({ fetchPost: vi.fn() }));
 vi.mock("../services/posts", () => ({ fetchPost }));

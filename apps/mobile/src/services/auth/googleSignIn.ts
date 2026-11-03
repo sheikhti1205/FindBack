@@ -16,7 +16,7 @@
  * (fetchMe semantics are unchanged). Google avatar URLs persist only when
  * they point at Google hosts, else null. The idToken is never logged.
  */
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { Capacitor } from "@capacitor/core";
 import { getSupabase } from "../supabaseClient";
 import { ApiError, cacheSessionToken, getTokenRevision } from "../session";

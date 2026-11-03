@@ -58,7 +58,7 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
       - run: npm ci
       - name: Build shared package (types for mobile)
-        run: npm run build -w @findback/shared
+        run: npm run build -w @norfold/shared
       - name: Retained native source ownership (not device acceptance)
         run: |
           node scripts/check-native-retirement.mjs
@@ -70,7 +70,7 @@ jobs:
       - name: Build mobile web dist (Capacitor webDir)
         run: |
           node scripts/check-mobile-build-config.mjs --preflight
-          npm run build -w @findback/mobile
+          npm run build -w @norfold/mobile
           node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
@@ -79,7 +79,7 @@ jobs:
         # (missing webDir, misconfigured capacitor.config, …). The sync must
         # leave the android tree reproducible: any unexpected diff is shown.
         run: |
-          npm run cap:sync -w @findback/mobile
+          npm run cap:sync -w @norfold/mobile
           test -d apps/mobile/android/app/src/main/assets/public || { echo "cap sync did not stage web assets"; exit 1; }
           git status --porcelain -- apps/mobile/android || true
       - name: Kotlin compile + JVM unit tests

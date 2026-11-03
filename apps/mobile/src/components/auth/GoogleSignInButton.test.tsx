@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import {
   __resetGoogleSignInSeams,
   __setGoogleSignInSeams,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { PostLink } from "./PostNavigation";
 import { RefreshCw } from "lucide-react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { cancelMatch, confirmMatch, handoverMatch, listMyMatches, proposeMatch, type MyMatch } from "../services/matches";
 import type { PossibleMatch } from "../services/similarity";
 import { ApiError } from "../services/session";

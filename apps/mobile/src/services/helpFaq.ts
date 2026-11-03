@@ -1,4 +1,4 @@
-import { CATEGORY_CATALOG } from "@findback/shared";
+import { CATEGORY_CATALOG } from "@norfold/shared";
 import {
   MODEL_IDENTITY_ANSWER,
   checkAppClaim,

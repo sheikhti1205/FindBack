@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, X } from "lucide-react";
 import { PostTypeBadge } from "../components/PostTypeBadge";
 import { PostLink } from "../components/PostNavigation";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { EmptyView, ErrorView, Skeleton } from "../components/uiPrimitives";

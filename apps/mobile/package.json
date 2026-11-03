@@ -1,5 +1,5 @@
 {
-  "name": "@findback/mobile",
+  "name": "@norfold/mobile",
   "private": true,
   "version": "0.13.0-beta.1",
   "type": "module",
@@ -25,7 +25,7 @@
     "@capacitor/geolocation": "^8.1.0",
     "@capacitor/push-notifications": "^8.1.2",
     "@capacitor/share": "^8.0.3",
-    "@findback/shared": "*",
+    "@norfold/shared": "*",
     "@floating-ui/react": "^0.27.20",
     "@internationalized/date": "^3.12.4",
     "@sentry/capacitor": "^4.4.0",

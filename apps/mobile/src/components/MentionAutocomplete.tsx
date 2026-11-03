@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import type { SearchedProfile } from "@findback/shared";
+import type { SearchedProfile } from "@norfold/shared";
 import { searchProfilesByPrefix } from "../services/profile";
 import { UserAvatar } from "./UserAvatar";
 

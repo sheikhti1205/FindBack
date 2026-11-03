@@ -1,4 +1,4 @@
-import type { Category, PostType } from "@findback/shared";
+import type { Category, PostType } from "@norfold/shared";
 import type { LocationValue } from "../components/LocationPicker";
 import { storage } from "./storage";
 

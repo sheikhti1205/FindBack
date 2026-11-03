@@ -3,8 +3,8 @@ import type {
   ReactionCounts,
   ReactionKind,
   ReactionSummary,
-} from "@findback/shared";
-import { CANONICAL_REACTION_KINDS, LEGACY_REACTION_KINDS } from "@findback/shared";
+} from "@norfold/shared";
+import { CANONICAL_REACTION_KINDS, LEGACY_REACTION_KINDS } from "@norfold/shared";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";
 
@@ -25,7 +25,7 @@ import { getSupabase } from "./supabaseClient";
  * authority. Other kinds are historical read vocabulary only.
  */
 
-export type { ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
+export type { ReactionCounts, ReactionKind, ReactionSummary } from "@norfold/shared";
 
 /** Every valid wire kind, canonical first then legacy. */
 export const ALL_REACTION_KINDS: readonly ReactionKind[] = [

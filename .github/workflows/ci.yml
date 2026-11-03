@@ -71,7 +71,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build shared package (client schemas and contracts)
-        run: npm run build -w @findback/shared
+        run: npm run build -w @norfold/shared
       - name: Typecheck all workspaces
         run: npm run typecheck
       - name: Lint
@@ -93,7 +93,7 @@ jobs:
       - name: Keyless map provider gate (no Google Maps/Places, MapLibre pin intact)
         run: node scripts/check-map-provider.mjs
       - name: Mobile tests
-        run: npm test -w @findback/mobile -- --maxWorkers=2
+        run: npm test -w @norfold/mobile -- --maxWorkers=2
       - name: Release-infra script tests (signing, ABI, manifest, publish type)
         # Gates the release-script regressions (fingerprint parse order, ABI
         # completeness, full-SHA provenance, SemVer publish type) so an
@@ -120,7 +120,7 @@ jobs:
         run: |
           test -n "$VITE_SUPABASE_URL" && test -n "$VITE_SUPABASE_PUBLISHABLE_KEY"
           node scripts/check-mobile-build-config.mjs --preflight
-          npm run build -w @findback/mobile
+          npm run build -w @norfold/mobile
           node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
@@ -336,7 +336,7 @@ jobs:
           echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
           echo "VITE_SENTRY_DIST=android-debug" >> "$GITHUB_ENV"
       - name: Build mobile web dist (Capacitor webDir)
-        run: npm run build -w @findback/mobile
+        run: npm run build -w @norfold/mobile
         env:
           # Sentry is MANDATORY in installable APKs (S1). Required GitHub Actions
           # VARIABLES (repo Settings → Secrets and variables → Actions → Variables):
@@ -393,7 +393,7 @@ jobs:
           fi
           echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Capacitor sync
-        run: npm run cap:sync -w @findback/mobile
+        run: npm run cap:sync -w @norfold/mobile
       - name: Negative test — verifyBundledClientConfig fails on stale assets
         # Proves the packaging gate is not blind: stale all staged JS chunks, expect
         # the Gradle task to refuse packaging, then restore and expect success.

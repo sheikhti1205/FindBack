@@ -1,5 +1,5 @@
 import { createContext, useContext, useRef, type ReactNode } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { fetchPost } from "../services/posts";
 import { friendlyError } from "../utils/friendlyErrors";
 

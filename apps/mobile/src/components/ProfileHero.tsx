@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { StatusPill } from "./settings";
 import { UserAvatar } from "./UserAvatar";
 

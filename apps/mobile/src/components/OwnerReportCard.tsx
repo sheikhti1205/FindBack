@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { PostItem, PostStatus } from "@findback/shared";
-import { POST_STATUS_LABELS } from "@findback/shared";
+import type { PostItem, PostStatus } from "@norfold/shared";
+import { POST_STATUS_LABELS } from "@norfold/shared";
 import {
   CalendarDays,
   CircleAlert,

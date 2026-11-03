@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import {
   BootTimeoutError,
   fetchMe,

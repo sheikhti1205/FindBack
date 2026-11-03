@@ -7,7 +7,7 @@
  * invalid or uncertain stays empty — this module never guesses, never invents
  * coordinates, and fails closed to an empty patch when the op fails.
  */
-import { CATEGORIES, searchCategoryCatalog, type Category, type PostStatus, type PostType } from "@findback/shared";
+import { CATEGORIES, searchCategoryCatalog, type Category, type PostStatus, type PostType } from "@norfold/shared";
 import type { ModelProfile } from "../ai/modelProfiles";
 import { extractSearchFilters } from "../ai/ops/extractSearchFilters";
 import type { GenerateFn, SearchFilterFields } from "../ai/types";

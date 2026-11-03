@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { findPossibleMatches, resolveMatchingBackend } from "./possibleMatches";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 
 const { fetchMatchCandidates } = vi.hoisted(() => ({ fetchMatchCandidates: vi.fn() }));
 vi.mock("./posts", async (importOriginal) => ({ ...await importOriginal<typeof import("./posts")>(), fetchMatchCandidates }));

@@ -10,7 +10,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { IDBFactory } from "fake-indexeddb";
 import { locks } from "node:worker_threads";

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 
 import { OwnerReportActionsProvider, OwnerReportMenu } from "./OwnerReportActions";
 

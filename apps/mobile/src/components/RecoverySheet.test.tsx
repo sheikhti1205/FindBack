@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { ApiError } from "../services/session";
 
 const { mockMarkRecovered, mockSearchProfiles, mockInvalidate, viewer } = vi.hoisted(() => ({

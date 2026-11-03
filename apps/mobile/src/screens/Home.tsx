@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import type { PostType } from "@findback/shared";
+import type { PostType } from "@norfold/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeTopBar } from "./HomeTopBar";
 import { TopUtilities } from "../components/TopUtilities";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { extractYouTubeId } from "@findback/shared";
+import { extractYouTubeId } from "@norfold/shared";
 import { ExternalLink, PlayCircle } from "lucide-react";
 import { motionDurations, motionEasings } from "./uiMotion";
 

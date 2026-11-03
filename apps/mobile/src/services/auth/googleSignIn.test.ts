@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearAllAuth, getToken } from "../session";
 import { getPendingReportRoute, rememberReportLink } from "../../utils/pendingReportLink";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const hoisted = vi.hoisted(() => ({
   fetchMe: vi.fn(),

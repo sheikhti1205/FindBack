@@ -1,4 +1,4 @@
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { fetchMe } from "./auth";

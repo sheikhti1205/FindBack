@@ -7,7 +7,7 @@ import { TextField } from "../Fields";
 import { motionDurations, motionEasings } from "../uiMotion";
 import { checkUsername } from "../../services/auth";
 import { getPendingReportRoute } from "../../utils/pendingReportLink";
-import { USERNAME_CHECK_DEBOUNCE_MS, normalizePhone } from "@findback/shared";
+import { USERNAME_CHECK_DEBOUNCE_MS, normalizePhone } from "@norfold/shared";
 
 type UsernameState = "idle" | "loading" | "available" | "taken" | "invalid";
 

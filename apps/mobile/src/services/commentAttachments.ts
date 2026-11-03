@@ -4,7 +4,7 @@ import { normalizeImage } from "./image";
 import { diag } from "./diag";
 import { ACCEPTED_STILL_MIME_TYPES } from "./media/mediaPolicy";
 import type { ImportedImage } from "./media/importImage";
-import type { CommentReportReference } from "@findback/shared";
+import type { CommentReportReference } from "@norfold/shared";
 
 /**
  * Comment attachments.

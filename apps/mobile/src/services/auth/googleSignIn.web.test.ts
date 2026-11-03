@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearAllAuth, getToken } from "../session";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const hoisted = vi.hoisted(() => ({
   isNativePlatform: vi.fn(),

@@ -1,4 +1,4 @@
-import type { Category, PostType } from "@findback/shared";
+import type { Category, PostType } from "@norfold/shared";
 import { ApiError } from "./session";
 import { refusalStatus } from "../utils/interactionRefusal";
 import { getSupabase } from "./supabaseClient";

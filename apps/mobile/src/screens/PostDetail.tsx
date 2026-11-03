@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { motion } from "framer-motion";
 import { CalendarDays, CircleCheck, CornerDownRight, ExternalLink, Heart, MapPin, Pencil, Star, ThumbsDown, X } from "lucide-react";
-import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@findback/shared";
-import { OWNER_SELECTABLE_STATUSES } from "@findback/shared";
+import type { CommentItem, PostItem, PostStatus, ReactionCounts, ReactionKind, ReactionSummary } from "@norfold/shared";
+import { OWNER_SELECTABLE_STATUSES } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { BackButton } from "../components/BackButton";
 import { CommentIdentityHeader } from "../components/CommentIdentityHeader";

@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { PostItem, SearchedProfile } from "@findback/shared";
+import type { PostItem, SearchedProfile } from "@norfold/shared";
 import { AdaptiveTaskSurface } from "./AdaptiveTaskSurface";
 import { Button } from "./Button";
 import { TextField } from "./Fields";

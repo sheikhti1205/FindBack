@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
+import type { PostItem, PublicProfile as PublicProfileShape } from "@norfold/shared";
 import { fetchPublicProfile, appendReportPage, hasMoreReports } from "../services/profile";
 import { fetchFeed } from "../services/posts";
 import { fetchReputationTier, REPUTATION_TIER_LABELS } from "../services/trust";

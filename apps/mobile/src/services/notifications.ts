@@ -1,4 +1,4 @@
-import type { NotificationType, ReactionKind } from "@findback/shared";
+import type { NotificationType, ReactionKind } from "@norfold/shared";
 import { isReactionKind } from "./reactions";
 import { ApiError } from "./session";
 import { getSupabase } from "./supabaseClient";

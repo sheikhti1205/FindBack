@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import type { PostItem, PostStatus, PostType } from "@findback/shared";
-import { POST_STATUS_LABELS } from "@findback/shared";
+import type { PostItem, PostStatus, PostType } from "@norfold/shared";
+import { POST_STATUS_LABELS } from "@norfold/shared";
 import { BackButton } from "../components/BackButton";
 import { PostList } from "../components/PostList";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";

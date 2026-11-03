@@ -8,7 +8,7 @@ test('only shipping workspaces and commands remain; no retired API or container 
  for(const command of Object.values(pkg.scripts))assert.doesNotMatch(command,/services\/api|@findback\/api/);
  for(const p of ['services/api/package.json','Dockerfile','docker-compose.yml','scripts/report-activity.mjs'])assert.equal(existsSync(p),false,p);
  const lock=JSON.parse(read('package-lock.json'));
- assert.equal(lock.packages['services/api'],undefined);assert.equal(lock.packages['node_modules/@findback/api'],undefined);
+ assert.equal(lock.packages['services/api'],undefined);assert.equal(lock.packages['node_modules/@norfold/api'],undefined);
  const mobile=JSON.parse(read('apps/mobile/package.json'));
  assert.equal(mobile.devDependencies.vitest,'5.0.5','mobile owns its test runner, not the deleted API');
  assert.equal(lock.packages['apps/mobile'].devDependencies.vitest,'5.0.5');

@@ -1,6 +1,6 @@
 import { useId, useRef } from "react";
 import { motion } from "framer-motion";
-import type { PostType } from "@findback/shared";
+import type { PostType } from "@norfold/shared";
 import { CircleAlert, CircleCheck, Clock3, Inbox, MapPin } from "lucide-react";
 import { motionSprings } from "../components/uiMotion";
 import type { NearbyRadiusKm } from "../services/nearby";

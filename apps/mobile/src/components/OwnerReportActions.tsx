@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { PostItem, PostStatus } from "@findback/shared";
-import { OWNER_SELECTABLE_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@findback/shared";
+import type { PostItem, PostStatus } from "@norfold/shared";
+import { OWNER_SELECTABLE_STATUSES, POST_STATUS_LABELS, RESOLVED_STATUSES } from "@norfold/shared";
 import { CircleCheck, Copy, MoreVertical, Pencil, Share2, Trash2, Undo2 } from "lucide-react";
 import { ActionMenu, type MenuAction } from "./ActionMenu";
 

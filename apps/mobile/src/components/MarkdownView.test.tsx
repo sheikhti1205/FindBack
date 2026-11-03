@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router";
 import { MarkdownView } from "./MarkdownView";
 import { ReportPreviewProvider } from "./CommentReportPreviews";
 import { ApiError } from "../services/session";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
 const { fetchPost } = vi.hoisted(() => ({ fetchPost: vi.fn() }));

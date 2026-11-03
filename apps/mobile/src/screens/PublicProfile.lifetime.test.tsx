@@ -3,7 +3,7 @@ import { createContext, useContext } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FeedPage, PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
+import type { FeedPage, PostItem, PublicProfile as PublicProfileShape } from "@norfold/shared";
 
 const api = vi.hoisted(() => ({ profile: vi.fn(), feed: vi.fn() }));
 vi.mock("../services/profile", async (original) => ({

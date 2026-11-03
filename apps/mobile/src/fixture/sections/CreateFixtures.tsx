@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Category } from "@findback/shared";
+import type { Category } from "@norfold/shared";
 import { Button } from "../../components/Button";
 import { CategoryField } from "../../components/CategoryField";
 import { TextField } from "../../components/Fields";

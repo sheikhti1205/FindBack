@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import type { MyMatch } from "../services/matches";
 import { ApiError } from "../services/session";
 import { ReportMatches } from "./ReportMatches";

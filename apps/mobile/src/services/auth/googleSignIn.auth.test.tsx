@@ -11,7 +11,7 @@
  */
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const hoisted = vi.hoisted(() => ({
   restoreSession: vi.fn(),

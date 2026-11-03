@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { PostLink } from "./PostNavigation";
 import { motion } from "framer-motion";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { ImageOff, MapPin } from "lucide-react";
 import { formatEventDate } from "../utils/dates";
 import { PostTypeBadge } from "./PostTypeBadge";

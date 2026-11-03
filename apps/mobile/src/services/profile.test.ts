@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PostItem, PublicUser } from "@findback/shared";
+import type { PostItem, PublicUser } from "@norfold/shared";
 
 const { clientMock, fetchMeMock } = vi.hoisted(() => ({
   clientMock: { rpc: vi.fn() },

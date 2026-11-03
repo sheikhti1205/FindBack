@@ -322,7 +322,7 @@ describe("setCommentReaction", () => {
 
 describe("reactToPostSchema input widening (W3.3)", () => {
   it("accepts canonical kinds, legacy kinds, and null; rejects unknown kinds", async () => {
-    const { reactToPostSchema } = await import("@findback/shared");
+    const { reactToPostSchema } = await import("@norfold/shared");
     for (const type of ["LIKE", "DISLIKE", "LOVE", "HELPFUL", "SUPPORT", "WOW", null]) {
       expect(() => reactToPostSchema.parse({ type })).not.toThrow();
     }

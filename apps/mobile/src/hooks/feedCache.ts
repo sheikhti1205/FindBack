@@ -1,4 +1,4 @@
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import type { FeedFilters } from "../services/posts";
 import { nearbyCenterFingerprint } from "../services/nearby";
 

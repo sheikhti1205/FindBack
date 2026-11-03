@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { PostList } from "../../components/PostList";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import {

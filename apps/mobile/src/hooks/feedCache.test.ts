@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import {
   clearFeedCaches,
   getNewPostCount,

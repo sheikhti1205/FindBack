@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { motion } from "framer-motion";
 import { ImageOff } from "lucide-react";
 import { displaySizeOrNull } from "../services/media/displayDimensions";

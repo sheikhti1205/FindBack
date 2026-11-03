@@ -1,4 +1,4 @@
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { Bookmark } from "lucide-react";
 import { SafetyActions } from "./SafetyActions";
 import { useSavePostAction } from "./SavePostButton";

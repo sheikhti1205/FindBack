@@ -1,4 +1,4 @@
-import { CATEGORIES } from "@findback/shared";
+import { CATEGORIES } from "@norfold/shared";
 import { sharePreviewLink } from "../utils/reportLinks";
 
 export interface PublicReportPreview {

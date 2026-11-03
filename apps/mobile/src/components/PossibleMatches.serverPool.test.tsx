@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { findPossibleMatches } from "../services/possibleMatches";
 
 /** Ownership moved from the interim client block flag to the server reader.

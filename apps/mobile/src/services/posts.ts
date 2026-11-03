@@ -8,7 +8,7 @@ import type {
   PostType,
   ReactionKind,
   ReactionSummary,
-} from "@findback/shared";
+} from "@norfold/shared";
 import { assertWritableReactionKind, reactionSummaryFromRow } from "./reactions";
 import { mapCommentAttachmentRefs } from "./commentAttachments";
 import { ApiError } from "./session";

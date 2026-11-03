@@ -62,13 +62,13 @@ jobs:
           node -e 'const r=Number(process.env.SENTRY_RATE); if(!Number.isFinite(r)||r<0||r>1){console.error(`bad traces sample rate: ${process.env.SENTRY_RATE} (want number in 0..1)`);process.exit(1)} console.log(`traces sample rate OK: ${r}`)'
           echo "VITE_SENTRY_TRACES_SAMPLE_RATE=${RATE}" >> "$GITHUB_ENV"
       - name: Typecheck and test link routing
-        run: npm run typecheck && npm test -w @findback/mobile -- src/utils/reportLinks.test.ts src/components/ReportLinkHandler.test.tsx src/screens/SharedReport.test.tsx src/services/sharedPreview.test.ts --maxWorkers=2
+        run: npm run typecheck && npm test -w @norfold/mobile -- src/utils/reportLinks.test.ts src/components/ReportLinkHandler.test.tsx src/screens/SharedReport.test.tsx src/services/sharedPreview.test.ts --maxWorkers=2
       - name: Verify and package same-domain public preview renderer
         run: |
           node --test scripts/share-preview.test.mjs scripts/prepare-share-preview.test.mjs
           node scripts/prepare-share-preview.mjs apps/share-preview-dist
       - name: Build static web surface
-        run: npm run build -w @findback/mobile
+        run: npm run build -w @norfold/mobile
         env:
           SENTRY_UPLOAD_SOURCEMAPS: "true"
       - name: Assert Sentry DSN host + release in built JS

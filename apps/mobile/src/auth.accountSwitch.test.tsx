@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const seams = vi.hoisted(() => ({
   callback: undefined as ((event: string, session: unknown) => void) | undefined,

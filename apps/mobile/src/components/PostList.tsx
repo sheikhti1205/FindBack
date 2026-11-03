@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { AnimatePresence, motion } from "framer-motion";
 import { FileQuestion } from "lucide-react";
 import { PostCard } from "./PostCard";

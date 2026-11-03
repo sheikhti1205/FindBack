@@ -1,4 +1,4 @@
-import type { SearchedProfile } from "@findback/shared";
+import type { SearchedProfile } from "@norfold/shared";
 import { getSupabase } from "./supabaseClient";
 import { isValidAvatarObjectKey } from "./avatar";
 

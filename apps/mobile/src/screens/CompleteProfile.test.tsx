@@ -30,7 +30,7 @@ vi.mock("../auth", () => ({ useAuth: () => authMock }));
 
 import { checkUsername } from "../services/auth";
 import { SupabaseConfigError } from "../services/supabaseClient";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import {
   __resetCompleteSocialProfile,
   __setCompleteSocialProfile,

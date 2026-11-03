@@ -7,7 +7,7 @@
  */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const auth = vi.hoisted(() => ({
   user: null as PublicUser | null,

@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { ChevronRight } from "lucide-react";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { UserAvatar } from "../../components/UserAvatar";
 
 /**

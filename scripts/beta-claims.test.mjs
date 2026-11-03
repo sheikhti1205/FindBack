@@ -57,7 +57,7 @@ test("retired lab workflow is not an executable CI queue; useful model/native ch
 test("retained native workflows invoke the supported config preflight before building", () => {
   for (const path of [".github/workflows/local-intelligence-native.yml", ".github/workflows/local-intelligence-models.yml"]) {
     const source = read(path);
-    const build = source.indexOf("npm run build -w @findback/mobile");
+    const build = source.indexOf("npm run build -w @norfold/mobile");
     assert.ok(build > 0, path);
     const preflight = [...source.matchAll(/^\s*node scripts\/check-mobile-build-config\.mjs(.*)$/gm)]
       .find(match => match.index < build);

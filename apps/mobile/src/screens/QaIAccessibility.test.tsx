@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 
 const authState = vi.hoisted(() => ({
   user: null as PublicUser | null,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { copyStaticLocation, isUuid } from "../services/messaging/validation";
 import { subscribeSafetyChanged } from "../services/safetySignals";
 import { onRealtime } from "../services/realtime";

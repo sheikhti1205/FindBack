@@ -21,7 +21,7 @@
  *   a result that resolves after a newer request started must be discarded
  *   by the UI, never rendered into another request's panel.
  */
-import { isReleasedCategory, type Category } from "@findback/shared";
+import { isReleasedCategory, type Category } from "@norfold/shared";
 import type { ModelProfile } from "./ai/modelProfiles";
 import { extractReportFields } from "./ai/ops/extractReportFields";
 import type {

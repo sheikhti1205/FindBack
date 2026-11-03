@@ -3,7 +3,7 @@ import type {
   PostItem,
   PostStatus,
   PublicProfile,
-} from "@findback/shared";
+} from "@norfold/shared";
 
 /**
  * L-FIXTURE deterministic factories. Every field is a fixed literal — no

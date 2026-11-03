@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { motion } from "framer-motion";
 import { MapPin, Tag } from "lucide-react";
 import { timeAgo } from "../utils/dates";

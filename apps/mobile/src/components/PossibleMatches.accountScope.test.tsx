@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { useLayoutEffect } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import type { PossibleMatchesResult } from "../services/possibleMatches";
 
 const state = vi.hoisted(() => ({ account: "viewer-a" as string | null, find: vi.fn(), preferences: vi.fn(), apply: vi.fn() }));

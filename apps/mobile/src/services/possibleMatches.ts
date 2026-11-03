@@ -2,7 +2,7 @@ import { MATCH_CANDIDATE_LIMIT, fetchMatchCandidates } from "./posts";
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
 import { embeddingInput, embedTexts, validateEmbeddingVectors } from "./embeddings";
 import { stripMarkdown } from "../utils/stripMarkdown";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { cosineSimilarity, rankMatches, rankTextMatches, type MatchCandidate, type PossibleMatch, MIN_COSINE_CUTOFF } from "./similarity";
 
 /** Matching engine selection. USE is the default incumbent; Needle is an

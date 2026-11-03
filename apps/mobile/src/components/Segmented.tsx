@@ -1,6 +1,6 @@
 import { useId, useRef } from "react";
 import { motion } from "framer-motion";
-import type { PostStatus, PostType } from "@findback/shared";
+import type { PostStatus, PostType } from "@norfold/shared";
 import { motionSprings } from "./uiMotion";
 
 interface SegmentedProps<T extends string> {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FeedPage, PostItem } from "@findback/shared";
+import type { FeedPage, PostItem } from "@norfold/shared";
 import { fetchFeed, type FeedFilters } from "../services/posts";
 import { friendlyError } from "../utils/friendlyErrors";
 import { recordLoadTiming } from "../utils/loadTiming";

@@ -15,7 +15,7 @@
  *   a mid-flight abort returns CANCELLED and never triggers fallback side
  *   effects (no retry, no second op, no apply).
  */
-import { isReleasedCategory, type Category } from "@findback/shared";
+import { isReleasedCategory, type Category } from "@norfold/shared";
 import type { ModelProfile } from "./ai/modelProfiles";
 import {
   classifyCategory,

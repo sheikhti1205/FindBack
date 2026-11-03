@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { CommentItem } from "@findback/shared";
+import type { CommentItem } from "@norfold/shared";
 import { UserIdentityTrigger } from "./UserIdentityTrigger";
 import { UserAvatar } from "./UserAvatar";
 import { timeAgo } from "../utils/dates";

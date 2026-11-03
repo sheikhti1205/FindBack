@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Button, Dialog, DialogTrigger, Heading } from "react-aria-components";
 import { useSearchParams } from "react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { CATEGORIES, POST_STATUSES, type Category, type PostStatus, type PostType } from "@findback/shared";
+import { CATEGORIES, POST_STATUSES, type Category, type PostStatus, type PostType } from "@norfold/shared";
 import { SlidersHorizontal, X } from "lucide-react";
 import { AdaptiveTaskSurface } from "../components/AdaptiveTaskSurface";
 import { LayeredPopover } from "../components/overlayFoundation";

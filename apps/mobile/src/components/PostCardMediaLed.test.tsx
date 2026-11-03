@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // W7B-HOME (FBX-019) media-led structure: separators over container chrome.
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

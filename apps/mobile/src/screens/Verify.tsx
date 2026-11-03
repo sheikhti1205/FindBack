@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { CheckCircle2 } from "lucide-react";
-import { normalizePhone } from "@findback/shared";
+import { normalizePhone } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { motionDurations, motionEasings } from "../components/uiMotion";

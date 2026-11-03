@@ -8,7 +8,7 @@ import {
   RELEASED_CATEGORIES,
   isReleasedCategory,
   searchCategoryCatalog,
-} from "@findback/shared";
+} from "@norfold/shared";
 
 const REPO_ROOT = resolve(process.cwd(), "../..");
 const MIGRATION = resolve(REPO_ROOT, "supabase/migrations/20260926000001_category_expansion.sql");

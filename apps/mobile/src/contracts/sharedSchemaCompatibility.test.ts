@@ -1,7 +1,7 @@
 // Shared consumer contracts retained independently of the retired Node API.
 import { describe, expect, it } from "vitest";
-import { createPostSchema, feedQuerySchema, loginSchema, registerSchema, updatePostSchema } from "@findback/shared";
-import { toFieldErrors } from "@findback/shared";
+import { createPostSchema, feedQuerySchema, loginSchema, registerSchema, updatePostSchema } from "@norfold/shared";
+import { toFieldErrors } from "@norfold/shared";
 
 describe("shared validation compatibility across the patched Zod upgrade", () => {
   it("preserves feed coercion/defaults and rejects out-of-range limits", () => {

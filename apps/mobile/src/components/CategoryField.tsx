@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import type { Category } from "@findback/shared";
-import { CATEGORY_GROUPS, isReleasedCategory, RELEASED_CATEGORIES, searchCategoryCatalog } from "@findback/shared";
+import type { Category } from "@norfold/shared";
+import { CATEGORY_GROUPS, isReleasedCategory, RELEASED_CATEGORIES, searchCategoryCatalog } from "@norfold/shared";
 import { Check, ChevronDown, Lock, Search, X } from "lucide-react";
 import { BottomSheet } from "./BottomSheet";
 import { AnimatedNote } from "./Fields";

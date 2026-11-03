@@ -5,7 +5,7 @@ import {
   normalizePhone,
   toFieldErrors,
   registerSchema,
-} from "@findback/shared";
+} from "@norfold/shared";
 
 describe("shared validation + helpers", () => {
   it("validates username rules", () => {

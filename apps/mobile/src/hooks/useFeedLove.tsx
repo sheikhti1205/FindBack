@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { PostItem, ReactionKind, ReactionSummary } from "@findback/shared";
+import type { PostItem, ReactionKind, ReactionSummary } from "@norfold/shared";
 import {
   applyCountDeltas,
   likeMine,

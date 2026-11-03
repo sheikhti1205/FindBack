@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // W5 functional StatusChip colors: data-status → functional chip class, and
 // the chip never binds the user accent (accent owns principal actions only).
-import type { PostItem, PostStatus, PostType } from "@findback/shared";
+import type { PostItem, PostStatus, PostType } from "@norfold/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { CircleAlert, CircleCheck, Link2, Lock } from "lucide-react";
 
 type SemanticStatusKind = "lost" | "found" | "matched" | "recovered" | "closed";

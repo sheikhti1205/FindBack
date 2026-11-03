@@ -1,5 +1,5 @@
 import { CircleAlert, CircleCheck } from "lucide-react";
-import type { PostType } from "@findback/shared";
+import type { PostType } from "@norfold/shared";
 
 /**
  * The one Lost/Found badge. Reuses the home-feed badge primitives and always

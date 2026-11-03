@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import { normalizePhone } from "@findback/shared";
+import { normalizePhone } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { saveProfilePhone } from "../services/auth";
 import { updateMyProfile } from "../services/profile";

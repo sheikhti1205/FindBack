@@ -107,12 +107,12 @@ jobs:
       - name: Build mobile web dist (Capacitor webDir)
         run: |
           node scripts/check-mobile-build-config.mjs --preflight
-          npm run build -w @findback/mobile
+          npm run build -w @norfold/mobile
           node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
         env:
           CI: true
       - name: Capacitor sync
-        run: npm run cap:sync -w @findback/mobile
+        run: npm run cap:sync -w @norfold/mobile
       - name: Android JVM tests + debug APK
         run: cd apps/mobile/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug --max-workers=2
       - name: Strict APK scan (USE allowlist, no retired JNI, per-ABI embedding JNI)

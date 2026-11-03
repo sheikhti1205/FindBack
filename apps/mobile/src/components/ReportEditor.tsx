@@ -1,8 +1,8 @@
 import { type ReactNode, type RefObject, useRef, useState } from "react";
-import { extractYouTubeId } from "@findback/shared";
+import { extractYouTubeId } from "@norfold/shared";
 import { isValidPostYouTubeUrl } from "../utils/youtubeUrl";
 import { isFutureDate } from "../utils/dates";
-import type { Attachment, Category, PostItem, PostType } from "@findback/shared";
+import type { Attachment, Category, PostItem, PostType } from "@norfold/shared";
 import type { Editor } from "@tiptap/react";
 import { TextField } from "./Fields";
 import { Segmented } from "./Segmented";

@@ -1,5 +1,5 @@
 import { createContext, useContext, type ComponentType, type ReactNode } from "react";
-import type { SearchedProfile } from "@findback/shared";
+import type { SearchedProfile } from "@norfold/shared";
 import { UserQuickCard } from "./UserQuickCard";
 
 export type PublicIdentity = Pick<SearchedProfile, "id" | "username"> & Partial<Pick<SearchedProfile, "displayName" | "avatarUrl">> & {

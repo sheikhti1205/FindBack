@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PostItem, PublicProfile as PublicProfileShape } from "@findback/shared";
+import type { PostItem, PublicProfile as PublicProfileShape } from "@norfold/shared";
 
 const { fetchPublicProfileMock, fetchFeedMock, authState, submitReport, fetchReputationTierMock } = vi.hoisted(() => ({
   fetchPublicProfileMock: vi.fn(),

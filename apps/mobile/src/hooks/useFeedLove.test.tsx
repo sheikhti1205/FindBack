@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FeedLoveProvider, useFeedLove } from "./useFeedLove";

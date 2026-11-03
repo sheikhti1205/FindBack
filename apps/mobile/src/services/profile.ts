@@ -1,5 +1,5 @@
-import type { PostItem, PublicProfile, PublicUser, SearchedProfile } from "@findback/shared";
-import { normalizePhone } from "@findback/shared";
+import type { PostItem, PublicProfile, PublicUser, SearchedProfile } from "@norfold/shared";
+import { normalizePhone } from "@norfold/shared";
 import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { fetchMe } from "./auth";

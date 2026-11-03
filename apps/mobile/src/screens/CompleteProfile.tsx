@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
-import type { PublicUser } from "@findback/shared";
-import { normalizePhone, USERNAME_CHECK_DEBOUNCE_MS } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
+import { normalizePhone, USERNAME_CHECK_DEBOUNCE_MS } from "@norfold/shared";
 import { useAuth } from "../auth";
 import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";

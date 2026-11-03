@@ -1,4 +1,4 @@
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { PostCard } from "../../components/PostCard";
 import { PostCardContent } from "../../components/PostCardContent";
 import { PostList } from "../../components/PostList";

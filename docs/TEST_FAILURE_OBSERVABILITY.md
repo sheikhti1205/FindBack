@@ -14,7 +14,7 @@ captures the next failure with its full identity:
 ```sh
 mkdir -p test-evidence/mobile-repeat
 for i in $(seq 1 20); do
-  npm test -w @findback/mobile > "test-evidence/mobile-repeat/run-$i.log" 2>&1 \
+  npm test -w @norfold/mobile > "test-evidence/mobile-repeat/run-$i.log" 2>&1 \
     || { echo "first failure at run $i — see run-$i.log"; break; }
 done
 ```

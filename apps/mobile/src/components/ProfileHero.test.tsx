@@ -2,7 +2,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
-import type { PublicUser } from "@findback/shared";
+import type { PublicUser } from "@norfold/shared";
 import { ProfileHero, initialsFor } from "./ProfileHero";
 
 const verifiedUser: PublicUser = {

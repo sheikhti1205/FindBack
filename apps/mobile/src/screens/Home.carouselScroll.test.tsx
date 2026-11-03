@@ -6,7 +6,7 @@
 // all 146 tests while carousels still reset the chrome. This file mounts the
 // real `PostList` so the real `FeedMediaCarousel` is in the tree under the real
 // handler.
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

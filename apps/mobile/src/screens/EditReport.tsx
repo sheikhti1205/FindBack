@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useBlocker, useNavigate, useParams, type BlockerFunction } from "react-router";
-import { RESOLVED_STATUSES, type PostItem } from "@findback/shared";
+import { RESOLVED_STATUSES, type PostItem } from "@norfold/shared";
 import { useIsPresent } from "framer-motion";
 import { AdaptiveTaskSurface, ConfirmDialog } from "../components/AdaptiveTaskSurface";
 import { useAuth } from "../auth";

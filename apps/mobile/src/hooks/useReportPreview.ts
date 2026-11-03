@@ -1,5 +1,5 @@
 import { useEffect, useReducer } from "react";
-import type { PostItem } from "@findback/shared";
+import type { PostItem } from "@norfold/shared";
 import { useReportPreviewStore } from "../components/CommentReportPreviews";
 
 /**
