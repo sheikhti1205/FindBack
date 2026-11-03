@@ -350,8 +350,8 @@ public final class GoogleAuthPlugin extends Plugin {
      *   <li>{@code GetCredentialProviderConfigurationException} →
      *       {@code misconfigured} (console/SHA/client setup — never device
      *       state);
-     *   <li>{@code NoCredentialException} → {@code unavailable} (in practice
-     *       no authorized Google account; the exact class is in logcat);
+     *   <li>{@code NoCredentialException} → {@code no_credential} (bounded
+     *       authorized-account fallback; final JS failure stays unavailable);
      *   <li>{@code GetCredentialUnsupportedException} → {@code unavailable}
      *       (no Credential Manager / Play Services; exact class in logcat);
      *   <li>cancellation/interruption → {@code cancelled} (silent on UI);
@@ -363,8 +363,12 @@ public final class GoogleAuthPlugin extends Plugin {
             || error instanceof GetCredentialInterruptedException) {
             return "cancelled";
         }
-        if (error instanceof NoCredentialException
-            || error instanceof GetCredentialUnsupportedException) {
+        if (error instanceof NoCredentialException) {
+            // Preserve the precise retry signal; JS maps final failure back to
+            // unavailable but may retry once without the authorized filter.
+            return "no_credential";
+        }
+        if (error instanceof GetCredentialUnsupportedException) {
             return "unavailable";
         }
         if (error instanceof GetCredentialProviderConfigurationException) {
@@ -417,6 +421,7 @@ public final class GoogleAuthPlugin extends Plugin {
             case "cancelled":
                 return "Google sign-in was cancelled.";
             case "unavailable":
+            case "no_credential":
                 return "Google sign-in is not available.";
             case "misconfigured":
                 return "Google sign-in is not configured.";

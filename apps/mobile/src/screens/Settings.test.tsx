@@ -106,6 +106,15 @@ function rootHrefs(): string[] {
   );
 }
 
+it.each([false, true])("offers explicit logout identity retention without saving a password (keep=%s)", async keepAccount => {
+  renderSettings();
+  const control = screen.getByRole("switch", { name: "Keep this account on this device" });
+  expect(control.getAttribute("aria-checked")).toBe("false");
+  if (keepAccount) fireEvent.click(control);
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await waitFor(() => expect(mockLogout).toHaveBeenCalledWith({ keepAccount }));
+});
+
 describe("summary helpers", () => {
   it("composes the appearance value from live theme and accent", () => {
     expect(appearanceSummary("dark", "emerald")).toBe("Dark · Emerald");

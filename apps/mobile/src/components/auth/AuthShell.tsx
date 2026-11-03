@@ -39,11 +39,11 @@ export function AuthShell({
       className="fb-auth-shell mx-auto flex w-full max-w-md flex-col justify-center gap-6 bg-surface text-on-surface"
     >
       <header className="flex flex-col gap-3">
-        <Link to="/" onClick={leaveAuth} className="flex min-h-11 items-center gap-2.5 rounded-m3-xs focus-visible:outline-2 focus-visible:outline-primary">
+        <Link to="/" state={{ showPublic: true }} onClick={leaveAuth} className="flex min-h-11 items-center gap-2.5 rounded-m3-xs focus-visible:outline-2 focus-visible:outline-primary">
           <BrandMark size={44} shape="tile" alt="" />
           <span className="text-lg font-semibold tracking-tight">{PRODUCT_NAME}</span>
         </Link>
-        <Link to="/" onClick={leaveAuth} className="inline-flex min-h-11 items-center text-sm text-primary">Back to Norfold</Link>
+        <Link to="/" state={{ showPublic: true }} onClick={leaveAuth} className="inline-flex min-h-11 items-center text-sm text-primary">Back to Norfold</Link>
         {illustration && (
           <span
             aria-hidden="true"

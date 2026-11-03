@@ -47,6 +47,7 @@ import { startPushNotifications, stopPushNotifications } from "./services/pushRu
 import { clearUserScopedLocalState } from "./services/userScopedState";
 import { aiCredentials } from "./services/aiCredentials";
 import { purgeMessagingAccount } from "./services/messaging/runtime";
+import { rememberAccount, refreshRememberedAccount, removeRememberedAccount } from "./services/rememberedAccounts";
 import {
   beginConfirmedAccountDeletion, finishAccountAuthCleanup, inspectPendingAccountDeletions,
   type PendingAccountDeletion,
@@ -85,7 +86,7 @@ interface AuthContextValue {
   verifyPendingEmail: (code: string) => Promise<PublicUser>;
   /** Resend the pending-signup confirmation code. */
   resendPendingEmail: () => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (options?: { keepAccount?: boolean }) => Promise<void>;
   deletionCompletion: { accountId: string; state: "cleaning" | "complete" | "cleanup-failed" } | null;
   /** Inventory failure is not evidence that an account was deleted. */
   deletionRecoveryError: boolean;
@@ -140,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (next !== null) assertAccount(next.id);
     if (next !== null) clearSessionExpired();
     if (next !== null) lastAccount.current = next.id;
+    if (next !== null) refreshRememberedAccount(next);
     currentUser.current = next;
     publishUser(next);
   }, [assertAccount]);
@@ -453,7 +455,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [setUserState]);
 
-  const logout = useCallback(() => cleanAccountOnDevice(currentUser.current?.id ?? sdkAccount.current), [cleanAccountOnDevice]);
+  const logout = useCallback(async (options?: { keepAccount?: boolean }) => {
+    const account = currentUser.current;
+    const accountId = account?.id ?? sdkAccount.current;
+    if (accountId) {
+      const updated = options?.keepAccount && account && !unadmittedDeletions.current.has(accountId)
+        ? rememberAccount(account) : removeRememberedAccount(accountId);
+      if (!updated) throw new Error("Couldn't update saved accounts on this device. Try again.");
+    }
+    await cleanAccountOnDevice(accountId);
+  }, [cleanAccountOnDevice]);
 
   const publishDeletion = useCallback((ticket: number, accountId: string, state: "cleaning" | "complete" | "cleanup-failed") => {
     if (!mounted.current || ticket !== deletionPresentation.current) return;
@@ -466,15 +477,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const performDeletionCleanup = useCallback(async (entry: PendingAccountDeletion) => {
     const failures: unknown[] = [];
+    const identityRemoved = removeRememberedAccount(entry.accountId);
+    let authPending = entry.authPending, authRevision = entry.authRevision;
+    if (!identityRemoved) {
+      failures.push(new Error("Saved account could not be removed."));
+      // Recovery of an older media-only entry must also retain durable auth
+      // authority before its last independent media acknowledgment is allowed.
+      if (!authPending) { authRevision = await beginConfirmedAccountDeletion(entry.accountId); authPending = true; }
+    }
     // Start captured-account media cleanup even if key/session work fails. Its
     // rejection is handled immediately, not left unhandled during a slow vault.
     const messaging = entry.messagingPending
       ? purgeMessagingAccount(entry.accountId).catch((error: unknown) => { failures.push(error); })
       : Promise.resolve();
-    if (entry.authPending) {
+    if (authPending) {
       try {
         await cleanAccountOnDevice(entry.accountId);
-        await finishAccountAuthCleanup(entry.accountId, entry.authRevision);
+        // Metadata is part of account cleanup. Never lose its restart/retry
+        // discovery merely because SDK/key/media cleanup already succeeded.
+        if (identityRemoved) await finishAccountAuthCleanup(entry.accountId, authRevision);
       } catch (error) { failures.push(error); }
     }
     await messaging;
@@ -495,6 +516,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Trusted confirmed-A seam. The screen calls this only after the server
     // verifies A's deletion; being signed in as B cannot abandon captured A.
     const ticket = ++deletionPresentation.current;
+    removeRememberedAccount(accountId);
     unadmittedDeletions.current.add(accountId);
     publishDeletion(ticket, accountId, "cleaning");
     try {

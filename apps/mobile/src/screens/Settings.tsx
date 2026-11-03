@@ -40,6 +40,7 @@ import {
   SettingsPage,
   SettingsRow,
   SettingsSearch,
+  PreferenceSwitchRow,
 } from "../components/settings";
 import { SettingsProfileHeader } from "./settings/SettingsProfileHeader";
 import { SettingsNestedGroup } from "./settings/SettingsNestedGroup";
@@ -147,6 +148,8 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   const [notifValue, setNotifValue] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [retention, setRetention] = useState<{ id: string; keep: boolean } | null>(null);
+  const keepAccount = retention?.id === user?.id && retention?.keep === true;
   // The staff console entry is offered only to an account the SERVER says is
   // an ADMIN. An unreadable role leaves it hidden: the server refuses
   // everything an ordinary account asks for, so the client never offers what
@@ -215,7 +218,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
     if (signingOut) return;
     setSigningOut(true);
     setSignOutError(null);
-    void logout()
+    void logout({ keepAccount })
       .catch((err: unknown) => {
         setSignOutError(friendlyError(err).message);
       })
@@ -425,9 +428,17 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
             </SettingsNestedGroup>
           </SettingsGroup>
           <div className="fb-settings-signout">
-            <SettingsGroup>
-              <SettingsRow
-                title={signingOut ? "Signing out…" : "Sign out"}
+          <SettingsGroup>
+            <PreferenceSwitchRow
+              title="Keep this account on this device"
+              description="Save your name and email for next time, not your password."
+              icon={UserRound}
+              checked={keepAccount}
+              onChange={keep => setRetention({ id: user.id, keep })}
+              disabled={signingOut}
+            />
+            <SettingsRow
+              title={signingOut ? "Signing out…" : "Sign out"}
                 icon={LogOut}
                 destructive
                 disabled={signingOut}

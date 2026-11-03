@@ -98,6 +98,25 @@ describe("isGoogleAuthAvailable", () => {
 });
 
 describe("startGoogleSignIn option mapping", () => {
+  it.each(["top", "nested"])("retries no authorized credential once with all accounts and no phone (%s code)", async slot => {
+    const reason = slot === "top" ? { code: "no_credential" } : { data: { code: "no_credential" } };
+    fakeBridge.signIn.mockRejectedValueOnce(reason).mockResolvedValueOnce({ idToken: TOKEN, nonce: "retry-nonce" });
+    await expect(startGoogleSignIn({ mode: "signin" })).resolves.toMatchObject({ idToken: TOKEN, nonce: "retry-nonce" });
+    expect(fakeBridge.signIn.mock.calls.map(call => call[0])).toEqual([{ filterByAuthorizedAccounts: true }, { filterByAuthorizedAccounts: false }]);
+  });
+
+  it.each(["cancelled", "unavailable", "network", "misconfigured"])("does not retry %s as if no authorized credential", async code => {
+    fakeBridge.signIn.mockRejectedValue({ code });
+    await expect(startGoogleSignIn({ mode: "signin" })).rejects.toMatchObject({ kind: code });
+    expect(fakeBridge.signIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds no-credential fallback to two total requests", async () => {
+    fakeBridge.signIn.mockRejectedValue({ code: "no_credential" });
+    await expect(startGoogleSignIn({ mode: "signin" })).rejects.toMatchObject({ kind: "unavailable" });
+    expect(fakeBridge.signIn).toHaveBeenCalledTimes(2);
+  });
+
   it("signin uses authorized-accounts-only with no phone request", async () => {
     fakeBridge.signIn.mockResolvedValue({ idToken: TOKEN, nonce: "n-signin" });
     await startGoogleSignIn({ mode: "signin" });

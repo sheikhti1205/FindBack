@@ -17,7 +17,8 @@
  *     it.
  *
  * Mode mapping (never combined):
- *   - `signin` → `filterByAuthorizedAccounts=true`, no phone request,
+ *   - `signin` → authorized accounts first, then all accounts only after
+ *     no_credential; neither attempt requests phone permission,
  *   - `signup` → `filterByAuthorizedAccounts=false` +
  *     `requestVerifiedPhoneNumber=true` (Android only, enforced by the
  *     platform guard above and re-checked natively).
@@ -147,6 +148,11 @@ function extractKind(reason: unknown): GoogleAuthFailureKind {
   }
 }
 
+function isNoCredential(reason: unknown): boolean {
+  const record = asRecord(reason);
+  return (typeof record["code"] === "string" ? record["code"] : asRecord(record["data"])["code"]) === "no_credential";
+}
+
 function availabilityKind(raw: unknown): GoogleAuthFailureKind {
   const record = asRecord(raw);
   if (record["available"] === true) return "unknown";
@@ -230,7 +236,14 @@ export async function startGoogleSignIn(opts: {
 
   let raw: unknown;
   try {
-    raw = await android.signIn(payload);
+    try {
+      raw = await android.signIn(payload);
+    } catch (reason) {
+      if (opts.mode !== "signin" || !isNoCredential(reason)) throw reason;
+      // One bounded fallback, never on cancellation, unsupported device,
+      // configuration or network errors. Native mints a fresh nonce per call.
+      raw = await android.signIn({ filterByAuthorizedAccounts: false });
+    }
   } catch (reason) {
     if (reason instanceof GoogleAuthError) throw reason;
     const kind = extractKind(reason);

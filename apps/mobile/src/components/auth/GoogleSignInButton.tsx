@@ -109,7 +109,6 @@ function humanMessageFor(err: unknown): string | null {
 }
 
 export function GoogleSignInButton({
-  mode,
   onDone,
   returnTo,
 }: {
@@ -156,7 +155,9 @@ export function GoogleSignInButton({
       // never logged, printed, or embedded in any error/message. The nonce is
       // required: S2 is never called without one (no downgrade to
       // skip-nonce-check).
-      const token = await activeSeams.startGoogleSignIn({ mode });
+      // One consumer entry, including the sign-up form. No signup-only phone
+      // permission request; missing profiles continue through normal completion.
+      const token = await activeSeams.startGoogleSignIn({ mode: "signin" });
       if (!token.nonce) {
         throw Object.assign(
           new Error("Google sign-in failed. Please try again."),

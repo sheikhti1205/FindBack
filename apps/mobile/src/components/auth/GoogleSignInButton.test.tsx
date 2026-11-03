@@ -70,7 +70,7 @@ describe("GoogleSignInButton (S3)", () => {
     expect(document.activeElement).toBe(button);
   });
 
-  it("calls startGoogleSignIn({mode}) then sign-in with the id token and forwards the outcome", async () => {
+  it.each(["signin", "signup"] as const)("uses the unified Google path without signup extras from %s", async mode => {
     const seed = {
       email: "new@example.com",
       name: "New User",
@@ -94,7 +94,7 @@ describe("GoogleSignInButton (S3)", () => {
     });
     const onDone = vi.fn();
     configureAvailable({ start, signIn });
-    render(<GoogleSignInButton mode="signin" onDone={onDone} />);
+    render(<GoogleSignInButton mode={mode} onDone={onDone} />);
     fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(start).toHaveBeenCalledWith({ mode: "signin" });

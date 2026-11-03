@@ -88,6 +88,7 @@ import { RequireAuth } from "./components/Guards";
 import { storage } from "./services/storage";
 import { ApiError } from "./services/session";
 import { clearSessionExpired, sessionExpiredPending } from "./services/sessionExpiry";
+import { readRememberedAccounts, rememberAccount, removeRememberedAccount } from "./services/rememberedAccounts";
 
 const USER_A: PublicUser = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -124,6 +125,7 @@ function probeHarness(capture: { current: { logout: () => Promise<void>; user: P
 }
 
 beforeEach(() => {
+  for (const account of readRememberedAccounts()) removeRememberedAccount(account.id);
   vi.stubGlobal("indexedDB", new IDBFactory());
   Object.defineProperty(navigator, "locks", { value: locks, configurable: true });
   hoisted.storedSession = false;
@@ -149,6 +151,72 @@ afterEach(async () => {
 });
 
 describe("F08 AuthProvider logout purges AI provider credentials", () => {
+  it("keeps only consented identity metadata on logout, not a new login", async () => {
+    const capture: { current: AuthState | null } = { current: null };
+    const Harness = probeHarness(capture); render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    expect(readRememberedAccounts()).toEqual([]);
+    await act(async () => { await capture.current!.logout({ keepAccount: true }); });
+    expect(readRememberedAccounts().map(a => a.id)).toEqual([USER_A.id]);
+    expect(capture.current?.user).toBeNull();
+    expect(JSON.stringify(readRememberedAccounts())).not.toContain(USER_A.phone);
+  });
+
+  it("ordinary logout forgets this identity without removing another retained account", async () => {
+    rememberAccount(USER_A); rememberAccount({ ...USER_A, id: USER_B_ID, username: "bob", email: "bob@example.com" });
+    const capture: { current: AuthState | null } = { current: null };
+    const Harness = probeHarness(capture); render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    await act(async () => { await capture.current!.logout(); });
+    expect(readRememberedAccounts().map(a => a.id)).toEqual([USER_B_ID]);
+  });
+
+  it("confirmed deletion forgets its captured identity even if another account is displayed", async () => {
+    rememberAccount(USER_A);
+    const userB = { ...USER_A, id: USER_B_ID, username: "bob", email: "bob@example.com" };
+    rememberAccount(userB);
+    const capture: { current: AuthState | null } = { current: null };
+    const Harness = probeHarness(capture); render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    act(() => capture.current!.setUser(userB));
+    await act(async () => { await capture.current!.finishAccountDeletion(USER_A.id); });
+    expect(readRememberedAccounts().map(a => a.id)).toEqual([USER_B_ID]);
+    expect(capture.current?.user?.id).toBe(USER_B_ID);
+  });
+
+  it.each(["retry", "restart"])("keeps failed identity removal durably pending, then erases only A after storage recovers (%s)", async recovery => {
+    rememberAccount(USER_A);
+    const userB = { ...USER_A, id: USER_B_ID, username: "bob", email: "bob@example.com" };
+    rememberAccount(userB);
+    const capture: { current: AuthState | null } = { current: null };
+    const Harness = probeHarness(capture); render(<Harness />);
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    act(() => capture.current!.setUser(userB));
+    const set = Storage.prototype.setItem, remove = Storage.prototype.removeItem;
+    const setSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (key === "findback.rememberedAccounts") throw new Error("denied");
+      set.call(this, key, value);
+    });
+    const removeSpy = vi.spyOn(Storage.prototype, "removeItem").mockImplementation(function (this: Storage, key) {
+      if (key === "findback.rememberedAccounts") throw new Error("denied");
+      remove.call(this, key);
+    });
+    await act(async () => { await expect(capture.current!.finishAccountDeletion(USER_A.id)).rejects.toThrow(); });
+    const pending = (await deletionRegistry.inspectPendingAccountDeletions()).pending;
+    expect(pending).toContainEqual(expect.objectContaining({ accountId: USER_A.id, authPending: true, messagingPending: false }));
+    expect(capture.current?.user?.id).toBe(USER_B_ID);
+    setSpy.mockRestore(); removeSpy.mockRestore();
+    if (recovery === "restart") {
+      cleanup(); hoisted.restoreSession.mockResolvedValue(userB); render(<Harness />);
+      await waitFor(() => expect(capture.current?.booting).toBe(false));
+      await waitFor(() => expect(capture.current?.deletionCompletion?.state).not.toBe("cleaning"));
+      await waitFor(async () => expect((await deletionRegistry.inspectPendingAccountDeletions()).pending).toEqual([]));
+    } else await act(async () => { await capture.current!.retryDeletionCleanup(); });
+    expect(readRememberedAccounts().map(a => a.id)).toEqual([USER_B_ID]);
+    expect((await deletionRegistry.inspectPendingAccountDeletions()).pending).toEqual([]);
+    expect(capture.current?.user?.id).toBe(USER_B_ID);
+  });
+
   it("passes a live account guard to push, invalidated synchronously by the SDK", async () => {
     hoisted.startPush.mockClear();
     const capture = { current: null } as Parameters<typeof probeHarness>[0];

@@ -73,3 +73,23 @@ users, deployed functions or history:
   two-account messaging, native-device or full programme acceptance. Publication
   and deployed CI/web outcomes are verified separately; no version bump, database
   change, domain migration or Release is included here.
+
+## Returning accounts
+
+- Session restoration still finishes before guest entry. Incomplete profiles and
+  protected destinations retain priority over the account chooser.
+- Sign out offers **Keep this account on this device**. Only a chosen account's
+  name, username and email are retained for normal sign-in prefill; saved names
+  never authenticate anyone. Multiple accounts can be selected or removed, and
+  **Use another account** starts without a saved address.
+- No passwords, Google tokens or copied SDK sessions are stored by this feature.
+  Confirmed account deletion removes its retained identity with durable retry;
+  a failed storage read is not treated as proof that private metadata is absent.
+- **Continue with Google** uses the same consumer path from sign-in and sign-up.
+  Android tries authorized accounts first, then makes at most one all-accounts
+  attempt only for a precise no-credential result. Neither consumer attempt asks
+  for signup-only phone permission.
+- Focused source verification: 297 tests, mobile typecheck and changed-path lint
+  passed. The actual Android classifier compiled and its JVM regression passed.
+  Real OAuth, physical-device behavior and full product-architecture acceptance
+  remain separate required evidence; this is not an APK distribution or Release.

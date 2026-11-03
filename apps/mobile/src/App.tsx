@@ -77,7 +77,7 @@ import { postBackgroundLocation, PostNavigationProvider } from "./components/Pos
 import { PostModal } from "./components/PostModal";
 import { UserIdentityProvider } from "./components/UserIdentityTrigger";
 import { PeerIdentityActions } from "./components/PeerIdentityActions";
-import { PublicWelcome } from "./screens/PublicWelcome";
+import { SignedOutEntry } from "./screens/RememberedAccounts";
 import { clearAuthReturnTo, getAuthReturnRoute, peekAuthReturnTo } from "./utils/authReturnTo";
 
 function MessagingLifecycle() {
@@ -96,7 +96,7 @@ function StartScreen() {
   if (user) return <Shell />;
   if (needsProfile) return <Navigate to="/complete-profile" replace />;
   if (getAuthReturnRoute() !== "/") return <Navigate to="/auth" replace />;
-  return <PublicWelcome />;
+  return <SignedOutEntry />;
 }
 
 /**

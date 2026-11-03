@@ -46,8 +46,8 @@ vi.mock("@capacitor/app", () => ({
 }));
 vi.mock("./screens/CompleteProfile", () => ({ CompleteProfileRoute: () => <p>CompleteProfile screen</p> }));
 vi.mock("./screens/AuthGateway", () => ({
-  AuthGateway: ({ initialMode = "email" }: { initialMode?: string }) => (
-    <p>Gateway:{initialMode}</p>
+  AuthGateway: ({ initialMode = "email", initialEmail = "" }: { initialMode?: string; initialEmail?: string }) => (
+    <><p>Gateway:{initialMode}</p><output data-testid="prefill">{initialEmail}</output></>
   ),
 }));
 const marker = vi.hoisted(() => (name: string) => () => <p>{name} screen</p>);
@@ -91,6 +91,7 @@ vi.mock("./screens/Diagnostics", () => ({ Diagnostics: marker("Diagnostics") }))
 
 import { ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION } from "./services/onboarding";
 import { App, createAppRouter } from "./App";
+import { readRememberedAccounts, rememberAccount } from "./services/rememberedAccounts";
 let router: ReturnType<typeof createAppRouter> | undefined;
 
 const origin = "https://findbackapp.social";
@@ -219,10 +220,12 @@ describe("consumer route map", () => {
 
   it("waits for Web session restoration and retains boot error retry", () => {
     native.platform = false;
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
     auth.booting = true;
     renderAt("/");
     expect(screen.queryByRole("heading", { name: "Lost something?" })).toBeNull();
     expect(screen.queryByText("Gateway:email")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
     expect(router?.state.location.pathname).toBe("/");
     cleanup();
     auth.booting = false;
@@ -235,6 +238,7 @@ describe("consumer route map", () => {
   it("restores an authenticated Web user to Home", () => {
     native.platform = false;
     signedIn();
+    rememberAccount(auth.user!);
     renderAt("/");
     expect(screen.getByText("Home screen")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Lost something?" })).toBeNull();
@@ -242,6 +246,7 @@ describe("consumer route map", () => {
 
   it.each(["/", "/onboarding"])("resumes an incomplete profile from %s before onboarding or pending links", route => {
     native.platform = false;
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
     auth.needsProfile = { accountId: "u1", email: "route@test.example", name: null, avatarUrl: null, phone: "", suggestedUsername: "route_user" };
     sessionStorage.setItem("findback.pendingReportLink", JSON.stringify({ url: `${origin}/r/${postId}`, expiresAt: Date.now() + 60_000 }));
     renderAt(route);
@@ -252,12 +257,64 @@ describe("consumer route map", () => {
 
   it("keeps a fresh Web guest's pending report intact and bypasses onboarding to unified auth", () => {
     native.platform = false;
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
     sessionStorage.setItem("findback.pendingReportLink", JSON.stringify({ url: `${origin}/r/${postId}`, expiresAt: Date.now() + 60_000 }));
     renderAt("/");
     expect(screen.getByText("Gateway:email")).toBeTruthy();
     expect(router?.state.location.pathname).toBe("/auth");
     expect(sessionStorage.getItem("findback.pendingReportLink")).toContain(postId);
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("offers remembered identities only as normal sign-in prefill, never a session", () => {
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
+    renderAt("/");
+    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeTruthy();
+    expect(screen.queryByText("Home screen")).toBeNull();
+    expect(screen.queryByText("routes@test.example")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continue as route-tester, @route-tester" }));
+    expect(screen.getByText("Gateway:signin")).toBeTruthy();
+    expect(screen.getByTestId("prefill").textContent).toBe("routes@test.example");
+    expect(auth.user).toBeNull();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("uses another account without remembered email prefill", () => {
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
+    renderAt("/");
+    fireEvent.click(screen.getByRole("button", { name: "Use another account" }));
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(screen.getByTestId("prefill").textContent).toBe("");
+    expect(readRememberedAccounts()).toHaveLength(1);
+  });
+
+  it("removes metadata and keeps a usable empty chooser with focused escape", () => {
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
+    renderAt("/");
+    fireEvent.click(screen.getByRole("button", { name: "Remove route-tester, @route-tester from this device" }));
+    expect(readRememberedAccounts()).toEqual([]);
+    expect(screen.getByText("No accounts saved on this device.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Use another account" })).toBe(document.activeElement);
+  });
+
+  it("explicit Back shows the public site without forgetting identities or looping", () => {
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
+    renderAt("/");
+    fireEvent.click(screen.getByRole("link", { name: "Back to Norfold" }));
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(readRememberedAccounts()).toHaveLength(1);
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
+  it("distinguishes accounts with the same display name in Continue and Remove controls", () => {
+    signedIn(); const account = auth.user!;
+    rememberAccount({ ...account, displayName: "Same Name" });
+    rememberAccount({ ...account, id: "second", username: "second_person", email: "second@test.example", displayName: "Same Name" });
+    auth.user = null; renderAt("/");
+    expect(screen.getByRole("button", { name: "Continue as Same Name, @route-tester" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue as Same Name, @second_person" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove Same Name, @route-tester from this device" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove Same Name, @second_person from this device" })).toBeTruthy();
   });
 
   it("keeps the exact background mounted under a contextual report and returns on Close", async () => {
