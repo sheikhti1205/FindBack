@@ -6,6 +6,10 @@
 #
 # Required secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF (or the
 # SUPABASE_PROJECT_REF variable), SUPABASE_DB_PASSWORD.
+#
+# Every `functions deploy` passes `--yes`: the runner has no TTY, and without it
+# the CLI prints "Confirmation required … Nothing was changed" and exits 1, so a
+# dispatched run looked like a deploy failure while production stayed untouched.
 # After every run, verify live:
 #   anon GET /rest/v1/users?select=*  -> 401
 #   anon POST /rest/v1/rpc/is_username_available -> true/false boolean only
@@ -94,14 +98,14 @@ jobs:
           supabase link --project-ref "$PROJECT_REF"
           # Server-to-server only: the function enforces its own
           # x-findback-dispatch-secret, so the gateway JWT check is redundant.
-          supabase functions deploy push-dispatch --no-verify-jwt
+          supabase functions deploy push-dispatch --no-verify-jwt --yes
       - name: Deploy reply-comment
         if: inputs.deploy_reply_comment
         run: |
           supabase link --project-ref "$PROJECT_REF"
           # Server-to-server only: the device presents a single-use reply token,
           # not a Supabase session.
-          supabase functions deploy reply-comment --no-verify-jwt
+          supabase functions deploy reply-comment --no-verify-jwt --yes
       - name: Deploy cleanup-comment-media
         if: inputs.deploy_cleanup_comment_media
         run: |
@@ -110,7 +114,7 @@ jobs:
           # gateway JWT verification must be OFF for backend secret API keys.
           # Deploy only after the chain through 20261102220000 is live
           # (private reservations + TTL purge + pending-status RPC).
-          supabase functions deploy cleanup-comment-media --no-verify-jwt
+          supabase functions deploy cleanup-comment-media --no-verify-jwt --yes
       - name: Deploy cleanup-report-media
         if: inputs.deploy_cleanup_report_media
         run: |
@@ -120,7 +124,7 @@ jobs:
           # 20261102120000_p11_authority_closure (queue + purge RPCs) is live.
           # Do not force-uninstall or vacuum; queued keys stay until storage
           # removal succeeds.
-          supabase functions deploy cleanup-report-media --no-verify-jwt
+          supabase functions deploy cleanup-report-media --no-verify-jwt --yes
       - name: Deploy chat-wake
         if: inputs.deploy_chat_wake
         run: |
@@ -129,7 +133,7 @@ jobs:
           # database whether that account sent the message; the gateway JWT
           # check would only duplicate that. Deploy only after
           # 20261102120000_p11_authority_closure (message-scoped claim) is live.
-          supabase functions deploy chat-wake --no-verify-jwt
+          supabase functions deploy chat-wake --no-verify-jwt --yes
       # NOTE: delete-account is intentionally NOT deployed by this workflow.
       # No delete-account pattern exists here or elsewhere in CI; it deploys
       # separately, owner-side, after explicit auth review.
@@ -142,24 +146,24 @@ jobs:
           # JWT check would only duplicate that, and it cannot express the
           # service-owned delivery path. Deploy only after the chat media
           # authorization migrations are live.
-          supabase functions deploy chat-media --no-verify-jwt
+          supabase functions deploy chat-media --no-verify-jwt --yes
       - name: Deploy cleanup-chat-media
         if: inputs.deploy_cleanup_chat_media
         run: |
           supabase link --project-ref "$PROJECT_REF"
           # Internal sweeper only: the canonical wrapper enforces the server
           # secret. No anonymous or user route may sweep private media.
-          supabase functions deploy cleanup-chat-media --no-verify-jwt
+          supabase functions deploy cleanup-chat-media --no-verify-jwt --yes
       - name: Deploy copy-chat-evidence
         if: inputs.deploy_copy_chat_evidence
         run: |
           supabase link --project-ref "$PROJECT_REF"
           # Internal moderation-evidence worker only: the canonical wrapper
           # enforces the server secret and claims work from the evidence queue.
-          supabase functions deploy copy-chat-evidence --no-verify-jwt
+          supabase functions deploy copy-chat-evidence --no-verify-jwt --yes
       - name: Deploy trust-maintenance
         if: inputs.deploy_trust_maintenance
         run: |
           supabase link --project-ref "$PROJECT_REF"
           # Internal secret-auth worker; only after accepted M3 migration rollout.
-          supabase functions deploy trust-maintenance --no-verify-jwt
+          supabase functions deploy trust-maintenance --no-verify-jwt --yes
