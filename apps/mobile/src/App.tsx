@@ -77,6 +77,8 @@ import { postBackgroundLocation, PostNavigationProvider } from "./components/Pos
 import { PostModal } from "./components/PostModal";
 import { UserIdentityProvider } from "./components/UserIdentityTrigger";
 import { PeerIdentityActions } from "./components/PeerIdentityActions";
+import { PublicWelcome } from "./screens/PublicWelcome";
+import { clearAuthReturnTo, getAuthReturnRoute, peekAuthReturnTo } from "./utils/authReturnTo";
 
 function MessagingLifecycle() {
   const { user } = useAuth();
@@ -89,9 +91,12 @@ function MessagingLifecycle() {
 }
 
 function StartScreen() {
-  // All hosts enter through the same session-first guards. GuestOnly at /auth
-  // owns incomplete-profile, pending-link and first-run onboarding decisions.
-  return <RequireAuth><Shell /></RequireAuth>;
+  const { user, booting, bootError, needsProfile } = useAuth();
+  if (booting || (bootError && !user)) return <Splash />;
+  if (user) return <Shell />;
+  if (needsProfile) return <Navigate to="/complete-profile" replace />;
+  if (getAuthReturnRoute() !== "/") return <Navigate to="/auth" replace />;
+  return <PublicWelcome />;
 }
 
 /**
@@ -113,6 +118,11 @@ function AppMotionConfig({ children }: { children: ReactNode }) {
 // existing descendant route tree; a data router enables supported blockers
 // for every navigation source (links, imperative navigation and history POP).
 export function createAppRouter() {
+  // Direct public links work on the existing hash-routed web/native app.
+  // Deliberately do not reinterpret provider callbacks, share paths or queries.
+  if (!window.location.hash && ["/privacy", "/terms", "/community-guidelines"].includes(window.location.pathname)) {
+    window.history.replaceState(window.history.state, "", `/${window.location.search}#${window.location.pathname}`);
+  }
   return createHashRouter([{ path: "*", element: <AppRouteTree /> }]);
 }
 
@@ -138,6 +148,9 @@ export function App({ router }: { router: ReturnType<typeof createAppRouter> }) 
 function AppRouteTree() {
   const location = useLocation();
   const { user } = useAuth();
+  useEffect(() => {
+    if (user && peekAuthReturnTo() === `${location.pathname}${location.search}${location.hash}`) clearAuthReturnTo();
+  }, [user, location.pathname, location.search, location.hash]);
   const background = postBackgroundLocation(location, user?.id ?? null);
   return (
     <>
@@ -150,7 +163,10 @@ function AppRouteTree() {
             <ReportDeletionFeedbackProvider>
              <UserIdentityProvider actions={PeerIdentityActions}><PostNavigationProvider value={user?.id ?? null}>
             <Routes location={background ?? location}>
-             <Route path="/shared/:id" element={<SharedReport />} />
+              <Route path="/shared/:id" element={<SharedReport />} />
+              <Route path="/privacy" element={<main className="nf-public-document"><PrivacyPolicy publicView /></main>} />
+              <Route path="/terms" element={<main className="nf-public-document"><Terms publicView /></main>} />
+              <Route path="/community-guidelines" element={<main className="nf-public-document"><CommunityGuidelines publicView /></main>} />
              <Route path="/" element={<StartScreen />}>
                <Route index element={<Home />} />
              </Route>

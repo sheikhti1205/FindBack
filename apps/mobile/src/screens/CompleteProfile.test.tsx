@@ -30,6 +30,7 @@ vi.mock("../auth", () => ({ useAuth: () => authMock }));
 
 import { checkUsername } from "../services/auth";
 import { SupabaseConfigError } from "../services/supabaseClient";
+import { rememberAuthReturnTo } from "../utils/authReturnTo";
 import type { PublicUser } from "@norfold/shared";
 import {
   __resetCompleteSocialProfile,
@@ -80,6 +81,7 @@ function renderProfile(
           }
         />
         <Route path="/posts/:id" element={<p>Shared report destination</p>} />
+        <Route path="/chats/:id" element={<p>Protected conversation destination</p>} />
         <Route path="/" element={<p>Home destination</p>} />
       </Routes>
     </MemoryRouter>,
@@ -87,6 +89,7 @@ function renderProfile(
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   mockCheckUsername.mockReset();
   mockCheckUsername.mockResolvedValue({ available: true, normalized: "google_user" });
   pendingMock.getPendingReportRoute.mockReset();
@@ -109,6 +112,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("CompleteProfile seeds (W0.5)", () => {
+  it("keeps protected intent through profile completion", async () => {
+    rememberAuthReturnTo("/chats/c1");
+    __setCompleteSocialProfile(vi.fn(async () => FAKE_USER));
+    renderProfile({ ...SEED, phone: "01812345678" });
+    await waitFor(() => expect(screen.getByText(/username available/i)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Protected conversation destination")).toBeTruthy();
+  });
   it("prefills name, username suggestion, email (read-only) and blank phone — all editable", async () => {
     const complete = vi.fn(async () => FAKE_USER);
     __setCompleteSocialProfile(complete);

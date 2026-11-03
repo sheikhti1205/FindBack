@@ -7,7 +7,7 @@ import { Button } from "../components/Button";
 import { TextField } from "../components/Fields";
 import { announce } from "../components/LiveRegion";
 import { motionDurations, motionEasings } from "../components/uiMotion";
-import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { getAuthReturnRoute } from "../utils/authReturnTo";
 import { clearSessionExpired, SESSION_EXPIRED_MESSAGE, sessionExpiredPending } from "../services/sessionExpiry";
 import { AuthShell } from "../components/auth/AuthShell";
 import {
@@ -93,7 +93,7 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
     if (sessionExpired) announce(SESSION_EXPIRED_MESSAGE);
   }, [sessionExpired]);
 
-  if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+  if (user) return <Navigate to={getAuthReturnRoute()} replace />;
 
   /**
    * W0-C (S3) Google handoff. The button already ran the S1+S2 exchange:
@@ -108,7 +108,7 @@ export function AuthGateway({ initialMode = "email", initialEmail = "" }: AuthGa
       return;
     }
     setUser(outcome.user);
-    navigate(getPendingReportRoute() ?? "/", { replace: true });
+    navigate(getAuthReturnRoute(), { replace: true });
   }
 
   function onEmailSubmit(e: FormEvent) {

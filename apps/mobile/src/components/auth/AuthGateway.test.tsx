@@ -27,6 +27,7 @@ import { clearSessionExpired, markSessionExpired } from "../../services/sessionE
 import { AuthGateway } from "../../screens/AuthGateway";
 import { SignIn } from "../../screens/SignIn";
 import { Register } from "../../screens/Register";
+import { rememberAuthReturnTo } from "../../utils/authReturnTo";
 
 const mockCheckUsername = vi.mocked(checkUsername);
 
@@ -56,6 +57,7 @@ function renderGateway(ui: React.ReactNode = <AuthGateway />, path = "/auth") {
         <Route path="/signin" element={ui} />
         <Route path="/register" element={ui} />
         <Route path="/posts/:id" element={<p>Shared report destination</p>} />
+        <Route path="/chats/:id" element={<p>Protected conversation destination</p>} />
         <Route path="/" element={<p>Home destination</p>} />
         <Route path="/verify" element={<p>Verify destination</p>} />
         <Route path="/forgot" element={<p>Forgot destination</p>} />
@@ -79,6 +81,7 @@ async function changeEmailBackTo(expectedValue: string) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   authMock.user = null;
   authMock.pendingEmail = null;
   authMock.login.mockReset();
@@ -139,6 +142,15 @@ describe("AuthGateway stage A (email)", () => {
 });
 
 describe("AuthGateway stage B (sign in)", () => {
+  it("resumes a protected conversation after email sign-in", async () => {
+    rememberAuthReturnTo("/chats/c1");
+    authMock.login.mockResolvedValue(undefined);
+    renderGateway(<AuthGateway initialMode="signin" />);
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "synthetic@example.invalid" } });
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), { target: { value: "synthetic-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Protected conversation destination")).toBeTruthy();
+  });
   it("morphs email into an identity chip with Change restoring the address", async () => {
     renderGateway();
     await continueWithEmail("user@example.com");
@@ -223,6 +235,20 @@ describe("AuthGateway stage B (sign in)", () => {
 });
 
 describe("AuthGateway stage C (explicit signup gating)", () => {
+  it("resumes protected intent after an immediately authenticated signup", async () => {
+    rememberAuthReturnTo("/chats/c1");
+    mockCheckUsername.mockResolvedValue({ available: true, normalized: "new_user" });
+    authMock.register.mockResolvedValue({ status: "authenticated" });
+    renderGateway(<AuthGateway initialMode="signup" />);
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "new_user" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "synthetic@example.invalid" } });
+    fireEvent.change(screen.getByLabelText("Mobile (Bangladesh)"), { target: { value: "01812345678" } });
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), { target: { value: "synthetic-password" } });
+    fireEvent.change(screen.getByLabelText("Confirm password", { exact: true }), { target: { value: "synthetic-password" } });
+    await waitFor(() => expect(screen.getByText(/username available/i)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+    expect(await screen.findByText("Protected conversation destination")).toBeTruthy();
+  });
   it("keeps signup fields hidden until the user explicitly chooses it", async () => {
     renderGateway();
     await continueWithEmail("new@example.com");

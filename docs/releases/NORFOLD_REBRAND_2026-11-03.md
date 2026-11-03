@@ -53,3 +53,23 @@ users, deployed functions or history:
 - Web build — the CI web job and the deployed site.
 - Not claimed: a fresh physical-device install, a store listing change or a
   domain migration. None of those are part of a name rebrand.
+
+## Public entry follow-through
+
+- Signed-out visitors can read the public product presentation; signed-in root
+  remains Home. The approved onboarding is reused, without fabricated activity.
+- Public Privacy, Terms and Community Guidelines share Settings' content. Direct
+  clean legal paths bridge into the existing hash router; provider/share paths
+  are unchanged.
+- Authentication is deliberate, with Back to Norfold and bounded internal
+  return-to through sign-in, immediate signup and incomplete-profile completion.
+  Back cancels sign-in intent; visiting legal does not. Sign in does not mark
+  onboarding complete.
+- Focused verification: 208 mobile tests, mobile typecheck, changed-path lint,
+  14 infrastructure/brand tests and canonical brand provenance passed. Local
+  Chromium rendered public/legal/auth/error states at 320/390/1280 widths,
+  light/dark/true-black, 200% text and reduced/full motion (12 contexts).
+- These are source and synthetic signed-out browser checks, not real OAuth,
+  two-account messaging, native-device or full programme acceptance. Publication
+  and deployed CI/web outcomes are verified separately; no version bump, database
+  change, domain migration or Release is included here.

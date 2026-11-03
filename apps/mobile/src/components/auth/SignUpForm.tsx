@@ -6,7 +6,7 @@ import { Button } from "../Button";
 import { TextField } from "../Fields";
 import { motionDurations, motionEasings } from "../uiMotion";
 import { checkUsername } from "../../services/auth";
-import { getPendingReportRoute } from "../../utils/pendingReportLink";
+import { getAuthReturnRoute } from "../../utils/authReturnTo";
 import { USERNAME_CHECK_DEBOUNCE_MS, normalizePhone } from "@norfold/shared";
 
 type UsernameState = "idle" | "loading" | "available" | "taken" | "invalid";
@@ -122,7 +122,7 @@ export function SignUpForm({
       if (outcome?.status === "pending") {
         navigate("/verify", { replace: true });
       } else {
-        navigate(getPendingReportRoute() ?? "/", { replace: true });
+        navigate(getAuthReturnRoute(), { replace: true });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");

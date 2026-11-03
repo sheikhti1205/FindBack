@@ -5,7 +5,7 @@ import { useAuth } from "../../auth";
 import { Button } from "../Button";
 import { TextField } from "../Fields";
 import { motionDurations, motionEasings } from "../uiMotion";
-import { getPendingReportRoute } from "../../utils/pendingReportLink";
+import { getAuthReturnRoute } from "../../utils/authReturnTo";
 import { EMAIL_PATTERN, SIGNIN_GENERIC_ERROR } from "./authCopy";
 import { ApiError } from "../../services/session";
 
@@ -56,7 +56,7 @@ export function SignInForm({
     setBusy(true);
     try {
       await login(address, password);
-      navigate(getPendingReportRoute() ?? "/", { replace: true });
+      navigate(getAuthReturnRoute(), { replace: true });
     } catch (error) {
       if (error instanceof ApiError && error.code === "email_not_confirmed") {
         navigate("/verify", { replace: true });

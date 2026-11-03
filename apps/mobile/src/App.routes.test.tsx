@@ -187,25 +187,34 @@ afterEach(() => {
 });
 
 describe("consumer route map", () => {
-  it.each([false, true])("starts a fresh guest at the real approved onboarding (native=%s)", platform => {
+  it.each([["/privacy", "Privacy policy"], ["/terms", "Terms of use"], ["/community-guidelines", "Community guidelines"]])("bridges direct clean legal path %s into the canonical router", (path, title) => {
+    window.history.replaceState(null, "", `${path}?from=footer`);
+    router = createAppRouter();
+    render(<App router={router} />);
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.hash).toBe(`#${path}`);
+    expect(window.location.search).toBe("?from=footer");
+  });
+  it.each([false, true])("opens the public root with approved onboarding (native=%s)", platform => {
     native.platform = platform;
     renderAt("/");
     expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
     expect(screen.queryByText("Report it. Match it. Return it.")).toBeNull();
-    expect(screen.queryByRole("link", { name: /create an account|sign in/i })).toBeNull();
-    expect(router?.state.location.pathname).toBe("/onboarding");
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/");
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(screen.getByText("Gateway:email")).toBeTruthy();
     expect(router?.state.location.pathname).toBe("/auth");
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe(String(ONBOARDING_VERSION));
   });
 
-  it("starts a returning unsigned Web user at unified auth", () => {
+  it("keeps a returning signed-out Web visitor on the public root", () => {
     native.platform = false;
     returningGuest();
     renderAt("/");
-    expect(screen.getByText("Gateway:email")).toBeTruthy();
-    expect(router?.state.location.pathname).toBe("/auth");
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(router?.state.location.pathname).toBe("/");
   });
 
   it("waits for Web session restoration and retains boot error retry", () => {
@@ -379,9 +388,10 @@ describe("consumer route map", () => {
     expect(screen.getByText(markerText)).toBeTruthy();
   });
 
-  it("redirects a fresh guest away from /auth to onboarding", () => {
+  it("opens deliberate auth without claiming onboarding completion", () => {
     renderAt("/auth");
-    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
   });
 
   it("renders the verify screen", () => {
@@ -461,13 +471,30 @@ describe("consumer route map", () => {
     expect(screen.getByText("SharedReport screen")).toBeTruthy();
   });
 
-  it("guards signed routes: fresh guests go to onboarding, returning guests to auth", () => {
+  it("guards signed routes with deliberate auth for both fresh and returning guests", () => {
     renderAt("/settings/appearance");
-    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
     cleanup();
     returningGuest();
     renderAt("/settings/appearance");
     expect(screen.getByText("Gateway:email")).toBeTruthy();
+  });
+
+  it.each([["/privacy", "Privacy policy"], ["/terms", "Terms of use"], ["/community-guidelines", "Community guidelines"]])("exposes canonical legal %s without auth", (path, title) => {
+    renderAt(path);
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to Norfold" })).toBeTruthy();
+    expect(router?.state.location.pathname).toBe(path);
+    expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
+  });
+
+  it("resumes a protected profile destination after auth instead of landing at Home", async () => {
+    renderAt("/profile/edit?from=search");
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    signedIn();
+    await act(async () => { await router!.navigate("/auth"); });
+    await waitFor(() => expect(router?.state.location.pathname).toBe("/profile/edit"));
+    expect(router?.state.location.search).toBe("?from=search");
   });
 
   it("requires sign-in, not an existing admin role, for administrator setup", () => {

@@ -109,10 +109,11 @@ describe("GuestOnly", () => {
     expect(location()).toBe(`/posts/${postId}`);
   });
 
-  it("sends a fresh guest with incomplete onboarding to /onboarding", () => {
+  it("keeps deliberate auth available to a fresh guest without completing onboarding", () => {
     renderGuard("/guarded", <GuestOnly><p>Auth form</p></GuestOnly>);
-    expect(screen.getByText("Onboarding screen")).toBeTruthy();
-    expect(location()).toBe("/onboarding");
+    expect(screen.getByText("Auth form")).toBeTruthy();
+    expect(location()).toBe("/guarded");
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
   });
 
   it("renders for a returning guest whose onboarding is complete", () => {

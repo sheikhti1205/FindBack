@@ -16,7 +16,8 @@ test('only shipping workspaces and commands remain; no retired API or container 
 test('CI/release have no retired runtime gate while live Supabase and app verification stay wired',()=>{
  for(const p of ['.github/workflows/ci.yml','.github/workflows/release.yml']){
   const s=read(p);assert.doesNotMatch(s,/@findback\/api|services\/api|docker build|docker run|localhost:4000/);
-  assert.match(s,/npm test -w @findback\/mobile/);assert.match(s,/check-security-baseline/);assert.match(s,/scan:secrets/);
+  const mobileName=JSON.parse(read('apps/mobile/package.json')).name;
+  assert.ok(s.includes(`npm test -w ${mobileName}`));assert.match(s,/check-security-baseline/);assert.match(s,/scan:secrets/);
  }
  assert.match(read('.github/workflows/ci.yml'),/sql-behavior\.mjs --apply-chain/);
  assert.match(read('.github/workflows/backend-deploy.yml'),/supabase/);

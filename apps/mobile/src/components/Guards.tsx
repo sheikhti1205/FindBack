@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
 import { useAuth } from "../auth";
 import { fetchMyRole } from "../services/roles";
 import { Splash } from "../screens/Splash";
 import { Onboarding } from "../screens/Onboarding";
-import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { getAuthReturnRoute, rememberAuthReturnTo } from "../utils/authReturnTo";
 import {
   hasPendingReportLink,
   isOnboardingComplete,
@@ -12,10 +12,15 @@ import {
 } from "../services/onboarding";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, booting, bootError } = useAuth();
+  const { user, booting, bootError, needsProfile } = useAuth();
+  const location = useLocation();
+  useEffect(() => {
+    if (!booting && !bootError && !user) rememberAuthReturnTo(`${location.pathname}${location.search}${location.hash}`);
+  }, [booting, bootError, user, location.pathname, location.search, location.hash]);
   // An unreachable backend keeps the boot screen with Retry instead of
   // dropping an unverified signed-out user at /auth.
   if (booting || (bootError && !user)) return <Splash />;
+  if (!user && needsProfile) return <Navigate to="/complete-profile" replace />;
   if (!user) return <Navigate to="/auth" replace />;
   return <>{children}</>;
 }
@@ -60,7 +65,7 @@ function ScopedAdmin({ children }: { children: ReactNode }) {
 export function GuestOnly({ children }: { children: ReactNode }) {
   const { user, booting, bootError, needsProfile } = useAuth();
   if (booting || (bootError && !user)) return <Splash />;
-  if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+  if (user) return <Navigate to={getAuthReturnRoute()} replace />;
   // W0-C (W0-QA defect 1): restart-while-incomplete. A kept session with no
   // Norfold profile must resume at completion, ahead of the pending-link and
   // onboarding branches below (completion itself resumes the pending link).
@@ -68,8 +73,7 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   // A pending shared-report launch bypasses first-run flow: stay on the auth
   // path so the link resumes after sign-in (never consumed here).
   if (hasPendingReportLink()) return <>{children}</>;
-  // Fresh guests with incomplete onboarding start there, not at auth.
-  if (!isOnboardingComplete()) return <Navigate to="/onboarding" replace />;
+  // Auth is deliberate; Sign in must not pretend onboarding was completed.
   return <>{children}</>;
 }
 
@@ -81,7 +85,7 @@ export function GuestOnly({ children }: { children: ReactNode }) {
  * renders, keeps completion sticky, and returns to `/settings`.
  */
 export function OnboardingRoute() {
-  const { user, booting, bootError } = useAuth();
+  const { user, booting, bootError, needsProfile } = useAuth();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   if (booting || (bootError && !user)) return <Splash />;
@@ -93,7 +97,8 @@ export function OnboardingRoute() {
       />
     );
   }
-  if (user) return <Navigate to={getPendingReportRoute() ?? "/"} replace />;
+  if (user) return <Navigate to={getAuthReturnRoute()} replace />;
+  if (needsProfile) return <Navigate to="/complete-profile" replace />;
   if (hasPendingReportLink()) {
     return <Navigate to={resolvePendingLinkBypassDestination(false)} replace />;
   }

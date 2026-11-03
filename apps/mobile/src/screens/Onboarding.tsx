@@ -41,6 +41,8 @@ export interface OnboardingProps {
   /** Called after canonical completion is persisted; the host owns navigation. */
   onComplete?: () => void;
   initialPage?: number;
+  /** Reuse approved scenes under the public navigation, without a second header. */
+  publicHero?: boolean;
 }
 
 function clampPage(page: number | undefined): number {
@@ -83,7 +85,7 @@ const Scene = forwardRef<HTMLDivElement, { page: number; reduced: boolean; direc
   );
 });
 
-export function Onboarding({ onComplete, initialPage = 0 }: OnboardingProps) {
+export function Onboarding({ onComplete, initialPage = 0, publicHero = false }: OnboardingProps) {
   const reduced = useShouldReduceMotion();
   const [{ page, direction }, setPosition] = useState(() => ({ page: clampPage(initialPage), direction: 1 }));
   const finished = useRef(false);
@@ -109,7 +111,7 @@ export function Onboarding({ onComplete, initialPage = 0 }: OnboardingProps) {
 
   return (
     <section aria-label="Onboarding" role="region" tabIndex={0}
-      data-motion={reduced ? "static" : "full"} className="fb-onboarding"
+      data-motion={reduced ? "static" : "full"} className={`fb-onboarding${publicHero ? " fb-onboarding--public" : ""}`}
       onKeyDown={event => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
         if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
@@ -121,7 +123,7 @@ export function Onboarding({ onComplete, initialPage = 0 }: OnboardingProps) {
       }}
     >
       <header className="fb-onboarding-header">
-        <div className="fb-onboarding-brand"><BrandMark size={28} shape="tile" alt="" /><span>Norfold</span></div>
+        {!publicHero && <div className="fb-onboarding-brand"><BrandMark size={28} shape="tile" alt="" /><span>Norfold</span></div>}
         {!last && <button type="button" onClick={finish} className="fb-onboarding-btn fb-onboarding-btn--quiet">Skip</button>}
       </header>
 

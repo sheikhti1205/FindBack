@@ -13,7 +13,7 @@ import {
   completeSocialProfile as stagedCompleteSocialProfile,
   type GoogleProfileSeed,
 } from "../services/auth/googleSignIn";
-import { getPendingReportRoute } from "../utils/pendingReportLink";
+import { getAuthReturnRoute } from "../utils/authReturnTo";
 
 export type { GoogleProfileSeed };
 
@@ -179,7 +179,7 @@ export function CompleteProfile({
         avatarUrl,
       });
       onCompleted?.(user);
-      navigate(getPendingReportRoute() ?? "/", { replace: true });
+      navigate(getAuthReturnRoute(), { replace: true });
     } catch (err) {
       // Never surface raw internals (constraint names, status codes, or
       // backend-config details) — unconfigured backends fail closed.

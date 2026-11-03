@@ -19,13 +19,15 @@ function Paragraph({ children }: { children: ReactNode }) {
 }
 
 /** Terms of use. */
-export function Terms() {
+export function Terms({ publicView = false }: { publicView?: boolean }) {
   return (
     <SettingsPage
       title="Terms of use"
       description="What Norfold is, and what each of us is responsible for."
-      backTo="/settings"
+      backTo={publicView ? "/" : "/settings"}
+      backLabel={publicView ? "Back to Norfold" : "Back to Settings"}
     >
+      <Paragraph>Revised 3 November 2026. Norfold was previously known as FindBack; findbackapp.social remains the current service address.</Paragraph>
       <SettingsGroup title="What Norfold is">
         <Paragraph>
           Norfold is a place to report a lost or found item, to search what other people have
@@ -93,13 +95,15 @@ export function Terms() {
 }
 
 /** Privacy policy. */
-export function PrivacyPolicy() {
+export function PrivacyPolicy({ publicView = false }: { publicView?: boolean }) {
   return (
     <SettingsPage
       title="Privacy policy"
       description="What Norfold keeps, where it keeps it, and what you can remove."
-      backTo="/settings"
+      backTo={publicView ? "/" : "/settings"}
+      backLabel={publicView ? "Back to Norfold" : "Back to Settings"}
     >
+      <Paragraph>Revised 3 November 2026. Norfold was previously known as FindBack; findbackapp.social remains the current service address.</Paragraph>
       <SettingsGroup title="What stays on your phone">
         <Paragraph>
           Your settings, appearance and any downloaded text-search resources stay on your device.
@@ -184,13 +188,15 @@ export function PrivacyPolicy() {
 }
 
 /** Community guidelines. */
-export function CommunityGuidelines() {
+export function CommunityGuidelines({ publicView = false }: { publicView?: boolean }) {
   return (
     <SettingsPage
       title="Community guidelines"
       description="How to post so that Norfold stays useful for everyone."
-      backTo="/settings"
+      backTo={publicView ? "/" : "/settings"}
+      backLabel={publicView ? "Back to Norfold" : "Back to Settings"}
     >
+      <Paragraph>Revised 3 November 2026. Norfold was previously known as FindBack; findbackapp.social remains the current service address.</Paragraph>
       <SettingsGroup title="Search before you post">
         <Paragraph>
           One clear report per item helps far more than three similar ones. Search first: the item
