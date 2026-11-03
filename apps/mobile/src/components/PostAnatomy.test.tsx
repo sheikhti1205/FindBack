@@ -30,9 +30,11 @@ function mount(density?: "home-feed" | "editorial" | "compact" | "masonry") {
   return render(<MemoryRouter><SavedReportsProvider><PostList items={[post]} density={density} loading={false} loadingMore={false} error={null} hasMore={false} onLoadMore={async () => {}} /><RouteProbe /></SavedReportsProvider></MemoryRouter>);
 }
 
-// Removing the shared identity, wrapping controls in a link, or routing photos
-// to detail instead of inspection must fail independently in every layout.
-it.each([undefined, "home-feed", "editorial", "compact", "masonry"] as const)("keeps identity, navigation and photo inspection separate in %s", async (density) => {
+// Removing the shared identity, wrapping controls in a link, or sending a feed
+// photo anywhere but the report it belongs to must fail independently in every
+// layout. A feed photo is a report destination; the fullscreen viewer belongs
+// to report detail (and to chat attachments), never to the list.
+it.each([undefined, "home-feed", "editorial", "compact", "masonry"] as const)("keeps identity, navigation and photo destination separate in %s", async (density) => {
   const { container } = mount(density);
   const identity = screen.getByRole("button", { name: "About Sam Reed" });
   const title = screen.getByRole("heading", { name: "Brown wallet" });
@@ -45,8 +47,8 @@ it.each([undefined, "home-feed", "editorial", "compact", "masonry"] as const)("k
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "About Sam Reed" })).toBeNull());
   const photo = screen.getByRole("button", { name: "Photo for Brown wallet" });
   fireEvent.click(photo);
-  expect(await screen.findByRole("dialog", { name: "Photo viewer" })).toBeTruthy();
-  expect(screen.getByTestId("route").textContent).toBe("/");
+  await waitFor(() => expect(screen.getByTestId("route").textContent).toBe("/posts/p1"));
+  expect(screen.queryByRole("dialog", { name: "Photo viewer" })).toBeNull();
 });
 
 it("keeps Save in overflow while the primary actions remain Like, Comments and Share", async () => {
