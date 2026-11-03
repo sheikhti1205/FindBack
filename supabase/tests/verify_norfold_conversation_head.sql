@@ -1,8 +1,18 @@
 -- Disposable actual PostgreSQL/RPC behavior, not hosted/account/device acceptance.
 begin;
-create function pg_temp.head_call(action text,args jsonb default '{}'::jsonb) returns jsonb language sql as $$
- select public.findback_chat_exchange(auth.uid()::text,current_setting('head.device'),action,
-  jsonb_build_object('conversationId','00000000-0000-4000-9944-000000000099')||args)
+-- Synthetic elevated commit models the independently verified Edge signature.
+-- It exists only inside this rolled-back test; production never grants commit.
+create function pg_temp.head_enroll() returns void language plpgsql security definer as $$ declare c jsonb; begin
+ c:=public.findback_device_enrollment_challenge(current_setting('head.device'),'04'||repeat('ab',64),'Head fixture','web');
+ perform public.findback_device_enrollment_commit(auth.uid()::text,(auth.jwt()->>'session_id')::uuid,(c->>'challengeId')::uuid);
+end $$;
+grant execute on function pg_temp.head_enroll() to authenticated;
+create function pg_temp.head_call(action text,args jsonb default '{}'::jsonb) returns jsonb language plpgsql as $$ begin
+ perform set_config('request.jwt.claims',jsonb_build_object('session_id',current_setting('head.device'))::text,true);
+ if action='REGISTER' then perform pg_temp.head_enroll(); end if;
+ return public.findback_chat_exchange(auth.uid()::text,current_setting('head.device'),action,
+  jsonb_build_object('conversationId','00000000-0000-4000-9944-000000000099')||args);
+end
 $$;
 create function pg_temp.head_get() returns jsonb language sql as $$ select pg_temp.head_call('HEAD') $$;
 create function pg_temp.head_send(n integer,kind text default 'TEXT') returns jsonb language sql as $$
@@ -14,6 +24,11 @@ grant execute on function pg_temp.head_call(text,jsonb),pg_temp.head_get(),pg_te
 insert into public.users(id,username,email,phone,email_verified,created_at,updated_at) values
  ('00000000-0000-4000-9944-000000000001','head_a','head_a@example.invalid','+8801994400001',1,now(),now()),
  ('00000000-0000-4000-9944-000000000002','head_b','head_b@example.invalid','+8801994400002',1,now(),now());
+insert into auth.users(id,email) select id::uuid,email from public.users where username in('head_a','head_b');
+insert into auth.sessions(id,user_id) values
+ ('00000000-0000-4000-9944-000000000011','00000000-0000-4000-9944-000000000001'),
+ ('00000000-0000-4000-9944-000000000022','00000000-0000-4000-9944-000000000002'),
+ ('00000000-0000-4000-9944-000000000023','00000000-0000-4000-9944-000000000002');
 insert into public.chat_conversations(id,user_a,user_b,state,receipt_connection_epoch) values
  ('00000000-0000-4000-9944-000000000099','00000000-0000-4000-9944-000000000001','00000000-0000-4000-9944-000000000002','CONNECTED','head-connection');
 insert into public.chat_member_state(conversation_id,user_id,mode) values
@@ -59,17 +74,24 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9944-000000000001'
 select set_config('head.device','00000000-0000-4000-9944-000000000011',true);
 select pg_temp.head_send(151);
 select public.findback_reserve_chat_media(auth.uid()::text,'00000000-0000-4000-9944-000000000150','00000000-0000-4000-9944-000000000250');
+select set_config('head.authority',public.findback_device_admission(current_setting('head.device'))::text,true);
 reset role;
 select set_config('head.gen',(select generation from public.chat_media_attachments where id='00000000-0000-4000-9944-000000000250'),true);
 select set_config('head.key',(select object_key from public.chat_media_attachments where id='00000000-0000-4000-9944-000000000250'),true);
 set local role service_role;
-select public.findback_commit_chat_media('00000000-0000-4000-9944-000000000001','00000000-0000-4000-9944-000000000250',current_setting('head.gen'),current_setting('head.key'),repeat('a',64),'image/jpeg',100,64,64);
-select public.findback_commit_chat_media('00000000-0000-4000-9944-000000000001','00000000-0000-4000-9944-000000000250',current_setting('head.gen'),current_setting('head.key'),repeat('a',64),'image/jpeg',100,64,64);
+select public.findback_commit_chat_media_for_device('00000000-0000-4000-9944-000000000001',
+ (current_setting('head.authority')::jsonb->>'sessionId')::uuid,current_setting('head.authority')::jsonb->>'deviceId',
+ (current_setting('head.authority')::jsonb->>'generation')::uuid,'00000000-0000-4000-9944-000000000250',current_setting('head.gen'),current_setting('head.key'),repeat('a',64),'image/jpeg',100,64,64);
+select public.findback_commit_chat_media_for_device('00000000-0000-4000-9944-000000000001',
+ (current_setting('head.authority')::jsonb->>'sessionId')::uuid,current_setting('head.authority')::jsonb->>'deviceId',
+ (current_setting('head.authority')::jsonb->>'generation')::uuid,'00000000-0000-4000-9944-000000000250',current_setting('head.gen'),current_setting('head.key'),repeat('a',64),'image/jpeg',100,64,64);
 set local role authenticated;
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9944-000000000002',true);
 select set_config('head.device','00000000-0000-4000-9944-000000000022',true);
 do $$ declare page jsonb; begin
- if pg_temp.head_get()->>'position'<>'13' then raise exception 'late photo not appended once after text'; end if;
+  if pg_temp.head_get()->>'position'<>'13' then raise exception 'late photo not appended once after text'; end if;
+  if public.findback_chat_media_target_client('00000000-0000-4000-9944-000000000250','READ')->>'sha256'<>repeat('a',64) then
+   raise exception 'Current recipient cannot read committed media through session gate'; end if;
  page:=pg_temp.head_call('CONVERSATION_SYNC',jsonb_build_object('head',pg_temp.head_get(),'afterPosition',11));
  if page#>>'{entries,0,messageId}'<>'00000000-0000-4000-9944-000000000151'
   or page#>>'{entries,1,messageId}'<>'00000000-0000-4000-9944-000000000150' then raise exception 'late publication order lost: %',page; end if;

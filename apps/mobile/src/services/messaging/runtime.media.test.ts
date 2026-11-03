@@ -160,6 +160,36 @@ afterEach(async () => {
   vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
+describe("Auth session lifetime within the same account",()=>{
+  it("keeps refresh in one owner but replaces the owner synchronously for a new session",async()=>{
+    runtime.setMessagingAccount(A,id(11)); await waitForState(s=>s.status==="ready");
+    const prior=boundary.handles[0]!;
+    runtime.setMessagingAccount(A,id(11)); expect(boundary.handles).toHaveLength(1);
+    runtime.setMessagingAccount(A,id(12));
+    expect(runtime.getMessagingRuntimeSnapshot()).toMatchObject({accountId:A,status:"opening",conversations:[],currentProjections:null});
+    await waitForState(s=>s.status==="ready"); expect(boundary.handles).toHaveLength(2);
+    await expect(prior.history.listConversations()).rejects.toThrow();
+  });
+  it("closes Chat when the SDK has no usable session without discarding durable history",async()=>{
+    runtime.setMessagingAccount(A,id(11)); await waitForState(s=>s.status==="ready");
+    runtime.setMessagingAccount(A,null);
+    expect(runtime.getMessagingRuntimeSnapshot()).toMatchObject({accountId:null,status:"closed"});
+    runtime.setMessagingAccount(A,id(12)); await waitForState(s=>s.status==="ready");
+    expect(boundary.handles).toHaveLength(2);
+  });
+  it("aborts an old same-account media request before admitting the replacement owner",async()=>{
+    runtime.setMessagingAccount(A,id(11)); await waitForState(s=>s.status==="ready");
+    const inbound=await mediaFixture(id(202),id(102),{direction:"IN",expiresAt:Date.now()+60_000});
+    remote.set(id(202),inbound);
+    await boundary.handles[0]!.history.persistInbound({accountId:A,deviceId:DEVICE,mailboxId:id(402),event:{kind:"TEXT",eventId:id(302),sequence:2,
+      message:{id:id(102),conversationId:CONV,authorId:B,recipientId:A,body:""}}});
+    deliveryGate=deferred(); const prior=runtime.refreshMessaging(A); await entered.promise;
+    runtime.setMessagingAccount(A,id(12)); expect(lastGetSignal?.aborted).toBe(true);
+    deliveryGate.resolve(); await prior; await waitForState(s=>s.status==="ready");
+    expect(boundary.handles).toHaveLength(2);
+  });
+});
+
 describe("active conversation canonical catch-up", () => {
   it.each([[10, "soft"], [11, "blocking"]] as const)("checks an open thread then gates %i unseen events on reconnect as %s", async (gap, mode) => {
     runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");

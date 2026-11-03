@@ -2,7 +2,8 @@
  * push-dispatch unit tests. Run with `deno test supabase/functions/push-dispatch/`.
  * Pure planning/payload/auth only: no network, no secrets, no database.
  */
-import { assert, assertEquals } from "jsr:@std/assert";
+// deno-lint-ignore no-import-prefix
+import { assert, assertEquals } from "jsr:@std/assert@1.0.19";
 import dispatcher from "./index.ts";
 import {
   buildFcmMessage,
@@ -349,7 +350,7 @@ Deno.test("authorized request names missing sender credentials and sends nothing
 });
 
 // Real fetch handler with in-memory HTTP peers. No live env/key/network access.
-async function dispatchFixture(states: Array<boolean | "error">) {
+async function dispatchFixture(states: Array<boolean | "error">, deviceStates: Array<boolean | "error"> = [true]) {
   const key = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
     publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
   const bytes = new Uint8Array(await crypto.subtle.exportKey("pkcs8", key.privateKey));
@@ -367,7 +368,7 @@ async function dispatchFixture(states: Array<boolean | "error">) {
   const originalEnv = Deno.env.get;
   const originalFetch = globalThis.fetch;
   const minted: unknown[] = []; const stamped: unknown[] = []; const retiredTokens: string[] = [];
-  let sent = 0; let checked = 0; let retries = 0;
+  let sent = 0; let checked = 0; let deviceChecked = 0; let retries = 0;
   Deno.env.get = (name) => fakeEnv[name];
   globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
@@ -380,6 +381,11 @@ async function dispatchFixture(states: Array<boolean | "error">) {
       assertEquals(await request.json(), { p_notification_id: "n1" });
       const state = states[Math.min(checked++, states.length - 1)];
       return state === "error" ? json({ message: "test unavailable" }, 503) : json(state);
+    }
+    if (url.pathname.endsWith("/rpc/findback_device_push_allowed")) {
+      assertEquals(await request.json(), { p_user: "u1", p_token: "test-device" });
+      const state=deviceStates[Math.min(deviceChecked++,deviceStates.length-1)];
+      return state === "error" ? json({ message: "test unavailable" },503) : json(state);
     }
     if (url.pathname.endsWith("/rpc/findback_record_push_failure")) { retries++; return json(0); }
     if (url.pathname.endsWith("/notifications")) {
@@ -399,7 +405,7 @@ async function dispatchFixture(states: Array<boolean | "error">) {
     const response = await dispatcher.fetch(new Request("https://example.invalid", {
       method: "POST", headers: { "x-findback-dispatch-secret": "test-only" },
     }));
-    return { status: response.status, body: await response.json(), checked, minted, stamped, sent, retries, retiredTokens };
+    return { status: response.status, body: await response.json(), checked, deviceChecked, minted, stamped, sent, retries, retiredTokens };
   } finally { Deno.env.get = originalEnv; globalThis.fetch = originalFetch; }
 }
 
@@ -429,4 +435,20 @@ Deno.test("eligibility failure after token mint sends nothing and retries withou
 Deno.test("eligible recipient gets one token and one send through the actual handler", async () => {
   const r = await dispatchFixture([true]);
   assertEquals(r.checked, 3); assertEquals(r.sent, 1); assertEquals(r.minted.length, 1); assertEquals(r.stamped.length, 1);
+});
+
+Deno.test("revoked push installation is filtered before OAuth or reply token mint", async () => {
+  const r=await dispatchFixture([true],[false]);
+  assertEquals(r.sent,0); assertEquals(r.minted.length,0); assertEquals(r.deviceChecked,1); assertEquals(r.stamped.length,1);
+});
+Deno.test("push installation revoked during OAuth is rechecked before FCM", async () => {
+  const r=await dispatchFixture([true],[true,false]);
+  assertEquals(r.sent,0); assertEquals(r.deviceChecked,2);
+});
+Deno.test("push authority outage before scan or send fails closed without terminal loss", async () => {
+  for(const states of [["error"],[true,"error"]] as Array<Array<boolean|"error">>) {
+    const r=await dispatchFixture([true],states);
+    assertEquals(r.sent,0); assertEquals(r.stamped.length,0);
+    assert(r.status===503 || r.retries===1);
+  }
 });

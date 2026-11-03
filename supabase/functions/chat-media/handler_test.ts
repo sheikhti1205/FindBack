@@ -92,7 +92,7 @@ Deno.test("cross-origin upload and download preserve verified bodies and safe he
   const metadata = await uploaded.json();
   assert.equal(metadata.attachmentId, id);
   const transport: typeof fetch = (input) => {
-    if (new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname.endsWith("findback_read_chat_media")) {
+    if (new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname.endsWith("findback_chat_media_target_client")) {
       return Promise.resolve(Response.json({ ...metadata, id, bucket: "findback-chat-media", objectKey: `attachments/${id}`,
         generation: id, expiresAt: "2099-01-01T00:00:00Z" }));
     }
@@ -113,19 +113,66 @@ Deno.test("cross-origin upload and download preserve verified bodies and safe he
 function fixture() {
   const calls:string[]=[]; let bytes:Uint8Array=png;
   const transport:typeof fetch=async(input,init)=>{ const req=new Request(input,init); const p=new URL(req.url).pathname; calls.push(`${req.method} ${p}`);
+    if(p.endsWith("/findback_device_admission")) { assert.equal(req.headers.get("authorization"),`Bearer ${token}`); return Response.json({accountId:id,sessionId:id,deviceId:id,generation:id}); }
     if(p.endsWith("/findback_reserve_chat_media")) return Response.json(id);
-    if(p.endsWith("/findback_chat_media_upload_target")) return Response.json({id,generation:id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,expiresAt:new Date(Date.now()+300000).toISOString()});
-    if(p.endsWith("/findback_commit_chat_media")) return new Response(null,{status:204});
+    if(p.endsWith("/findback_chat_media_target_client")) { assert.equal(req.headers.get("authorization"),`Bearer ${token}`); assert.deepEqual(await req.json(),{p_attachment_id:id,p_mode:"UPLOAD"}); return Response.json({id,generation:id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,expiresAt:new Date(Date.now()+300000).toISOString()}); }
+    if(p.endsWith("/findback_commit_chat_media_for_device")) { const args=await req.json(); assert.equal(args.p_actor,id); assert.equal(args.p_session,id); assert.equal(args.p_device,id); assert.equal(args.p_enrollment,id); return new Response(null,{status:204}); }
     if(p.includes("/storage/") && req.method==="POST") { assert.equal(req.headers.get("x-upsert"),"false"); bytes=new Uint8Array(await req.arrayBuffer()); return Response.json({Key:"private"}); }
     if(p.includes("/storage/") && req.method==="GET") return new Response(bytes.slice());
     throw Error("private-path");
   }; return {calls,transport};
 }
-Deno.test("verified user uploads through SDK and receives only public metadata",async()=>{ const f=fixture(); const res=await createChatMediaEndpoint(testEnv,f.transport)(request()); const body=await res.text(); assert.equal(res.status,200,body); const value=JSON.parse(body); assert.equal(value.attachmentId,id); assert.equal(value.width,1); assert.equal(value.height,1); assert(!body.includes("attachments/") && !body.includes("generation") && !body.includes("findback-chat-media")); assert.deepEqual(f.calls.map(x=>x.split(" ")[0]),["POST","POST","POST","GET","POST"]); });
+ Deno.test("verified user uploads through SDK and receives only public metadata",async()=>{ const f=fixture(); const res=await createChatMediaEndpoint(testEnv,f.transport)(request()); const body=await res.text(); assert.equal(res.status,200,body); const value=JSON.parse(body); assert.equal(value.attachmentId,id); assert.equal(value.width,1); assert.equal(value.height,1); assert(!body.includes("attachments/") && !body.includes("generation") && !body.includes("findback-chat-media")); assert.deepEqual(f.calls.map(x=>x.split(" ")[0]),["POST","POST","POST","POST","GET","POST"]); });
 Deno.test("unauthenticated caller cannot access storage",async()=>{const f=fixture(); const h={...headers}; delete (h as Record<string,string>).authorization; const res=await createChatMediaEndpoint(testEnv,f.transport)(request(h)); assert.equal(res.status,401); assert.equal(f.calls.length,0); assert(!(await res.text()).includes("attachments/"));});
 Deno.test("headers and media type are rejected before transport",async()=>{const f=fixture(); const endpoint=createChatMediaEndpoint(testEnv,f.transport); for (const [h,status] of [[{...headers,"x-message-id":"bad"},400],[{...headers,"content-type":"text/plain"},415],[{...headers,"content-length":"20971521"},413]] as const) { const res=await endpoint(request(h)); assert.equal(res.status,status); assert(!(await res.text()).includes("attachments/")); } assert.equal(f.calls.length,0);});
 Deno.test("request abort reaches actual upload and does not commit",async()=>{ const f=fixture(); const c=new AbortController(); let aborted=false; const transport:typeof fetch=(input,init)=>{const req=new Request(input,init); if(req.method==="POST" && new URL(req.url).pathname.includes("/storage/")) return new Promise((_resolve,reject)=>{req.signal.addEventListener("abort",()=>{aborted=true;reject(Error("private"));},{once:true});c.abort();}); return f.transport(input,init);}; const res=await createChatMediaEndpoint(testEnv,transport)(new Request(request(),{signal:c.signal})); assert.equal(res.status,503); assertCors(res); assert(aborted); assert(!f.calls.some(x=>x.includes("commit"))); assert(!(await res.text()).includes("private")); });
-Deno.test("stream above cap is cancelled without storage access",async()=>{const f=fixture(); let cancelled=false; const stream=new ReadableStream<Uint8Array>({pull(c){c.enqueue(new Uint8Array(1048576));},cancel(){cancelled=true;}}); const req=new Request("https://example.invalid",{method:"POST",headers,body:stream,duplex:"half"} as RequestInit); const res=await createChatMediaEndpoint(testEnv,f.transport)(req); assert.equal(res.status,400); assertCors(res); assert(cancelled); assert.equal(f.calls.length,0);});
+Deno.test("stream above cap is cancelled without storage access",async()=>{const f=fixture(); let cancelled=false; const stream=new ReadableStream<Uint8Array>({pull(c){c.enqueue(new Uint8Array(1048576));},cancel(){cancelled=true;}}); const req=new Request("https://example.invalid",{method:"POST",headers,body:stream,duplex:"half"} as RequestInit); const res=await createChatMediaEndpoint(testEnv,f.transport)(req); assert.equal(res.status,400); assertCors(res); assert(cancelled); assert.deepEqual(f.calls,["POST /rest/v1/rpc/findback_device_admission"]);});
 
-Deno.test("GET verifies exact media and returns safe headers",async()=>{const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",png)),x=>x.toString(16).padStart(2,"0")).join(""); let actor="";const transport:typeof fetch=async(input,init)=>{const req=new Request(input,init); if(new URL(req.url).pathname.endsWith("findback_read_chat_media")){actor=(await req.json()).p_actor;return Response.json({id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,generation:id,sha256:digest,mime:"image/png",bytes:png.length,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"});}return new Response(png.slice());};const res=await createChatMediaEndpoint(testEnv,transport)(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${actorToken}`}}));assert.equal(res.status,200);assert.equal(actor,actorId);assert.notEqual(actorId,id);assert.deepEqual(new Uint8Array(await res.arrayBuffer()),png);assert.equal(res.headers.get("content-type"),"image/png");assert.equal(res.headers.get("content-length"),String(png.length));assert.equal(res.headers.get("cache-control"),"private, no-store");assert.equal(res.headers.get("x-content-type-options"),"nosniff");assert.equal(res.headers.get("content-disposition"),"inline");assert(!JSON.stringify([...res.headers]).includes("attachments/"));assert(!JSON.stringify([...res.headers]).includes("generation"));assert(!JSON.stringify([...res.headers]).includes("findback-chat-media"));});
+Deno.test("GET verifies exact media and returns safe headers",async()=>{const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",png)),x=>x.toString(16).padStart(2,"0")).join(""); let reads=0;const transport:typeof fetch=async(input,init)=>{const req=new Request(input,init); if(new URL(req.url).pathname.endsWith("findback_chat_media_target_client")){reads++;assert.equal(req.headers.get("authorization"),`Bearer ${actorToken}`);assert.deepEqual(await req.json(),{p_attachment_id:id,p_mode:"READ"});return Response.json({id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,generation:id,sha256:digest,mime:"image/png",bytes:png.length,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"});}return new Response(png.slice());};const res=await createChatMediaEndpoint(testEnv,transport)(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${actorToken}`}}));assert.equal(res.status,200);assert.equal(reads,2);assert.notEqual(actorId,id);assert.deepEqual(new Uint8Array(await res.arrayBuffer()),png);assert.equal(res.headers.get("content-type"),"image/png");assert.equal(res.headers.get("content-length"),String(png.length));assert.equal(res.headers.get("cache-control"),"private, no-store");assert.equal(res.headers.get("x-content-type-options"),"nosniff");assert.equal(res.headers.get("content-disposition"),"inline");assert(!JSON.stringify([...res.headers]).includes("attachments/"));assert(!JSON.stringify([...res.headers]).includes("generation"));assert(!JSON.stringify([...res.headers]).includes("findback-chat-media"));});
 Deno.test("GET validates identity, authentication and absence without leaks",async()=>{let calls=0;const transport:typeof fetch=()=>{calls++;return Promise.resolve(Response.json(null));};const endpoint=createChatMediaEndpoint(testEnv,transport);for(const h of [{},{"x-attachment-id":"BAD"}] as Record<string,string>[])assert.equal((await endpoint(new Request("https://example.invalid",{headers:h}))).status,400);assert.equal((await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id}}))).status,401);assert.equal(calls,0);const res=await endpoint(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${token}`}}));assert.equal(res.status,404);const out=await res.text()+JSON.stringify([...res.headers]);for(const value of ["attachments/","generation","findback-chat-media"])assert(!out.includes(value));assert.equal(calls,1);});
+
+Deno.test("revoked session cannot download through an admin-only target lookup", async () => {
+  const sha256=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",png)),x=>x.toString(16).padStart(2,"0")).join("");
+  let storage=0;
+  const transport: typeof fetch=(input,init)=>{
+    const req=new Request(input,init), path=new URL(req.url).pathname;
+    if(path.endsWith("findback_chat_media_target_client")) {
+      assert.equal(req.headers.get("authorization"),`Bearer ${actorToken}`);
+      return Promise.resolve(Response.json({code:"42501",message:"Device unavailable"},{status:403}));
+    }
+    if(path.endsWith("findback_read_chat_media")) return Promise.resolve(Response.json({id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,sha256,mime:"image/png",bytes:png.length,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"}));
+    storage++; return Promise.resolve(new Response(png.slice()));
+  };
+  const res=await createChatMediaEndpoint(testEnv,transport)(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${actorToken}`}}));
+  assert.equal(res.status,503); assert.equal(storage,0);
+});
+
+Deno.test("revoked upload rejects before consuming the body or reserving media", async () => {
+  const f=fixture(); let admissions=0;
+  const transport: typeof fetch=(input,init)=>{
+    const req=new Request(input,init);
+    if(new URL(req.url).pathname.endsWith("findback_device_admission")) {
+      admissions++; assert.equal(req.headers.get("authorization"),`Bearer ${token}`);
+      return Promise.resolve(Response.json({code:"42501",message:"Device unavailable"},{status:403}));
+    }
+    return f.transport(input,init);
+  };
+  const req=request(), res=await createChatMediaEndpoint(testEnv,transport)(req);
+  assert.equal(res.status,503); assert.equal(req.bodyUsed,false); assert.equal(admissions,1); assert.equal(f.calls.length,0);
+});
+
+Deno.test("download rechecks current authority after fetching bytes", async () => {
+  const sha256=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",png)),x=>x.toString(16).padStart(2,"0")).join("");
+  let reads=0;
+  const transport: typeof fetch=(input,init)=>{
+    const req=new Request(input,init), path=new URL(req.url).pathname;
+    if(path.endsWith("findback_chat_media_target_client") || path.endsWith("findback_read_chat_media")) {
+      reads++;
+      return Promise.resolve(reads===1 ? Response.json({id,bucket:"findback-chat-media",objectKey:`attachments/${id}`,sha256,mime:"image/png",bytes:png.length,width:1,height:1,expiresAt:"2099-01-01T00:00:00Z"})
+        : Response.json({code:"42501",message:"Device unavailable"},{status:403}));
+    }
+    return Promise.resolve(new Response(png.slice()));
+  };
+  const res=await createChatMediaEndpoint(testEnv,transport)(new Request("https://example.invalid",{headers:{"x-attachment-id":id,authorization:`Bearer ${token}`}}));
+  assert.equal(res.status,503); assert.equal(reads,2);
+});

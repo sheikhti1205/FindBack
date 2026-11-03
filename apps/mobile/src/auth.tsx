@@ -28,6 +28,8 @@ import {
   setToken,
 } from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
+import { readAuthSessionId } from "./services/authSessionIdentity";
+import { clearMessagingRuntime } from "./services/messaging/runtime";
 import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
 import { storage } from "./services/storage";
 import { clearSessionExpired, markSessionExpired, sessionExpiryCandidate } from "./services/sessionExpiry";
@@ -67,6 +69,8 @@ export type RegisterOutcome =
 
 interface AuthContextValue {
   user: PublicUser | null;
+  /** SDK session routing identity only; never a token or authority certificate. */
+  authSessionId: string | null;
   /** True while we try to hydrate a stored session on boot. */
   booting: boolean;
   /** Non-null when boot could not reach the backend (session kept, Retry offered). */
@@ -112,6 +116,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const DELETION_CLEANUP_KEY = "findback.auth.deletedAccountCleanup";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const [authSessionId,setAuthSessionId]=useState<string|null>(null);
+  const sdkSessionId=useRef<string|null>(null);
   const [user, publishUser] = useState<PublicUser | null>(null);
   const currentUser = useRef<PublicUser | null>(null);
   const sdkAccount = useRef<string | null>(null);
@@ -220,6 +226,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session) clearSessionExpired();
         if (event === "SIGNED_OUT") hadStoredSession.current = false;
         const nextAccount = session?.user.id ?? null;
+        const nextSessionId=readAuthSessionId(session);
+        // A same-account SIGNED_IN may replace the SDK session without SIGNED_OUT.
+        // Fence old messaging/media/RTC work synchronously, before React effects
+        // or deferred profile adoption. Ordinary token refresh keeps its ID.
+        if (previousAccount===nextAccount && sdkSessionId.current!==null && sdkSessionId.current!==nextSessionId) clearMessagingRuntime();
+        sdkSessionId.current=nextSessionId;
         const accountChanged = previousAccount !== null && previousAccount !== nextAccount;
         // The SDK's startup snapshot is part of the boot restore, not a new
         // auth attempt. Do not invalidate that restore for the same slot.
@@ -233,6 +245,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // changed SDK slot may reopen adoption after local sign-out.
         else if (previousAccount !== nextAccount) profileAdoptionBlocked.current = false;
         setToken(profileAdoptionBlocked.current ? null : session?.access_token ?? null);
+        setAuthSessionId(profileAdoptionBlocked.current ? null : nextSessionId);
         if (event === "SIGNED_OUT" || accountChanged) {
           // SDK replacement need not emit SIGNED_OUT. Invalidate A's private
           // slices synchronously, before scheduling B's profile fetch. The
@@ -652,6 +665,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       user,
+      authSessionId,
       booting,
       bootError,
       retryBoot: runBoot,
@@ -675,6 +689,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [
       user,
+      authSessionId,
       booting,
       bootError,
       runBoot,

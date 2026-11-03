@@ -81,12 +81,12 @@ import { SignedOutEntry } from "./screens/RememberedAccounts";
 import { clearAuthReturnTo, getAuthReturnRoute, peekAuthReturnTo } from "./utils/authReturnTo";
 
 function MessagingLifecycle() {
-  const { user } = useAuth();
+  const { user, authSessionId } = useAuth();
   const accountId = user?.id ?? null;
   useEffect(() => {
-    setMessagingAccount(accountId);
+    setMessagingAccount(accountId,authSessionId ?? null);
     return clearMessagingRuntime;
-  }, [accountId]);
+  }, [accountId,authSessionId]);
   return null;
 }
 

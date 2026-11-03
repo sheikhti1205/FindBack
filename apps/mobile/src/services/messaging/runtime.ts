@@ -70,6 +70,7 @@ type RefreshMode = "fast" | "full";
 let snapshot = EMPTY_MESSAGING_SNAPSHOT;
 let generation = 0;
 let desiredAccount: string | null = null;
+let desiredSession: string | null | undefined;
 let current: Owner | null = null;
 let lifecycle: Promise<void> = Promise.resolve();
 // A switch can detach A before deletion is confirmed. Preserve failed teardown
@@ -299,14 +300,16 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
 /** The canonical auth owner calls this on sign-in/switch and clears it on every
  * sign-out path. Old rows disappear immediately, before any asynchronous close.
  * The serialized lifecycle also handles React StrictMode setup/cleanup/setup. */
-export function setMessagingAccount(accountId: string | null): void {
+export function setMessagingAccount(accountId: string | null, sessionId?: string | null): void {
   // This runs in a passive effect, so a throw here unmounts the entire tree and
   // takes every non-chat screen with it. An id that is not a UUID cannot be a
   // Supabase account, so chat stays closed for it instead: the additive lane
   // never becomes a way for the shell to fail.
-  const next = accountId !== null && isUuid(accountId) ? accountId : null;
-  if (desiredAccount === next) return;
+  const next = accountId !== null && isUuid(accountId) && (sessionId===undefined || (sessionId!==null && isUuid(sessionId))) ? accountId : null;
+  const nextSession=next===null ? undefined : sessionId;
+  if (desiredAccount === next && desiredSession === nextSession) return;
   desiredAccount = next;
+  desiredSession = nextSession;
   const ticket = ++generation;
   const prior = current;
   current = null;
@@ -379,8 +382,9 @@ export function invalidateMessaging(accountId: string): void {
 export function refreshMessaging(accountId: string): Promise<void> {
   if (!current && desiredAccount === accountId) {
     // Explicit retry may reopen after a recoverable startup failure.
+    const sessionId=desiredSession;
     setMessagingAccount(null);
-    setMessagingAccount(accountId);
+    setMessagingAccount(accountId,sessionId);
     return lifecycle;
   }
   return requestRefresh(ownerFor(accountId), "full");

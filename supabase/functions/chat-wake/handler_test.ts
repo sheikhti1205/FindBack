@@ -55,3 +55,27 @@ Deno.test("preflight never touches the wake queue or FCM configuration", async (
   }
   assert.equal(calls, 0);
 });
+
+Deno.test("revoked wake caller is denied through USER device admission before the service claim",async()=>{
+  const id="00000000-0000-4000-8000-000000000001";
+  const key=await crypto.subtle.generateKey({name:"ECDSA",namedCurve:"P-256"},true,["sign","verify"]);
+  const publicKey=await crypto.subtle.exportKey("jwk",key.publicKey); Object.assign(publicKey,{kid:"synthetic",alg:"ES256",use:"sig"});
+  const b64=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
+  const text=(value:object)=>b64(new TextEncoder().encode(JSON.stringify(value)));
+  const signing=`${text({alg:"ES256",kid:"synthetic"})}.${text({sub:id,session_id:id,role:"authenticated",exp:Math.floor(Date.now()/1000)+3600})}`;
+  const token=`${signing}.${b64(new Uint8Array(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},key.privateKey,new TextEncoder().encode(signing))))}`;
+  const originalFetch=globalThis.fetch, originalEnv=Deno.env.get; let admissions=0,claims=0;
+  Deno.env.get=(name)=>name==="FCM_PROJECT_ID"?"synthetic-project":name==="FIREBASE_SERVICE_ACCOUNT_JSON"?"{}":undefined;
+  globalThis.fetch=(input,init)=>{
+    const req=new Request(input,init),path=new URL(req.url).pathname;
+    if(path.endsWith("findback_device_admission")) { admissions++; assert.equal(req.headers.get("authorization"),`Bearer ${token}`);
+      return Promise.resolve(Response.json({code:"42501",message:"Device unavailable"},{status:403})); }
+    if(path.endsWith("findback_claim_chat_external_wakes_for_message")) { claims++; return Promise.resolve(Response.json([])); }
+    throw Error("Unexpected synthetic route");
+  };
+  try {
+    const response=await createChatWakeEndpoint({...env,jwks:{keys:[publicKey]}})(new Request("https://example.invalid",{
+      method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify({message_id:id})}));
+    assert.equal(response.status,503); assert.equal(admissions,1); assert.equal(claims,0); assertCors(response);
+  } finally {globalThis.fetch=originalFetch;Deno.env.get=originalEnv;}
+});

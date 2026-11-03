@@ -1,3 +1,5 @@
+// Edge bundles require the pinned npm: specifier, not a project-wide import map.
+// deno-lint-ignore no-import-prefix
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import { MAX_BYTES, uploadChatMedia, type GatewayPorts } from "../_shared/chatMediaGateway.ts";
 import { downloadChatMedia } from "../_shared/chatMediaDownload.ts";
@@ -5,9 +7,9 @@ import { corsHeaders, corsJson, preflight } from "../_shared/cors.js";
 
 type Database = { public: { Tables: Record<string, never>; Views: Record<string, never>; Functions: {
   findback_reserve_chat_media: { Args: { p_account_id: string; p_message_id: string; p_attachment_id: string }; Returns: string };
-  findback_chat_media_upload_target: { Args: { p_actor: string; p_attachment_id: string }; Returns: unknown };
-  findback_read_chat_media: { Args: { p_actor: string; p_attachment_id: string }; Returns: unknown };
-  findback_commit_chat_media: { Args: { p_actor: string; p_attachment_id: string; p_generation: string; p_object_key: string; p_sha: string; p_mime: string; p_bytes: number; p_width: number; p_height: number }; Returns: undefined };
+  findback_device_admission: { Args: Record<string, never>; Returns: unknown };
+  findback_chat_media_target_client: { Args: { p_attachment_id: string; p_mode: string }; Returns: unknown };
+  findback_commit_chat_media_for_device: { Args: { p_actor: string; p_session: string; p_device: string; p_enrollment: string; p_attachment_id: string; p_generation: string; p_object_key: string; p_sha: string; p_mime: string; p_bytes: number; p_width: number; p_height: number }; Returns: undefined };
 }; Enums: Record<string, never>; CompositeTypes: Record<string, never> } };
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // Bearer-token API, never cookie credentials. The outer endpoint owns CORS so
@@ -37,22 +39,29 @@ export function createChatMediaEndpoint(env?: Partial<SupabaseEnv>, transport: t
     const handler=withSupabase<Database>({auth:"user",cors:"disabled",env,errors:{detailed:false},supabaseOptions:{global:{fetch:boundedFetch}}},async (req,ctx)=>{
       if(req.method==="GET") {
         const actor=ctx.userClaims?.id; if(!actor)return respond({error:"Unauthorized"},401);
-        const admin=ctx.supabaseAdmin;
-        const result=await downloadChatMedia({now:Date.now,async readTarget(_actor,id,s){activeSignal=s;const {data,error}=await admin.rpc("findback_read_chat_media",{p_actor:actor,p_attachment_id:id}).abortSignal(s);if(error)throw Error();return data;},async download(t,s){activeSignal=s;const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream();if(error || !data)throw Error();return data;}},{actor,attachmentId},{signal});
+        const user=ctx.supabase, admin=ctx.supabaseAdmin;
+        const result=await downloadChatMedia({now:Date.now,async readTarget(_actor,id,s){activeSignal=s;const {data,error}=await user.rpc("findback_chat_media_target_client",{p_attachment_id:id,p_mode:"READ"}).abortSignal(s);if(error)throw Error();return data;},async download(t,s){activeSignal=s;const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream();if(error || !data)throw Error();return data;}},{actor,attachmentId},{signal});
         if(result.status!=="served")return respond({error:result.status==="retry"?"Unavailable":"Not found"},result.status==="retry"?503:404);
         return new Response(result.bytes,{status:200,headers:{...CORS_HEADERS,"Content-Type":result.mime,"Content-Length":String(result.bytes.length),"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":"inline"}});
       }
       if (active) return respond({error:"Unavailable"},503); active=true;
       try {
         const actor=ctx.userClaims?.id; if (!actor) return respond({error:"Unauthorized"},401);
-        let bytes: Uint8Array; try { bytes=await bodyBytes(req,signal); } catch { return respond({error:"Invalid request"},400); }
         const user=ctx.supabase, admin=ctx.supabaseAdmin;
+        const admission=await user.rpc("findback_device_admission",{}).abortSignal(signal);
+        const authority=admission.data as Record<string,unknown> | null;
+        if(admission.error || !authority || authority.accountId!==actor
+          || typeof authority.sessionId!=="string" || !UUID.test(authority.sessionId)
+          || typeof authority.deviceId!=="string" || !UUID.test(authority.deviceId)
+          || typeof authority.generation!=="string" || !UUID.test(authority.generation)) return respond({error:"Unavailable"},503);
+        const {sessionId,deviceId,generation}=authority;
+        let bytes: Uint8Array; try { bytes=await bodyBytes(req,signal); } catch { return respond({error:"Invalid request"},400); }
         const io: GatewayPorts={
           async reserve(_actor, msg, id, s) { activeSignal=s; const {error}=await user.rpc("findback_reserve_chat_media",{p_account_id:actor,p_message_id:msg,p_attachment_id:id}).abortSignal(s); if (error) throw Error(); },
-          async uploadTarget(_actor,id,s) { activeSignal=s; const {data,error}=await admin.rpc("findback_chat_media_upload_target",{p_actor:actor,p_attachment_id:id}).abortSignal(s); if (error) throw Error(); return data; },
+          async uploadTarget(_actor,id,s) { activeSignal=s; const {data,error}=await user.rpc("findback_chat_media_target_client",{p_attachment_id:id,p_mode:"UPLOAD"}).abortSignal(s); if (error) throw Error(); return data; },
           async write(t,b,s) { activeSignal=s; const {error}=await admin.storage.from(t.bucket).upload(t.objectKey,b.slice(),{upsert:false,contentType:mime,cacheControl:"0"}); if (error) { if (error.status===409) return "exists"; throw Error(); } return "written"; },
           async readBack(t,s) { activeSignal=s; const {data,error}=await admin.storage.from(t.bucket).download(t.objectKey,{}, {signal:s,cache:"no-store"}).asStream(); if (error || !data) throw Error(); return data; },
-          async commit(t,a,s) { activeSignal=s; const {error}=await admin.rpc("findback_commit_chat_media",{p_actor:actor,p_attachment_id:t.id,p_generation:t.generation,p_object_key:t.objectKey,p_sha:a.sha256,p_mime:a.mime,p_bytes:a.bytes,p_width:a.width,p_height:a.height}).abortSignal(s); if (error) throw Error(); },
+          async commit(t,a,s) { activeSignal=s; const {error}=await admin.rpc("findback_commit_chat_media_for_device",{p_actor:actor,p_session:sessionId,p_device:deviceId,p_enrollment:generation,p_attachment_id:t.id,p_generation:t.generation,p_object_key:t.objectKey,p_sha:a.sha256,p_mime:a.mime,p_bytes:a.bytes,p_width:a.width,p_height:a.height}).abortSignal(s); if (error) throw Error(); },
         };
         const result=await uploadChatMedia(io,{actor,messageId:messageId!,attachmentId,bytes,declaredMime:mime!},{signal});
         if (result.status!=="attached") return respond({error:result.status==="invalid"?"Invalid request":"Unavailable"},result.status==="invalid"?400:503);

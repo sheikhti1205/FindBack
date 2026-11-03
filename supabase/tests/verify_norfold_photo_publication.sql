@@ -1,11 +1,21 @@
 -- Real canonical RPC/SQL paths on disposable PG; synthetic actors/metadata only.
 -- No actual Storage bytes, OAuth or live two-account acceptance is claimed.
 begin;
+-- Test-only elevated commit models independently verified signing. No hosted
+-- Auth/Storage/real-account acceptance is inferred from this synthetic binding.
+create function pg_temp.photo_enroll() returns void language plpgsql security definer as $$ declare c jsonb; begin
+ c:=public.findback_device_enrollment_challenge(current_setting('photo.device'),'04'||repeat('ab',64),'Photo fixture','web');
+ perform public.findback_device_enrollment_commit(auth.uid()::text,(auth.jwt()->>'session_id')::uuid,(c->>'challengeId')::uuid);
+end $$;
+grant execute on function pg_temp.photo_enroll() to authenticated;
 create function pg_temp.photo_exchange(p_action text,p_args jsonb default '{}'::jsonb)
-returns jsonb language sql as $$
-  select public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),p_action,
+returns jsonb language plpgsql as $$ begin
+  perform set_config('request.jwt.claims',jsonb_build_object('session_id',current_setting('photo.device'))::text,true);
+  if p_action='REGISTER' then perform pg_temp.photo_enroll(); end if;
+  return public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),p_action,
    case when p_action='SEND' then p_args||jsonb_build_object('expectedHead',
-    public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),'HEAD',p_args)) else p_args end)
+    public.findback_chat_exchange(auth.uid()::text,current_setting('photo.device'),'HEAD',p_args)) else p_args end);
+end
 $$;
 create function pg_temp.photo_mailbox(p_ids text[]) returns void language plpgsql as $$
 declare ids text[];
@@ -19,6 +29,11 @@ grant execute on function pg_temp.photo_exchange(text,jsonb),pg_temp.photo_mailb
 insert into public.users(id,username,email,phone,email_verified,created_at,updated_at) values
  ('00000000-0000-4000-9933-000000000001','photo_pub_a','photo_pub_a@example.invalid','+8801993300001',1,now(),now()),
  ('00000000-0000-4000-9933-000000000002','photo_pub_b','photo_pub_b@example.invalid','+8801993300002',1,now(),now());
+insert into auth.users(id,email) select id::uuid,email from public.users where username in('photo_pub_a','photo_pub_b');
+insert into auth.sessions(id,user_id) values
+ ('00000000-0000-4000-9933-000000000011','00000000-0000-4000-9933-000000000001'),
+ ('00000000-0000-4000-9933-000000000021','00000000-0000-4000-9933-000000000002'),
+ ('00000000-0000-4000-9933-000000000022','00000000-0000-4000-9933-000000000002');
 insert into public.chat_conversations(id,user_a,user_b,state,receipt_connection_epoch) values
  ('00000000-0000-4000-9933-000000000099','00000000-0000-4000-9933-000000000001','00000000-0000-4000-9933-000000000002','CONNECTED','photo-publication-connection');
 insert into public.chat_member_state(conversation_id,user_id,mode) values
@@ -50,6 +65,7 @@ select set_config('request.jwt.claim.sub','00000000-0000-4000-9933-000000000002'
 select set_config('photo.device','00000000-0000-4000-9933-000000000021',true);
 select pg_temp.photo_mailbox('{}');
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9933-000000000001',true);
+select set_config('request.jwt.claims','{"session_id":"00000000-0000-4000-9933-000000000011"}',true);
 select public.findback_reserve_chat_media(auth.uid()::text,'00000000-0000-4000-9933-000000000101','00000000-0000-4000-9933-000000000201');
 select set_config('request.jwt.claim.sub','00000000-0000-4000-9933-000000000002',true);
 select pg_temp.photo_mailbox('{}');

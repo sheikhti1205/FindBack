@@ -26,8 +26,10 @@
  *   `findback-push` sender `push-dispatch` uses.
  * - `SUPABASE_URL`, `SUPABASE_SECRET_KEYS` — injected by the runtime.
  */
+// Edge deployments use inline npm specifiers, without a global import map.
+// deno-lint-ignore no-import-prefix
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
-import { drainChatWakes, type ChatClaim } from "../_shared/chatWake.ts";
+import { drainChatWakes, type ChatClaim, type ChatWakeAdmin } from "../_shared/chatWake.ts";
 import { corsJson, preflight } from "../_shared/cors.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -37,6 +39,7 @@ type Database = {
     Tables: Record<string, never>;
     Views: Record<string, never>;
     Functions: {
+      findback_device_admission: { Args: Record<string, never>; Returns: unknown };
       findback_claim_chat_external_wakes_for_message: {
         Args: { p_message_id: string; p_actor: string; p_limit: number };
         Returns: { wake_id: string; device_id: string; claim_token: string }[];
@@ -79,6 +82,12 @@ export function createChatWakeEndpoint(env?: Partial<SupabaseEnv>) {
       async (_req, ctx) => {
         const actor = ctx.userClaims?.id;
         if (!actor) return respond({ error: "Unauthorized" }, 401);
+        // Verified identity alone is insufficient after device revocation or
+        // same-account session rebind. Preserve the original JWT for admission.
+        const admission=await ctx.supabase.rpc("findback_device_admission",{}).abortSignal(request.signal);
+        if(admission.error || !admission.data || (admission.data as Record<string,unknown>).accountId!==actor) {
+          return respond({error:"Unavailable"},503);
+        }
 
         // Read after the caller is authenticated, so an anonymous request can
         // never learn whether push is configured.
@@ -98,7 +107,9 @@ export function createChatWakeEndpoint(env?: Partial<SupabaseEnv>) {
         const admin = ctx.supabaseAdmin;
         try {
           const result = await drainChatWakes(
-            admin,
+            // Shared structural port avoids recursive SDK schema comparison;
+            // the message-scoped claim below retains its exact typed RPC args.
+            admin as unknown as ChatWakeAdmin,
             projectId,
             senderJson,
             async (limit) => {

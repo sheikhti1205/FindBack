@@ -1,5 +1,6 @@
--- LOCAL milestone WIP: device authority foundation. Integrating existing Chat,
--- media gateway, push and runtime admission remains required before publication.
+-- LOCAL milestone WIP: device authority and canonical Chat/media/push admission.
+-- Runtime key enrollment and authenticated peer execution remain required before
+-- milestone acceptance/publication. Earlier applied migrations remain immutable.
 begin;
 
 alter table public.chat_devices
@@ -66,7 +67,8 @@ create function public.findback_device_context_internal(p_uid text,p_session uui
 returns jsonb language plpgsql volatile security definer set search_path=public,pg_temp as $$
 declare b public.chat_device_sessions%rowtype; d public.chat_devices%rowtype;
 begin
- if p_uid is null or p_session is null or not exists(select 1 from auth.sessions s join auth.users u on u.id=s.user_id
+ if p_uid is null or p_session is null or exists(select 1 from public.account_deletion_fences where user_id=p_uid)
+  or not exists(select 1 from auth.sessions s join auth.users u on u.id=s.user_id
    join public.users a on a.id=u.id::text where s.id=p_session and s.user_id::text=p_uid
    and u.deleted_at is null and (u.banned_until is null or u.banned_until<=clock_timestamp())) then
   raise exception 'Session unavailable' using errcode='42501'; end if;
@@ -95,7 +97,7 @@ returns jsonb language plpgsql volatile security definer set search_path=public,
 declare u text:=auth.uid()::text; s uuid; d public.chat_devices%rowtype; c public.chat_device_challenges%rowtype;
  n bigint:=floor(extract(epoch from clock_timestamp())*1000); label text:=btrim(p_name);
 begin
- perform public.findback_device_lock_internal(u,true); s:=public.findback_device_session_internal();
+  perform public.findback_device_lock_internal(u,true); n:=floor(extract(epoch from clock_timestamp())*1000); s:=public.findback_device_session_internal();
  perform public.findback_device_context_internal(u,s,p_device_id,true);
  if p_device_id is null or p_device_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
   or p_public_key is null or p_public_key !~ '^04[0-9a-f]{128}$' or label is null or length(label) not between 1 and 64
@@ -132,7 +134,8 @@ returns jsonb language plpgsql volatile security definer set search_path=public,
 declare c public.chat_device_challenges%rowtype; d public.chat_devices%rowtype; g uuid:=gen_random_uuid();
  n bigint:=floor(extract(epoch from clock_timestamp())*1000);
 begin
- perform public.findback_device_lock_internal(p_uid,true);
+  perform public.findback_device_lock_internal(p_uid,true);
+  n:=floor(extract(epoch from clock_timestamp())*1000);
  select * into c from public.chat_device_challenges where id=p_challenge and user_id=p_uid and session_id=p_session for update;
  if not found or c.consumed_at is not null or c.expires_ms<=n then raise exception 'Device proof unavailable' using errcode='42501'; end if;
  perform public.findback_device_context_internal(p_uid,p_session,c.device_id,true);
@@ -306,4 +309,99 @@ begin
 end $$;
 revoke all on function public.findback_peer_signal(text,jsonb) from public,anon,authenticated,service_role;
 grant execute on function public.findback_peer_signal(text,jsonb) to authenticated;
+
+-- Preserve canonical Chat behavior behind ONE admission boundary. Renamed
+-- implementations retain their bodies/dependencies but have no callable role
+-- grants. This avoids maintaining copied versions of exchange/receipt logic.
+do $$ declare f record; legacy text; begin
+ for f in select * from (values
+  ('findback_chat_exchange','text,text,text,jsonb','p_account_id text,p_device_id text,p_action text,p_args jsonb','jsonb','$1,$2,$3,$4','p_device_id'),
+  ('findback_chat_receipt_view','text,text,text,jsonb','p_account_id text,p_device_id text,p_conversation_id text,p_message_ids jsonb','jsonb','$1,$2,$3,$4','p_device_id'),
+  ('findback_chat_receipt_observe','text,text,text,text,text','p_account_id text,p_device_id text,p_conversation_id text,p_context text,p_message_id text','boolean','$1,$2,$3,$4,$5','p_device_id'),
+  ('findback_chat_set_muted','text,text,text,boolean','p_account_id text,p_device_id text,p_conversation_id text,p_muted boolean','boolean','$1,$2,$3,$4','p_device_id'),
+  ('findback_reserve_chat_media','text,text,text','p_account_id text,p_message_id text,p_attachment_id text','text','$1,$2,$3','null'),
+  ('findback_fetch_chat_media_delivery','text,text','p_account_id text,p_device_id text','jsonb','$1,$2','p_device_id'),
+  ('findback_ack_chat_media_delivery','text,text,text','p_account_id text,p_device_id text,p_attachment_id text','integer','$1,$2,$3','p_device_id'),
+  ('findback_unregister_device_token_client','text','p_token text','integer','$1','null')
+ ) x(name,types,params,result,args,device) loop
+  legacy:=f.name||'_authority_legacy_internal';
+  execute format('alter function public.%I(%s) rename to %I',f.name,f.types,legacy);
+  execute format('revoke all on function public.%I(%s) from public,anon,authenticated,service_role',legacy,f.types);
+  execute format('create function public.%I(%s) returns %s language plpgsql volatile security definer set search_path=public,pg_temp as $body$ begin
+   perform public.findback_device_admission(%s); return public.%I(%s); end $body$',f.name,f.params,f.result,f.device,legacy,f.args);
+  execute format('revoke all on function public.%I(%s) from public,anon,authenticated,service_role',f.name,f.types);
+  execute format('grant execute on function public.%I(%s) to authenticated',f.name,f.types);
+ end loop;
+end $$;
+
+-- REGISTER still returns the canonical device row ID, but can only heartbeat
+-- an already key-enrolled installation. No revoked/unbound alias is recreated.
+create or replace function public.findback_register_chat_device(p_device_id text,p_platform text)
+returns text language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare r text; begin
+ perform public.findback_device_admission(p_device_id);
+ if p_platform is null or p_platform not in('android','web','ios') then raise exception 'Invalid device' using errcode='22023'; end if;
+ update public.chat_devices set last_seen_at=clock_timestamp() where user_id=auth.uid()::text and device_id=p_device_id returning id into r;
+ return r;
+end $$;
+
+-- User-scoped target reads preserve JWT/session context. The trusted gateway
+-- remains the ONLY committer of verified bytes; clients cannot certify hashes.
+create function public.findback_chat_media_target_client(p_attachment_id text,p_mode text) returns jsonb
+language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare u text:=auth.uid()::text; begin
+ perform public.findback_device_admission();
+ if p_mode='READ' then return public.findback_read_chat_media(u,p_attachment_id);
+ elsif p_mode='UPLOAD' then return public.findback_chat_media_upload_target(u,p_attachment_id);
+ end if;
+ raise exception 'Invalid media action' using errcode='22023';
+end $$;
+create function public.findback_commit_chat_media_for_device(p_actor text,p_session uuid,p_device text,p_enrollment uuid,
+ p_attachment_id text,p_generation text,p_object_key text,p_sha text,p_mime text,p_bytes integer,p_width integer,p_height integer)
+returns void language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare ctx jsonb; begin
+ perform public.findback_device_lock_internal(p_actor,false);
+ ctx:=public.findback_device_context_internal(p_actor,p_session,p_device);
+ if p_enrollment is null or p_enrollment is distinct from (ctx->>'generation')::uuid then raise exception 'Device unavailable' using errcode='42501'; end if;
+ perform public.findback_commit_chat_media(p_actor,p_attachment_id,p_generation,p_object_key,p_sha,p_mime,p_bytes,p_width,p_height);
+end $$;
+revoke all on function public.findback_chat_media_target_client(text,text),
+ public.findback_commit_chat_media_for_device(text,uuid,text,uuid,text,text,text,text,text,integer,integer,integer) from public,anon,authenticated,service_role;
+grant execute on function public.findback_chat_media_target_client(text,text) to authenticated;
+grant execute on function public.findback_commit_chat_media_for_device(text,uuid,text,uuid,text,text,text,text,text,integer,integer,integer) to service_role;
+
+-- Keep token ownership's single canonical upsert. Bind every refreshed token to
+-- its immutable current session/installation/generation in that transaction.
+alter function public.findback_register_device_token_client(text,text) rename to findback_register_device_token_client_authority_legacy_internal;
+revoke all on function public.findback_register_device_token_client_authority_legacy_internal(text,text) from public,anon,authenticated,service_role;
+create function public.findback_register_device_token_client(p_token text,p_platform text) returns void
+language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare ctx jsonb; begin
+ ctx:=public.findback_device_admission();
+ perform public.findback_register_device_token_client_authority_legacy_internal(p_token,p_platform);
+ update public.device_tokens set installation_id=ctx->>'deviceId',auth_session_id=(ctx->>'sessionId')::uuid,
+  enrollment_generation=(ctx->>'generation')::uuid where user_id=auth.uid()::text and token=p_token;
+end $$;
+revoke all on function public.findback_register_device_token_client(text,text) from public,anon,authenticated,service_role;
+grant execute on function public.findback_register_device_token_client(text,text) to authenticated;
+
+-- A service-side send admission, not an everlasting grant. The dispatch owner
+-- rechecks after OAuth immediately before FCM. Already admitted sends cannot be
+-- recalled. Missing/legacy bindings are never dispatch-eligible.
+create function public.findback_device_push_allowed(p_user text,p_token text) returns boolean
+language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare d public.device_tokens%rowtype; ctx jsonb; begin
+ if p_user is null then return false; end if;
+ perform public.findback_device_lock_internal(p_user,false);
+ select * into d from public.device_tokens where user_id=p_user and token=p_token;
+ if not found or d.installation_id is null or d.auth_session_id is null or d.enrollment_generation is null then return false; end if;
+ begin ctx:=public.findback_device_context_internal(p_user,d.auth_session_id,d.installation_id);
+ exception when insufficient_privilege then return false; end;
+ return d.enrollment_generation=(ctx->>'generation')::uuid;
+end $$;
+alter function public.findback_chat_external_wake_delivery(text,text,text) rename to findback_chat_external_wake_delivery_authority_legacy_internal;
+revoke all on function public.findback_chat_external_wake_delivery_authority_legacy_internal(text,text,text) from public,anon,authenticated,service_role;
+create function public.findback_chat_external_wake_delivery(p_wake_id text,p_device_id text,p_claim_token text) returns jsonb
+language plpgsql volatile security definer set search_path=public,pg_temp as $$ declare d public.device_tokens%rowtype; begin
+ select * into d from public.device_tokens where id=p_device_id;
+ if not found or not public.findback_device_push_allowed(d.user_id,d.token) then return null; end if;
+ return public.findback_chat_external_wake_delivery_authority_legacy_internal(p_wake_id,p_device_id,p_claim_token);
+end $$;
+revoke all on function public.findback_device_push_allowed(text,text),public.findback_chat_external_wake_delivery(text,text,text) from public,anon,authenticated,service_role;
+grant execute on function public.findback_device_push_allowed(text,text),public.findback_chat_external_wake_delivery(text,text,text) to service_role;
 commit;

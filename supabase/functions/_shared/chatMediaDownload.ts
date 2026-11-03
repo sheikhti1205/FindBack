@@ -16,6 +16,12 @@ export async function downloadChatMedia(io:DownloadPorts,input:{actor:string;att
     check(); const raw=await abortable(signal,()=>io.readTarget(input.actor,input.attachmentId,signal)); check(); if(raw===null)return {status:"not_found"}; const target=parse(raw,input.attachmentId); if(Date.parse(target.expiresAt)<=io.now())return {status:"expired"};
     const stream=await abortable(signal,()=>io.download(target,signal));check();const reader=stream.getReader(),bytes=new Uint8Array(target.bytes);let offset=0;
     try {for(;;){const part=await abortable(signal,()=>reader.read());check();if(part.done)break;if(!(part.value instanceof Uint8Array)||offset+part.value.length>bytes.length){controller.abort();throw Error();} bytes.set(part.value,offset);offset+=part.value.length;}} finally {void reader.cancel().catch(()=>{});reader.releaseLock();}
-    if(offset!==bytes.length)throw Error();const digest=new Uint8Array(await abortable(signal,()=>crypto.subtle.digest("SHA-256",bytes)));check();if(Array.from(digest,x=>x.toString(16).padStart(2,"0")).join("")!==target.sha256)throw Error();if(Date.parse(target.expiresAt)<=io.now())return {status:"expired"};return {status:"served",bytes,mime:target.mime};
+    if(offset!==bytes.length)throw Error();const digest=new Uint8Array(await abortable(signal,()=>crypto.subtle.digest("SHA-256",bytes)));check();if(Array.from(digest,x=>x.toString(16).padStart(2,"0")).join("")!==target.sha256)throw Error();
+    // Storage/crypto is asynchronous: a prior target is not lasting permission.
+    // Re-read canonical authority/erasures before any verified bytes are served.
+    const latest=await abortable(signal,()=>io.readTarget(input.actor,input.attachmentId,signal));check();
+    if(latest===null)return {status:"not_found"};
+    if(JSON.stringify(parse(latest,input.attachmentId))!==JSON.stringify(target))throw Error();
+    if(Date.parse(target.expiresAt)<=io.now())return {status:"expired"};return {status:"served",bytes,mime:target.mime};
   } catch {return {status:"retry"};} finally {clearTimeout(timer);controller.abort();}
 }

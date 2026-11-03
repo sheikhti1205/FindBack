@@ -47,6 +47,7 @@ import { aiCredentials } from "./services/aiCredentials";
 import { ApiError, beginAccountSwitch, getPendingEmail, getToken, setPendingEmail } from "./services/session";
 import { loadDraft, saveDraft } from "./services/reportDraft";
 import { disconnectRealtime } from "./services/realtime";
+import * as messagingRuntime from "./services/messaging/runtime";
 
 const A: PublicUser = {
   id: "switch-a", username: "alice", email: "alice@example.invalid", phone: "", emailVerified: true,
@@ -105,6 +106,22 @@ afterEach(() => {
 });
 
 describe("direct SDK account replacement isolation", () => {
+  it("routes same-account Auth-session replacement synchronously but not ordinary token refresh",async()=>{
+    const user={...A,id:"00000000-0000-4000-8000-000000000001"};
+    const sid="00000000-0000-4000-8000-000000000011", next="00000000-0000-4000-8000-000000000012";
+    seams.restoreSession.mockResolvedValue(user);
+    const closed=vi.spyOn(messagingRuntime,"clearMessagingRuntime");
+    const emit=(event:string,session_id:string,exp:number)=>seams.callback?.(event,{user:{id:user.id},
+      access_token:`e30.${btoa(JSON.stringify({sub:user.id,session_id,exp})).replaceAll("=","")}.c3ludGhldGlj`});
+    render(<AuthProvider><Probe /></AuthProvider>); await waitFor(()=>expect(auth.user?.id).toBe(user.id));
+    await act(async()=>{emit("SIGNED_IN",sid,100);});
+    expect(auth.authSessionId).toBe(sid); closed.mockClear();
+    await act(async()=>{emit("TOKEN_REFRESHED",sid,200);});
+    expect(auth.authSessionId).toBe(sid); expect(closed).not.toHaveBeenCalled();
+    await act(async()=>{emit("SIGNED_IN",next,300);expect(closed).toHaveBeenCalledOnce();});
+    expect(auth.authSessionId).toBe(next); expect(auth.user?.id).toBe(user.id);
+    closed.mockRestore();
+  });
   it("accepts pending signup after the ordinary empty startup snapshot", async () => {
     seams.restoreSession.mockRejectedValue(new Error("no session"));
     seams.register.mockResolvedValue({ user: A, emailVerificationRequired: true, email: "a@example.invalid" });

@@ -17,6 +17,8 @@
  * - `FCM_PROJECT_ID`, `PUBLIC_SHARE_ORIGIN`, `PUSH_DISPATCH_SECRET`.
  * - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — injected by the runtime.
  */
+// Edge deployment has no project-wide import map.
+// deno-lint-ignore no-import-prefix
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateReplyToken, hashToken, REPLY_TOKEN_TTL_MS } from "../_shared/replyTokens.ts";
 import { runDispatchLanes, type LaneResponse } from "../_shared/dispatchLanes.ts";
@@ -384,6 +386,11 @@ async function dispatchReportLane(
     if (error || typeof data !== "boolean") throw new Error("Delivery eligibility unavailable");
     return data;
   };
+  const deviceAllowed = async (user: string, token: string): Promise<boolean> => {
+    const { data, error } = await admin.rpc("findback_device_push_allowed", { p_user: user, p_token: token });
+    if (error || typeof data !== "boolean") throw new Error("Device eligibility unavailable");
+    return data;
+  };
   const notifications: DispatchNotification[] = [];
   const suppressed = new Set<string>();
   const deferred = new Set<string>();
@@ -402,20 +409,29 @@ async function dispatchReportLane(
   }
 
   const userIds = [...new Set(notifications.map((n) => n.user_id))];
-  const [{ data: prefs }, { data: tokens }] = await Promise.all([
+  const [preferenceRead, tokenRead] = await Promise.all([
     admin.from("notification_preferences").select("*").in("user_id", userIds),
     admin.from("device_tokens").select("user_id, token").in("user_id", userIds),
   ]);
+  if (preferenceRead.error || tokenRead.error || !Array.isArray(tokenRead.data)) {
+    return { status: 503, body: { error: "eligibility unavailable", scanned: scanned.length, sent: 0 } };
+  }
+  const tokens: DeviceTokenRow[]=[];
+  try {
+    for (const row of tokenRead.data as DeviceTokenRow[]) {
+      if (await deviceAllowed(row.user_id,row.token)) tokens.push(row);
+    }
+  } catch { return { status: 503, body: { error: "eligibility unavailable", scanned: scanned.length, sent: 0 } }; }
 
   const deliveries = planDeliveries(
     notifications,
-    (prefs ?? []) as PreferenceRow[],
-    (tokens ?? []) as DeviceTokenRow[],
+    (preferenceRead.data ?? []) as PreferenceRow[],
+    tokens,
   );
 
   let accessToken = "";
   try {
-    accessToken = await getChatAccessToken(JSON.parse(senderJson));
+    if (deliveries.length>0) accessToken = await getChatAccessToken(JSON.parse(senderJson));
   } catch {
     console.error("push-dispatch: FIREBASE_SERVICE_ACCOUNT_JSON is invalid or FCM authentication failed. No notifications were sent.");
     return { status: 502, body: { error: "fcm auth failed", scanned: notifications.length, sent: 0 } };
@@ -464,6 +480,9 @@ async function dispatchReportLane(
         replyTokens.delete(delivery.notificationId);
         continue;
       }
+      // Token scans are not authority. Enrollment/rebind/revoke and Auth-session
+      // deletion are checked through the canonical device owner after OAuth.
+      if (!await deviceAllowed(delivery.userId,delivery.token)) continue;
     } catch {
       deferred.add(delivery.notificationId);
       outcomes.push({ notificationId: delivery.notificationId, ok: false, prune: false });
