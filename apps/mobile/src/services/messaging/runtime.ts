@@ -1,5 +1,8 @@
 import { Capacitor } from "@capacitor/core";
-import type { MediaAttachment, OutboxEntry, StaticLocation, StoredHumanMessage } from "./history";
+import type {
+  HistorySnapshot, ImportReport, MediaAttachment, OutboxEntry, StaticLocation, StoredHumanMessage,
+} from "./history";
+import { normaliseSnapshot } from "./backup";
 import type { MediaMetadata } from "./media";
 import type { ConversationProjection, ConversationSummary } from "./conversationIndex";
 import { openPlatformMessagingHistory, purgePlatformMessagingAccount, type PlatformMessagingHandle } from "./platformHistory";
@@ -90,7 +93,7 @@ export function subscribeMessagingRuntime(listener: () => void): () => void {
 
 export function getMessagingRuntimeSnapshot(): MessagingRuntimeSnapshot { return snapshot; }
 
-function webInstallationId(): string {
+export function webInstallationId(): string {
   const key = "findback.messaging.installation.v1";
   const stored = localStorage.getItem(key);
   if (stored !== null) return uuid(stored);
@@ -111,6 +114,32 @@ function ownerFor(accountId: string): Owner {
   if (!owner || owner.handle.scope.accountId !== uuid(accountId)) throw new Error("Chat is not ready");
   assertOwner(owner);
   return owner;
+}
+
+/**
+ * Portable history for the encrypted backup owner. Only while this exact
+ * account's runtime is live; a switch mid-read rejects instead of returning
+ * another account's rows.
+ */
+export async function exportMessagingSnapshot(accountId: string): Promise<HistorySnapshot> {
+  const owner = ownerFor(accountId);
+  const value = await owner.handle.history.exportSnapshot();
+  assertOwner(owner);
+  return value;
+}
+
+/**
+ * Merge a backup snapshot into local history. The shared import applies
+ * tombstones, unsends and clears and never creates send work, receipts or state
+ * events. Conversation heads still have to be reconciled with the server.
+ */
+export async function importMessagingSnapshot(accountId: string,
+  snapshot: HistorySnapshot): Promise<ImportReport> {
+  const owner = ownerFor(accountId);
+  const report = await owner.handle.history.importSnapshot(normaliseSnapshot(snapshot));
+  assertOwner(owner);
+  await reload(owner);
+  return report;
 }
 
 async function reload(owner: Owner) {

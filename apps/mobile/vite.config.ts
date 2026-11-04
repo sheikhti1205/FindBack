@@ -84,6 +84,13 @@ export default defineConfig(({ command, mode }) => {
   const { publishableKey, url } = resolveSupabaseBuildEnv(mode);
   const shareOrigin = loadEnv(mode, process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."), "").VITE_PUBLIC_SHARE_ORIGIN?.trim() || "";
   const mapEnv = resolveMapBuildEnv(mode);
+  // Drive backup authorization is a web public client id. It may be the same
+  // OAuth client as sign-in (the client is not an identity), but the backup
+  // flow requests only `drive.appdata` and never exchanges its token for a
+  // Norfold session.
+  const buildEnv = loadEnv(mode, process.env.FINDBACK_ENV_DIR || resolve(import.meta.dirname, "../.."), "");
+  const driveClientId = buildEnv.VITE_GOOGLE_DRIVE_CLIENT_ID?.trim()
+    || buildEnv.GOOGLE_WEB_CLIENT_ID?.trim() || "";
   if (command === "build") {
     // FBX-027 maps truth: the node owner validates the effective map config
     // (malformed custom values fail closed). Running it here means a direct
@@ -143,6 +150,7 @@ export default defineConfig(({ command, mode }) => {
       "import.meta.env.VITE_MAP_STYLE_URL": JSON.stringify(mapEnv.styleUrl),
       "import.meta.env.VITE_MAP_SEARCH_CONTACT": JSON.stringify(mapEnv.contact),
       "import.meta.env.VITE_NOMINATIM_SEARCH_URL": JSON.stringify(mapEnv.nominatimSearchUrl),
+      "import.meta.env.VITE_GOOGLE_DRIVE_CLIENT_ID": JSON.stringify(driveClientId),
       __SUPABASE_URL__: JSON.stringify(url),
       __SUPABASE_PUBLISHABLE_KEY__: JSON.stringify(publishableKey),
     },

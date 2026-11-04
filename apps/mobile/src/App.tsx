@@ -38,6 +38,7 @@ import { Notifications } from "./screens/Notifications";
 import { Settings } from "./screens/Settings";
 import { AccountSettings } from "./screens/AccountSettings";
 import { Devices } from "./screens/Devices";
+import { BackupSettings } from "./screens/BackupSettings";
 import { AppearanceSettings } from "./screens/AppearanceSettings";
 import { AccessibilitySettings } from "./screens/AccessibilitySettings";
 import { FeedLayoutSettings } from "./screens/FeedLayoutSettings";
@@ -244,6 +245,7 @@ function AppRouteTree() {
               <Route path="/settings/administrator" element={<AdminBootstrap />} />
               <Route path="/settings/account" element={<AccountSettings />} />
               <Route path="/settings/devices" element={<Devices />} />
+              <Route path="/settings/backup" element={<BackupSettings />} />
               <Route path="/settings/appearance" element={<AppearanceSettings />} />
               <Route path="/settings/accessibility" element={<AccessibilitySettings />} />
               <Route path="/settings/feed-layout" element={<FeedLayoutSettings />} />

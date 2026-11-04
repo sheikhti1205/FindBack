@@ -5,6 +5,7 @@ import {
   Accessibility,
   Activity,
   Bell,
+  CloudUpload,
   CircleHelp,
   Cpu,
   Flag,
@@ -267,6 +268,13 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               icon={MonitorSmartphone}
               iconTone="teal"
               route="/settings/devices"
+            />
+            <SettingsRow
+              title="Chat backup"
+              description="Keep your conversations with you."
+              icon={CloudUpload}
+              iconTone="blue"
+              route="/settings/backup"
             />
           </SettingsGroup>
           <SettingsGroup title="Preferences">

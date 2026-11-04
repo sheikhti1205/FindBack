@@ -26,6 +26,8 @@ import { PreferenceSwitchRow } from "../components/settings/SettingsPrimitives";
 import { fetchAccountLabels } from "../services/accountLabels";
 import { fetchPost } from "../services/posts";
 import { useMessaging } from "../services/messaging/useMessaging";
+import { BackupPrompt } from "../components/BackupPrompt";
+import { startDriveBackup } from "../services/messaging/backupRuntime";
 import {
   changeMessagingRelationship, markMessagingConversationRead, readMessagingThreadState,
   refreshMessaging, sendMessagingText, sendMessagingLocation, sendMessagingMedia, clearMessagingConversation, removeMessagingMessage,
@@ -224,6 +226,8 @@ function ConnectionsSession({ accountId, selectedId }: { accountId: string; sele
   const heading = useRef<HTMLHeadingElement>(null);
   const labels = useLabels(chat.conversations.map((row) => row.peerId));
   useEffect(() => { heading.current?.focus(); }, []);
+  // One backup ticker per open Chat surface; it stops when the last one closes.
+  useEffect(() => startDriveBackup(), []);
   const requests = chat.conversations.filter(row => {
     const view = chat.currentProjections?.[row.conversationId] ?? row.cachedProjection;
     return !view?.ownHidden && !view?.ownDeclined && view?.mode === "REQUEST" && view.request === "INCOMING";
@@ -246,6 +250,7 @@ function ConnectionsSession({ accountId, selectedId }: { accountId: string; sele
       <ActionMenu label="Filter chats" icon={<ListFilter size={20} aria-hidden="true" />} items={["All", "Unread", "Archived"].map(value => ({ id: value, label: value, onAction: () => setFilter(value) }))} />
     </header>
     <label className="fb-chat-search"><Search size={17} aria-hidden="true" /><input type="search" aria-label="Search people or chats" placeholder="Search people or chats" value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <BackupPrompt sequences={chat.conversations.reduce((total, row) => total + row.lastSequence, 0)} />
     <div className="fb-chat-filters" role="group" aria-label="Show conversations">
       {["All", "Requests"].map((value) => <button key={value} type="button" aria-label={value === "Requests" ? `Requests, ${requests}` : "All"}
         aria-pressed={filter === value} onClick={() => setFilter(value)}>{value}{value === "Requests" && requests > 0 && <span className="fb-chat-count" aria-hidden="true">{requests}</span>}</button>)}

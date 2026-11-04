@@ -13,6 +13,8 @@ describe("settingsIndex", () => {
         // Device management (packet 05/06 consumer surface) postdates the
         // 2026-10-03 route map like the rows above.
         "/settings/devices",
+        // Encrypted Drive backup (packet 06) postdates the route map too.
+        "/settings/backup",
         "/settings/ai",
         "/settings/ai/connections",
         "/settings/appearance",

@@ -92,6 +92,7 @@ const BACK_TO_ROUTES = [
   "/settings/ai",
   "/settings/account",
   "/settings/devices",
+  "/settings/backup",
   "/profile",
   "/",
   "/settings/appearance",

@@ -120,3 +120,11 @@ a.fb-chat-context:hover, a.fb-chat-context:focus-visible { text-decoration:under
 .fb-chat-location-composer { padding:.9rem; display:flex; flex-direction:column; gap:.9rem; min-width:0; }
 .fb-chat-row-context { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.75rem; color:var(--fb-on-surface-variant); }
 .fb-chat-row-meta { display:flex; flex-direction:column; align-items:flex-end; flex:none; gap:.3rem; font-size:.75rem; color:var(--fb-on-surface-variant); }
+
+/* One optional backup prompt above the conversation list (packet 06). */
+.fb-chat-backup-prompt { display:flex; flex-direction:column; gap:.75rem; margin:0 .75rem .75rem; padding:.9rem 1rem; border:1px solid var(--fb-outline-variant); border-radius:.9rem; background:var(--fb-surface-container); }
+.fb-chat-backup-prompt h2 { margin:0; font-size:1rem; font-weight:650; }
+.fb-chat-backup-prompt p { margin:.35rem 0 0; font-size:.875rem; line-height:1.45; color:var(--fb-on-surface-variant); }
+.fb-chat-backup-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.fb-chat-backup-settings { font-size:.8125rem; color:var(--fb-primary); text-decoration:underline; }
+.fb-chat-backup-error { color:var(--fb-error) !important; }
