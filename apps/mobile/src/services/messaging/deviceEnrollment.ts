@@ -66,10 +66,30 @@ export function createDeviceEnrollment(input: DeviceIdentityScope & { sessionId:
     if (result.accountId !== scope.accountId || result.deviceId !== scope.deviceId || result.sessionId !== sessionId) throw unavailable();
     return Object.freeze({ accountId: scope.accountId, sessionId, deviceId: scope.deviceId, generation: uuid(result.generation as string) });
   }
-  return { ready(): Promise<EnrolledDevice> {
+  function ready(): Promise<EnrolledDevice> {
     if (signal.aborted) return Promise.reject(unavailable());
     if (enrolled) return Promise.resolve(enrolled);
     pending ??= enroll().then(value => { live(); enrolled = value; return value; }).finally(() => { pending = undefined; });
     return pending;
-  } };
+  }
+  async function signPeer(input: { peerDeviceId: string; transferId: string; nonce: string;
+    channelBinding: string }): Promise<{ proof: DeviceChallenge; signature: ArrayBuffer }> {
+    // Only an enrolled, still-admitted installation may prove possession. The
+    // transfer id is the proof's session binding; the nonce/binding come from
+    // the server-admitted session and the locally derived DTLS fingerprints.
+    await ready(); live();
+    const key = await identity();
+    const peerDeviceId = uuid(input.peerDeviceId), transferId = uuid(input.transferId);
+    if (peerDeviceId === scope.deviceId) throw unavailable();
+    const issuedAt = now();
+    const proof: DeviceChallenge = { version: 1, purpose: "PEER", accountId: scope.accountId,
+      signerDeviceId: scope.deviceId, peerDeviceId, sessionId: transferId, nonce: input.nonce,
+      channelBinding: input.channelBinding, issuedAt, expiresAt: issuedAt + 30_000 };
+    deviceChallengeBytes(scope, proof, issuedAt);
+    const signature = await wait(key.sign(proof));
+    if (!(signature instanceof ArrayBuffer) || signature.byteLength !== 64) throw unavailable();
+    deviceChallengeBytes(scope, proof, now()); live();
+    return { proof, signature };
+  }
+  return { ready, signPeer };
 }

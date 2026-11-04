@@ -41,7 +41,8 @@ function fixture() {
     },
   };
   const open = () => createDeviceEnrollment({ ...scope, sessionId }, controller.signal, ports);
-  return { ports, controller, open, released, counts: () => ({ challengeCalls, commits, closed }) };
+  return { ports, controller, open, released, publicKey: () => challenge.publicKey as string,
+    counts: () => ({ challengeCalls, commits, closed }) };
 }
 describe("session-owned signed device enrollment", () => {
   it("coalesces callers, verifies the real persistent signer and closes on session abort", async () => {
@@ -86,5 +87,24 @@ describe("session-owned signed device enrollment", () => {
     f.ports.commit = async (...args) => ({ ...await real(...args), sessionId: id(9) });
     await expect(f.open().ready()).rejects.toThrow();
     f.controller.abort();
+  });
+  it("signs PEER proofs bound to the peer, transfer, nonce and DTLS channel", async () => {
+    const f = fixture(), owner = f.open(), peerDeviceId = id(6);
+    await owner.ready();
+    const transferId = id(7), nonce = "b".repeat(64), channelBinding = "c".repeat(64);
+    const { proof, signature } = await owner.signPeer({ peerDeviceId, transferId, nonce, channelBinding });
+    expect(proof).toEqual({ version: 1, purpose: "PEER", accountId: scope.accountId,
+      signerDeviceId: scope.deviceId, peerDeviceId, sessionId: transferId, nonce, channelBinding,
+      issuedAt: expect.any(Number), expiresAt: expect.any(Number) });
+    expect(await verifyDeviceProof(scope, f.publicKey(), proof, signature, { now: Date.now() })).toBe(true);
+    // Neither the channel binding nor the peer device can be swapped after signing.
+    expect(await verifyDeviceProof(scope, f.publicKey(), { ...proof, channelBinding: "d".repeat(64) },
+      signature, { now: Date.now() })).toBe(false);
+    expect(await verifyDeviceProof(scope, f.publicKey(), { ...proof, peerDeviceId: id(8) },
+      signature, { now: Date.now() })).toBe(false);
+    await expect(owner.signPeer({ peerDeviceId: scope.deviceId, transferId, nonce, channelBinding }))
+      .rejects.toThrow();
+    f.controller.abort();
+    await expect(owner.signPeer({ peerDeviceId, transferId, nonce, channelBinding })).rejects.toThrow();
   });
 });

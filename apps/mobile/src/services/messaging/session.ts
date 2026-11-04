@@ -331,6 +331,15 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     context.live();
   }
 
+  /** Server delivery row for one attachment, used to authorize peer bytes. */
+  async function pendingMediaFor(attachmentId: string): Promise<MediaMetadata | null> {
+    const context = mediaContext(), id = uuid(attachmentId);
+    const row = (await context.transport.fetchDeliveries()).find((item) => item.id === id);
+    context.live();
+    return row ? { id: row.id, messageId: row.messageId, direction: "IN", sha256: row.sha256,
+      mime: row.mime, byteSize: row.byteSize, width: row.width, height: row.height, expiresAt: row.expiresAt } : null;
+  }
+
   const syncMedia = (): Promise<void> => {
     if (mediaSyncing) return mediaSyncing;
     const run = async () => {
@@ -466,6 +475,29 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
       if (!row || row.expiresAt === null) throw mediaUnavailable();
       if (row.expiresAt <= Date.now()) { context.live(); throw new PhotoUnavailableError(); }
       await receiveMedia(row, context);
+    },
+    /** Server delivery row for one attachment, used to authorize peer bytes. */
+    pendingMedia: pendingMediaFor,
+    /**
+     * Imports bytes that arrived over the optional same-account peer channel.
+     * The peer is only a byte source: a current server delivery row must match
+     * the digest/size/mime/parent, and the normal canonical delivery ACK still
+     * happens. A peer transfer DONE is never treated as a server ACK.
+     */
+    async importPeerMedia(input: MediaMetadata, bytes: ArrayBuffer) {
+      const context = mediaContext(), metadata = copyMediaMetadata(input);
+      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== metadata.byteSize) throw mediaUnavailable();
+      const pending = await pendingMediaFor(metadata.id);
+      context.live();
+      if (metadata.direction !== "IN" || !pending || pending.messageId !== metadata.messageId
+        || pending.sha256 !== metadata.sha256 || pending.byteSize !== metadata.byteSize
+        || pending.mime !== metadata.mime || pending.width !== metadata.width
+        || pending.height !== metadata.height || pending.expiresAt !== metadata.expiresAt) throw mediaUnavailable();
+      await history.persistVerifiedMediaAndAck(metadata, bytes, (row) => {
+        // Begin captured-account work synchronously under the adapter's lock.
+        context.live(); return context.transport.ack(row.id);
+      });
+      context.live();
     },
     /**
      * Run an authority-invalidating action that lives outside this session (the

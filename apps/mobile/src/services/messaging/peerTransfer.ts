@@ -89,6 +89,9 @@ export function createPeerTransfer(channel: PeerTransferChannel, ports: {
   crypto?: Crypto;
   authorize(descriptor: PeerTransferDescriptor, signal: AbortSignal): boolean | Promise<boolean>;
   commit(descriptor: PeerTransferDescriptor, bytes: ArrayBuffer, signal: AbortSignal): Promise<void>;
+  /** Optional owner-level control envelope; returning true consumes the message.
+   * Only used by the repair coordinator for its PLAN/COMPLETE barrier. */
+  onControl?(type: string, message: unknown): boolean;
   onFailure(): void;
   timeoutMs?: number;
 }) {
@@ -167,6 +170,7 @@ export function createPeerTransfer(channel: PeerTransferChannel, ports: {
         exact(parsed, ["version", "type", "descriptor"]); if (parsed.version !== 1) throw unavailable();
         void begin(descriptor(parsed.descriptor)).catch(fail); return;
       }
+      if (typeof parsed?.type === "string" && ports.onControl?.(parsed.type, parsed)) return;
       exact(parsed, ["version", "type", "transferId"]); if (parsed.version !== 1) throw unavailable();
       if (!isUuid(parsed.transferId)) throw unavailable();
       const id = uuid(parsed.transferId);
