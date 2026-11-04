@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { publishReportMock, publishReportWithPhotosMock, photo, nativeMedia } = vi.hoisted(() => ({
@@ -342,8 +342,12 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
     expect(screen.getByRole("button", { name: /cancel upload/i })).toBeTruthy();
     // After the final photo stages, the commit phase must not offer Cancel.
     await waitFor(() => expect(screen.queryByRole("button", { name: /cancel upload/i })).toBeNull());
-    releaseCommit("p-multi");
-    await waitFor(() => expect(publishReportWithPhotosMock).toHaveBeenCalled());
+    await act(async () => {
+      releaseCommit("p-multi");
+      await publishReportWithPhotosMock.mock.results[0]!.value;
+    });
+    expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByText(/uploading \d+ of/i)).toBeNull();
   });
 
   it("multi-photo publish passes onProgress and streams Uploading i/N to completion", async () => {
@@ -378,5 +382,10 @@ describe("CreateReport photo progress + cancel (Lane C)", () => {
       | { onProgress?: (p: { completed: number; total: number }) => void }
       | undefined;
     expect(typeof options?.onProgress).toBe("function");
+    // Observing the call is not observing completion. Drain the actual publish
+    // continuation before cleanup/jsdom teardown, including its finally updates.
+    await act(async () => { await publishReportWithPhotosMock.mock.results[0]!.value; });
+    expect((screen.getByLabelText(/what did you lose/i) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByText(/uploading \d+ of/i)).toBeNull();
   });
 });
