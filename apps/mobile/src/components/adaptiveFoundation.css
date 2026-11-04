@@ -76,6 +76,12 @@
 .fb-split-wide { display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); }
 .fb-split-list, .fb-split-detail { height: 100%; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; }
 .fb-split-wide .fb-split-list { border-inline-end: 1px solid var(--fb-outline-variant); }
+/* A screen-opt-in resizable split draws its boundary on the divider instead. */
+.fb-split-resizable.fb-split-wide .fb-split-list { border-inline-end: 0; }
+.fb-split-resize { position: relative; width: 7px; cursor: col-resize; touch-action: none; background: transparent; }
+.fb-split-resize::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 3px; width: 1px; background: var(--fb-outline-variant); }
+.fb-split-resize:hover::before, .fb-split-resize:focus-visible::before { width: 2px; inset-inline-start: 2px; background: var(--fb-primary); }
+.fb-split-resize:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; }
 .fb-split-list:focus-visible, .fb-split-detail:focus-visible { outline: 2px solid var(--fb-focus); outline-offset: -2px; }
 .fb-composer-shell { container: composer / inline-size; min-width: 0; width: 100%; border: 1px solid var(--fb-outline-variant); background: var(--fb-surface); border-radius: 20px; }
 .fb-composer-shell:focus-within { border-color: var(--fb-focus); }

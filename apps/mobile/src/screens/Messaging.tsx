@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router";
-import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
+import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { PostItem } from "@norfold/shared";
 import { copyStaticLocation, isUuid } from "../services/messaging/validation";
@@ -11,7 +11,8 @@ import { UserAvatar } from "../components/UserAvatar";
 import { ChatIdentity } from "../components/ChatIdentity";
 import { StatusChip } from "../components/StatusChip";
 import { formatEventDate, timeAgo } from "../utils/dates";
-import { SplitView } from "../components/SplitView";
+import { SplitView, type SplitPaneState } from "../components/SplitView";
+import { CHAT_PANE } from "../components/panePreference";
 import { ActionMenu } from "../components/ActionMenu";
 import { PeopleSearch } from "../components/PeopleSearch";
 import { PeerChatComposer } from "../components/PeerChatComposer";
@@ -208,7 +209,8 @@ export function Connections() {
   const { user } = useAuth();
   const { conversationId } = useParams();
   return user ? <SplitView selected={!!conversationId}
-    list={<ConnectionsSession key={user.id} accountId={user.id} selectedId={conversationId} />}
+    pane={{ ...CHAT_PANE, label: "Resize conversation list" }}
+    list={(pane) => <ConnectionsSession key={user.id} accountId={user.id} selectedId={conversationId} pane={pane} />}
     detail={conversationId ? <Outlet /> : <div className="fb-chat-empty"><h2>Choose a conversation</h2><p>Open a chat, or search for someone to connect with.</p></div>} /> : null;
 }
 
@@ -219,13 +221,61 @@ export function LegacyChatsRedirect() {
   return <Navigate replace to={{ pathname: conversationId ? `/chats/${encodeURIComponent(conversationId)}` : "/chats", search: location.search, hash: location.hash }} />;
 }
 
-function ConnectionsSession({ accountId, selectedId }: { accountId: string; selectedId?: string }) {
+/** Collapsed conversation pane: the same people as a labelled avatar rail.
+ *
+ * Extracted so the rail can be rendered without the messaging runtime. Names and
+ * previews leave the rail; the count survives in the link's accessible name,
+ * and the expand control is the only chrome it needs. */
+export function ChatRail({ rows, labels, selectedId, onExpand, headingRef, toggleRef }: {
+  rows: { conversationId: string; peerId: string; unreadCount: number }[];
+  labels: Map<string, string>;
+  selectedId?: string;
+  onExpand: () => void;
+  headingRef?: RefObject<HTMLHeadingElement | null>;
+  toggleRef?: RefObject<HTMLButtonElement | null>;
+}) {
+  return <section className="fb-chat-page fb-chat-rail" aria-label="Chats">
+    <header className="fb-chat-header fb-chat-rail-header">
+      <h1 ref={headingRef} tabIndex={-1} className="sr-only">Chats</h1>
+      <button ref={toggleRef} type="button" className="fb-chat-icon" aria-label="Expand conversation list" onClick={onExpand}>
+        <PanelLeftOpen size={20} aria-hidden="true" />
+      </button>
+    </header>
+    <ul className="fb-chat-rail-list">
+      {rows.map((row) => {
+        const name = labels.get(row.peerId);
+        const unread = row.unreadCount;
+        return <li key={row.conversationId}>
+          <Link to={`/chats/${row.conversationId}`} className="fb-chat-rail-row"
+            aria-current={selectedId === row.conversationId ? "page" : undefined}
+            aria-label={`${name ? `@${name}` : "Conversation"}${unread > 0 ? `, ${unread} unread` : ""}`}
+            title={name ? `@${name}` : "Member"}>
+            <UserAvatar username={name} size={40} />
+            {unread > 0 && <span className="fb-chat-rail-unread" aria-hidden="true" />}
+          </Link>
+        </li>;
+      })}
+    </ul>
+  </section>;
+}
+
+function ConnectionsSession({ accountId, selectedId, pane }: {
+  accountId: string; selectedId?: string; pane?: SplitPaneState;
+}) {
   const chat = useMessaging();
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
+  const paneToggle = useRef<HTMLButtonElement>(null);
+  const paneSettled = useRef(false);
   const labels = useLabels(chat.conversations.map((row) => row.peerId));
   useEffect(() => { heading.current?.focus(); }, []);
+  // Collapsing swaps the header control for the rail's expand button; keep the
+  // keyboard where the user was rather than dropping focus to the document.
+  useEffect(() => {
+    if (!paneSettled.current) { paneSettled.current = true; return; }
+    paneToggle.current?.focus({ preventScroll: true });
+  }, [pane?.collapsed]);
   // One backup ticker per open Chat surface; it stops when the last one closes.
   useEffect(() => startDriveBackup(), []);
   const requests = chat.conversations.filter(row => {
@@ -243,10 +293,18 @@ function ConnectionsSession({ accountId, selectedId }: { accountId: string; sele
     if (filter === "Unread") return row.unreadCount > 0;
     return true;
   });
+  // A collapsed pane is a rail of the same people, not a second list: names and
+  // previews leave, each avatar stays a labelled link and the unread marker
+  // survives as a dot with the count in the link's name.
+  if (pane?.wide && pane.collapsed) return <ChatRail rows={rows} labels={labels} selectedId={selectedId}
+    onExpand={pane.toggle} headingRef={heading} toggleRef={paneToggle} />;
   return <section className="fb-chat-page" aria-label="Chats">
     <header className="fb-chat-header">
       <h1 ref={heading} tabIndex={-1} className="fb-chat-list-title">Chats</h1>
       <RetrySync accountId={accountId} />
+      {pane?.wide && <button ref={paneToggle} type="button" className="fb-chat-icon" aria-label="Collapse conversation list" onClick={pane.toggle}>
+        <PanelLeftClose size={20} aria-hidden="true" />
+      </button>}
       <ActionMenu label="Filter chats" icon={<ListFilter size={20} aria-hidden="true" />} items={["All", "Unread", "Archived"].map(value => ({ id: value, label: value, onAction: () => setFilter(value) }))} />
     </header>
     <label className="fb-chat-search"><Search size={17} aria-hidden="true" /><input type="search" aria-label="Search people or chats" placeholder="Search people or chats" value={query} onChange={event => setQuery(event.target.value)} /></label>
