@@ -27,3 +27,10 @@ Implementation/review candidate only; no acceptance bump, tag or release.
 Focused host/SQL and live schema/deployment evidence does not prove real-account,
 physical-device, Sentry ingestion or owner-corpus acceptance. Those remain
 separate, unpassed gates until actually observed.
+
+**Superseded 2026-11-04:** the "no consumer Drive backup in this beta" line above
+describes this corrective snapshot, not the current product. Drive backup now
+ships on web and Android (`66008792`), and the privacy policy states that the
+backup key is re-issued to signed-in devices, so it is not zero-knowledge. Real
+consent and a real Drive round-trip are still unverified; see
+`FindBack-internal/01_ACTIVE/norfold-rebrand-2026-11-03/sessions/p11/ANDROID-DRIVE.md`.
