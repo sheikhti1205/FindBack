@@ -52,11 +52,14 @@ describe("the backup settings surface", () => {
     expect(screen.queryByRole("button", { name: "Restore from Drive" })).toBeNull();
   });
 
-  it("says plainly when the platform cannot connect, without a dead button", () => {
+  it("says plainly when the build cannot connect, without a dead button", () => {
     mocks.backup.status.mockReturnValue({ kind: "unavailable", reason: "native" });
     renderScreen();
-    expect(screen.getByText("Not available here")).toBeTruthy();
-    expect(screen.getByText(/isn't available in the Android app yet/)).toBeTruthy();
+    expect(screen.getByText("Not available")).toBeTruthy();
+    expect(screen.getByText(/can't reach Google Drive/)).toBeTruthy();
+    // Never claim the Android app lacks the feature: it has it natively now, and
+    // this state is the build/device that cannot reach Google at all.
+    expect(screen.queryByText(/in the Android app yet/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /Connect Google Drive/ })).toBeNull();
   });
 

@@ -5,6 +5,8 @@ import {
   DRIVE_TOKEN_KEY,
   DriveAuthError,
   createDriveAuth,
+  type NativeDriveAccess,
+  type NativeDriveAuth,
 } from "./driveAuth";
 
 const CLIENT = "1234567890-abcdef.apps.googleusercontent.com";
@@ -129,5 +131,90 @@ describe("connecting a Google account for backup", () => {
     auth.forget();
     expect(store.size()).toBe(0);
     expect(auth.current()).toBeNull();
+  });
+});
+
+/**
+ * Android obtains the same narrow grant natively because Google refuses the
+ * Identity Services script inside a WebView. The port must apply identical
+ * validation there and must never open UI for a background renewal.
+ */
+function nativeTransport(answer: (options: { silent: boolean }) => Promise<NativeDriveAccess>) {
+  const calls: Array<{ silent: boolean }> = [];
+  const revoked: string[] = [];
+  const transport: NativeDriveAuth = {
+    isAvailable: async () => ({ available: true }),
+    authorize: async (options) => { calls.push(options); return answer(options); },
+    revoke: async ({ token }) => { revoked.push(token); return { revoked: true }; },
+  };
+  return { transport, calls, revoked };
+}
+
+const granted = () => Promise.resolve({ accessToken: TOKEN, expiresAt: Date.now() + 3_600_000 });
+
+describe("connecting a Google account on Android", () => {
+  it("connects through the native grant and stores it like the web token", async () => {
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    expect(auth.available()).toBe(true);
+    expect(auth.unavailableReason()).toBeNull();
+    await expect(auth.authorize()).resolves.toMatchObject({ token: TOKEN });
+    expect(native.calls).toEqual([{ silent: false }]);
+    expect(auth.current()?.token).toBe(TOKEN);
+  });
+
+  it("still fails closed when the build has no native grant at all", async () => {
+    const auth = createDriveAuth({ native: true, transport: null, storage: storage() });
+    expect(auth.available()).toBe(false);
+    expect(auth.unavailableReason()).toBe("native");
+    await expect(auth.authorize()).rejects.toMatchObject({ kind: "native" });
+  });
+
+  it("reports a native refusal as a refusal, not a generic failure", async () => {
+    const native = nativeTransport(async () => {
+      throw Object.assign(new Error("dismissed"), { code: "denied" });
+    });
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    await expect(auth.authorize()).rejects.toMatchObject({ kind: "denied" });
+    expect(auth.current()).toBeNull();
+  });
+
+  it("refuses a native answer Google could not have sent", async () => {
+    const answers: NativeDriveAccess[] = [
+      { accessToken: "short", expiresAt: Date.now() + 3_600_000 },
+      { accessToken: TOKEN, expiresAt: Date.now() - 1_000_000 },
+      { accessToken: TOKEN, expiresAt: Number.NaN },
+    ];
+    for (const answer of answers) {
+      const native = nativeTransport(async () => answer);
+      const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+      await expect(auth.authorize()).rejects.toBeInstanceOf(DriveAuthError);
+      expect(auth.current()).toBeNull();
+    }
+  });
+
+  it("keeps a background renewal silent: a needed consent yields no token", async () => {
+    const store = storage();
+    const connected = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: connected.transport, storage: store });
+    await auth.authorize();
+
+    const needsConsent = nativeTransport(async () => {
+      throw Object.assign(new Error("consent"), { code: "consent-required" });
+    });
+    const renewing = createDriveAuth({ native: true, transport: needsConsent.transport, storage: store });
+    await expect(renewing.renew()).resolves.toBeNull();
+    expect(needsConsent.calls).toEqual([{ silent: true }]);
+  });
+
+  it("revokes the Google grant when the user disconnects", async () => {
+    const store = storage();
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    await auth.authorize();
+    auth.forget();
+    expect(auth.current()).toBeNull();
+    expect(store.size()).toBe(0);
+    expect(native.revoked).toEqual([TOKEN]);
   });
 });

@@ -104,14 +104,15 @@ export function PrivacyPolicy({ publicView = false }: { publicView?: boolean }) 
       backLabel={publicView ? "Back to Norfold" : "Back to Settings"}
     >
       <Paragraph>Revised 3 November 2026. Norfold was previously known as FindBack; findbackapp.social remains the current service address.</Paragraph>
+      <Paragraph>Backup disclosure updated 4 November 2026.</Paragraph>
       <SettingsGroup title="What stays on your phone">
         <Paragraph>
           Your settings, appearance and any downloaded text-search resources stay on your device.
           AI Chat conversations are held in memory while the app is open, separately for each
           account, and are gone when you close it. Private messages between people are stored on
           your device so accepted history can be read offline. The list of reports you save is
-          kept on this phone too, separately for each account. This beta has no consumer Drive
-          backup option; keep that in mind before clearing app data or changing phones.
+          kept on this phone too, separately for each account. Clearing app data or changing
+          devices can lose private message history if you do not have a current usable backup.
         </Paragraph>
       </SettingsGroup>
 
@@ -133,6 +134,21 @@ export function PrivacyPolicy({ publicView = false }: { publicView?: boolean }) 
           expire; this is not a permanent server archive of your conversations. Push notifications
           wake the app without carrying message text. Messages are not end-to-end encrypted.
           The other person may keep copies, screenshots or saved files that Norfold cannot erase.
+        </Paragraph>
+      </SettingsGroup>
+
+      <SettingsGroup title="Optional chat backup">
+        <Paragraph>
+          Optional encrypted Google Drive backup is offered in the web and Android apps
+          after you choose to connect a separate Google account. That account may differ
+          from your Norfold sign-in. Your chat history is encrypted on your device before it
+          is uploaded to that Google account, so Google stores bytes it cannot open. The
+          backup key is held for your Norfold account and re-issued to your signed-in
+          devices so you can restore after reinstalling; Norfold's service can therefore
+          decrypt your backup. This is not a zero-knowledge backup. The
+          Android app needs Google Play services, and some builds leave backup out. Check
+          Backup settings for a successful recent backup before relying on it. Copies
+          already saved in your Google account must be managed there.
         </Paragraph>
       </SettingsGroup>
 

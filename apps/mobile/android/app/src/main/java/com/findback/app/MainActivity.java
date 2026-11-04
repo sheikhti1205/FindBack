@@ -3,6 +3,7 @@ package com.findback.app;
 import com.findback.app.LocationServicesPlugin;
 import com.findback.app.map.FindbackMapPlugin;
 import com.findback.app.GoogleAuthPlugin;
+import com.findback.app.DriveAuthPlugin;
 import com.findback.app.FindbackNotificationsPlugin;
 import com.findback.app.shortlink.ShortLinkResolverPlugin;
 import com.findback.app.download.ModelDownloadPlugin;
@@ -32,6 +33,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LocationServicesPlugin.class);
         registerPlugin(FindbackMapPlugin.class);
         registerPlugin(GoogleAuthPlugin.class);
+        registerPlugin(DriveAuthPlugin.class);
         registerPlugin(FindbackNotificationsPlugin.class);
         registerPlugin(FindbackMediaPlugin.class);
         registerPlugin(FindbackMessagingSqlitePlugin.class);

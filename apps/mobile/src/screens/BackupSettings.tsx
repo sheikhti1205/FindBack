@@ -36,8 +36,8 @@ function statusCopy(status: BackupStatus): { title: string; description: string;
   switch (status.kind) {
     case "unavailable":
       return status.reason === "native"
-        ? { title: "Google Drive backup", label: "Not available here", tone: "neutral",
-          description: "Drive backup isn't available in the Android app yet. Your chats stay on this device." }
+        ? { title: "Google Drive backup", label: "Not available", tone: "neutral",
+          description: "This build can't reach Google Drive. Your chats stay on this device." }
         : { title: "Google Drive backup", label: "Not set up", tone: "neutral",
           description: "Drive backup isn't configured for this build." };
     case "off":
@@ -158,7 +158,7 @@ export function BackupSettings() {
     >
       <SettingsGroup
         title="Google Drive"
-        description="Backups are locked on this device before they reach Drive. Only your account can open them — Google can't read them."
+        description="Backups are encrypted on this device before they reach Drive, so Google can't read them. The key stays with your Norfold account and is re-issued to your signed-in devices so a reinstall can restore."
       >
         <div className="flex items-start justify-between gap-3 px-3 py-3">
           <div className="min-w-0">

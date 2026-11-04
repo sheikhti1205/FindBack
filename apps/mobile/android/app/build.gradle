@@ -359,6 +359,12 @@ dependencies {
     // Report location-services check + enable dialog (SettingsClient). The
     // Geolocation fix itself comes from @capacitor/geolocation (fused provider).
     implementation "com.google.android.gms:play-services-location:21.3.0"
+    // Native Google Drive authorization for optional chat backup
+    // (DriveAuthPlugin). The WebView cannot run Google Identity Services, so
+    // the drive.appdata grant is obtained here instead. Pinned exact — never
+    // floating. Already present transitively; depended on explicitly because
+    // the plugin compiles against AuthorizationClient directly.
+    implementation "com.google.android.gms:play-services-auth:21.1.1"
     // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
     // backend only. Pinned exact via $mapLibreVersion in variables.gradle —
     // never floating.

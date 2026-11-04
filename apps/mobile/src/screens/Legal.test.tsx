@@ -89,7 +89,16 @@ describe("legal documents", () => {
     expect(copy).toMatch(/limited public preview without an account/i);
     expect(copy).toMatch(/does not reveal contact details or exact location/i);
     expect(copy).toMatch(/does not compare photos or generate report fields/i);
-    expect(copy).toMatch(/no consumer Drive backup option/i);
+    expect(copy).toMatch(/optional encrypted Google Drive backup/i);
+    expect(copy).toMatch(/web and Android apps/i);
+    expect(copy).toMatch(/separate Google account/i);
+    expect(copy).toMatch(/needs Google Play services/i);
+    // The key is re-issued by the backend, so "only you can open it" would be
+    // an overclaim. The document must state what is actually true.
+    expect(copy).toMatch(/re-issued to your signed-in devices/i);
+    expect(copy).toMatch(/not a zero-knowledge backup/i);
+    expect(copy).not.toMatch(/no consumer Drive backup option/i);
+    expect(copy).not.toMatch(/not available in the Android app/i);
     expect(copy).not.toMatch(/report-field suggestions|AI models you downloaded|shared report link requires a Norfold account/i);
   });
 

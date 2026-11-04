@@ -9,11 +9,15 @@
  * On the web we use Google Identity Services' token model, which needs no
  * redirect route and no stored refresh token. Tokens are short-lived, kept in
  * memory (mirrored in `sessionStorage` so a reload does not force a re-consent)
- * and never exported anywhere else. Inside the Android WebView Google blocks
- * embedded authorization, so the port reports itself unavailable instead of
- * pretending to be connected.
+ * and never exported anywhere else.
+ *
+ * Inside the Android WebView Google blocks embedded authorization, so the
+ * Android build gets the same narrow grant from the native `DriveAuth` plugin
+ * instead (`Identity.getAuthorizationClient`) and shares the identical
+ * validation, storage and renewal contract. The port reports unavailable only
+ * when neither path exists, rather than pretending to be connected.
  */
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 export const DRIVE_TOKEN_KEY = "norfold.drive.token.v1";
@@ -25,7 +29,7 @@ export type DriveAuthUnavailable = "native" | "unconfigured";
 export class DriveAuthError extends Error {
   constructor(public kind: "denied" | "failed" | DriveAuthUnavailable) {
     super(kind === "denied" ? "Google Drive access was not granted."
-      : kind === "native" ? "Drive backup isn't available in the Android app yet."
+      : kind === "native" ? "Drive backup isn't available on this device."
         : kind === "unconfigured" ? "Drive backup isn't configured for this build."
           : "Google Drive could not be reached. Try again.");
     this.name = "DriveAuthError";
@@ -33,6 +37,39 @@ export class DriveAuthError extends Error {
 }
 
 export interface DriveAccess { token: string; expiresAt: number }
+
+/**
+ * The native Android half. The WebView cannot run Google Identity Services, so
+ * `DriveAuthPlugin` performs the same single-scope grant with Play services and
+ * returns only the access token and its conservative local expiry.
+ */
+export interface NativeDriveAccess { accessToken: string; expiresAt: number; account?: string }
+
+export interface NativeDriveAuth {
+  isAvailable(): Promise<{ available: boolean; reason?: string }>;
+  authorize(options: { silent: boolean }): Promise<NativeDriveAccess>;
+  revoke(options: { token: string }): Promise<{ revoked?: boolean }>;
+}
+
+const DRIVE_PLUGIN = "DriveAuth";
+let nativeBridge: NativeDriveAuth | null = null;
+
+/** The registered Android plugin, or null when this build has no such path. */
+function driveBridge(): NativeDriveAuth | null {
+  if (!Capacitor.isNativePlatform()) return null;
+  if (!Capacitor.isPluginAvailable(DRIVE_PLUGIN)) return null;
+  nativeBridge ??= registerPlugin<NativeDriveAuth>(DRIVE_PLUGIN);
+  return nativeBridge;
+}
+
+/** Native rejections carry a stable `code`; never surface platform text. */
+function nativeFailure(error: unknown): DriveAuthError {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "denied") return new DriveAuthError("denied");
+  if (code === "unavailable") return new DriveAuthError("native");
+  if (code === "misconfigured") return new DriveAuthError("unconfigured");
+  return new DriveAuthError("failed");
+}
 
 export interface DriveAuthorization {
   /** A real build can connect; false means the UI must not offer it. */
@@ -101,6 +138,8 @@ export interface DriveAuthOptions {
   now?: () => number;
   native?: boolean;
   load?: () => Promise<GoogleOAuth2>;
+  /** Android plugin seam; `undefined` resolves the registered plugin. */
+  transport?: NativeDriveAuth | null;
 }
 
 export function driveClientId(): string {
@@ -116,6 +155,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     ? (typeof sessionStorage === "undefined" ? null : sessionStorage)
     : options.storage;
   const load = options.load ?? (() => loadGoogleIdentity(document));
+  const transport = options.transport === undefined ? driveBridge() : options.transport;
   let live: DriveAccess | null = null;
   let loaded = false;
 
@@ -145,15 +185,35 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   };
 
   const unavailableReason = (): DriveAuthUnavailable | null => {
-    if (native) return "native";
+    // A native build is usable once the Drive plugin is registered; the web
+    // token client is the alternative, but it cannot run inside a WebView.
+    if (native) return transport ? null : "native";
     if (!clientId) return "unconfigured";
     if (typeof document === "undefined") return "unconfigured";
     return null;
   };
 
+  /** One native grant, validated by the same rules as the web token. */
+  const askNative = async (silent: boolean): Promise<DriveAccess | null> => {
+    if (!transport) throw new DriveAuthError("native");
+    let answer: NativeDriveAccess;
+    try {
+      answer = await transport.authorize({ silent });
+    } catch (error) {
+      throw nativeFailure(error);
+    }
+    const access = validAccess(
+      { token: answer?.accessToken ?? "", expiresAt: Number(answer?.expiresAt ?? 0) }, now());
+    if (!access) throw new DriveAuthError("failed");
+    save(access);
+    loaded = true;
+    return access;
+  };
+
   const request = (silent: boolean): Promise<DriveAccess | null> => {
     const reason = unavailableReason();
     if (reason) return Promise.reject(new DriveAuthError(reason));
+    if (native) return askNative(silent);
     return load().then((oauth2) => new Promise<DriveAccess | null>((resolve, reject) => {
       let settled = false;
       const finish = (access: DriveAccess | null, error?: DriveAuthError) => {
@@ -200,8 +260,9 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
       return access;
     },
     renew: async () => {
-      // A silent renewal is only worth trying once we know Google is loadable;
-      // otherwise it would inject the GIS script for a user who declined.
+      // A silent renewal is only worth trying for a grant the user already
+      // made: on the web it would otherwise inject the GIS script for someone
+      // who declined, and on Android it would open a consent sheet.
       if (!loaded && !read()) return null;
       try {
         return await request(true);
@@ -211,8 +272,14 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     },
     current: read,
     forget: () => {
+      const last = read();
       live = null;
       storage?.removeItem(DRIVE_TOKEN_KEY);
+      // Revoking the Google grant is best-effort: the local token is gone
+      // either way, so a device that is offline still reports disconnected.
+      if (native && transport && last) {
+        void Promise.resolve(transport.revoke({ token: last.token })).catch(() => undefined);
+      }
     },
   };
 }
