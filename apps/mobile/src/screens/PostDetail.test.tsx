@@ -1011,8 +1011,13 @@ describe("PostDetail recovery", () => {
   afterEach(cleanup);
 
   it("opens the recovery sheet for a LOST report and never writes a bare status", async () => {
-    renderDetail();
-    const recovered = await screen.findByRole("button", { name: "Record recovery…" });
+    // The initial post read also schedules the report-boundary effect. Wait for
+    // that render/effect turn, not just the first DOM mutation containing a
+    // launcher that the pending boundary reset can immediately invalidate.
+    await act(async () => { renderDetail(); });
+    const recovered = screen.getByRole("button", { name: "Record recovery…" });
+    expect(recovered.isConnected).toBe(true);
+    expect(recovered).toHaveProperty("disabled", false);
     fireEvent.click(recovered);
 
     await waitFor(() => expect(recoverySheet.open).toBe(true));
