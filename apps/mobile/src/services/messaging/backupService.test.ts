@@ -8,7 +8,6 @@ import type { BackupKeyMaterial } from "./backupKey";
 import {
   BACKUP_COMPACT_MS,
   BACKUP_MAX_DELAY_MS,
-  BACKUP_MIN_DELAY_MS,
   BACKUP_STATE_KEY,
   DriveBackup,
   backoffDelayMs,
@@ -107,7 +106,7 @@ function harness(options: {
   storage?: ReturnType<typeof memoryStorage>;
 } = {}): Harness {
   let now = NOW;
-  let material: BackupKeyMaterial = { accountId: A, generation: GEN, keyHex: KEY_HEX, createdAt: NOW };
+  const material: BackupKeyMaterial = { accountId: A, generation: GEN, keyHex: KEY_HEX, createdAt: NOW };
   const auth = fakeAuth(options);
   const store = memoryStore();
   const storage = options.storage ?? memoryStorage();

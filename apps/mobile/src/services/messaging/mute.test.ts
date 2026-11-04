@@ -32,8 +32,13 @@ it("refuses malformed mute input and mismatched acknowledgement",async()=>{
  await expect(f.session.setMuted(conversation,true)).rejects.toThrow(/response/i);
 });
 it("aborts mute and refuses late completion after the captured account session closes",async()=>{
- let finish:(value:unknown)=>void=()=>{};let signal:AbortSignal|undefined;
- const f=await setup(input=>{signal=input.signal;return new Promise(resolve=>{finish=resolve;});});
- const work=f.session.setMuted(conversation,true);f.session.close();expect(signal?.aborted).toBe(true);finish(true);
+ let finish:(value:unknown)=>void=()=>{};let signal:AbortSignal|undefined;let entered!:()=>void;
+ const started=new Promise<void>(resolve=>{entered=resolve;});
+ const f=await setup(input=>{signal=input.signal;entered();return new Promise(resolve=>{finish=resolve;});});
+ const work=f.session.setMuted(conversation,true);
+ // The canonical session awaits admission before the RPC, so wait for the
+ // request to actually start rather than assuming a synchronous call.
+ await started;
+ f.session.close();expect(signal?.aborted).toBe(true);finish(true);
  await expect(work).rejects.toThrow(/closed/i);await expect(f.session.setMuted(conversation,false)).rejects.toThrow(/closed/i);
 });
