@@ -448,7 +448,7 @@ export function Home() {
       toolbarSeparatedRef.current = next;
       setToolbarSeparated(next);
     }
-    onFeedScroll(top);
+    onFeedScroll(top, feed.scrollHeight - feed.clientHeight);
   }
 
   function collapseSearch() {

@@ -271,3 +271,65 @@ describe("useScrollChrome", () => {
     expect(result.current.hidden).toBe(false);
   });
 });
+
+/**
+ * The bottom-of-feed flicker. Collapsing the chrome hands its own height back
+ * to the feed, so the scrollable range shrinks by that height and the browser
+ * pulls `scrollTop` down to the new maximum. That pull is an upward delta; read
+ * as intent it revealed the chrome, which re-grew the range and let the next
+ * downward pixel collapse it again.
+ */
+describe("collapsing the chrome at the bottom of the feed", () => {
+  const CHROME = 120;
+
+  /** A reader who has just pulled the last 40px down to a 740px range. */
+  function justHid(): ScrollChromeState {
+    const open: ScrollChromeState = { hidden: false, compact: false, lastY: 700, travel: 0, lastMaxY: 700 };
+    const hid = nextScrollChrome(open, 740, false, 740);
+    expect(hid.hidden).toBe(true);
+    return hid;
+  }
+
+  it("reads the clamp as layout, not as an upward swipe", () => {
+    const hid = justHid();
+    // The chrome's 120px came back to the feed: range 740 → 620, and the browser
+    // clamps the offset from 740 to 620 in the same event.
+    const clamped = nextScrollChrome(hid, 740 - CHROME, false, 740 - CHROME);
+    expect(clamped.hidden).toBe(true);
+    expect(clamped.travel).toBe(0);
+    expect(clamped.lastMaxY).toBe(740 - CHROME);
+  });
+
+  it("holds through the animation's per-frame clamps and the new bottom", () => {
+    let state = justHid();
+    for (let given = 20; given <= CHROME; given += 20) {
+      state = nextScrollChrome(state, 740 - given, false, 740 - given);
+      expect(state.hidden).toBe(true);
+    }
+    // Continuing down at the new bottom must not re-open it either.
+    state = nextScrollChrome(state, 740 - CHROME, false, 740 - CHROME);
+    expect(state.hidden).toBe(true);
+  });
+
+  it("still reveals when the reader really does scroll up at the bottom", () => {
+    const hid = justHid();
+    // Same range as the last decision: nothing was re-laid-out.
+    expect(nextScrollChrome(hid, 740 - CHROME_SHOW_TRAVEL, false, 740).hidden).toBe(false);
+  });
+
+  it("does not swallow a pull larger than the range actually shrank", () => {
+    const hid = justHid();
+    // Range fell 120 but the offset fell 200: 80px of that was the reader.
+    expect(nextScrollChrome(hid, 740 - 200, false, 740 - CHROME).hidden).toBe(false);
+  });
+
+  it("ignores the clamp end-to-end through the hook", () => {
+    const { result } = renderHook(() => useScrollChrome(false));
+    act(() => result.current.onScroll(700, 700)); // a jump: re-base only
+    expect(result.current.hidden).toBe(false);
+    act(() => result.current.onScroll(740, 740)); // real downward intent
+    expect(result.current.hidden).toBe(true);
+    act(() => result.current.onScroll(620, 620)); // the browser's clamp
+    expect(result.current.hidden).toBe(true);
+  });
+});

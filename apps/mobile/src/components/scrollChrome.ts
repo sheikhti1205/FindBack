@@ -63,6 +63,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
  *   programmatic move — a restored scroll offset after Post Detail, an anchor,
  *   a jump — and only re-bases the tracker. Chrome state survives it, so a
  *   reader who returns to a deep offset still sees the chrome.
+ * - **Clamps are not swipes.** Collapsing the chrome returns its height to the
+ *   feed, so the scrollable range shrinks by that height. At the bottom the
+ *   browser pulls `scrollTop` down to the new maximum, and that pull is an
+ *   upward delta. Treating it as intent showed the chrome, which re-grew the
+ *   range, and the next downward pixel collapsed it again: the bottom-of-feed
+ *   flicker. When the offset falls by the same distance the range shrank, the
+ *   layout moved the offset, so the tracker only re-bases.
  * - **Top zone.** At or above {@link CHROME_TOP_ZONE} the chrome is always fully
  *   visible, whatever the travel history.
  * - **Pinned.** While a control the reader is actively using is open or focused
@@ -121,6 +128,12 @@ export const WORD_RESTORE_TRAVEL = 28;
 export const CHROME_JITTER = 3;
 /** A single delta this large is a programmatic jump, never a swipe. */
 export const CHROME_JUMP = 320;
+/**
+ * How closely a lost scroll offset must match the shrink of the scrollable
+ * range before it is treated as a layout adjustment rather than a gesture.
+ * Layout rounding is sub-pixel; a real swipe never matches this.
+ */
+export const CHROME_LAYOUT_TOLERANCE = 2;
 
 export interface ScrollChromeState {
   /** Whether the chrome is collapsed right now. */
@@ -134,28 +147,61 @@ export interface ScrollChromeState {
   lastY: number;
   /** Signed travel accumulated in the current direction since that decision. */
   travel: number;
+  /**
+   * The scrollable range (`scrollHeight - clientHeight`) at that decision, or
+   * `-1` when the caller has not supplied geometry yet. It exists to tell a
+   * browser clamp apart from a gesture — see `nextScrollChrome`.
+   */
+  lastMaxY: number;
 }
 
 export function initialScrollChrome(): ScrollChromeState {
-  return { hidden: false, compact: false, lastY: 0, travel: 0 };
+  return { hidden: false, compact: false, lastY: 0, travel: 0, lastMaxY: -1 };
 }
 
 /**
  * The next chrome state for a scroll offset. Pure: no DOM, no timers, so the
  * hysteresis is testable without a browser.
+ *
+ * `maxY` is the feed's scrollable range (`scrollHeight - clientHeight`). It is
+ * what lets this machine tell a browser clamp apart from a gesture: the chrome
+ * collapses by giving its own height back to the feed, which *grows* the
+ * viewport and therefore *shrinks* `maxY`. At the bottom of the feed the browser
+ * then pulls `scrollTop` down by exactly that much. Without the range, that
+ * adjustment reads as an upward swipe, so the chrome reappears, the viewport
+ * shrinks again, and the next downward pixel re-hides it — the bottom-of-feed
+ * flicker. Callers that cannot measure the range omit the argument and keep the
+ * pure offset behaviour.
  */
 export function nextScrollChrome(
   state: ScrollChromeState,
   scrollTop: number,
   pinned = false,
+  maxY?: number,
 ): ScrollChromeState {
   const y = Number.isFinite(scrollTop) ? Math.max(0, scrollTop) : state.lastY;
-  if (pinned) return { hidden: false, compact: false, lastY: y, travel: 0 };
-  if (y <= CHROME_TOP_ZONE) return { hidden: false, compact: false, lastY: y, travel: 0 };
+  const limit = typeof maxY === "number" && Number.isFinite(maxY) ? Math.max(0, maxY) : null;
+  const tracked = limit === null ? state.lastMaxY : limit;
+  const keep = (next: Omit<ScrollChromeState, "lastMaxY">): ScrollChromeState => ({ ...next, lastMaxY: tracked });
+
+  if (pinned) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
+  if (y <= CHROME_TOP_ZONE) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
 
   const delta = y - state.lastY;
-  if (Math.abs(delta) >= CHROME_JUMP) return { ...state, lastY: y, travel: 0 };
-  if (Math.abs(delta) < CHROME_JITTER) return { ...state, lastY: y };
+
+  // Layout adjustment, not intent. Both facts must agree: the offset fell *and*
+  // the scrollable range shrank by the same distance, which is precisely what
+  // collapsing the chrome does at the bottom. A real upward swipe moves the
+  // offset while the range stays put, so it is never mistaken for this.
+  if (limit !== null && state.lastMaxY >= 0 && delta < 0) {
+    const shrink = limit - state.lastMaxY;
+    if (shrink < 0 && Math.abs(delta - shrink) <= CHROME_LAYOUT_TOLERANCE) {
+      return keep({ hidden: state.hidden, compact: state.compact, lastY: y, travel: 0 });
+    }
+  }
+
+  if (Math.abs(delta) >= CHROME_JUMP) return keep({ ...state, lastY: y, travel: 0 });
+  if (Math.abs(delta) < CHROME_JITTER) return keep({ ...state, lastY: y });
 
   // Same direction as the travel already accumulated, or a fresh direction.
   const travel = state.travel * delta > 0 ? state.travel + delta : delta;
@@ -171,7 +217,7 @@ export function nextScrollChrome(
     // A *transition* re-bases the accumulator; an event that changes nothing
     // keeps accumulating. Without this discipline any threshold placed above
     // this one would be unreachable by construction.
-    return { hidden: true, compact: true, lastY: y, travel: state.hidden ? travel : 0 };
+    return keep({ hidden: true, compact: true, lastY: y, travel: state.hidden ? travel : 0 });
   }
   if (-travel >= CHROME_SHOW_TRAVEL) {
     // Same discipline on the way back, and this is where it mattered. Zeroing
@@ -179,9 +225,9 @@ export function nextScrollChrome(
     // WORD_RESTORE_TRAVEL (28) unreachable: with 8px upward steps the cycle ran
     // [-8, 0, -8, 0 …] and a reader who pulled back 200px got the bar with no
     // name (independent review BLOCKER-1, reproduced on the real module).
-    return { hidden: false, compact, lastY: y, travel: state.hidden ? 0 : travel };
+    return keep({ hidden: false, compact, lastY: y, travel: state.hidden ? 0 : travel });
   }
-  return { hidden: state.hidden, compact, lastY: y, travel };
+  return keep({ hidden: state.hidden, compact, lastY: y, travel });
 }
 
 export interface ScrollChrome {
@@ -189,8 +235,10 @@ export interface ScrollChrome {
   hidden: boolean;
   /** Whether the brand row should show the mark alone. */
   compact: boolean;
-  /** Feed this every scroll event of the feed scroller. */
-  onScroll: (scrollTop: number) => void;
+  /** Feed this every scroll event of the feed scroller. `maxY` is its
+   * `scrollHeight - clientHeight`; supplying it lets a browser clamp caused by
+   * the chrome's own collapse be ignored instead of read as an upward swipe. */
+  onScroll: (scrollTop: number, maxY?: number) => void;
 }
 
 /**
@@ -211,13 +259,16 @@ export function useScrollChrome(pinned: boolean): ScrollChrome {
   useEffect(() => {
     pinnedRef.current = pinned;
     if (!pinned) return;
-    stateRef.current = { hidden: false, compact: false, lastY: stateRef.current.lastY, travel: 0 };
+    stateRef.current = {
+      hidden: false, compact: false, lastY: stateRef.current.lastY, travel: 0,
+      lastMaxY: stateRef.current.lastMaxY,
+    };
     setHidden(false);
     setCompact(false);
   }, [pinned]);
 
-  const onScroll = useCallback((scrollTop: number) => {
-    const next = nextScrollChrome(stateRef.current, scrollTop, pinnedRef.current);
+  const onScroll = useCallback((scrollTop: number, maxY?: number) => {
+    const next = nextScrollChrome(stateRef.current, scrollTop, pinnedRef.current, maxY);
     stateRef.current = next;
     setHidden((prev) => (prev === next.hidden ? prev : next.hidden));
     setCompact((prev) => (prev === next.compact ? prev : next.compact));
