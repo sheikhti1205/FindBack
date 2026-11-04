@@ -57,6 +57,10 @@ let nativeBridge: NativeDriveAuth | null = null;
 /** The registered Android plugin, or null when this build has no such path. */
 function driveBridge(): NativeDriveAuth | null {
   if (!Capacitor.isNativePlatform()) return null;
+  // Fail closed when the bridge cannot report plugin availability: without that
+  // check there is no way to prove the plugin is installed, and claiming it is
+  // would offer a backup the device cannot honour.
+  if (typeof Capacitor.isPluginAvailable !== "function") return null;
   if (!Capacitor.isPluginAvailable(DRIVE_PLUGIN)) return null;
   nativeBridge ??= registerPlugin<NativeDriveAuth>(DRIVE_PLUGIN);
   return nativeBridge;

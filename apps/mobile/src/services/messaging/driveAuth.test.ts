@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// A native build whose bridge cannot report plugin availability. `driveAuth`
+// must fail closed there instead of resolving a plugin it cannot confirm.
+vi.mock("@capacitor/core", () => ({
+  Capacitor: { isNativePlatform: () => true },
+  registerPlugin: () => { throw new Error("unconfirmable plugin must not be resolved"); },
+}));
 import {
   DRIVE_SCOPE,
   DRIVE_TOKEN_KEY,
@@ -168,6 +175,16 @@ describe("connecting a Google account on Android", () => {
     expect(auth.available()).toBe(false);
     expect(auth.unavailableReason()).toBe("native");
     await expect(auth.authorize()).rejects.toMatchObject({ kind: "native" });
+  });
+
+  it("does not resolve a plugin the bridge cannot confirm exists", () => {
+    // Reachable through the real default path: no explicit `transport`, a
+    // native platform, and a bridge without `isPluginAvailable`. Resolving
+    // `registerPlugin` here would offer a backup the build may not have.
+    const auth = createDriveAuth({ storage: storage() });
+    expect(auth.available()).toBe(false);
+    expect(auth.unavailableReason()).toBe("native");
+    expect(() => auth.current()).not.toThrow();
   });
 
   it("reports a native refusal as a refusal, not a generic failure", async () => {

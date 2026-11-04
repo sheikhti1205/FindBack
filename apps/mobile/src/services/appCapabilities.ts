@@ -23,7 +23,7 @@ import packageJson from "../../package.json";
  * separate paths. Installed weights do not prove hardware speed or quality;
  * measured backend claims remain evidence-gated.
  */
-export const CAPABILITIES_VERSION = "1.9.3-beta-truth";
+export const CAPABILITIES_VERSION = "1.9.4-beta-truth";
 
 /** Generated from apps/mobile/package.json (the canonical SemVer source) — never a duplicated literal. */
 export const APP_VERSION: string = packageJson.version;
@@ -117,7 +117,7 @@ export const APP_CAPABILITIES: AppCapabilities = {
     "Raw HTML, scripts, and remote images are stripped for safety.",
   ],
   privacy: [
-    "Private message history is stored on each device with temporary server delivery and private image storage. This beta has no consumer Drive backup option.",
+    "Private message history is stored on each device with temporary server delivery and private image storage. Drive chat backup is optional: it needs a separate Google consent, keeps encrypted copies in the app's own Drive storage, and some builds leave it out. The backup key is held for the Norfold account and re-issued to signed-in devices, so this is not a zero-knowledge backup.",
     "Limited safety records are retained after account deletion: reported-content evidence for up to 90 days, and appeal, moderation and audit records. Other people's existing message copies cannot be erased by account deletion.",
     "Report photos stay on the device until you publish.",
     "AI requests leave the device only through the provider you connect with your own key. Only the chat questions you type use that path; report contents and photos are never attached automatically.",
