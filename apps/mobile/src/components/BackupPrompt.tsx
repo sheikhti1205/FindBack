@@ -52,7 +52,8 @@ export function BackupPrompt({ sequences }: { sequences: number }) {
         <h2 id="backup-prompt-title">Keep your conversations with you</h2>
         <p>
           Connect a Google account to automatically back up your Norfold chats and restore them on
-          another device. Only your account can open them.
+          another device. They are encrypted on this device; your Norfold account holds the key, so
+          a reinstall can restore them.
         </p>
         {error ? <p role="alert" className="fb-chat-backup-error">{error}</p> : null}
       </div>

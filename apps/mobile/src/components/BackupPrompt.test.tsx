@@ -37,10 +37,13 @@ describe("the one backup prompt", () => {
     expect(screen.queryByText("Keep your conversations with you")).toBeNull();
   });
 
-  it("explains that only the account can open the backup", () => {
+  it("says where the key lives instead of implying nobody else can read it", () => {
     renderPrompt();
     expect(screen.getByText("Keep your conversations with you")).toBeTruthy();
-    expect(screen.getByText(/Only your account can open them/)).toBeTruthy();
+    expect(screen.getByText(/your Norfold account holds the key/i)).toBeTruthy();
+    // The backend re-issues the key, so "only your account can open them" is
+    // false and must not come back.
+    expect(screen.queryByText(/Only your account can open them/)).toBeNull();
     expect(screen.getByRole("button", { name: "Connect Google Drive" })).toBeTruthy();
   });
 
