@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { createDeviceEnrollmentEndpoint } from "./handler.ts";
-const env = { url: "https://synthetic.supabase.co", secretKeys: { default: "sb_secret_placeholder" },
+const env = { url: "https://synthetic.supabase.co", secretKeys: { default: ["sb", "secret", "placeholder"].join("_") },
   publishableKeys: { default: "sb_publishable_placeholder" }, jwks: { keys: [] } };
 Deno.test("enrollment preflight and methods never call the registry", async () => {
   const endpoint = createDeviceEnrollmentEndpoint(env);

@@ -1,6 +1,11 @@
 -- Synthetic disposable SQL engine contract for report context + static location.
 -- Every write rolls back; no hosted identity or credential.
 begin;
+create function pg_temp.fixture_claim(p_user text,p_session text) returns void language plpgsql as $$ begin
+ perform set_config('request.jwt.claim.sub',p_user,true);
+ perform set_config('request.jwt.claims',jsonb_build_object('session_id',p_session)::text,true);
+end $$;
+grant execute on function pg_temp.fixture_claim(text,text) to authenticated;
 -- Current-client admission; original payload/authority assertions stay intact.
 create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
 returns jsonb language plpgsql as $$ begin
@@ -11,7 +16,21 @@ grant execute on function pg_temp.ready_send(text,text,text,jsonb) to authentica
 insert into public.users(id,username,email,phone,created_at,updated_at) values
  ('00000000-0000-4000-9800-000000000001','ctx_author','ctx_a@example.invalid','+100009800001',now(),now()),
  ('00000000-0000-4000-9800-000000000002','ctx_peer','ctx_b@example.invalid','+100009800002',now(),now()),
- ('00000000-0000-4000-9800-000000000003','ctx_outsider','ctx_c@example.invalid','+100009800003',now(),now());
+  ('00000000-0000-4000-9800-000000000003','ctx_outsider','ctx_c@example.invalid','+100009800003',now(),now());
+insert into auth.users(id,email) select id::uuid,email from public.users where id like '00000000-0000-4000-9800-%';
+insert into auth.sessions(id,user_id) values
+ ('00000000-0000-4000-9800-000000000011','00000000-0000-4000-9800-000000000001'),
+ ('00000000-0000-4000-9800-000000000021','00000000-0000-4000-9800-000000000002'),
+ ('00000000-0000-4000-9800-000000000031','00000000-0000-4000-9800-000000000003');
+-- Elevated fixture commit models separately tested Edge signature verification.
+-- Exchange probes still execute as authenticated through production admission.
+do $$ declare s record; c jsonb; begin
+ for s in select id,user_id from auth.sessions where id::text like '00000000-0000-4000-9800-%' loop
+  perform pg_temp.fixture_claim(s.user_id::text,s.id::text);
+  c:=public.findback_device_enrollment_challenge(s.id::text,'04'||repeat('ab',64),'Context fixture','web');
+  perform public.findback_device_enrollment_commit(s.user_id::text,s.id,(c->>'challengeId')::uuid);
+ end loop;
+end $$;
 insert into public.item_posts(id,user_id,type,title,description,category,status,event_date,latitude,longitude,
  location_label,created_at,updated_at)
 values('00000000-0000-4000-9800-000000000101','00000000-0000-4000-9800-000000000001','FOUND',
@@ -29,9 +48,9 @@ $$;
 grant execute on function pg_temp.ctx_view(text) to authenticated;
 
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000002','00000000-0000-4000-9800-000000000021');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000021','REGISTER','{"platform":"android"}');
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000001','00000000-0000-4000-9800-000000000011');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011','REGISTER','{"platform":"web"}');
 select set_config('ctx.conversation',public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000011',
  'CREATE','{"otherId":"00000000-0000-4000-9800-000000000002"}')#>>'{}',true);
@@ -75,10 +94,10 @@ do $$ begin
 end $$;
 
 -- Connect, then the same explicit share is allowed with an empty caption.
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000002','00000000-0000-4000-9800-000000000021');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000021','ACCEPT',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'expectedEpoch',pg_temp.ctx_view('00000000-0000-4000-9800-000000000021')->>'epoch'));
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000001','00000000-0000-4000-9800-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9800-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('ctx.conversation'),'recipientId','00000000-0000-4000-9800-000000000002',
  'messageId','00000000-0000-4000-9800-000000000204','body','','messageType','LOCATION',
@@ -152,7 +171,7 @@ end $$;
 
 -- The recipient resolves the same live id; a later-hidden report is no longer
 -- readable, so the client renders "Report unavailable" instead of a snapshot.
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000002','00000000-0000-4000-9800-000000000021');
 do $$ declare v jsonb; begin
  select value into v from jsonb_array_elements(public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000021','SYNC','{}')) value
   where value->'event'->'message'->>'id'='00000000-0000-4000-9800-000000000201';
@@ -168,7 +187,7 @@ do $$ begin
 end $$;
 
 -- Outsiders and closed callables stay closed.
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9800-000000000003',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9800-000000000003','00000000-0000-4000-9800-000000000031');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9800-000000000031','REGISTER','{"platform":"web"}');
 do $$ begin
  begin

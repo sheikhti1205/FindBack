@@ -744,6 +744,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_admit_public_action",
   "findback_apply_moderation",
   "findback_audit_log",
+  "findback_backup_key",
   "findback_block_user",
   "findback_bootstrap_admin",
   "findback_bootstrap_claim_status",
@@ -756,6 +757,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_cancel_match",
   "findback_change_post_status_client",
   "findback_chat_exchange",
+  "findback_chat_media_target_client",
   "findback_chat_receipt_observe",
   "findback_chat_receipt_view",
   "findback_chat_set_muted",
@@ -765,6 +767,10 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_delete_comment_client",
   "findback_delete_notifications_client",
   "findback_delete_post_client",
+  "findback_device_admission",
+  "findback_device_enrollment_challenge",
+  "findback_device_enrollment_proof",
+  "findback_devices",
   "findback_discard_comment_media",
   "findback_discard_staged_upload",
   "findback_feed_reaction_state_client",
@@ -794,6 +800,7 @@ const CLIENT_REACHABLE_DEFINERS = Object.freeze([
   "findback_my_role",
   "findback_my_role_offer",
   "findback_notification_count_client",
+  "findback_peer_signal",
   "findback_post_is_match_linked",
   "findback_post_limit",
   "findback_post_social_state_client",
@@ -1101,6 +1108,25 @@ const NON_FUNCTION_DYNAMIC_DDL = new Set([
   "b8c31204d048d0420191ebef4cc0c15eb453f4809a9187d2d8e7e95de85a03b8",
 ]);
 
+// Immutable applied admission loop: expand all eight concrete declarations and
+// ACLs instead of ignoring dynamic DDL or making the legacy bodies disappear.
+const DEVICE_ADMISSION_LOOP_HASH = "49c7de1db55b5efff3de22b08bc77d1a241470b13def530980fd2d3026c1f789";
+function* deviceAdmissionEvents(statement) {
+  const rows = [...statement.matchAll(/\('([^']+)','([^']+)','([^']+)','([^']+)','([^']+)','([^']+)'\)/g)];
+  assert.equal(rows.length, 8, "the reviewed admission loop has eight wrappers");
+  for (const [, name, types, params, result, args, device] of rows) {
+    const legacy = `${name}_authority_legacy_internal`;
+    const key = signatureKey(name, types, "reference");
+    const nextKey = signatureKey(legacy, types, "reference");
+    yield { kind: "rename", name, key, nextName: legacy, nextKey };
+    yield { kind: "revoke", name: legacy, argList: types, roles: ["public", "anon", "authenticated", "service_role"] };
+    yield { kind: "create", name, key,
+      statement: `create function public.${name}(${params}) returns ${result} language plpgsql volatile security definer set search_path=public,pg_temp as $body$ begin perform public.findback_device_admission(${device}); return public.${legacy}(${args}); end $body$` };
+    yield { kind: "revoke", name, argList: types, roles: ["public", "anon", "authenticated", "service_role"] };
+    yield { kind: "grant", name, argList: types, roles: ["authenticated"] };
+  }
+}
+
 /** Top-level DDL in actual statement order; bodies/data cannot declare objects.
  * splitSql removes inline signature comments while preserving quoted bodies.
  * Dynamic DDL is outside this static model; disposable PostgreSQL is final truth.
@@ -1120,10 +1146,14 @@ function* functionEvents(migrations) {
           ...(rename ? { nextName: rename[1].toLowerCase(), nextKey: signatureKey(rename[1].toLowerCase(), args, "reference") } : {}) };
       }
       if (/^do\b/i.test(statement) && /\bexecute\b/i.test(statement)) {
-        // Only two reviewed immutable catalog loops are modelled, not arbitrary
+        // Only reviewed immutable catalog/admission loops are modelled, not arbitrary
         // runtime SQL. Hash BEFORE any normalization so literal case, quoted
         // data, comments and format spelling cannot collide or skip the gate.
         const hash = createHash("sha256").update(statement).digest("hex");
+        if (hash === DEVICE_ADMISSION_LOOP_HASH) {
+          yield* deviceAdmissionEvents(statement);
+          continue;
+        }
         if (NON_FUNCTION_DYNAMIC_DDL.has(hash)) continue;
         const revoke = R4_DYNAMIC_ACL[hash] === "revoke";
         const grant = R4_DYNAMIC_ACL[hash] === "grant";
@@ -1907,6 +1937,42 @@ describe("reader-driven grant coverage (the whole client-read surface)", () => {
     for (const verb of ["revoke all", "grant execute"]) {
       const sql = blocks.filter(s => !s.includes(`execute format('${verb} on function %s`)).join(";\n");
       assert.throws(() => readExecuteModel([{ file, sql }]), /Missing reviewed R4 dynamic function ACL/);
+    }
+  });
+
+  it("expands all eight admission wrappers without losing legacy bodies or ACLs", () => {
+    const file = "20261104010000_norfold_device_authority.sql";
+    const chain = CHAIN().filter(m => m.file <= file);
+    const before = readFunctionModel(chain.filter(m => m.file < file));
+    const after = readFunctionModel(chain);
+    const acl = readExecuteModel(chain);
+    const block = splitSql(mig(file)).find(s => s.includes("legacy:=f.name"));
+    assert.ok(block);
+    const renames = [...deviceAdmissionEvents(block)].filter(e => e.kind === "rename");
+    assert.equal(renames.length, 8);
+    for (const e of renames) {
+      assert.equal(after.get(e.nextKey)?.body, before.get(e.key)?.body, e.nextKey);
+      assert.ok(before.get(e.key), e.key);
+      assert.equal(after.get(e.key)?.definer, true);
+      assert.match(after.get(e.key)?.body, /perform public\.findback_device_admission\(/);
+      assert.match(after.get(e.key)?.body, new RegExp(`return public\\.${e.nextName}\\(`));
+      assert.deepEqual(acl.get(e.nextKey), { public: false, authenticated: false, anon: false, service_role: false });
+      assert.deepEqual(acl.get(e.key), { public: false, authenticated: true, anon: false, service_role: false });
+    }
+    assert.deepEqual(unresolvedExecuteStatements(chain), []);
+  });
+
+  it("rejects mutated admission bodies, role grants and wrapper inventories", () => {
+    const block = splitSql(mig("20261104010000_norfold_device_authority.sql"))
+      .find(s => s.includes("legacy:=f.name"));
+    assert.ok(block);
+    for (const mutant of [
+      block.replace("perform public.findback_device_admission(%s);", "perform 1;"),
+      block.replace("to authenticated", "to anon"),
+      block.replace("'findback_chat_exchange'", "'findback_unreviewed_exchange'"),
+    ]) {
+      assert.notEqual(mutant, block);
+      assert.throws(() => readExecuteModel([{ file: "mutant.sql", sql: `${mutant};` }]), /Unmodelled dynamic function ACL/);
     }
   });
 

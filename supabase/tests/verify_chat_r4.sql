@@ -2,6 +2,12 @@
 -- Uses the canonical exchange and global block API, never legacy helpers.
 -- The runner fails at the end with every violated boundary, not the first one.
 begin;
+-- Synthetic Auth rows/session claims model current admission, never hosted JWTs.
+create function pg_temp.fixture_claim(p_user text,p_session text) returns void language plpgsql as $$ begin
+ perform set_config('request.jwt.claim.sub',p_user,true);
+ perform set_config('request.jwt.claims',jsonb_build_object('session_id',p_session)::text,true);
+end $$;
+grant execute on function pg_temp.fixture_claim(text,text) to authenticated;
 -- Current-client admission for unrelated regressions; no-HEAD/stale/replay
 -- behavior is exercised directly by verify_norfold_conversation_head.sql.
 create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
@@ -47,7 +53,8 @@ select pg_temp.r4_check('only documented chat RPCs are callable by ordinary acco
  and has_function_privilege('authenticated',p.oid,'execute')
  and p.proname not in('findback_chat_exchange','findback_chat_receipt_view',
   'findback_chat_receipt_observe','findback_reserve_chat_media',
-   'findback_fetch_chat_media_delivery','findback_ack_chat_media_delivery','findback_chat_set_muted')));
+    'findback_fetch_chat_media_delivery','findback_ack_chat_media_delivery','findback_chat_set_muted',
+    'findback_chat_media_target_client','findback_register_chat_device')));
 select pg_temp.r4_check('private chat tables stay closed to clients',
  not has_table_privilege('authenticated','public.chat_conversations','select')
  and not has_table_privilege('authenticated','public.chat_messages','select')
@@ -57,17 +64,34 @@ select pg_temp.r4_check('private chat tables stay closed to clients',
 insert into public.users(id,username,email,phone,email_verified,created_at,updated_at) values
  ('00000000-0000-4000-9940-000000000001','r4_account_a','r4_a@example.invalid','+8801994000001',1,now(),now()),
  ('00000000-0000-4000-9940-000000000002','r4_account_b','r4_b@example.invalid','+8801994000002',1,now(),now()),
- ('00000000-0000-4000-9940-000000000003','r4_outsider','r4_c@example.invalid','+8801994000003',1,now(),now());
+  ('00000000-0000-4000-9940-000000000003','r4_outsider','r4_c@example.invalid','+8801994000003',1,now(),now());
+insert into auth.users(id,email) select id::uuid,email from public.users where id like '00000000-0000-4000-9940-%';
+insert into auth.sessions(id,user_id) values
+ ('00000000-0000-4000-9940-000000000011','00000000-0000-4000-9940-000000000001'),
+ ('00000000-0000-4000-9940-000000000012','00000000-0000-4000-9940-000000000001'),
+ ('00000000-0000-4000-9940-000000000021','00000000-0000-4000-9940-000000000002'),
+ ('00000000-0000-4000-9940-000000000031','00000000-0000-4000-9940-000000000003');
+-- Elevated fixture commit models separately tested Edge signature verification.
+-- All actual exchange assertions below still execute as authenticated.
+do $$ declare s record; c jsonb; begin
+ for s in select id,user_id from auth.sessions where id::text like '00000000-0000-4000-9940-%' loop
+  perform pg_temp.fixture_claim(s.user_id::text,s.id::text);
+  c:=public.findback_device_enrollment_challenge(s.id::text,'04'||repeat('ab',64),'R4 fixture','web');
+  perform public.findback_device_enrollment_commit(s.user_id::text,s.id,(c->>'challengeId')::uuid);
+ end loop;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Three installations, one unordered pair
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','REGISTER','{"platform":"web"}');
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000012');
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000012','REGISTER','{"platform":"android"}');
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 select set_config('r4.conversation',public.findback_chat_exchange(
  '00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011',
  'CREATE','{"otherId":"00000000-0000-4000-9940-000000000002"}')#>>'{}',true);
@@ -146,7 +170,7 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- Recipient side
 -- ---------------------------------------------------------------------------
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000002',
  '00000000-0000-4000-9940-000000000021','REGISTER','{"platform":"web"}');
 select pg_temp.r4_check('unordered pair has one conversation',public.findback_chat_exchange(
@@ -180,7 +204,7 @@ select pg_temp.r4_check('multiple request messages retain stable identity',
 -- End returns to REQUEST with history; the pre-end boundary cannot send
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 select set_config('r4.epoch_before_end',current_setting('r4.epoch'),true);
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000002',
  '00000000-0000-4000-9940-000000000021','END',jsonb_build_object(
@@ -191,7 +215,7 @@ select pg_temp.r4_check('end returns the pair to REQUEST and keeps history',
  and (select count(*)=2 from public.chat_messages where conversation_id=current_setting('r4.conversation')));
 
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 do $$
 declare denied boolean:=false;
 begin
@@ -215,7 +239,7 @@ select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
 reset role;
 
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 select set_config('r4.epoch',pg_temp.r4_epoch(current_setting('r4.conversation'),
  '00000000-0000-4000-9940-000000000021'),true);
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000002',
@@ -229,7 +253,7 @@ select pg_temp.r4_check('a fresh request reconnects only on explicit acceptance'
 -- Connected media, moderation evidence and per-account erasure
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 select set_config('r4.epoch',pg_temp.r4_epoch(current_setting('r4.conversation'),
  '00000000-0000-4000-9940-000000000011'),true);
 select pg_temp.ready_send('00000000-0000-4000-9940-000000000001',
@@ -258,7 +282,7 @@ select pg_temp.r4_check('media reads are authorized for both participants only',
  and not public.findback_chat_media_visible_internal('00000000-0000-4000-9940-000000000003','00000000-0000-4000-9940-000000000201'));
 
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000003',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000003','00000000-0000-4000-9940-000000000031');
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000003',
  '00000000-0000-4000-9940-000000000031','REGISTER','{"platform":"web"}');
 do $$
@@ -278,7 +302,7 @@ reset role;
 
 -- Only the author may unsend; a recipient erase is per-account.
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 do $$
 declare denied boolean:=false;
 begin
@@ -317,7 +341,7 @@ select pg_temp.r4_check('reporting a media message captures one evidence source'
 select set_config('r4.clear_through',(select max(event_sequence)::text from public.chat_messages
  where conversation_id=current_setting('r4.conversation')),true);
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 select public.findback_chat_exchange('00000000-0000-4000-9940-000000000001',
  '00000000-0000-4000-9940-000000000011','CLEAR_FOR_ME',jsonb_build_object(
  'conversationId',current_setting('r4.conversation'),
@@ -360,7 +384,7 @@ select set_config('r4.epoch',(select pg_temp.r4_pair_epoch()),true);
 set local role authenticated;
 -- Pin the actor: the preceding sections deliberately leave different identities
 -- in place, and a block must never be proven with an ambiguous caller.
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 select public.findback_block_user('00000000-0000-4000-9940-000000000001');
 reset role;
 select pg_temp.r4_check('block ends the connection without a third mode',
@@ -373,7 +397,7 @@ select pg_temp.r4_check('block moves the blocked peer revision with its changed 
  and pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')
   > current_setting('r4.b_rev')::bigint);
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000002','00000000-0000-4000-9940-000000000021');
 select public.findback_unblock_user('00000000-0000-4000-9940-000000000001');
 reset role;
 select pg_temp.r4_check('global unblock does not silently restore CONNECTED',
@@ -385,7 +409,7 @@ select set_config('r4.a_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9
 select set_config('r4.b_rev',(select pg_temp.r4_member_rev('00000000-0000-4000-9940-000000000002')::text),true);
 select set_config('r4.epoch',(select pg_temp.r4_pair_epoch()),true);
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9940-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9940-000000000001','00000000-0000-4000-9940-000000000011');
 select public.findback_block_user('00000000-0000-4000-9940-000000000002');
 reset role;
 select pg_temp.r4_check('a REQUEST-state block also moves the peer revision and epoch',

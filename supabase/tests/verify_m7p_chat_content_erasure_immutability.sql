@@ -3,6 +3,11 @@
 -- an accepted message's identity must stay replayable after the report it
 -- references disappears. No hosted identity or credential.
 begin;
+create function pg_temp.fixture_claim(p_user text,p_session text) returns void language plpgsql as $$ begin
+ perform set_config('request.jwt.claim.sub',p_user,true);
+ perform set_config('request.jwt.claims',jsonb_build_object('session_id',p_session)::text,true);
+end $$;
+grant execute on function pg_temp.fixture_claim(text,text) to authenticated;
 -- Current-client admission; canonical immutable-payload checks are unchanged.
 create function pg_temp.ready_send(p_account text,p_device text,p_action text,p_args jsonb)
 returns jsonb language plpgsql as $$ begin
@@ -12,7 +17,20 @@ end $$;
 grant execute on function pg_temp.ready_send(text,text,text,jsonb) to authenticated;
 insert into public.users(id,username,email,phone,created_at,updated_at) values
  ('00000000-0000-4000-9900-000000000001','era_author','era_a@example.invalid','+100009900001',now(),now()),
- ('00000000-0000-4000-9900-000000000002','era_peer','era_b@example.invalid','+100009900002',now(),now());
+  ('00000000-0000-4000-9900-000000000002','era_peer','era_b@example.invalid','+100009900002',now(),now());
+insert into auth.users(id,email) select id::uuid,email from public.users where id like '00000000-0000-4000-9900-%';
+insert into auth.sessions(id,user_id) values
+ ('00000000-0000-4000-9900-000000000011','00000000-0000-4000-9900-000000000001'),
+ ('00000000-0000-4000-9900-000000000021','00000000-0000-4000-9900-000000000002');
+-- Elevated fixture commit models separately tested Edge signature verification.
+-- Exchange probes still execute as authenticated through production admission.
+do $$ declare s record; c jsonb; begin
+ for s in select id,user_id from auth.sessions where id::text like '00000000-0000-4000-9900-%' loop
+  perform pg_temp.fixture_claim(s.user_id::text,s.id::text);
+  c:=public.findback_device_enrollment_challenge(s.id::text,'04'||repeat('ab',64),'Erasure fixture','web');
+  perform public.findback_device_enrollment_commit(s.user_id::text,s.id,(c->>'challengeId')::uuid);
+ end loop;
+end $$;
 insert into public.item_posts(id,user_id,type,title,description,category,status,event_date,latitude,longitude,
  location_label,created_at,updated_at)
 values('00000000-0000-4000-9900-000000000101','00000000-0000-4000-9900-000000000001','FOUND',
@@ -26,9 +44,9 @@ $$;
 grant execute on function pg_temp.era_view(text) to authenticated;
 
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000002','00000000-0000-4000-9900-000000000021');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000021','REGISTER','{"platform":"android"}');
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','REGISTER','{"platform":"web"}');
 select set_config('era.conversation',public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011',
  'CREATE','{"otherId":"00000000-0000-4000-9900-000000000002"}')#>>'{}',true);
@@ -39,10 +57,10 @@ select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011
  'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000011')->>'epoch'));
 
 -- Connect, then share one explicit static location.
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000002','00000000-0000-4000-9900-000000000021');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000021','ACCEPT',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'expectedEpoch',pg_temp.era_view('00000000-0000-4000-9900-000000000021')->>'epoch'));
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000202','body','','messageType','LOCATION',
@@ -55,7 +73,7 @@ reset role;
 --    an empty caption, so erasing `body` alone retains the coordinates.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select public.findback_chat_exchange(auth.uid()::text,'00000000-0000-4000-9900-000000000011','UNSEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'messageId','00000000-0000-4000-9900-000000000202'));
 reset role;
@@ -72,7 +90,7 @@ end $$;
 --    leave the coordinates behind once no mailbox still holds the message.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000203','body','','messageType','LOCATION',
@@ -100,7 +118,7 @@ do $$ declare m public.chat_messages%rowtype; begin
   'an accepted message keeps its opaque report reference after the report is deleted';
 end $$;
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 do $$ declare v_id text; begin
  v_id:=pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
   'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
@@ -121,7 +139,7 @@ values('00000000-0000-4000-9900-000000000102','00000000-0000-4000-9900-000000000
  'Later hidden','Moderated away','OTHER','OPEN','2026-10-30',null,null,null,
  '2026-10-30T00:00:00Z','2026-10-30T00:00:00Z');
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000204','body','About the second report','messageType','TEXT',
@@ -167,7 +185,7 @@ end $$;
 --    now length-prefixed and must refuse the recast.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000206',
@@ -188,7 +206,7 @@ reset role;
 --    below the old six-decimal rounding must not share an accepted id.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.ready_send(auth.uid()::text,'00000000-0000-4000-9900-000000000011','SEND',jsonb_build_object(
  'conversationId',current_setting('era.conversation'),'recipientId','00000000-0000-4000-9900-000000000002',
  'messageId','00000000-0000-4000-9900-000000000207','body','','messageType','LOCATION',
@@ -235,7 +253,7 @@ create function pg_temp.era_expect_conflict(p_id text,p_body text,p_type text,p_
 end $$;
 grant execute on function pg_temp.era_expect_conflict(text,text,text,jsonb) to authenticated;
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000001',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000001','00000000-0000-4000-9900-000000000011');
 select pg_temp.era_expect_conflict('00000000-0000-4000-9900-000000000206','hello','TEXT',
  '{"contextReportId":"00000000-0000-4000-9900-000000000102"}');
 select pg_temp.era_expect_conflict('00000000-0000-4000-9900-000000000206','different body','TEXT','{}');
@@ -265,7 +283,7 @@ do $$ begin
   where id='00000000-0000-4000-9900-000000000204'),'all-ACK clears context and body';
 end $$;
 set local role authenticated;
-select set_config('request.jwt.claim.sub','00000000-0000-4000-9900-000000000002',true);
+select pg_temp.fixture_claim('00000000-0000-4000-9900-000000000002','00000000-0000-4000-9900-000000000021');
 do $$ declare v_id text; begin
  v_id:=public.findback_submit_message_report(auth.uid()::text,
   '00000000-0000-4000-9900-000000000204','OTHER',null,'About the second report');
