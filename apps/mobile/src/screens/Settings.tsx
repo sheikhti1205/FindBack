@@ -14,6 +14,7 @@ import {
   LifeBuoy,
   LogOut,
   MessageSquare,
+  MonitorSmartphone,
   Palette,
   RotateCcw,
   Scale,
@@ -259,6 +260,13 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               iconTone="account"
               value={accountSummary(user)}
               route="/settings/account"
+            />
+            <SettingsRow
+              title="Devices"
+              description="Phones, tablets and browsers signed in to Chat."
+              icon={MonitorSmartphone}
+              iconTone="teal"
+              route="/settings/devices"
             />
           </SettingsGroup>
           <SettingsGroup title="Preferences">

@@ -10,6 +10,9 @@ describe("settingsIndex", () => {
         "/settings/about",
         "/settings/accessibility",
         "/settings/account",
+        // Device management (packet 05/06 consumer surface) postdates the
+        // 2026-10-03 route map like the rows above.
+        "/settings/devices",
         "/settings/ai",
         "/settings/ai/connections",
         "/settings/appearance",
@@ -75,8 +78,13 @@ describe("settingsIndex", () => {
     expect(searchSettings("photo quality").map((r) => r.id)).toContain("media");
   });
 
-  it("is case-insensitive and trims whitespace", () => {
-    expect(searchSettings("  THEME ").map((r) => r.id)).toContain("appearance");
+  it("finds device management by the words a reader would use", () => {
+    expect(searchSettings("device").map((r) => r.id)).toContain("devices");
+    expect(searchSettings("remove device").map((r) => r.id)).toContain("devices");
+    expect(searchSettings("sign out").map((r) => r.id)).toContain("devices");
+  });
+
+  it("is case-insensitive and trims whitespace", () => {    expect(searchSettings("  THEME ").map((r) => r.id)).toContain("appearance");
     expect(searchSettings("Ai").map((r) => r.id)).toEqual(
       expect.arrayContaining(["ai", "connections"]),
     );
