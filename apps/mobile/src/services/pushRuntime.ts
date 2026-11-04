@@ -4,6 +4,8 @@ import { createChatAccountBinding, parseChatPush } from "./chatPush";
 
 let controller: PushController | null = null;
 let accountId: string | null = null;
+let sessionId: string | null = null;
+let prepared = false;
 let generation = 0;
 let ownerCurrent: (() => boolean) | null = null;
 const adapter = createCapacitorPushAdapter();
@@ -42,26 +44,38 @@ export async function acknowledgeChatPushTap(account: string, notificationId: st
 /** Lazily built singleton. The Capacitor adapter is inert outside a native shell. */
 export function pushController(): PushController {
   controller ??= createPushController({ adapter,
-    isCurrent: () => accountId !== null && binding.isReady(accountId) && (ownerCurrent?.() ?? false),
+    isCurrent: () => prepared && accountId !== null && binding.isReady(accountId) && (ownerCurrent?.() ?? false),
     chatAccount: () => accountId, chatWake });
   return controller;
 }
 
 /** Best-effort start after sign-in; a denied permission or bridge error never blocks auth. */
-export async function startPushNotifications(owner: { accountId: string; isCurrent: () => boolean }): Promise<void> {
+export async function startPushNotifications(owner: {
+  accountId: string; sessionId: string | null; isCurrent: () => boolean; prepare: () => Promise<void>;
+}): Promise<void> {
   const previous = accountId;
-  if (previous !== owner.accountId) ++generation;
+  const changed = previous !== owner.accountId || sessionId !== owner.sessionId;
+  if (changed) { ++generation; prepared = false; }
   const epoch = generation;
   accountId = owner.accountId;
+  sessionId = owner.sessionId;
   ownerCurrent = owner.isCurrent;
   const active = () => generation === epoch && accountId === owner.accountId && owner.isCurrent();
   // Fence old controller callbacks synchronously. Native binding has its own
   // serialized lane so a slow token/preferences operation cannot delay clear.
   const push = pushController();
-  const stopping = previous !== null && previous !== owner.accountId ? push.stop() : Promise.resolve();
+  const stopping = previous !== null && changed ? push.stop() : Promise.resolve();
   void stopping.catch(() => {}); // bound may reject first; still observe stop.
-  const bound = binding.set(owner.accountId, active);
+  // Initial session adoption must retain a legitimate cold tap until this
+  // account actually binds. An existing session replacement clears immediately.
+  const cleared = previous !== null && changed ? binding.set(null, () => generation === epoch) : Promise.resolve();
   try {
+    await cleared;
+    if (!active() || !owner.sessionId) return;
+    await owner.prepare();
+    if (!active()) return;
+    prepared = true;
+    const bound = binding.set(owner.accountId, active);
     await bound;
     if (active() && typeof window !== "undefined") window.dispatchEvent(new Event(CHAT_PUSH_BOUND_EVENT));
     await stopping;
@@ -79,6 +93,8 @@ export async function startPushNotifications(owner: { accountId: string; isCurre
 export async function stopPushNotifications(): Promise<void> {
   ++generation;
   accountId = null;
+  sessionId = null;
+  prepared = false;
   ownerCurrent = () => false;
   const cleared = binding.set(null, () => true);
   const stopped = pushController().stop();

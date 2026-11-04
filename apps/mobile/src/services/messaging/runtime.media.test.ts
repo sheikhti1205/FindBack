@@ -10,6 +10,7 @@ import { mediaFixture, deferred } from "./mediaTestDoubles";
 import type { MediaMetadata } from "./media";
 import type { MailboxEnvelope } from "./history";
 import { listPendingMessagingDeletions } from "./scopedMediaBytes";
+import { verifyDeviceProof, type DeviceChallenge } from "./webDeviceIdentity";
 
 const boundary = vi.hoisted(() => ({ sdk: null as unknown, raw: null as unknown,
   handles: [] as PlatformMessagingHandle[], url: "https://runtime.example.test" }));
@@ -41,6 +42,8 @@ let wakes: Array<{ messageId: string; committed: boolean }>;
 let headPosition: number, headRevision: number, headState: number;
 let rangeGate: ReturnType<typeof deferred> | null;
 let rangeEntered: ReturnType<typeof deferred> | null;
+let authSession: string | null, enrollmentGate: ReturnType<typeof deferred> | null;
+let enrollmentCalls: string[], challenges: Map<string, Record<string, unknown>>;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -54,6 +57,7 @@ async function waitForState(predicate: (state: ReturnType<typeof runtime.getMess
 
 beforeEach(async () => {
   vi.resetModules(); boundary.handles = []; account = A; online = true; uploadFails = false;
+  authSession = id(11); enrollmentGate = null; enrollmentCalls = []; challenges = new Map();
   headPosition = 0; headRevision = 1; headState = 0; rangeGate = null; rangeEntered = null;
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
@@ -68,6 +72,19 @@ beforeEach(async () => {
   const network: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     if (!online) throw new Error("offline");
+    if (request.url.endsWith("/device-enroll")) {
+      const { challengeId, signature } = await request.json() as { challengeId: string; signature: string };
+      const c = challenges.get(challengeId)!;
+      const proof: DeviceChallenge = { version: 1, purpose: "REGISTER", accountId: account,
+        signerDeviceId: DEVICE, peerDeviceId: DEVICE, sessionId: c.sessionId as string,
+        nonce: c.nonce as string, channelBinding: "0".repeat(64), issuedAt: c.issuedAt as number, expiresAt: c.expiresAt as number };
+      expect(await verifyDeviceProof({ backendUrl: boundary.url, accountId: account, deviceId: DEVICE },
+        c.publicKey as string, proof, Uint8Array.from(signature.match(/../g)!, p => parseInt(p, 16)).buffer,
+        { now: Date.now() })).toBe(true);
+      enrollmentCalls.push("commit");
+      if (enrollmentGate) await enrollmentGate.promise;
+      return Response.json({ device: { accountId: account, sessionId: c.sessionId, deviceId: DEVICE, generation: id(99) } });
+    }
     if (request.url.endsWith("/chat-wake")) {
       const { message_id: messageId } = await request.json() as { message_id: string };
       wakes.push({ messageId, committed: [...remote.values()].some(row => row.metadata.messageId === messageId) });
@@ -75,6 +92,12 @@ beforeEach(async () => {
     }
     if (request.url.includes("/rpc/")) {
       const args = await request.json() as Record<string, unknown>;
+      if (request.url.endsWith("findback_device_enrollment_challenge")) {
+        expect(args.p_device_id).toBe(DEVICE);
+        const c = { challengeId: id(500 + challenges.size), accountId: account, deviceId: DEVICE,
+          sessionId: authSession, publicKey: args.p_public_key, nonce: "a".repeat(64), issuedAt: Date.now() - 1, expiresAt: Date.now() + 60_000 };
+        challenges.set(c.challengeId, c); enrollmentCalls.push("challenge"); return Response.json(c);
+      }
        expect(args.p_account_id).toBe(account); expect(args.p_device_id).toBe(DEVICE);
        if (request.url.endsWith("findback_chat_set_muted")) {
          expect(args.p_conversation_id).toBe(CONV); expect(typeof args.p_muted).toBe("boolean");
@@ -152,15 +175,50 @@ beforeEach(async () => {
   boundary.sdk = createClient(config.url, config.key, { accessToken: async () => `synthetic-${account}`, global: { fetch: network } });
   boundary.raw = createSupabaseFunctionFetch(config, { getSession: async () => ({ data: {
     session: { user: { id: account }, access_token: `synthetic-${account}` } }, error: null }) }, network);
-  runtime = await import("./runtime");
+  const realRuntime = await import("./runtime");
+  // Existing fixtures now explicitly supply a synthetic Auth session. All actual
+  // runtime/session/signer/SDK/storage code still executes (network only is fake).
+  runtime = { ...realRuntime, setMessagingAccount: (next, session = id(11)) => {
+    authSession = session; realRuntime.setMessagingAccount(next, session);
+  } };
 });
 afterEach(async () => {
-  runtime.clearMessagingRuntime(); deliveryGate?.resolve(); mutationGate?.resolve(); rangeGate?.resolve();
+  runtime.clearMessagingRuntime(); deliveryGate?.resolve(); mutationGate?.resolve(); rangeGate?.resolve(); enrollmentGate?.resolve();
   await Promise.all(boundary.handles.map((handle) => handle.close()));
   vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
 describe("Auth session lifetime within the same account",()=>{
+  it("lets push join the latest same-session lifetime across StrictMode cleanup/setup", async () => {
+    const shared = runtime.ensureMessagingDevice(A, id(11));
+    runtime.clearMessagingRuntime();
+    runtime.setMessagingAccount(A, id(11));
+    await expect(shared).resolves.toBeUndefined();
+    await waitForState(s => s.status === "ready");
+    expect(boundary.handles).toHaveLength(1);
+  });
+  it("signs and enrolls before REGISTER/history RPC and lets push join the same owner", async () => {
+    enrollmentGate = deferred();
+    runtime.setMessagingAccount(A, id(11));
+    await vi.waitFor(() => expect(enrollmentCalls).toEqual(["challenge", "commit"]));
+    expect(requestLog).toEqual([]);
+    const shared = runtime.ensureMessagingDevice(A, id(11));
+    enrollmentGate.resolve(); await shared;
+    await waitForState(s => s.status === "ready");
+    expect(enrollmentCalls).toEqual(["challenge", "commit"]);
+    expect(boundary.handles).toHaveLength(1);
+    expect(requestLog[0]).toBe("REGISTER");
+  });
+  it("cancels late enrollment on same-account replacement without sending old REGISTER", async () => {
+    enrollmentGate = deferred();
+    runtime.setMessagingAccount(A, id(11));
+    await vi.waitFor(() => expect(enrollmentCalls).toContain("commit"));
+    runtime.setMessagingAccount(A, id(12));
+    enrollmentGate.resolve(); enrollmentGate = null;
+    await waitForState(s => s.status === "ready");
+    expect(enrollmentCalls).toEqual(["challenge", "commit", "challenge", "commit"]);
+    expect(requestLog.filter(x => x === "REGISTER")).toHaveLength(1);
+  });
   it("keeps refresh in one owner but replaces the owner synchronously for a new session",async()=>{
     runtime.setMessagingAccount(A,id(11)); await waitForState(s=>s.status==="ready");
     const prior=boundary.handles[0]!;

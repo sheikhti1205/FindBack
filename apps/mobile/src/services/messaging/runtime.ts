@@ -328,7 +328,8 @@ export function setMessagingAccount(accountId: string | null, sessionId?: string
       handle = await openPlatformMessagingHistory({ accountId: next, media: { backendUrl: getSupabaseBackendUrl() },
         ...(Capacitor.isNativePlatform() ? {} : { deviceId: webInstallationId() }) });
       if (ticket !== generation) { await closePlatformHandle(handle); return; }
-      const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history),
+      const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history,
+        { sessionId: nextSession, platform: handle.platform }),
         generation: ticket, refreshing: null, pendingRefresh: null, started: false,
         authorityVersion: 0, activeThread: null, detach: () => undefined };
       current = owner;
@@ -351,6 +352,27 @@ export function setMessagingAccount(accountId: string | null, sessionId?: string
 }
 
 export function clearMessagingRuntime(): void { setMessagingAccount(null); }
+
+/** Push and other device-authorized consumers join this existing owner. Calling
+ * from a deferred Auth effect is safe regardless of App effect ordering; no new
+ * SDK listener or competing enrollment/storage lifetime is constructed. */
+export async function ensureMessagingDevice(accountId: string, sessionId: string): Promise<void> {
+  uuid(accountId); uuid(sessionId);
+  setMessagingAccount(accountId, sessionId);
+  // React StrictMode cleanup/setup replaces the ticket while this wait is in
+  // flight. Join the newest lifetime for the same target instead of reading a
+  // half-torn-down owner; a different target or sign-out fails closed.
+  for (;;) {
+    const ticket = generation;
+    await lifecycle;
+    if (ticket === generation) break;
+    if (desiredAccount !== accountId || desiredSession !== sessionId) throw new Error("Messaging session changed");
+  }
+  const owner = ownerFor(accountId);
+  if (desiredSession !== sessionId) throw new Error("Messaging session changed");
+  await owner.session.prepare();
+  assertOwner(owner);
+}
 
 /** Confirmed deletion for captured A, even after B becomes current. Ordinary
  * logout never calls this. Durable pending work belongs to the storage registry,

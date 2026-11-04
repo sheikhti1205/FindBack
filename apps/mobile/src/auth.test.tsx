@@ -25,7 +25,7 @@ const hoisted = vi.hoisted(() => ({
   onAuthStateChange: vi.fn(),
   beginAccountSwitch: vi.fn(),
   stopPush: vi.fn(async () => {}),
-  startPush: vi.fn(async (_owner: { accountId: string; isCurrent: () => boolean }) => {}),
+  startPush: vi.fn(async (_owner: { accountId: string; sessionId: string | null; isCurrent: () => boolean; prepare: () => Promise<void> }) => {}),
   fetchMe: vi.fn(() => new Promise(() => {})),
   authCallback: null as ((event: string, session: unknown) => void) | null,
   storedSession: false,
@@ -72,7 +72,7 @@ vi.mock("./services/realtime", () => ({
 }));
 
 vi.mock("./services/pushRuntime", () => ({
-  startPushNotifications: (owner: { accountId: string; isCurrent: () => boolean }) => hoisted.startPush(owner),
+  startPushNotifications: (owner: { accountId: string; sessionId: string | null; isCurrent: () => boolean; prepare: () => Promise<void> }) => hoisted.startPush(owner),
   stopPushNotifications: () => hoisted.stopPush(),
 }));
 
@@ -228,6 +228,24 @@ describe("F08 AuthProvider logout purges AI provider credentials", () => {
     expect(owner.isCurrent()).toBe(true);
     act(() => hoisted.authCallback!("SIGNED_OUT", null));
     expect(owner.isCurrent()).toBe(false);
+  });
+  it("passes the canonical session to push and invalidates its old guard on same-account replacement, not refresh", async () => {
+    const capture = { current: null } as Parameters<typeof probeHarness>[0];
+    render(probeHarness(capture)({}));
+    await waitFor(() => expect(capture.current?.user?.id).toBe(USER_A.id));
+    const session = (n: number) => ({ user: { id: USER_A.id }, access_token:
+      `synthetic.${btoa(JSON.stringify({ sub: USER_A.id, session_id: `00000000-0000-4000-8000-${n.toString().padStart(12, "0")}` })).replaceAll("=", "").replaceAll("+", "-").replaceAll("/", "_")}.synthetic` });
+    act(() => hoisted.authCallback!("SIGNED_IN", session(11)));
+    await waitFor(() => expect(hoisted.startPush.mock.calls.at(-1)?.[0].sessionId).toBe("00000000-0000-4000-8000-000000000011"));
+    const first = hoisted.startPush.mock.calls.at(-1)![0];
+    expect(typeof first.prepare).toBe("function");
+    act(() => hoisted.authCallback!("TOKEN_REFRESHED", session(11)));
+    expect(first.isCurrent()).toBe(true);
+    hoisted.stopPush.mockClear();
+    act(() => hoisted.authCallback!("SIGNED_IN", session(12)));
+    expect(first.isCurrent()).toBe(false);
+    expect(hoisted.stopPush).toHaveBeenCalled();
+    await waitFor(() => expect(hoisted.startPush.mock.calls.at(-1)?.[0].sessionId).toBe("00000000-0000-4000-8000-000000000012"));
   });
   it("persists a real boot expiry but not a cold guest launch", async () => {
     hoisted.storedSession = true;

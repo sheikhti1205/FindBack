@@ -31,12 +31,13 @@ function object(value: unknown): Record<string, unknown> {
  * No timers/presence/push payloads are treated as message authority.
  */
 export function createMessagingSession(identity: MessagingScope, history: MessagingHistory, rpc: MessagingRpc,
-  mediaFactory?: MediaTransportFactory) {
+  mediaFactory?: MediaTransportFactory, admission?: (signal: AbortSignal) => Promise<void>) {
   const scope = Object.freeze({ accountId: uuid(identity.accountId), deviceId: uuid(identity.deviceId) });
   const controller = new AbortController();
   let flushing: Promise<void> | null = null;
   let stateTail: Promise<unknown> = Promise.resolve();
   const assertOpen = () => { if (controller.signal.aborted) throw new Error("Messaging session closed"); };
+  const prepare = async () => { assertOpen(); await admission?.(controller.signal); assertOpen(); };
   const mediaUnavailable = () => new Error("Photo could not sync. Try again.");
   let mediaEpoch = 0, mediaMutationEpoch = 0, mediaPaused = false;
   let mediaController = new AbortController();
@@ -62,6 +63,8 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     signal?.addEventListener("abort", abort);
     try {
       if (controller.signal.aborted || signal?.aborted) throw new Error("Messaging request closed");
+      await prepare();
+      if (request.signal.aborted) throw new Error("Messaging request closed");
       const value = await rpc({ ...scope, action, args, signal: request.signal });
       assertOpen();
       if (request.signal.aborted) throw new Error("Messaging request closed");
@@ -375,6 +378,7 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     return mediaSyncing;
   };
   return {
+    prepare,
     async start(platform: "web" | "android" | "ios") { await call("REGISTER", { platform }); },
     async request(otherId: string) { return uuid(await call("CREATE", { otherId: uuid(otherId) }) as string); },
     async accept(conversationId: string) {

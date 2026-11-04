@@ -42,11 +42,44 @@ beforeEach(() => {
 });
 
 describe("sign-in push lifecycle", () => {
+  it("does not bind native Chat or register tokens before device enrollment", async () => {
+    const pending = deferred<void>();
+    fake.adapter.setChatAccount = vi.fn(async () => {});
+    const { startPushNotifications } = await import("./pushRuntime");
+    const prepare = vi.fn(() => pending.promise);
+    const start = startPushNotifications({ accountId: "A", sessionId: "session-1", isCurrent: () => true, prepare });
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
+    expect(fake.adapter.setChatAccount).not.toHaveBeenCalledWith("A");
+    expect(fake.adapter.register).not.toHaveBeenCalled();
+    pending.resolve(); await start;
+    expect(fake.adapter.setChatAccount).toHaveBeenCalledWith("A");
+    expect(fake.adapter.register).toHaveBeenCalledOnce();
+  });
+  it("stops old same-account session callbacks and enrolls before its replacement", async () => {
+    const { startPushNotifications } = await import("./pushRuntime");
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", isCurrent: () => true, prepare: async () => {} });
+    const oldRegistration = registration!, pending = deferred<void>();
+    const next = startPushNotifications({ accountId: "A", sessionId: "session-2", isCurrent: () => true, prepare: () => pending.promise });
+    oldRegistration("old-session-token");
+    await Promise.resolve();
+    expect(fake.registerToken).not.toHaveBeenCalled();
+    pending.resolve(); await next;
+    expect(fake.adapter.register).toHaveBeenCalledTimes(2);
+  });
+  it("keeps settings starts closed and stops waiting enrollment on logout", async () => {
+    const pending = deferred<void>();
+    const { startPushNotifications, stopPushNotifications, pushController } = await import("./pushRuntime");
+    const start = startPushNotifications({ accountId: "A", sessionId: "session-1", isCurrent: () => true, prepare: () => pending.promise });
+    await pushController().start({ requestPermission: true });
+    await stopPushNotifications(); pending.resolve(); await start;
+    expect(fake.adapter.register).not.toHaveBeenCalled();
+    expect(fake.adapter.requestPermission).not.toHaveBeenCalled();
+  });
   it("coalesces duplicate same-account sign-in effects", async () => {
     const { startPushNotifications } = await import("./pushRuntime");
     await Promise.all([
-      startPushNotifications({ accountId: "A", isCurrent: () => true }),
-      startPushNotifications({ accountId: "A", isCurrent: () => true }),
+      startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true }),
+      startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true }),
     ]);
     expect(fake.adapter.register).toHaveBeenCalledOnce();
     registration!("token");
@@ -56,7 +89,7 @@ describe("sign-in push lifecycle", () => {
   it("fails closed if preferences cannot be read", async () => {
     fake.preferences.mockRejectedValue(new Error("offline"));
     const { startPushNotifications } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => true });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     expect(fake.adapter.register).not.toHaveBeenCalled();
     expect(fake.adapter.requestPermission).not.toHaveBeenCalled();
   });
@@ -65,7 +98,7 @@ describe("sign-in push lifecycle", () => {
     let current = true;
     fake.adapter.checkPermission = vi.fn(async () => "prompt" as const);
     const { startPushNotifications, pushController } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => current });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => current });
     fake.adapter.checkPermission = vi.fn(async () => "granted" as const);
     await pushController().start({ requestPermission: true });
     current = false;
@@ -77,7 +110,7 @@ describe("sign-in push lifecycle", () => {
   it("honours a saved master OFF after process restart", async () => {
     fake.preferences.mockResolvedValue({ pushEnabled: false });
     const { startPushNotifications } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => true });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     expect(fake.preferences).toHaveBeenCalledOnce();
     expect(fake.adapter.register).not.toHaveBeenCalled();
     expect(fake.adapter.requestPermission).not.toHaveBeenCalled();
@@ -86,14 +119,14 @@ describe("sign-in push lifecycle", () => {
   it.each(["prompt", "denied"] as const)("never prompts on sign-in when OS permission is %s", async (permission) => {
     fake.adapter.checkPermission = vi.fn(async () => permission);
     const { startPushNotifications } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => true });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     expect(fake.adapter.requestPermission).not.toHaveBeenCalled();
     expect(fake.adapter.register).not.toHaveBeenCalled();
   });
 
   it("registers on granted permission without asking again", async () => {
     const { startPushNotifications } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => true });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     expect(fake.adapter.register).toHaveBeenCalledOnce();
     expect(fake.adapter.requestPermission).not.toHaveBeenCalled();
   });
@@ -102,7 +135,7 @@ describe("sign-in push lifecycle", () => {
     const pending = deferred<{ pushEnabled: boolean }>();
     fake.preferences.mockReturnValue(pending.promise);
     const { startPushNotifications, stopPushNotifications } = await import("./pushRuntime");
-    const start = startPushNotifications({ accountId: "A", isCurrent: () => true });
+    const start = startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     await vi.waitFor(() => expect(fake.preferences).toHaveBeenCalled());
     await stopPushNotifications();
     pending.resolve({ pushEnabled: true });
@@ -114,7 +147,7 @@ describe("sign-in push lifecycle", () => {
     const pending = deferred<{ pushEnabled: boolean }>();
     fake.preferences.mockReturnValue(pending.promise);
     const { startPushNotifications, pushController } = await import("./pushRuntime");
-    const start = startPushNotifications({ accountId: "A", isCurrent: () => true });
+    const start = startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => true });
     await vi.waitFor(() => expect(fake.preferences).toHaveBeenCalled());
     await pushController().stop();
     pending.resolve({ pushEnabled: true });
@@ -127,10 +160,10 @@ describe("sign-in push lifecycle", () => {
     fake.preferences.mockReturnValueOnce(pending.promise).mockResolvedValue({ pushEnabled: true });
     let account = "A";
     const { startPushNotifications } = await import("./pushRuntime");
-    const first = startPushNotifications({ accountId: "A", isCurrent: () => account === "A" });
+    const first = startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => account === "A" });
     await vi.waitFor(() => expect(fake.preferences).toHaveBeenCalledOnce());
     account = "B";
-    await startPushNotifications({ accountId: "B", isCurrent: () => account === "B" });
+    await startPushNotifications({ accountId: "B", sessionId: "session-2", prepare: async () => {}, isCurrent: () => account === "B" });
     pending.resolve({ pushEnabled: true });
     await first;
     expect(fake.adapter.register).toHaveBeenCalledOnce();
@@ -141,7 +174,7 @@ describe("sign-in push lifecycle", () => {
   it("checks the auth owner's account guard again inside the token callback", async () => {
     let current = true;
     const { startPushNotifications } = await import("./pushRuntime");
-    await startPushNotifications({ accountId: "A", isCurrent: () => current });
+    await startPushNotifications({ accountId: "A", sessionId: "session-1", prepare: async () => {}, isCurrent: () => current });
     const oldCallback = registration!;
     current = false; // auth SDK invalidates synchronously, before effects run
     oldCallback("A-late-token");

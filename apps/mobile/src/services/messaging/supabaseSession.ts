@@ -1,16 +1,20 @@
-import { fetchSupabaseFunction, getSupabase } from "../supabaseClient";
+import { fetchSupabaseFunction, getSupabase, getSupabaseBackendUrl } from "../supabaseClient";
 import type { MessagingHistory, MessagingScope } from "./history";
 import { createMessagingSession } from "./session";
 import { createMediaTransport } from "./mediaTransport";
 import { uuid } from "./validation";
 import { kickChatWake } from "./chatWake";
+import { createDeviceEnrollment } from "./deviceEnrollment";
+import { openWebDeviceIdentity } from "./webDeviceIdentity";
+import { openAndroidDeviceIdentity } from "./androidDeviceIdentity";
 
 /** Shares the caller's lifetime; does not create another session or scheduler. */
-export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal) {
+export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal, prepare?: () => Promise<void>) {
   const accountId = uuid(scope.accountId);
   const transport = createMediaTransport(scope, signal, {
-    request: (input) => fetchSupabaseFunction("chat-media", accountId, input),
+    request: async (input) => { await prepare?.(); return fetchSupabaseFunction("chat-media", accountId, input); },
     rpc: async ({ name, args, signal: requestSignal }) => {
+      await prepare?.();
       const { data, error } = await getSupabase().rpc(name, args).abortSignal(requestSignal);
       if (error) throw new Error("Photo could not sync. Try again.");
       return data;
@@ -25,8 +29,38 @@ export function createSupabaseMediaTransport(scope: MessagingScope, signal: Abor
 }
 
 /** Uses the canonical auth SDK; server checks the captured account on every RPC. */
-export function createSupabaseMessagingSession(scope: MessagingScope, history: MessagingHistory) {
-  return createMessagingSession(scope, history, async ({ accountId, deviceId, action, args, signal }) => {
+export function createSupabaseMessagingSession(identity: MessagingScope, history: MessagingHistory,
+  context: { sessionId: string | null | undefined; platform: "web" | "android" }) {
+  const scope = Object.freeze({ accountId: uuid(identity.accountId), deviceId: uuid(identity.deviceId) });
+  const owner = Object.freeze({ sessionId: context.sessionId, platform: context.platform });
+  let enrollment: ReturnType<typeof createDeviceEnrollment> | undefined;
+  const admission = async (signal: AbortSignal) => {
+    const sessionId = uuid(owner.sessionId as string);
+    enrollment ??= createDeviceEnrollment({ ...scope, backendUrl: getSupabaseBackendUrl(), sessionId }, signal, {
+      openIdentity: () => {
+        const open = owner.platform === "android" ? openAndroidDeviceIdentity : openWebDeviceIdentity;
+        return open({ ...scope, backendUrl: getSupabaseBackendUrl() });
+      },
+      challenge: async publicKey => {
+        const { data, error } = await getSupabase().rpc("findback_device_enrollment_challenge", {
+          p_device_id: scope.deviceId, p_public_key: publicKey,
+          p_name: owner.platform === "web" ? "Browser" : "Android device", p_platform: owner.platform,
+        }).abortSignal(signal);
+        if (error) throw new Error("Device could not connect"); return data;
+      },
+      commit: async (challengeId, signature) => {
+        const body = new TextEncoder().encode(JSON.stringify({ challengeId, signature })).buffer;
+        const response = await fetchSupabaseFunction("device-enroll", scope.accountId, {
+          method: "POST", signal, headers: { "content-type": "application/json" }, body,
+        });
+        if (!response.ok) throw new Error("Device could not connect");
+        const result = await response.json() as { device?: unknown };
+        return result.device;
+      },
+    });
+    await enrollment.ready();
+  };
+  const session = createMessagingSession(scope, history, async ({ accountId, deviceId, action, args, signal }) => {
     const sdk = getSupabase();
     const request = action === "MUTE"
       ? sdk.rpc("findback_chat_set_muted", { p_account_id: accountId, p_device_id: deviceId,
@@ -47,5 +81,6 @@ export function createSupabaseMessagingSession(scope: MessagingScope, history: M
     // never allowed to fail this send.
     if (action === "SEND" && typeof args.messageId === "string") kickChatWake(accountId, args.messageId);
     return data;
-  }, createSupabaseMediaTransport);
+  }, (mediaScope, signal) => createSupabaseMediaTransport(mediaScope, signal, () => session.prepare()), admission);
+  return session;
 }

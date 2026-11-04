@@ -29,7 +29,7 @@ import {
 } from "./services/session";
 import { getSupabase } from "./services/supabaseClient";
 import { readAuthSessionId } from "./services/authSessionIdentity";
-import { clearMessagingRuntime } from "./services/messaging/runtime";
+import { clearMessagingRuntime, ensureMessagingDevice } from "./services/messaging/runtime";
 import { AuthAccountChangedError } from "./services/accountScopedAuthStorage";
 import { storage } from "./services/storage";
 import { clearSessionExpired, markSessionExpired, sessionExpiryCandidate } from "./services/sessionExpiry";
@@ -230,7 +230,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // A same-account SIGNED_IN may replace the SDK session without SIGNED_OUT.
         // Fence old messaging/media/RTC work synchronously, before React effects
         // or deferred profile adoption. Ordinary token refresh keeps its ID.
-        if (previousAccount===nextAccount && sdkSessionId.current!==null && sdkSessionId.current!==nextSessionId) clearMessagingRuntime();
+        if (previousAccount===nextAccount && sdkSessionId.current!==null && sdkSessionId.current!==nextSessionId) {
+          clearMessagingRuntime();
+          void stopPushNotifications();
+        }
         sdkSessionId.current=nextSessionId;
         const accountChanged = previousAccount !== null && previousAccount !== nextAccount;
         // The SDK's startup snapshot is part of the boot restore, not a new
@@ -316,8 +319,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       joinInboxRoom(user.id);
       void startPushNotifications({
         accountId: user.id,
+        sessionId: authSessionId,
+        prepare: async () => {
+          if (!authSessionId) throw new Error("Session unavailable");
+          await ensureMessagingDevice(user.id, authSessionId);
+        },
         isCurrent: () => currentUser.current?.id === user.id &&
-          (!sdkObserved.current || sdkAccount.current === user.id) && !profileAdoptionBlocked.current,
+          (!sdkObserved.current || (sdkAccount.current === user.id && sdkSessionId.current === authSessionId)) && !profileAdoptionBlocked.current,
       });
     } else {
       leaveInboxRoom();
@@ -326,7 +334,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // discard a legitimate cold notification tap before its session loads.
       if (!booting) void stopPushNotifications();
     }
-  }, [user, booting]);
+  }, [user, booting, authSessionId]);
 
   const setUser = useCallback((next: PublicUser) => setUserState(next), []);
 
