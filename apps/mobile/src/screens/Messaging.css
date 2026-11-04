@@ -133,7 +133,7 @@ a.fb-chat-context:hover, a.fb-chat-context:focus-visible { text-decoration:under
    not a wall of empty space. Phones are narrower than the rail by construction. */
 .fb-chat-page { --fb-chat-rail-width: 48rem; }
 .fb-chat-messages > * { width: 100%; max-width: var(--fb-chat-rail-width); margin-inline: auto; }
-.fb-chat-composer { width: 100%; max-width: var(--fb-chat-rail-width); margin-inline: auto; }
+.fb-chat-page > .fb-composer-shell { width: 100%; max-width: var(--fb-chat-rail-width); margin-inline: auto; }
 
 /* The collapsed conversation pane: a rail of the same people, not a second
    compact list. 64px keeps a 40px avatar comfortably inside the hit target. */
