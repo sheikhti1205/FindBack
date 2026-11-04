@@ -139,5 +139,28 @@ local Web login and callback; signed Android Credential Manager login; existing
 email/password signup and recovery. Record actual outcomes without tokens,
 authorization codes, raw nonces, secrets, or account personal data.
 
+## 5. Google Drive backup (separate from sign-in)
+
+Drive backup is a **second, independent consent**: one scope,
+`https://www.googleapis.com/auth/drive.appdata`, and never a sign-in scope. Web
+uses Google Identity Services; the Android app uses Play services
+`Identity.getAuthorizationClient` because Google blocks Identity Services inside
+a WebView. Neither path needs a client secret in the app.
+
+Owner-side console checks, none of which an agent may perform without console
+access:
+
+1. The **Android OAuth client** for package `com.findback.app` with the signing
+   SHA-1 must exist in the same Google Cloud project and be the one Play services
+   resolves. Native Credential Manager sign-in is reported working, which implies
+   it exists — so **inspect, do not recreate**.
+2. `…/auth/drive.appdata` must be listed on the OAuth consent screen (it is a
+   non-sensitive scope, so no Google verification review should be needed).
+3. The **Google Drive API** must be enabled for that project.
+
+Until all three are confirmed and a real consent is granted on a device, the
+native transport is source-only: `DriveAuthPlugin` reports `misconfigured`
+(status 10, `DEVELOPER_ERROR`) rather than pretending to be connected.
+
 References: [Supabase Google sign-in](https://supabase.com/docs/guides/auth/social-login/auth-google),
 [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
