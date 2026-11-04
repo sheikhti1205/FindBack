@@ -91,8 +91,12 @@ function mapAuthError(error: AuthErrorLike): ApiError {
   ) {
     return new ApiError(DUPLICATE_ACCOUNT_MESSAGE, 409);
   }
-  if (isRateLimited(code, message)) {
+  if (error.status === 429 || isRateLimited(code, message)) {
     return new ApiError(RATE_LIMIT_MESSAGE, 429);
+  }
+  if (["email_provider_disabled", "email_address_not_authorized", "email_send_failed", "hook_send_email_error"].includes(code) ||
+      message.includes("error sending email") || message.includes("email provider is disabled")) {
+    return new ApiError("Email verification is temporarily unavailable. Try again later or contact support.", 503);
   }
   if (code === "email_not_confirmed") {
     return new ApiError("Email not confirmed. Verify your email to continue.", 403, "email_not_confirmed");
@@ -304,10 +308,110 @@ export function passwordRecoveryRedirect(): string {
 export async function requestPasswordReset(email: string): Promise<void> {
   const address = email.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new ApiError("Enter a valid email address.", 400);
-  const { error } = await getSupabase().auth.resetPasswordForEmail(address, {
+  const { error } = await withTimeout(() => getSupabase().auth.resetPasswordForEmail(address, {
     redirectTo: passwordRecoveryRedirect(),
-  });
+  }), 15_000, "The email request timed out. Please try again.");
   if (error && !isEnumerationError(error.code ?? "")) throw mapAuthError(error);
+}
+
+/** A screen-owned recovery capability. Its SDK session never replaces app auth. */
+export interface PasswordRecovery {
+  verify(email: string, code: string): Promise<void>;
+  updatePassword(password: string): Promise<void>;
+  dispose(): Promise<void>;
+}
+let recoveryClientSequence = 0;
+
+export function createPasswordRecovery(): PasswordRecovery {
+  let client: SupabaseClient | null = null;
+  const lifetime = new AbortController();
+  let identity: { id: string; email: string } | null = null;
+  let closed = false;
+  let busy = false;
+  const assertLive = () => {
+    if (closed) throw new ApiError("This recovery attempt has ended. Request a new code.", 409);
+  };
+  const dispose = async () => {
+    closed = true; identity = null;
+    lifetime.abort();
+    const previous = client; client = null;
+    await previous?.auth.dispose();
+  };
+  const auth = () => {
+    assertLive();
+    if (!client) {
+      getSupabase(); // Validate the canonical publishable-only build config.
+      client = createClient(__SUPABASE_URL__, __SUPABASE_PUBLISHABLE_KEY__, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
+          storageKey: `findback-password-recovery-${++recoveryClientSequence}` },
+        global: { fetch: async (input, init) => {
+          const inherited = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+          if (!inherited) return fetch(input, { ...init, signal: lifetime.signal });
+          const combined = new AbortController();
+          const abort = () => combined.abort();
+          lifetime.signal.addEventListener("abort", abort, { once: true });
+          inherited.addEventListener("abort", abort, { once: true });
+          if (lifetime.signal.aborted || inherited.aborted) abort();
+          try { return await fetch(input, { ...init, signal: combined.signal }); }
+          finally {
+            lifetime.signal.removeEventListener("abort", abort);
+            inherited.removeEventListener("abort", abort);
+          }
+        } },
+      });
+    }
+    return client.auth;
+  };
+  const run = async (task: () => Promise<void>) => {
+    assertLive();
+    if (busy) throw new ApiError("Wait for the current recovery step to finish.", 409);
+    busy = true;
+    try {
+      await withTimeout(task, 15_000, "Recovery timed out. Request a new code and try again.");
+      assertLive();
+    } catch (error) {
+      if (error instanceof BootTimeoutError) { await dispose(); throw error; }
+      assertLive();
+      if (error instanceof ApiError) throw error;
+      throw new ApiError("Password recovery failed. Check your connection and try again.", 503);
+    } finally { busy = false; }
+  };
+  return {
+    dispose,
+    verify: async (email, code) => {
+      const address = email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || !/^\d{6}$/.test(code)) {
+        throw new ApiError("Enter the six-digit recovery code from your email.", 400);
+      }
+      await run(async () => {
+        identity = null;
+        const { data, error } = await auth().verifyOtp({ email: address, token: code, type: "recovery" });
+        assertLive();
+        if (error) throw mapAuthError(error);
+        const user = data.session?.user;
+        if (!data.session?.access_token || !user?.id || user.email?.toLowerCase() !== address || data.user?.id !== user.id) {
+          throw new ApiError(INVALID_CODE_MESSAGE, 400);
+        }
+        identity = { id: user.id, email: address };
+      });
+    },
+    updatePassword: async password => {
+      if (password.length < MIN_PASSWORD_LENGTH) throw new ApiError("Password must be at least 8 characters.", 400);
+      await run(async () => {
+        const expected = identity;
+        if (!expected) throw new ApiError("Verify your recovery code before changing the password.", 401);
+        const { data: current, error: currentError } = await auth().getUser();
+        assertLive();
+        if (currentError || current.user?.id !== expected.id || current.user.email?.toLowerCase() !== expected.email) {
+          throw new ApiError("Recovery could not confirm your account. Request a new code.", 409);
+        }
+        const { data, error } = await auth().updateUser({ password });
+        assertLive();
+        if (error) throw mapAuthError(error);
+        if (data.user?.id !== expected.id) throw new ApiError("Password update could not be confirmed. Try signing in before retrying.", 409);
+      });
+    },
+  };
 }
 
 /**

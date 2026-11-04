@@ -1,7 +1,5 @@
 import { useId } from "react";
 
-const CELLS = 8;
-
 /**
  * Accessible OTP input: ONE real input (screen-reader/keyboard/paste friendly)
  * with grouped visual cells rendered aria-hidden beneath it. The cells are
@@ -11,13 +9,17 @@ export function OtpField({
   label = "Verification code",
   value,
   onChange,
+  maxLength = 6,
+  disabled = false,
 }: {
   label?: string;
   value: string;
   onChange: (next: string) => void;
+  maxLength?: 6 | 10;
+  disabled?: boolean;
 }) {
   const id = useId();
-  const digits = value.replace(/\D/g, "").slice(0, 10);
+  const digits = value.replace(/\D/g, "").slice(0, maxLength);
 
   return (
     <div>
@@ -26,9 +28,10 @@ export function OtpField({
       </label>
       <div
         aria-hidden="true"
-        className="mb-2 grid grid-cols-8 gap-1.5"
+        className="mb-2 grid gap-1.5"
+        style={{ gridTemplateColumns: `repeat(${maxLength}, minmax(0, 1fr))` }}
       >
-        {Array.from({ length: CELLS }, (_, i) => (
+        {Array.from({ length: maxLength }, (_, i) => (
           <span
             key={i}
             className={`flex min-h-[44px] items-center justify-center rounded-m3-sm border text-lg font-semibold ${
@@ -46,11 +49,16 @@ export function OtpField({
       <input
         id={id}
         value={digits}
-        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, 10))}
+        onChange={(e) => onChange(e.target.value.replace(/\D/g, "").slice(0, maxLength))}
+        onPaste={(event) => {
+          event.preventDefault();
+          onChange(event.clipboardData.getData("text").replace(/\D/g, "").slice(0, maxLength));
+        }}
         inputMode="numeric"
         autoComplete="one-time-code"
-        placeholder="Enter the code"
-        maxLength={10}
+        placeholder="Enter code"
+        maxLength={maxLength}
+        disabled={disabled}
         className="w-full rounded-m3-sm border border-outline-variant bg-surface px-3.5 py-3 text-base tracking-[0.3em] text-on-surface placeholder:tracking-normal placeholder:text-on-surface-variant focus:border-on-surface"
       />
     </div>

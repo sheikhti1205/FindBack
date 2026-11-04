@@ -10,17 +10,13 @@ import { sendPendingEmailCode, verifyPendingEmailCode, sendPhoneChangeCode, veri
 import { getPendingReportRoute } from "../utils/pendingReportLink";
 import { AuthShell } from "../components/auth/AuthShell";
 import { OtpField } from "../components/auth/OtpField";
+import { useOtpCountdown } from "../components/auth/useOtpCountdown";
 
 type Channel = "EMAIL" | "PHONE";
 
-function useResendCountdown() {
-  const [resendIn, setResendIn] = useState(0);
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendIn]);
-  return { resendIn, setResendIn } as const;
+function useResendCountdown(initial = 0) {
+  const { seconds, setSeconds } = useOtpCountdown(initial);
+  return { resendIn: seconds, setResendIn: setSeconds } as const;
 }
 
 function VerifyRow({ channel }: { channel: Channel }) {
@@ -57,11 +53,11 @@ function VerifyRow({ channel }: { channel: Channel }) {
       setSent(true);
       setCode("");
       setResendIn(channel === "PHONE" ? 60 : 30);
-      setMessage(`Code sent to ${destination}.`);
+      setMessage(`Code requested for ${destination}. Check your ${channel === "PHONE" ? "messages" : "email"}.`);
     } catch (err) {
       if (!alive.current) return;
       setError(err instanceof Error ? err.message : "Could not send code");
-      if (channel === "PHONE" && err instanceof Error && /too many attempts/i.test(err.message)) setResendIn(60);
+      if (err instanceof Error && /too many attempts/i.test(err.message)) setResendIn(60);
     } finally {
       busy.current = false;
       if (alive.current) setSending(false);
@@ -89,7 +85,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
     } catch (err) {
       if (!alive.current) return;
       setError(err instanceof Error ? err.message : "Verification failed");
-      if (channel === "PHONE" && err instanceof Error && /too many attempts/i.test(err.message)) {
+      if (err instanceof Error && /too many attempts/i.test(err.message)) {
         setVerifyIn(60);
         setResendIn(60);
       }
@@ -134,7 +130,7 @@ function VerifyRow({ channel }: { channel: Channel }) {
         </p>
       )}
 
-      <OtpField label={channel === "PHONE" ? "Phone verification code" : "Verification code"} value={code} onChange={setCode} />
+      <OtpField label={channel === "PHONE" ? "Phone verification code" : "Verification code"} value={code} onChange={setCode} maxLength={channel === "PHONE" ? 10 : 6} disabled={sending || verifying} />
 
       <div className="flex flex-col gap-2">
         <Button onClick={onVerify} loading={verifying} disabled={sending || verifyIn > 0 || (channel === "PHONE" && (!sent || !/^\d{6,10}$/.test(code.trim())))} size="lg">
@@ -159,50 +155,68 @@ function PendingEmailVerify({ email }: { email: string }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(
-    `We sent a verification code to your email.`,
+    "If your signup is awaiting verification, check your email for a six-digit code.",
   );
   const [verifying, setVerifying] = useState(false);
   const [resending, setResending] = useState(false);
-  const { resendIn, setResendIn } = useResendCountdown();
+  const { resendIn, setResendIn } = useResendCountdown(30);
+  const inFlight = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   async function onResend() {
+    if (inFlight.current || resendIn > 0) return;
+    inFlight.current = true;
     setResending(true);
     setError(null);
     setMessage(null);
     try {
       await resendPendingEmail();
+      if (!alive.current) return;
       setResendIn(30);
-      setMessage("We sent a new verification code to your email.");
+      setMessage("If your signup is awaiting verification, check your email for a fresh code.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not resend code");
+      if (alive.current) {
+        setError(err instanceof Error ? err.message : "Could not resend code");
+        if (err instanceof Error && /too many attempts/i.test(err.message)) setResendIn(60);
+      }
     } finally {
-      setResending(false);
+      inFlight.current = false;
+      if (alive.current) setResending(false);
     }
   }
 
   async function onVerify() {
+    if (inFlight.current) return;
+    if (!/^\d{6}$/.test(code)) { setError("Enter the six-digit verification code from your email."); return; }
+    inFlight.current = true;
     setVerifying(true);
     setError(null);
     try {
       await verifyPendingEmail(code.trim());
+      if (!alive.current) return;
       navigate(getPendingReportRoute() ?? "/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Verification failed");
+      if (alive.current) {
+        setError(err instanceof Error ? err.message : "Verification failed");
+        if (err instanceof Error && /too many attempts/i.test(err.message)) setResendIn(60);
+      }
     } finally {
-      setVerifying(false);
+      inFlight.current = false;
+      if (alive.current) setVerifying(false);
     }
   }
 
   return (
     <AuthShell
       title="Check your email"
-      supporting="Enter the code we sent to finish creating your account."
+      supporting="Enter your six-digit email code to finish creating your account."
     >
       <p className="rounded-m3-md bg-surface-container-low px-4 py-3 text-sm">
-        <span className="font-medium text-on-surface">{email}</span>
+        <span className="break-all font-medium text-on-surface">{email}</span>
       </p>
 
-      <div className="flex flex-col gap-3 rounded-m3-md bg-surface-container-low p-4">
+      <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void onVerify(); }}>
         {message && (
           <p className="text-sm text-on-surface-variant" role="status">
             {message}
@@ -214,32 +228,32 @@ function PendingEmailVerify({ email }: { email: string }) {
           </p>
         )}
 
-        <OtpField value={code} onChange={setCode} />
+        <OtpField value={code} onChange={setCode} disabled={verifying || resending} />
 
-        <Button onClick={onVerify} loading={verifying} size="lg">
+        <Button type="submit" loading={verifying} disabled={resending} size="lg">
           Verify and continue
         </Button>
 
-        <Button variant="outline" size="lg" onClick={onResend} loading={resending} disabled={resendIn > 0}>
+        <Button type="button" variant="outline" size="lg" onClick={onResend} loading={resending} disabled={resendIn > 0 || verifying}>
           {resendIn > 0 ? `Resend in ${resendIn}s` : "Resend code"}
         </Button>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="flex min-h-[44px] min-w-[44px] items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             Back
           </button>
           <Link
             to="/auth"
-            className="flex min-h-[44px] items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="flex min-h-[44px] max-w-full shrink-0 items-center px-2 text-sm font-medium text-on-surface underline focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             Use a different email
           </Link>
         </div>
-      </div>
+      </form>
     </AuthShell>
   );
 }
@@ -250,7 +264,7 @@ export function Verify() {
 
   if (booting) return null;
   if (!user && !pendingEmail) return <Navigate to="/signin" replace />;
-  if (!user && pendingEmail) return <PendingEmailVerify email={pendingEmail} />;
+   if (!user && pendingEmail) return <PendingEmailVerify key={pendingEmail} email={pendingEmail} />;
 
   return (
     <AuthShell

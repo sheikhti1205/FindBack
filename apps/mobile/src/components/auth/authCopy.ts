@@ -13,11 +13,12 @@ export const SIGNIN_GENERIC_ERROR =
 
 /** Reset request outcome — identical whether or not the email exists. */
 export const PASSWORD_RESET_SENT =
-  "If an account uses this email, a reset link is on its way. Check your inbox.";
+  "If an account uses this email, check your inbox for a recovery code.";
 
 /** Recovery link states. */
 export const RECOVERY_INVALID_LINK = "This password-reset link is invalid or expired. Request a new one.";
 export const RECOVERY_SUCCESS = "Your password is updated. You're signed in.";
+export const RECOVERY_OTP_SUCCESS = "Your password is updated. You can now sign in with your new password.";
 
 /** Syntax-only email check for the gateway email stage (never an existence probe). */
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

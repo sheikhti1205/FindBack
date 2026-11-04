@@ -54,6 +54,7 @@ Capture dimensions and checksums: [screenshot manifest](docs/screenshots/manifes
 - Adaptive layouts: bottom navigation on phones, compact rails and split views on larger windows
 - A shared photo viewer with zoom, keyboard navigation and desktop thumbnails
 - Sign in with email or Google; phone verification is not enabled
+- Six-digit email codes for signup confirmation and password recovery, with reset-link fallback; [owner SMTP/template setup](docs/auth/owner-setup.md) and real delivery verification are still required
 - Optional AI Chat using your own API key from the provider you choose
 
 This is an internal beta under validation, not a public-ready release. The current

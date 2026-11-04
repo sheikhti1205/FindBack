@@ -87,7 +87,10 @@ describe("Verify pending-signup mode (no session yet)", () => {
 
   it("announces resend status without leaving the screen", async () => {
     authMock.resendPendingEmail.mockResolvedValue(undefined);
+    vi.useFakeTimers();
     renderVerify();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    vi.useRealTimers();
     fireEvent.click(screen.getByRole("button", { name: "Resend code" }));
     await waitFor(() => expect(authMock.resendPendingEmail).toHaveBeenCalled());
     expect(screen.getByRole("status")).toBeTruthy();
