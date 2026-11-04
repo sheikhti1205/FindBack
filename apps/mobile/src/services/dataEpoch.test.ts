@@ -4,11 +4,10 @@ import {DATA_EPOCH,DATA_EPOCH_KEY,resetLocalDataEpoch,type DataEpochEnvironment}
 
 class MemoryStorage implements Storage {
   values=new Map<string,string>();
-  reads:string[]=[];
   get length(){return this.values.size;}
   clear(){this.values.clear();}
   key(i:number){return [...this.values.keys()][i]??null;}
-  getItem(key:string){this.reads.push(key);return this.values.get(key)??null;}
+  getItem(key:string){return this.values.get(key)??null;}
   setItem(key:string,value:string){this.values.set(key,value);}
   removeItem(key:string){this.values.delete(key);}
 }
@@ -19,82 +18,116 @@ function fixture(){
   const env:DataEpochEnvironment={local,session,indexedDB:idb,
     caches:{keys:async()=>[...cacheNames],delete:async(name:string)=>cacheNames.delete(name)},
     workers:{getRegistrations:async()=>Array.from({length:registrations},()=>({unregister:async()=>{registrations--;return true;}}))}};
+  local.setItem('findback:reportDraft:v1:synthetic','saved draft');
+  local.setItem('sb-synthetic-auth-token','synthetic auth fixture');
+  local.setItem('findback.appearance.v1','dark');
+  local.setItem('findback.ai.openrouter.v1.synthetic','synthetic provider fixture');
+  session.setItem('findback.authReturnTo','/saved');
   return {env,local,session,idb,cacheNames,registrations:()=>registrations};
 }
 async function seedDatabase(idb:IDBFactory,name:string){
-  await new Promise<void>((resolve,reject)=>{const r=idb.open(name,1);r.onupgradeneeded=()=>r.result.createObjectStore('rows');r.onerror=()=>reject(r.error);r.onsuccess=()=>{r.result.close();resolve();};});
+  await new Promise<void>((resolve,reject)=>{
+    const r=idb.open(name,1);
+    r.onupgradeneeded=()=>r.result.createObjectStore('rows');
+    r.onerror=()=>reject(r.error);
+    r.onsuccess=()=>{
+      const db=r.result,tx=db.transaction('rows','readwrite');
+      tx.objectStore('rows').put('synthetic accepted history','history');
+      tx.oncomplete=()=>{db.close();resolve();};
+      tx.onerror=()=>{db.close();reject(tx.error);};
+    };
+  });
+}
+async function readHistory(idb:IDBFactory,name:string){
+  return new Promise<unknown>((resolve,reject)=>{
+    const r=idb.open(name);
+    r.onerror=()=>reject(r.error);
+    r.onsuccess=()=>{
+      const db=r.result;
+      if(!db.objectStoreNames.contains('rows')){db.close();resolve(null);return;}
+      const tx=db.transaction('rows'),get=tx.objectStore('rows').get('history');
+      get.onsuccess=()=>resolve(get.result);get.onerror=()=>reject(get.error);
+      tx.oncomplete=()=>db.close();
+    };
+  });
+}
+function assertPreferencesPreserved(f:ReturnType<typeof fixture>){
+  expect(f.local.getItem('findback:reportDraft:v1:synthetic')).toBe('saved draft');
+  expect(f.local.getItem('sb-synthetic-auth-token')).toBe('synthetic auth fixture');
+  expect(f.local.getItem('findback.appearance.v1')).toBe('dark');
+  expect(f.local.getItem('findback.ai.openrouter.v1.synthetic')).toBe('synthetic provider fixture');
+  expect(f.session.getItem('findback.authReturnTo')).toBe('/saved');
+  expect([...f.cacheNames]).toEqual(['findback-products','legacy-app-shell']);
+  expect(f.registrations()).toBe(2);
 }
 
-describe('one-time launch epoch',()=>{
-  it('erases old account state,all legacy app DB scopes and caches without reading their values',async()=>{
+describe('non-destructive launch preparation',()=>{
+  it.each([null,'old',DATA_EPOCH])('preserves account data with marker %s',async(marker)=>{
     const f=fixture();
-    for(const key of ['findback:reportDraft:v1:old','findback.appearance.v1','findback.ai.openrouter.v1.old','sb-old-auth-token','supabase.auth.token'])f.local.setItem(key,'synthetic old state');
-    f.session.setItem('findback.authReturnTo','/old');f.local.setItem('other-app.setting','preserve');
-    for(const name of ['findback-human-history-v1:old:device','findback-report-photo-bytes','findback-chat-media-owners-v1','findback-unknown-legacy','unrelated-database'])await seedDatabase(f.idb,name);
-    expect(await resetLocalDataEpoch(f.env)).toBe(true);
-    expect([...f.local.values]).toEqual([['other-app.setting','preserve'],[DATA_EPOCH_KEY,DATA_EPOCH]]);
-    expect([...f.session.values]).toEqual([[DATA_EPOCH_KEY,DATA_EPOCH]]);
-    expect(f.local.reads.every(k=>k===DATA_EPOCH_KEY)).toBe(true);
-    expect((await f.idb.databases()).map(d=>d.name)).toEqual(['unrelated-database']);
-    expect(f.cacheNames.size).toBe(0);expect(f.registrations()).toBe(0);
+    if(marker!==null)f.local.setItem(DATA_EPOCH_KEY,marker);
+    await seedDatabase(f.idb,'findback-human-history-v1:synthetic');
+    await seedDatabase(f.idb,'findback-verified-models');
+    await resetLocalDataEpoch(f.env);
+    assertPreferencesPreserved(f);
+    expect(await readHistory(f.idb,'findback-human-history-v1:synthetic')).toBe('synthetic accepted history');
+    expect(await readHistory(f.idb,'findback-verified-models')).toBe('synthetic accepted history');
+    expect(f.local.getItem(DATA_EPOCH_KEY)).toBe(DATA_EPOCH);
   });
-  it('does not erase any new product state on later launches',async()=>{
-    const f=fixture();await resetLocalDataEpoch(f.env);
-    f.local.setItem('findback.new-account','keep');await seedDatabase(f.idb,'findback-new-history');f.cacheNames.add('new-cache');
-    expect(await resetLocalDataEpoch(f.env)).toBe(false);
-    expect(f.local.values.get('findback.new-account')).toBe('keep');
-    expect((await f.idb.databases()).map(d=>d.name)).toEqual(['findback-new-history']);expect(f.cacheNames.has('new-cache')).toBe(true);
-  });
-  it('clears a second tabs stale session without erasing new shared account data',async()=>{
-    const f=fixture();await resetLocalDataEpoch(f.env);
-    f.local.setItem('findback.new-account','keep');
-    const secondSession=new MemoryStorage();secondSession.setItem('findback.old-session-draft','remove');
-    f.env.session=secondSession;
-    expect(await resetLocalDataEpoch(f.env)).toBe(false);
-    expect(secondSession.values.has('findback.old-session-draft')).toBe(false);
-    expect(f.local.values.get('findback.new-account')).toBe('keep');
-  });
-  it('does not set the marker or launch past an unfinished native reset',async()=>{
-    const f=fixture();let finish!:(v:{epoch:string;changed:boolean})=>void;
-    f.env.nativeReset=()=>new Promise(r=>{finish=r;});
-    const pending=resetLocalDataEpoch(f.env);await Promise.resolve();
-    expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
-    finish({epoch:DATA_EPOCH,changed:true});expect(await pending).toBe(true);
-  });
-  it('fails closed when native bridge or its completion contract fails',async()=>{
-    const f=fixture();f.env.nativeReset=async()=>{throw new Error('native failure');};
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
-    f.env.nativeReset=async()=>({epoch:'wrong-epoch',changed:false});
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
-  });
-  it('checks native storage even when web marker is current and resets web when native epoch changed',async()=>{
-    const f=fixture();f.local.setItem(DATA_EPOCH_KEY,DATA_EPOCH);f.local.setItem('findback.old','remove');
-    f.env.nativeReset=async()=>({epoch:DATA_EPOCH,changed:true});
-    expect(await resetLocalDataEpoch(f.env)).toBe(true);expect(f.local.values.has('findback.old')).toBe(false);
-  });
-  it('keeps the old marker on partial failure and safely retries remaining work',async()=>{
-    const f=fixture();f.local.setItem(DATA_EPOCH_KEY,'old');await seedDatabase(f.idb,'findback-old');
-    const working=f.env.caches!;f.env.caches={keys:working.keys,delete:async()=>{throw new Error('cache failure');}};
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.get(DATA_EPOCH_KEY)).toBe('old');
-    f.env.caches=working;expect(await resetLocalDataEpoch(f.env)).toBe(true);expect(f.local.values.get(DATA_EPOCH_KEY)).toBe(DATA_EPOCH);
-  });
-  it('refuses blocked IndexedDB deletion rather than marking stale history cleared',async()=>{
-    const f=fixture();await seedDatabase(f.idb,'findback-open-history');
-    const connection=await new Promise<IDBDatabase>(r=>{const open=f.idb.open('findback-open-history');open.onsuccess=()=>r(open.result);});
-    try{await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);}
-    finally{connection.close();}
-    expect(await resetLocalDataEpoch(f.env)).toBe(true);
-  });
-  it('refuses an engine that cannot enumerate legacy database names',async()=>{
+  it('does not require database enumeration or touch unavailable cache/worker APIs',async()=>{
     const f=fixture();Object.defineProperty(f.idb,'databases',{value:undefined});
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
+    f.env.caches={keys:async()=>{throw new Error('cache unavailable');},delete:async()=>{throw new Error('must not delete');}};
+    f.env.workers={getRegistrations:async()=>{throw new Error('workers unavailable');}};
+    await expect(resetLocalDataEpoch(f.env)).resolves.toBe(true);
+    assertPreferencesPreserved(f);
   });
-  it('does not silently continue after storage refuses removing an old auth token',async()=>{
-    const f=fixture();f.local.setItem('sb-old-auth-token','synthetic');f.local.removeItem=()=>{};
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
+  it('preserves an open history database rather than requesting deletion',async()=>{
+    const f=fixture();await seedDatabase(f.idb,'findback-open-history');
+    const db=await new Promise<IDBDatabase>(resolve=>{const r=f.idb.open('findback-open-history');r.onsuccess=()=>resolve(r.result);});
+    try{await resetLocalDataEpoch(f.env);expect(await readHistory(f.idb,'findback-open-history')).toBe('synthetic accepted history');}
+    finally{db.close();}
   });
-  it('refuses a worker that cannot be unregistered before cache deletion',async()=>{
-    const f=fixture();f.env.workers={getRegistrations:async()=>[{unregister:async()=>false}]};
-    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();expect(f.local.values.has(DATA_EPOCH_KEY)).toBe(false);
+  it('a second tab does not clear its pending protected destination',async()=>{
+    const f=fixture();f.local.setItem(DATA_EPOCH_KEY,DATA_EPOCH);
+    f.session.setItem('findback.draft','second tab draft');
+    await expect(resetLocalDataEpoch(f.env)).resolves.toBe(false);
+    expect(f.session.getItem('findback.draft')).toBe('second tab draft');
+    assertPreferencesPreserved(f);
+  });
+  it('marker read denial fails without modifying user stores',async()=>{
+    const f=fixture(),get=f.local.getItem.bind(f.local);
+    f.local.getItem=key=>{if(key===DATA_EPOCH_KEY)throw new Error('storage denied');return get(key);};
+    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();
+    assertPreferencesPreserved(f);
+  });
+  it('marker write failure preserves data and can retry safely',async()=>{
+    const f=fixture();f.local.setItem(DATA_EPOCH_KEY,'old');
+    await seedDatabase(f.idb,'findback-history');
+    const set=f.local.setItem.bind(f.local);
+    f.local.setItem=(key,value)=>{if(key===DATA_EPOCH_KEY)throw new Error('quota');set(key,value);};
+    await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();
+    assertPreferencesPreserved(f);
+    expect(f.local.getItem(DATA_EPOCH_KEY)).toBe('old');
+    expect(await readHistory(f.idb,'findback-history')).toBe('synthetic accepted history');
+    f.local.setItem=set;await resetLocalDataEpoch(f.env);assertPreferencesPreserved(f);
+  });
+  it('does not publish the web marker before native preparation settles',async()=>{
+    const f=fixture();let finish!:(v:{epoch:string;changed:boolean})=>void;
+    f.env.nativeReset=()=>new Promise(resolve=>{finish=resolve;});
+    const pending=resetLocalDataEpoch(f.env);await Promise.resolve();
+    expect(f.local.getItem(DATA_EPOCH_KEY)).toBeNull();assertPreferencesPreserved(f);
+    finish({epoch:DATA_EPOCH,changed:true});await pending;assertPreferencesPreserved(f);
+  });
+  it('native marker changes do not authorize deleting web data',async()=>{
+    const f=fixture();f.local.setItem(DATA_EPOCH_KEY,DATA_EPOCH);
+    f.env.nativeReset=async()=>({epoch:DATA_EPOCH,changed:true});
+    await resetLocalDataEpoch(f.env);assertPreferencesPreserved(f);
+  });
+  it('native failure or invalid receipt denies boot without clearing stores',async()=>{
+    const f=fixture();
+    for(const nativeReset of [async()=>{throw new Error('native unavailable');},async()=>({epoch:'wrong',changed:false})]){
+      f.env.nativeReset=nativeReset;
+      await expect(resetLocalDataEpoch(f.env)).rejects.toThrow();
+      assertPreferencesPreserved(f);expect(f.local.getItem(DATA_EPOCH_KEY)).toBeNull();
+    }
   });
 });

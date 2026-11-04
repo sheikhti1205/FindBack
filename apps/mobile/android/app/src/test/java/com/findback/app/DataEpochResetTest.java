@@ -14,7 +14,6 @@ public class DataEpochResetTest {
         private void step(String action) throws Exception {
             actions.add(action);
             if (action.equals(fail)) throw new Exception("synthetic failure");
-            assertEquals("marker committed before cleanup", "old", epoch);
         }
         public void clearPush() throws Exception { step("push"); }
         public void clearMessaging() throws Exception { step("messaging"); }
@@ -24,10 +23,10 @@ public class DataEpochResetTest {
         public void commitEpoch(String value) throws Exception { step("commit"); epoch = value; }
     }
 
-    @Test public void markerIsCommittedOnlyAfterAllNativeStoresAreCleared() throws Exception {
+    @Test public void oldMarkerOnlyUpdatesMetadataWithoutClearingNativeStores() throws Exception {
         Store s = new Store();
         assertTrue(DataEpochReset.prepare(s));
-        assertEquals(Arrays.asList("push", "messaging", "credentials", "legacy", "cache", "commit"), s.actions);
+        assertEquals(Arrays.asList("commit"), s.actions);
         assertEquals("product-fit-2026-11-01", s.epoch);
     }
     @Test public void sameEpochPreservesNewUserState() throws Exception {
@@ -35,16 +34,20 @@ public class DataEpochResetTest {
         assertFalse(DataEpochReset.prepare(s));
         assertTrue(s.actions.isEmpty());
     }
-    @Test public void partialFailureDoesNotCommitAndRetryDoesNotSkipRemainingStores() throws Exception {
-        for (String failure : Arrays.asList("push", "messaging", "credentials", "legacy", "cache", "commit")) {
-            Store s = new Store(); s.fail = failure;
-            try { DataEpochReset.prepare(s); fail("failure ignored: " + failure); }
-            catch (Exception expected) { }
-            assertEquals("old", s.epoch);
-            s.fail = null; s.actions.clear();
-            assertTrue(DataEpochReset.prepare(s));
-            assertEquals("product-fit-2026-11-01", s.epoch);
-            assertEquals(Arrays.asList("push", "messaging", "credentials", "legacy", "cache", "commit"), s.actions);
-        }
+    @Test public void missingMarkerDoesNotAuthorizeDeletingNativeState() throws Exception {
+        Store s = new Store(); s.epoch = null;
+        assertTrue(DataEpochReset.prepare(s));
+        assertEquals(Arrays.asList("commit"), s.actions);
+    }
+    @Test public void deniedMarkerWriteDoesNotClearNativeStateAndRetriesMetadataOnly() throws Exception {
+        Store s = new Store(); s.fail = "commit";
+        try { DataEpochReset.prepare(s); fail("failure ignored"); }
+        catch (Exception expected) { }
+        assertEquals("old", s.epoch);
+        assertEquals(Arrays.asList("commit"), s.actions);
+        s.fail = null; s.actions.clear();
+        assertTrue(DataEpochReset.prepare(s));
+        assertEquals("product-fit-2026-11-01", s.epoch);
+        assertEquals(Arrays.asList("commit"), s.actions);
     }
 }
