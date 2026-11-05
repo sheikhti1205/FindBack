@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { FixtureRoute } from "./FixtureRoute";
@@ -56,10 +56,6 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanup();
-});
-
 function renderRoute() {
   return render(
     <MemoryRouter initialEntries={["/__fixture"]}>
@@ -68,9 +64,34 @@ function renderRoute() {
   );
 }
 
+let sharedRoute: ReturnType<typeof render> | null = null;
+
+/**
+ * Read-only assertions share ONE mount of the whole fixture route.
+ *
+ * The 15-section x 9-variant matrix is the most expensive tree this file
+ * renders. Re-rendering it for every assertion cost ~20 full fixtures, and
+ * jsdom kept the detached trees warm long enough that the worker crossed its
+ * heap cap (reproduced on 2026-11-05: SIGABRT after ~26 renders, with a single
+ * worker and the machine-wide 3 GiB cap). These tests only read the rendered
+ * tree, so they share one mount and the owning section tears it down. Tests
+ * that mutate storage, the root font scale or the toggle keep their own mount.
+ */
+function useSharedRoute() {
+  sharedRoute ??= renderRoute();
+  return sharedRoute;
+}
+
+/** Tear down the shared mount. Section-owned: never per test. */
+function clearSharedRoute() {
+  if (sharedRoute === null) return;
+  sharedRoute.unmount();
+  sharedRoute = null;
+}
+
 describe("visual fixture route (static preflight)", () => {
   it("renders the route shell with a section index", () => {
-    renderRoute();
+    useSharedRoute();
     expect(screen.getByTestId("fixture-route")).toBeTruthy();
     for (const id of SECTIONS) {
       expect(
@@ -81,7 +102,7 @@ describe("visual fixture route (static preflight)", () => {
   });
 
   it("every section index link resolves to a unique in-page anchor", () => {
-    const { container } = renderRoute();
+    const { container } = useSharedRoute();
     for (const id of SECTIONS) {
       const anchor = container.querySelector(`#fixture-${CSS.escape(id)}`);
       expect(anchor, `missing anchor: #fixture-${id}`).toBeTruthy();
@@ -94,7 +115,7 @@ describe("visual fixture route (static preflight)", () => {
   });
 
   it.each(SECTIONS)("section %s renders every variant without crashing", (section) => {
-    renderRoute();
+    useSharedRoute();
     const root = screen.getByTestId(`fixture-section-${section}`);
     // Navigation is data-free, so it renders only the variants that can change
     // its paint (see NAV_VARIANTS); every other section keeps the full matrix.
@@ -113,7 +134,7 @@ describe("visual fixture route (static preflight)", () => {
   });
 
   it("home matrix covers 0/1/5 photos, all statuses, and edge rows", () => {
-    renderRoute();
+    useSharedRoute();
     const frame = screen.getByTestId("fixture-home-normal");
     // Matrix ids are stable literals from fixture/posts.ts.
     for (const id of [
@@ -136,7 +157,7 @@ describe("visual fixture route (static preflight)", () => {
   });
 
   it("assistant section carries transcript turns and a labelled composer", () => {
-    renderRoute();
+    useSharedRoute();
     const frame = screen.getByTestId("fixture-assistant-normal");
     expect(
       within(frame).getByText("How do I report a lost bag?"),
@@ -147,14 +168,14 @@ describe("visual fixture route (static preflight)", () => {
   });
 
   it("map-unavailable frames never fabricate coordinates", () => {
-    renderRoute();
+    useSharedRoute();
     const frame = screen.getByTestId("fixture-map-unavailable-normal");
     // The keyless placeholder renders; no tile grid implies no coordinates.
     expect(frame.textContent?.trim().length).toBeGreaterThan(0);
   });
 
   it("feed-layouts covers every masonry width band plus the compact capsule", () => {
-    renderRoute();
+    useSharedRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     // Four bands: the compact single column and the medium/expanded grids.
     const grids = within(section).getAllByTestId("feed-masonry");
@@ -182,8 +203,10 @@ describe("visual fixture route (static preflight)", () => {
  * These pin the three ways a frame can lie.
  */
 describe("fixture frames are trustworthy evidence", () => {
+  afterAll(clearSharedRoute);
+
   it("derives each band frame's column count from its own width", () => {
-    renderRoute();
+    useSharedRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     const frames = [...section.querySelectorAll("[data-frame-width]")] as HTMLElement[];
     expect(frames.length).toBeGreaterThanOrEqual(4);
@@ -205,7 +228,7 @@ describe("fixture frames are trustworthy evidence", () => {
   });
 
   it("measures each band frame's cards against the container the frame really gets", () => {
-    renderRoute();
+    useSharedRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     for (const frame of [...section.querySelectorAll("[data-frame-width]")] as HTMLElement[]) {
       const width = Number(frame.getAttribute("data-frame-width"));
@@ -248,7 +271,7 @@ describe("fixture frames are trustworthy evidence", () => {
     // not declared, nothing declared that is not printed), and the geometry
     // premise is pinned along the whole chain from the frame's content box down to
     // the lane that owns the card grid.
-    renderRoute();
+    useSharedRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     const threeColumn = 3 * MASONRY_MIN_CARD_PX + 2 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
     const fourColumn = 4 * MASONRY_MIN_CARD_PX + 3 * MASONRY_GUTTER_PX + MASONRY_CONTAINER_INSET_PX;
@@ -356,7 +379,7 @@ describe("fixture frames are trustworthy evidence", () => {
     // canvas, the real list gutter and every text scale — restating the formula
     // here is what let a bad inset stay green in this file (a frame width and
     // the inset it was derived from move together).
-    renderRoute();
+    useSharedRoute();
     const section = screen.getByTestId("fixture-section-feed-layouts");
     const widths = [...section.querySelectorAll("[data-frame-width]")].map((frame) =>
       Number(frame.getAttribute("data-frame-width")),
@@ -370,7 +393,7 @@ describe("fixture frames are trustworthy evidence", () => {
   });
 
   it("uses the real theme class on dark and AMOLED frames, not inline paint", () => {
-    renderRoute();
+    useSharedRoute();
     for (const variant of ["dark", "amoled"] as const) {
       const frame = screen.getByTestId(`fixture-feed-layouts-${variant}`);
       // The app's themes are class-scoped token sets; an inline background
@@ -384,6 +407,15 @@ describe("fixture frames are trustworthy evidence", () => {
       expect(frame.classList.contains("bg-surface")).toBe(true);
     }
   });
+
+});
+
+/**
+ * Root-font-scale assertions own their mounts: the shared route holds the root
+ * while it is mounted, so it must be gone before these tests measure it.
+ */
+describe("fixture text scale is controllable evidence", () => {
+  afterEach(cleanup);
 
   it("scales large text at the app's own value, and hands the root back", () => {
     // A parent `font-size` scales nothing (every size under review is in rem),
@@ -462,6 +494,7 @@ describe("fixture frames are trustworthy evidence", () => {
 
 describe("navigation preflight renders the production nav", () => {
   afterEach(() => {
+    cleanup();
     localStorage.clear();
   });
 
