@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ApplicationAiService } from "./applicationAi";
+import { downloadProblemStage } from "./localSearchDiagnosis";
 import { isRetiredGenerativeRuntime, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { OfflineModelStatus } from "./offlineModelManager";
@@ -86,6 +87,13 @@ export function localOperationNotice(notice: string | null): string | null {
   if (/unavailable on this device|incompatible/i.test(notice)) return "Unavailable on this device.";
   if (/checksum|verification|installed file.*missing/i.test(notice)) return "The downloaded file couldn't be checked. Download it again.";
   if (/transfer|download failed|interrupted/i.test(notice)) return "The download was interrupted. Retry to continue.";
+  // Transfer, integrity and install failures are different recoveries and get
+  // different sentences: a transfer that never reached the server is not the
+  // same advice as a finished transfer that could not be installed.
+  const stage = downloadProblemStage(notice);
+  if (stage === "hash") return "The downloaded file couldn't be checked. Download it again.";
+  if (stage === "promotion") return "The download finished but couldn't be installed. Try again.";
+  if (stage === "source") return "The download couldn't reach the server. Retry to continue.";
   return "Couldn't finish. Please try again.";
 }
 
@@ -126,12 +134,19 @@ export function localSearchHelperView(descriptor: ModelDescriptor, status: Offli
       break;
     case "failed":
       state = problem === "removal failed" ? "Removal didn't finish"
-        : /not enough free storage|free space|free_bytes|out of space/i.test(problem ?? "")
-        ? "Needs more storage"
-        : integrityFailed
-          ? "Needs repair"
-          : "Download interrupted";
-      primary = problem === "removal failed" ? null : { action: "download", label: integrityFailed ? "Download again" : "Retry" };
+        : downloadProblemStage(problem) === "storage"
+          ? "Needs more storage"
+          : integrityFailed || downloadProblemStage(problem) === "hash"
+            ? "Needs repair"
+            : downloadProblemStage(problem) === "promotion"
+              ? "Couldn't install the download"
+              : downloadProblemStage(problem) === "source"
+                ? "Download couldn't reach the server"
+                : "Download interrupted";
+      primary = problem === "removal failed" ? null : {
+        action: "download",
+        label: integrityFailed || downloadProblemStage(problem) === "hash" ? "Download again" : "Retry",
+      };
       break;
     default:
       state = repair ? "Needs repair" : "Not downloaded";

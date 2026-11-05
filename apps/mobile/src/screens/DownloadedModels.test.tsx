@@ -154,6 +154,28 @@ describe("Downloaded models", () => {
     expect(screen.getByRole("button", { name: "Download again" })).toBeTruthy();
     expect(container.textContent).not.toMatch(/checksum|catalogue pin/);
   });
+  it("distinguishes a transfer that never reached the server from a broken file", async () => {
+    const { service } = device();
+    await service.ready;
+    act(() => { service.manager.dispatch(descriptor.modelId, { type: "FAIL", reason: "Download stopped (HTTP_404)." }); });
+    const { container } = render(<MemoryRouter><DownloadedModels service={service} /></MemoryRouter>);
+    expect(await screen.findByText("Download couldn't reach the server")).toBeTruthy();
+    expect(screen.getByText("The download couldn't reach the server. Retry to continue.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(container.textContent).not.toMatch(/HTTP_404|Download stopped/);
+  });
+
+  it("keeps a finished transfer retryable when it could not be installed", async () => {
+    const { service } = device();
+    await service.ready;
+    act(() => { service.manager.dispatch(descriptor.modelId, { type: "FAIL", reason: "Download stopped (PROMOTE_FAILED)." }); });
+    const { container } = render(<MemoryRouter><DownloadedModels service={service} /></MemoryRouter>);
+    expect(await screen.findByText("Couldn't install the download")).toBeTruthy();
+    expect(screen.getByText("The download finished but couldn't be installed. Try again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(container.textContent).not.toMatch(/PROMOTE_FAILED|Download stopped/);
+  });
+
   it("checks an installed file through the secondary file action and drops missing-file readiness", async () => {
     const { service } = device();
     await service.ready;

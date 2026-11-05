@@ -166,7 +166,17 @@ function textRuntime(manager: OfflineModelManager, backend: ProductionTextBacken
     available: () => managerReady(manager, backend.modelId),
     servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
-      if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
+      let ready: boolean;
+      try {
+        ready = await backend.isReady();
+      } catch (error) {
+        // The model is installed and verified (availability already passed);
+        // a rejection here is the native load failing, which is a RUNTIME
+        // failure — not "the model is absent". Reporting it as not-ready
+        // would send the reader to reinstall a sound file.
+        return runtimeError(error);
+      }
+      if (!ready) return notReady(backend.modelId);
       // The task interpreter owns generation mode AND interpretation: the
       // adapter executes raw model output and never parses it. A task without
       // a structured interpreter fails closed here, never as silent success.
@@ -215,7 +225,13 @@ function embeddingRuntime(
     available: () => managerReady(manager, backend.modelId),
     servesTask: servesRoles(backend.taskRoles),
     invoke: async (input) => {
-      if (!(await backend.isReady().catch(() => false))) return notReady(backend.modelId);
+      let ready: boolean;
+      try {
+        ready = await backend.isReady();
+      } catch (error) {
+        return runtimeError(error);
+      }
+      if (!ready) return notReady(backend.modelId);
       const interpreter = interpreterFor(input.taskId);
       if (interpreter === undefined || interpreter.generation !== "typed") {
         return { ok: false, error: `Task "${input.taskId}" has no embedding contract.`, denialReason: "NO_TASK_CONTRACT" };

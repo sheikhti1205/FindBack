@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApplicationAiService, compatibilityOf, DEVICE_INCOMPATIBLE_REASON } from "./applicationAi";
+import { localSearchFailureOf } from "./localSearchDiagnosis";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { ModelDownloadDriver } from "./download/driver";
@@ -288,6 +289,57 @@ describe("local intelligence lifecycle", () => {
     const restarted = new ApplicationAiService({ android: true, ...p });
     await restarted.ready;
     await expect(restarted.embedNeedle(["umbrella"])).rejects.toThrow();
+  });
+
+  it("records an unreadable model store as a storage failure, never a clean install", async () => {
+    const p = platform();
+    p.driver.rootDir = async () => { throw new Error("private disk detail"); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    expect(service.notice(NEEDLE_MODEL_ID)).toMatch(/Model storage could not be verified/);
+    expect(service.notice(NEEDLE_MODEL_ID)).not.toMatch(/private disk detail/);
+    expect(service.manager.statusOf(NEEDLE_MODEL_ID)?.download).toBe("not-installed");
+  });
+
+  it("fails closed when the device ABI facts cannot be read", async () => {
+    const p = platform();
+    p.driver.supportedAbis = async () => { throw new Error("bridge unavailable"); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.ensureCompatibility();
+    expect(service.compatibility(NEEDLE_MODEL_ID)).toEqual({
+      compatible: false,
+      reason: DEVICE_INCOMPATIBLE_REASON,
+    });
+    await expect(service.download(NEEDLE_MODEL_ID)).rejects.toThrow(DEVICE_INCOMPATIBLE_REASON);
+    expect(p.calls).not.toContain("download");
+  });
+
+  it("reports a native load failure as the runtime boundary, not an absent model", async () => {
+    const p = platform();
+    p.needle.loadModel = async () => { throw new Error("Needle engine failed to load"); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const result = await service.route("extract-report-fields", { prompt: "red umbrella" }, { traceId: "t" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.denialReason).toBe("RUNTIME_ERROR");
+    expect(localSearchFailureOf(result).stage).toBe("runtime");
+  });
+
+  it("reports invalid structured output as the output boundary", async () => {
+    const p = platform();
+    p.needle.completeJson = async () => "{}";
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    const result = await service.route("extract-search-filters", { prompt: "black wallet" }, { traceId: "t" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The native call succeeded; the model simply produced no tool call. That
+    // is an output-validation failure, not a missing helper.
+    expect(localSearchFailureOf(result)).toEqual({ stage: "output", code: "RUNTIME_ERROR" });
   });
 
   it("fails closed for a structured task without a Needle tool schema", async () => {

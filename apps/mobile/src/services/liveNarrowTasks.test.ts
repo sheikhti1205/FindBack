@@ -6,10 +6,21 @@ const state = vi.hoisted(() => ({
   text: vi.fn(),
   account: "account-a" as string | null,
   keyReads: vi.fn(),
+  helper: { android: true, compatible: true, installed: true },
 }));
 
 vi.mock("./ai/applicationAi", () => ({
-  getApplicationAi: () => ({ route: state.route }),
+  getApplicationAi: () => ({
+    route: state.route,
+    android: state.helper.android,
+    ready: Promise.resolve(),
+    compatibility: () => ({ compatible: state.helper.compatible }),
+    manager: {
+      statusOf: () => state.helper.installed
+        ? { modelId: "needle", download: "installed", residency: "resident", downloadedBytes: 1, checksumVerified: true, updatedAt: "2026-11-05T00:00:00.000Z" }
+        : undefined,
+    },
+  }),
 }));
 
 vi.mock("./openRouter", () => ({
@@ -68,6 +79,9 @@ beforeEach(() => {
   state.text.mockReset();
   state.keyReads.mockReset().mockResolvedValue("test-key");
   state.account = "account-a";
+  state.helper.android = true;
+  state.helper.compatible = true;
+  state.helper.installed = true;
   localStorage.clear();
 });
 
@@ -246,7 +260,7 @@ describe("ready-made live composers", () => {
   });
 
   it("nlExtractLive never calls generate for empty input", async () => {
-    await expect(nlExtractLive("   ")).resolves.toEqual({});
+    await expect(nlExtractLive("   ")).resolves.toEqual({ kind: "extracted", patch: {} });
     expect(state.route).not.toHaveBeenCalled();
     expect(state.text).not.toHaveBeenCalled();
   });
@@ -256,10 +270,12 @@ describe("ready-made live composers", () => {
     state.route.mockResolvedValue(
       okRoute(JSON.stringify({ query: "black wallet", dateRangeText: "last week" })),
     );
-    const patch = await nlExtractLive("black wallet lost last week");
-    expect(patch.query).toBe("black wallet");
-    expect(patch.dateFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(patch.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const outcome = await nlExtractLive("black wallet lost last week");
+    expect(outcome.kind).toBe("extracted");
+    if (outcome.kind !== "extracted") return;
+    expect(outcome.patch.query).toBe("black wallet");
+    expect(outcome.patch.dateFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(outcome.patch.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   it("parses with the structured route's profile, not the prose engine's thought envelope", async () => {
@@ -268,14 +284,62 @@ describe("ready-made live composers", () => {
     // envelope truncated any output containing the literal marker — the whole
     // patch was silently dropped.
     state.route.mockResolvedValue(okRoute(JSON.stringify({ query: "[thought] wallet" })));
-    await expect(nlExtractLive("[thought] wallet")).resolves.toEqual({ query: "[thought] wallet" });
+    await expect(nlExtractLive("[thought] wallet")).resolves.toEqual({
+      kind: "extracted",
+      patch: { query: "[thought] wallet" },
+    });
   });
 
-  it("nlExtractLive fails closed to an empty patch when the on-device route fails", async () => {
+  it("reports the runtime boundary instead of an empty patch when the engine fails", async () => {
+    // The defect S6 names: an untagged empty patch here became "no confident
+    // filters" in the UI, which claims an engine ran that never did.
     state.route.mockResolvedValue(failRoute("RUNTIME_ERROR"));
     state.text.mockRejectedValue(new Error("no key"));
-    await expect(nlExtractLive("black wallet")).resolves.toEqual({});
+    await expect(nlExtractLive("black wallet")).resolves.toEqual({
+      kind: "failed",
+      failure: { stage: "runtime", code: "RUNTIME_ERROR" },
+    });
     expect(state.text).not.toHaveBeenCalled();
+    expect(state.keyReads).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["LOCAL_TASK_INVALID", "output"],
+    ["INVALID_OUTPUT", "output"],
+    ["MODEL_NOT_READY", "helper"],
+    ["TIMEOUT", "source"],
+  ] as const)("names the %s boundary as %s", async (denialReason, stage) => {
+    state.route.mockResolvedValue({ ...failRoute(denialReason), denialReason });
+    await expect(nlExtractLive("wallet")).resolves.toEqual({
+      kind: "failed",
+      failure: { stage, code: denialReason },
+    });
+  });
+
+  it("turns an absent helper into an installable state, never a device claim", async () => {
+    state.helper.installed = false;
+    state.route.mockResolvedValue({ ...failRoute("Model needle is not installed."), denialReason: "NO_RUNTIME" });
+    await expect(nlExtractLive("wallet")).resolves.toEqual({
+      kind: "failed",
+      failure: { stage: "helper", code: "NOT_SET_UP" },
+    });
+  });
+
+  it("keeps the platform truth when this build cannot run on-device AI", async () => {
+    state.helper.android = false;
+    state.route.mockResolvedValue({ ...failRoute("no runtime"), denialReason: "NO_RUNTIME" });
+    await expect(nlExtractLive("wallet")).resolves.toEqual({
+      kind: "failed",
+      failure: { stage: "plugin", code: "UNSUPPORTED_PLATFORM" },
+    });
+  });
+
+  it("normalises a bare injected patch as a completed extraction", async () => {
+    const { asNlExtractOutcome } = await import("./liveNarrowTasks");
+    expect(asNlExtractOutcome({ query: "wallet" })).toEqual({ kind: "extracted", patch: { query: "wallet" } });
+    expect(asNlExtractOutcome({ kind: "extracted", patch: {} })).toEqual({ kind: "extracted", patch: {} });
+    expect(asNlExtractOutcome({ kind: "failed", failure: { stage: "runtime", code: "RUNTIME_ERROR" } }))
+      .toEqual({ kind: "failed", failure: { stage: "runtime", code: "RUNTIME_ERROR" } });
   });
 });
 

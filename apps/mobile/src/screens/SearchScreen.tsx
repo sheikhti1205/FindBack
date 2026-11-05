@@ -16,12 +16,14 @@ import { SearchNearbyControls, useSearchNearby } from "./SearchNearby";
 import "./SearchScreen.css";
 import type { NlFilterPatch } from "../services/search/nlFilters";
 import { cleanPlace, matchesPlace } from "../services/search/placeScope";
-import { nlExtractLive, nlHelperState } from "../services/liveNarrowTasks";
+import { nlExtractLive, nlHelperState, asNlExtractOutcome, type NlExtractOutcome } from "../services/liveNarrowTasks";
 import {
   NL_EMPTY_PATCH_NOTE,
   NL_SEARCH_FAILED_NOTE,
   NL_SEARCH_FILTERS_CHANGED_NOTE,
   NL_SEARCH_FILTERS_KEPT_NOTE,
+  localSearchFailureNote,
+  localSearchFailureOffersHelper,
   nlSearchAppliedAndKeptNote,
   nlSearchAppliedNote,
   nlSearchRefusedNote,
@@ -121,8 +123,10 @@ function SearchHelperSetup({ service = getApplicationAi(), onDismiss, onTransfer
 interface SearchScreenProps {
   /** Injected NL extractor (test fakes or a live extractNlFilters composer).
    * Absent means the live transport. Explicit undefined keeps smart search
-   * unavailable: the button stays disabled and nothing is ever guessed. */
-  nlExtract?: (input: string) => Promise<NlFilterPatch>;
+   * unavailable: the button stays disabled and nothing is ever guessed.
+   * A bare patch means the extractor ran; only a tagged outcome can say it
+   * never did. */
+  nlExtract?: (input: string) => Promise<NlFilterPatch | NlExtractOutcome>;
   helperService?: LocalIntelligenceService;
 }
 
@@ -273,8 +277,22 @@ function ReportSearch(props: SearchScreenProps) {
     // flight has to keep its progress line and its error line.
     if (!helperTransferRef.current) setNlHelperMissing(false);
     try {
-      const patch = await nlExtract(text);
+      const outcome = asNlExtractOutcome(await nlExtract(text));
       if (!alive()) return;
+      // The helper FAILED, so it never produced an answer. Naming the first
+      // failing boundary is the only honest report: "no confident filters"
+      // would claim an engine ran that did not. The words are still searched,
+      // and the helper row stays available wherever a retry or repair can
+      // actually change the outcome.
+      if (outcome.kind === "failed") {
+        setQuery(text);
+        setNlNote(localSearchFailureNote(outcome.failure));
+        if (!helperTransferRef.current) {
+          setNlHelperMissing(localSearchFailureOffersHelper(outcome.failure));
+        }
+        return;
+      }
+      const patch = outcome.patch;
       // A refused place is not a filter: it never counts as one, and it never
       // makes an empty patch look like a patch with filters in it.
       const hasFilters = Object.entries(patch).some(([key, value]) =>

@@ -21,6 +21,7 @@
  * to the words.
  */
 import { DEVICE_INCOMPATIBLE_REASON } from "../services/ai/applicationAi";
+import type { LocalSearchFailure, LocalSearchStage } from "../services/ai/localSearchDiagnosis";
 import type { NlHelperState } from "../services/liveNarrowTasks";
 
 const OFFLINE_NEEDS_ANDROID = "On-device AI requires the Android app.";
@@ -144,3 +145,53 @@ export const NL_SUGGESTION_FAILURE_NOTE: Record<NlHelperState, string> = {
   "unsupported-device": DEVICE_INCOMPATIBLE_REASON,
   unknown: SUGGESTION_FAILED_NOTE,
 };
+
+/**
+ * What a FAILED Smart Search attempt says, per first-failing boundary.
+ *
+ * Every sentence keeps the two facts the reader needs: what happened to the
+ * helper, and that the words were still searched. None of them may say "no
+ * extra filters found" — that sentence claims the helper ran and found
+ * nothing, which is exactly the claim a failed attempt cannot make.
+ *
+ * `helper`, `storage`, `hash` and `promotion` are recoverable on this device,
+ * so those stages also keep the helper row (install/repair) on screen.
+ */
+export const LOCAL_SEARCH_FAILURE_NOTE: Record<LocalSearchStage, string> = {
+  helper: NL_HELPER_NOT_SET_UP_NOTE,
+  plugin: "Smart Search isn't available on this device. Searching your words normally.",
+  storage: "Norfold couldn't read the search helper's files on this device. Searching your words normally.",
+  source: "The search helper needs to download again. Searching your words normally.",
+  hash: "The search helper's files didn't pass their check. Searching your words normally.",
+  promotion: "The search helper couldn't finish installing. Searching your words normally.",
+  runtime: "Smart Search started but couldn't finish on this device. Searching your words normally.",
+  output: "Smart Search couldn't read the result on this device. Searching your words normally.",
+  busy: "Smart Search is already running. Try again in a moment.",
+};
+
+/**
+ * The stage receipt, in consumer words.
+ *
+ * The route's generic "no runtime/not ready" code is resolved against the same
+ * device predicate the helper row uses before it gets here, so the terminal
+ * platform/device truths keep their exact sentences instead of collapsing into
+ * a generic install offer.
+ */
+export function localSearchFailureNote(failure: LocalSearchFailure): string {
+  switch (failure.code) {
+    case "UNSUPPORTED_PLATFORM": return OFFLINE_NEEDS_ANDROID;
+    case "UNSUPPORTED_DEVICE": return DEVICE_INCOMPATIBLE_REASON;
+    case "NOT_SET_UP": return NL_HELPER_NOT_SET_UP_NOTE;
+    default: return LOCAL_SEARCH_FAILURE_NOTE[failure.stage];
+  }
+}
+
+/**
+ * Whether the helper row (install/repair) can change this outcome. A terminal
+ * platform/device verdict cannot, and neither can a busy engine — offering an
+ * install there would promise something that cannot help.
+ */
+export function localSearchFailureOffersHelper(failure: LocalSearchFailure): boolean {
+  if (failure.code === "NOT_SET_UP") return true;
+  return failure.stage === "storage" || failure.stage === "hash" || failure.stage === "promotion";
+}

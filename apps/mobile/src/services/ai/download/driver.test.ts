@@ -186,6 +186,64 @@ describe("managed downloads", () => {
     expect(driver.removed).toEqual([]);
   });
 
+  it("names the storage boundary when the model root is unreadable", async () => {
+    const driver = { ...fakeDriver(), rootDir: async () => { throw new Error("private disk detail"); } };
+    const outcome = await runManagedDownload(manager(), driver, REQUEST);
+    expect(outcome).toMatchObject({ ok: false, code: "DRIVER_UNAVAILABLE" });
+    expect(JSON.stringify(outcome)).not.toMatch(/private disk detail/);
+  });
+
+  it("refuses before transferring when the device has no space", async () => {
+    const mgr = new OfflineModelManager([PIN], {
+      storageProbe: { freeBytes: async () => 10 },
+      storageHeadroomBytes: 64,
+    });
+    const driver = fakeDriver();
+    const outcome = await runManagedDownload(mgr, driver, REQUEST);
+    expect(outcome).toMatchObject({ ok: false, code: "INSUFFICIENT_STORAGE" });
+    expect(driver.downloads).toBe(0);
+    expect(driver.removed).toEqual([]);
+  });
+
+  it("refuses a source that is not a credential-free HTTPS URL", async () => {
+    const driver = fakeDriver();
+    const outcome = await runManagedDownload(manager(), driver, {
+      ...REQUEST,
+      url: "http://user:secret@cdn.example.com/m.litertlm",
+    });
+    expect(outcome).toMatchObject({ ok: false, code: "BAD_SOURCE" });
+    expect(driver.downloads).toBe(0);
+    expect(JSON.stringify(outcome)).not.toMatch(/secret/);
+  });
+
+  it("keeps a verified transfer retryable when promotion fails", async () => {
+    const mgr = manager();
+    const driver = fakeDriver();
+    driver.promoteFile = async () => { throw new Error("private rename detail"); };
+    const outcome = await runManagedDownload(mgr, driver, REQUEST);
+    expect(outcome).toMatchObject({ ok: false, code: "PROMOTE_FAILED" });
+    // Nothing is claimed installed, and the payload keeps the code, not the
+    // native message.
+    expect(mgr.statusOf(PIN.modelId)).toMatchObject({ download: "failed", checksumVerified: false });
+    expect(JSON.stringify(outcome)).not.toMatch(/private rename detail/);
+  });
+
+  it("tries the next bounded source after a retryable transfer failure", async () => {
+    const mgr = manager();
+    const base = fakeDriver({ downloadThrows: { code: "HTTP_503", message: "upstream busy" } });
+    const tried: string[] = [];
+    const driver: ModelDownloadDriver = {
+      ...base,
+      download: async (attempt) => { tried.push(attempt.url); return base.download(attempt); },
+    };
+    const outcome = await runManagedDownload(mgr, driver, {
+      ...REQUEST,
+      sources: ["https://a.example.com/m", "https://b.example.com/m"],
+    });
+    expect(outcome).toMatchObject({ ok: false, code: "HTTP_503" });
+    expect(tried).toEqual(["https://a.example.com/m", "https://b.example.com/m"]);
+  });
+
   it("pauses to CANCEL on abort and keeps staged bytes", async () => {
     const mgr = manager();
     const controller = new AbortController();

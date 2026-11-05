@@ -21,11 +21,13 @@
  * This module exposes no cloud transport or credential read.
  */
 import { getApplicationAi, type ApplicationAiService } from "./ai/applicationAi";
+import { isLocalSearchAbort, localSearchFailureOf, type LocalSearchFailure } from "./ai/localSearchDiagnosis";
 import { describeOfflineReadiness } from "./ai/modelReadiness";
 import { profileFor } from "./ai/modelProfiles";
 import { NEEDLE_MODEL_ID } from "./ai/needle/embedder";
 import type { AiTaskId, GenerateFn } from "./ai/types";
-import { extractNlFilters, type NlFilterPatch } from "./search/nlFilters";
+import { extractSearchFilters } from "./ai/ops/extractSearchFilters";
+import { toValidatedPatch, type NlFilterPatch } from "./search/nlFilters";
 
 export type LiveNarrowTaskId =
   | "extract-search-filters"
@@ -46,6 +48,25 @@ function abortError(): Error {
   const error = new Error("AI request cancelled.");
   error.name = "AbortError";
   return error;
+}
+
+/**
+ * A failed local route that keeps its stable denial reason.
+ *
+ * `generateLocalFirst` must still throw the route's own message (callers and
+ * their tests read it), but the denial reason is the only reliable statement
+ * of WHICH boundary failed — losing it collapsed "the model never loaded" and
+ * "the model ran and returned nothing usable" into one indistinguishable
+ * error.
+ */
+export class LocalRouteError extends Error {
+  readonly denialReason: string;
+
+  constructor(denialReason: string, message: string) {
+    super(message);
+    this.name = "LocalRouteError";
+    this.denialReason = denialReason;
+  }
 }
 
 /**
@@ -72,7 +93,9 @@ export async function generateLocalFirst(
   if (opts?.signal?.aborted) throw abortError();
   if (!result.ok) {
     if (/cancel|abort/i.test(result.error) || /cancel|abort/i.test(result.state)) throw abortError();
-    throw new Error(result.error);
+    // Keep the route's denial reason: the message alone cannot say whether the
+    // engine never loaded, the native call failed, or the output was invalid.
+    throw new LocalRouteError(result.denialReason, result.error);
   }
   const value = (result as { value?: unknown }).value;
   return typeof value === "string" ? value : JSON.stringify(value);
@@ -192,12 +215,52 @@ export async function nlHelperState(source?: NlHelperSource): Promise<NlHelperSt
 
 /**
  * Live NL search extractor: raw input through `extract-search-filters`
- * (on-device only) mapped to a validated patch. Fail-closed:
- * empty input never calls generate, and any failure yields an empty patch
- * via `extractNlFilters`.
+ * (on-device only) mapped to a validated patch.
+ *
+ * The result is TAGGED. An untagged empty patch cannot distinguish "the helper
+ * ran and found nothing confident" from "the helper never ran", and reporting
+ * the second as the first is a lie about the reader's device. Cancellation
+ * still propagates untouched; every other failure is a receipt.
  */
-export async function nlExtractLive(input: string): Promise<NlFilterPatch> {
+export async function nlExtractLive(input: string): Promise<NlExtractOutcome> {
   const profile = profileFor(NARROW_TASK_PROFILE_ID);
-  if (!profile) return {};
-  return extractNlFilters(liveGenerateFor("extract-search-filters"), input, profile);
+  if (!profile) return { kind: "failed", failure: { stage: "helper", code: "NO_PROFILE" } };
+  if (input.trim() === "") return { kind: "extracted", patch: {} };
+  try {
+    const result = await extractSearchFilters(liveGenerateFor("extract-search-filters"), input, profile);
+    if (!result.ok) return { kind: "failed", failure: await describeRouteFailure(result.error) };
+    return { kind: "extracted", patch: toValidatedPatch(result.value.fields) };
+  } catch (error) {
+    if (isLocalSearchAbort(error)) throw error;
+    return { kind: "failed", failure: await describeRouteFailure(error) };
+  }
+}
+
+/**
+ * One runtime code covers three different truths — the helper is absent, this
+ * build cannot run one, or this device cannot. Ask the same predicate the
+ * helper row renders before naming a recovery; a failed predicate leaves the
+ * original receipt rather than inventing a device claim.
+ */
+async function describeRouteFailure(error: unknown): Promise<LocalSearchFailure> {
+  const base = localSearchFailureOf(error);
+  if (base.stage !== "helper") return base;
+  const state = await nlHelperState();
+  if (state === "unsupported-platform") return { stage: "plugin", code: "UNSUPPORTED_PLATFORM" };
+  if (state === "unsupported-device") return { stage: "plugin", code: "UNSUPPORTED_DEVICE" };
+  if (state === "not-set-up") return { stage: "helper", code: "NOT_SET_UP" };
+  return base;
+}
+
+/**
+ * Smart Search's result. A plain patch from an injected extractor means the
+ * extractor ran; only the live path can say "it never ran".
+ */
+export type NlExtractOutcome =
+  | { readonly kind: "extracted"; readonly patch: NlFilterPatch }
+  | { readonly kind: "failed"; readonly failure: LocalSearchFailure };
+
+/** Normalise an extractor result; a bare patch is a completed extraction. */
+export function asNlExtractOutcome(value: NlFilterPatch | NlExtractOutcome): NlExtractOutcome {
+  return "kind" in value ? value : { kind: "extracted", patch: value };
 }

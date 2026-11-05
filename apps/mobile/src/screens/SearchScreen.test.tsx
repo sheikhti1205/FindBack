@@ -13,10 +13,12 @@ const { fetchFeedMock, tabTapState, nlExtractLiveMock, nlHelperStateMock } = vi.
 vi.mock("../services/posts", () => ({ fetchFeed: fetchFeedMock }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "u1", username: "tester" } }) }));
 vi.mock("../components/TabTap", () => ({ useTabTap: () => tabTapState }));
-vi.mock("../services/liveNarrowTasks", () => ({
-  nlExtractLive: nlExtractLiveMock,
-  nlHelperState: nlHelperStateMock,
-}));
+vi.mock("../services/liveNarrowTasks", async () => {
+  // Only the two live seams are replaced. The result normaliser is real: a
+  // patch-shaped fake must keep meaning "the extractor ran".
+  const actual = await vi.importActual<typeof import("../services/liveNarrowTasks")>("../services/liveNarrowTasks");
+  return { ...actual, nlExtractLive: nlExtractLiveMock, nlHelperState: nlHelperStateMock };
+});
 
 import { SearchScreen } from "./SearchScreen";
 vi.mock("../services/people", async original => ({
@@ -301,7 +303,7 @@ describe("SearchScreen URL filters", () => {
   });
 
   describe("NL smart filters", () => {
-    function renderWithNl(nlExtract?: (input: string) => Promise<Record<string, string>>, helper?: ReturnType<typeof helperService>) {
+    function renderWithNl(nlExtract?: (input: string) => Promise<unknown>, helper?: ReturnType<typeof helperService>) {
       return render(
         <MemoryRouter initialEntries={["/search"]}>
           <SearchScreen nlExtract={nlExtract as never} helperService={helper as unknown as LocalIntelligenceService | undefined} />
@@ -366,6 +368,62 @@ describe("SearchScreen URL filters", () => {
       ];
       expect(last[0].category).toBeUndefined();
       expect(last[0].q).toBe("vague");
+    });
+
+    it("names the failing boundary instead of claiming no filters were found", async () => {
+      // The defect S6 names: a failed engine used to arrive as an empty patch
+      // and become "No extra filters found", which claims a lookup that never
+      // happened. The failing stage is named, and the words are still searched.
+      renderWithNl(async () => ({ kind: "failed", failure: { stage: "runtime", code: "RUNTIME_ERROR" } }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "vague" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "Smart Search started but couldn't finish on this device. Searching your words normally.",
+        ),
+      ).toBeTruthy();
+      expect(screen.queryByText("No extra filters found — searching your words.")).toBeNull();
+      await waitFor(() =>
+        expect(fetchFeedMock).toHaveBeenCalledWith(expect.objectContaining({ q: "vague" }), undefined),
+      );
+      expect(screen.getByTestId("location").textContent).not.toMatch(/category=|status=|dateFrom=|dateTo=/);
+    });
+
+    it("keeps the helper row when the failure can be repaired on this device", async () => {
+      const service = helperService();
+      renderWithNl(async () => ({
+        kind: "failed",
+        failure: { stage: "hash", code: "CHECKSUM_MISMATCH" },
+      }), service);
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(
+        await screen.findByText(
+          "The search helper's files didn't pass their check. Searching your words normally.",
+        ),
+      ).toBeTruthy();
+      expect(await screen.findByRole("heading", { name: "Local search helper" })).toBeTruthy();
+    });
+
+    it("does not offer an install for a terminal device verdict", async () => {
+      renderWithNl(async () => ({
+        kind: "failed",
+        failure: { stage: "plugin", code: "UNSUPPORTED_DEVICE" },
+      }));
+      await waitFor(() => expect(fetchFeedMock).toHaveBeenCalled());
+
+      fireEvent.change(screen.getByLabelText("Describe your search"), { target: { value: "wallet" } });
+      fireEvent.click(screen.getByRole("button", { name: "Smart search" }));
+
+      expect(await screen.findByText("Unavailable on this device.")).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "Local search helper" })).toBeNull();
+      expect(screen.queryByText("No extra filters found — searching your words.")).toBeNull();
     });
 
     it("offers explicit helper setup without leaving ordinary search", async () => {
