@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 
 const native = vi.hoisted(() => ({ enabled: true, launch: undefined as string | undefined, listener: null as ((event: {url:string}) => void) | null, removed: false }));
 const auth = vi.hoisted(() => ({ user: null as {id:string} | null, booting: false }));
@@ -18,6 +18,10 @@ const origin = "https://findbackapp.social";
 const id = "5b6f7c8d-1234-4abc-8def-123456789012";
 function Location() { const l = useLocation(); return <output>{l.pathname}{l.search}{l.hash}</output>; }
 function Harness() { return <MemoryRouter><ReportLinkHandler /><Location /></MemoryRouter>; }
+function HomeEscape() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/", { state: { showPublic: true } })}>Home</button>;
+}
 beforeEach(() => { vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", origin); auth.user = null; auth.booting = false; native.enabled = true; native.launch = undefined; native.listener = null; native.removed = false; sessionStorage.clear(); });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); window.history.replaceState(null, "", "/"); });
 
@@ -52,6 +56,22 @@ describe("App Link navigation", () => {
     window.history.replaceState(null, "", `/r/${id}`);
     render(<Harness />);
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe(`/shared/${id}`));
+  });
+  it("keeps a signed-out share through public Home and resumes it once after sign-in", async () => {
+    // A reader who arrived from a shared report can read the public page without
+    // losing where the share will take them once they sign in.
+    native.enabled = false;
+    window.history.replaceState(null, "", `/r/${id}`);
+    const view = render(<MemoryRouter initialEntries={[`/shared/${id}`]}><ReportLinkHandler /><HomeEscape /><Location /></MemoryRouter>);
+    await waitFor(() => expect(getPendingReportRoute()).toBe(`/posts/${id}`));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("/"));
+    expect(getPendingReportRoute()).toBe(`/posts/${id}`);
+
+    auth.user = {id:"u1"};
+    view.rerender(<MemoryRouter initialEntries={["/"]}><ReportLinkHandler /><HomeEscape /><Location /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe(`/posts/${id}`));
+    expect(getPendingReportRoute()).toBeNull();
   });
   it("does not resume an expired link or a tampered stored route", () => {
     sessionStorage.setItem("findback.pendingReportLink", JSON.stringify({url:`${origin}/r/${id}`, expiresAt:Date.now()-1}));

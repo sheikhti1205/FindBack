@@ -23,6 +23,25 @@ function run(offsets: number[], opts: { pinned?: boolean; from?: ScrollChromeSta
 }
 
 describe("scroll-reactive chrome state", () => {
+  it("keeps hidden chrome when a short feed's range clamps to zero", () => {
+    // Collapsing the chrome gave its own height back to the feed, so a feed
+    // that only scrolled by exactly that height is pulled back to the top. That
+    // is the layout moving the offset, not the reader swiping up.
+    const hidden: ScrollChromeState = { hidden: true, compact: true, lastY: 60, travel: 0, lastMaxY: 60 };
+    expect(nextScrollChrome(hidden, 0, false, 0).hidden).toBe(true);
+    expect(nextScrollChrome(hidden, 0, false, 0).compact).toBe(true);
+
+    // An explicit pin always wins, and a real upward swipe at the same offset
+    // (range unchanged) still reveals it.
+    expect(nextScrollChrome(hidden, 0, true, 0).hidden).toBe(false);
+    expect(nextScrollChrome({ ...hidden, lastMaxY: 0 }, 0, false, 0).hidden).toBe(false);
+
+    // The clamp banks no travel: the next real downward move decides normally.
+    const clamped = nextScrollChrome(hidden, 0, false, 0);
+    expect(clamped.travel).toBe(0);
+    expect(nextScrollChrome(clamped, 80, false, 80).hidden).toBe(true);
+  });
+
   it("starts visible and stays visible at the top", () => {
     expect(initialScrollChrome().hidden).toBe(false);
     expect(run([CHROME_TOP_ZONE]).hidden).toBe(false);

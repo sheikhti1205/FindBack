@@ -92,6 +92,7 @@ vi.mock("./screens/Diagnostics", () => ({ Diagnostics: marker("Diagnostics") }))
 import { ONBOARDING_STORAGE_KEY, ONBOARDING_VERSION } from "./services/onboarding";
 import { App, createAppRouter } from "./App";
 import { readRememberedAccounts, rememberAccount } from "./services/rememberedAccounts";
+import { peekAuthReturnTo, rememberAuthReturnTo } from "./utils/authReturnTo";
 let router: ReturnType<typeof createAppRouter> | undefined;
 
 const origin = "https://findbackapp.social";
@@ -230,8 +231,16 @@ describe("consumer route map", () => {
     cleanup();
     auth.booting = false;
     auth.bootError = "unreachable";
+    // An earlier protected visit is still waiting; a boot failure neither
+    // consumes it nor invents a settled guest, and Retry is the real escape.
+    rememberAuthReturnTo("/saved");
     renderAt("/");
     expect(screen.getByRole("button", { name: /retry/i })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Lost something?" })).toBeNull();
+    expect(peekAuthReturnTo()).toBe("/saved");
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(auth.retryBoot).toHaveBeenCalled();
+    expect(peekAuthReturnTo()).toBe("/saved");
     expect(router?.state.location.pathname).toBe("/");
   });
 
@@ -552,6 +561,80 @@ describe("consumer route map", () => {
     await act(async () => { await router!.navigate("/auth"); });
     await waitFor(() => expect(router?.state.location.pathname).toBe("/profile/edit"));
     expect(router?.state.location.search).toBe("?from=search");
+  });
+
+  it("lets a guest browse public Home and still resume the protected destination", async () => {
+    native.platform = false;
+    window.history.replaceState(null, "", "/#/profile/edit?from=search");
+    router = createAppRouter();
+    render(<App router={router} />);
+    await waitFor(() => expect(router?.state.location.pathname).toBe("/auth"));
+    expect(peekAuthReturnTo()).toBe("/profile/edit?from=search");
+
+    // The explicit Home escape is a presentation choice, not a cancellation.
+    await act(async () => { await router!.navigate("/", { state: { showPublic: true } }); });
+    expect(router?.state.location.pathname).toBe("/");
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(peekAuthReturnTo()).toBe("/profile/edit?from=search");
+
+    // Signing in from the public Home resumes it, and the destination is used once.
+    signedIn();
+    await act(async () => { await router!.navigate("/auth"); });
+    await waitFor(() => expect(router?.state.location.pathname).toBe("/profile/edit"));
+    expect(router?.state.location.search).toBe("?from=search");
+    await waitFor(() => expect(peekAuthReturnTo()).toBeNull());
+    // Nothing is replayed: the next protected visit is a normal signed-in route.
+    await act(async () => { await router!.navigate("/settings"); });
+    expect(router?.state.location.pathname).toBe("/settings");
+    expect(peekAuthReturnTo()).toBeNull();
+  });
+
+  it("shows public Home ahead of the remembered-account chooser without clearing intent", async () => {
+    signedIn(); rememberAccount(auth.user!); auth.user = null;
+    window.history.replaceState(null, "", "/#/profile/edit");
+    router = createAppRouter();
+    render(<App router={router} />);
+    await waitFor(() => expect(router?.state.location.pathname).toBe("/auth"));
+
+    await act(async () => { await router!.navigate("/", { state: { showPublic: true } }); });
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
+    expect(peekAuthReturnTo()).toBe("/profile/edit");
+    expect(readRememberedAccounts()).toHaveLength(1);
+
+    // Without the presentation intent the protected destination still wins over
+    // the remembered-account chooser; browsing Home did not cancel it.
+    await act(async () => { await router!.navigate("/"); });
+    expect(router?.state.location.pathname).toBe("/auth");
+    expect(screen.getByText("Gateway:email")).toBeTruthy();
+    expect(peekAuthReturnTo()).toBe("/profile/edit");
+  });
+
+  it("keeps a protected destination and a pending share through a legal detour", async () => {
+    native.platform = false;
+    sessionStorage.setItem("findback.pendingReportLink",
+      JSON.stringify({ url: `${origin}/r/${postId}`, expiresAt: Date.now() + 60_000 }));
+    window.history.replaceState(null, "", "/#/profile/edit");
+    router = createAppRouter();
+    render(<App router={router} />);
+    await waitFor(() => expect(router?.state.location.pathname).toBe("/auth"));
+    expect(peekAuthReturnTo()).toBe("/profile/edit");
+
+    await act(async () => { await router!.navigate("/privacy"); });
+    expect(screen.getByRole("heading", { level: 1, name: "Privacy policy" })).toBeTruthy();
+    expect(peekAuthReturnTo()).toBe("/profile/edit");
+    expect(sessionStorage.getItem("findback.pendingReportLink")).toContain(postId);
+
+    // The public Home link keeps both, and signing in still honours the share.
+    await act(async () => { await router!.navigate("/", { state: { showPublic: true } }); });
+    expect(screen.getByRole("heading", { name: "Lost something?" })).toBeTruthy();
+    expect(peekAuthReturnTo()).toBe("/profile/edit");
+    expect(sessionStorage.getItem("findback.pendingReportLink")).toContain(postId);
+
+    signedIn();
+    await act(async () => { await router!.navigate("/auth"); });
+    expect(await screen.findByText("PostDetail screen")).toBeTruthy();
+    expect(sessionStorage.getItem("findback.pendingReportLink")).toBeNull();
   });
 
   it("requires sign-in, not an existing admin role, for administrator setup", () => {

@@ -84,10 +84,16 @@ import { clearAuthReturnTo, getAuthReturnRoute, peekAuthReturnTo } from "./utils
 
 function StartScreen() {
   const { user, booting, bootError, needsProfile } = useAuth();
+  const location = useLocation();
   if (booting || (bootError && !user)) return <Splash />;
   if (user) return <Shell />;
   if (needsProfile) return <Navigate to="/complete-profile" replace />;
-  if (getAuthReturnRoute() !== "/") return <Navigate to="/auth" replace />;
+  // An explicit "show me Home" is a presentation choice, not auth authority: it
+  // is settled ahead of a protected destination so a signed-out reader can read
+  // the public page without losing where they were headed. Only a successful
+  // sign-in consumes that destination.
+  const showPublic = (location.state as { showPublic?: unknown } | null)?.showPublic === true;
+  if (!showPublic && getAuthReturnRoute() !== "/") return <Navigate to="/auth" replace />;
   return <SignedOutEntry />;
 }
 

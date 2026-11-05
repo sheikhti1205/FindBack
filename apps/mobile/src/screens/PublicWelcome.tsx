@@ -4,7 +4,6 @@ import { ArrowRight } from "lucide-react";
 import { BrandMark } from "../components/BrandMark";
 import { PRODUCT_NAME, WEBSITE_TRANSITION_NOTE } from "../brand";
 import { completeOnboarding } from "../services/onboarding";
-import { clearAuthReturnTo } from "../utils/authReturnTo";
 import { Onboarding } from "./Onboarding";
 import "./PublicWelcome.css";
 
@@ -40,8 +39,9 @@ export function PublicWelcome() {
   }, []);
 
   function start() {
+    // Browsing the public explanation never cancels a pending sign-in
+    // destination: only the successful sign-in consumes it.
     completeOnboarding();
-    clearAuthReturnTo();
     navigate("/auth");
   }
   function chapter(id: string) {
@@ -54,14 +54,14 @@ export function PublicWelcome() {
   return <div className="nf-public">
     <a className="nf-public-skip" href="#how-it-works" onClick={event => { event.preventDefault(); chapter("how-it-works"); }}>Skip to how it works</a>
     <header className="nf-public-nav">
-      <Link className="nf-public-brand" to="/"><BrandMark size={28} alt="" /><span>{PRODUCT_NAME}</span></Link>
+      <Link className="nf-public-brand" to="/" state={{ showPublic: true }}><BrandMark size={28} alt="" /><span>{PRODUCT_NAME}</span></Link>
       <nav aria-label="Public navigation">
         <span className="nf-public-desktop-links">
           <button onClick={() => chapter("how-it-works")}>How it works</button>
           <button onClick={() => chapter("safety")}>Safety</button>
           <button onClick={() => chapter("about-norfold")}>About</button>
         </span>
-        <Link to="/auth" onClick={() => clearAuthReturnTo()}>Sign in</Link>
+        <Link to="/auth">Sign in</Link>
         <button className="nf-public-action nf-public-desktop-cta" onClick={start}>Get started</button>
         <details ref={menu} className="nf-public-menu"><summary>Explore</summary><div>
           <button onClick={() => chapter("how-it-works")}>How it works</button>
@@ -72,7 +72,7 @@ export function PublicWelcome() {
     </header>
     <main>
       <div ref={hero} className="nf-public-hero">
-        <Onboarding publicHero onComplete={() => { clearAuthReturnTo(); navigate("/auth"); }} />
+        <Onboarding publicHero onComplete={() => navigate("/auth")} />
         <button className="nf-public-action nf-public-hero-cta" onClick={start}>Get started <ArrowRight size={18} aria-hidden="true" /></button>
       </div>
       <div className="nf-public-story">

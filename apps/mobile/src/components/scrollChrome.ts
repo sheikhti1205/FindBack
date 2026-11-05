@@ -15,15 +15,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * own gate order, which is the specification and what a reader should reason
  * from:
  *
- * 1. `pinned`, and `y <= {@link CHROME_TOP_ZONE}`, return early leaving **both
- *    stages false** — the top-zone return is why a bounce at the very top brings
- *    the wordmark back with no up-travel at all;
- * 2. `|delta| >= {@link CHROME_JUMP}` keeps the state and re-bases the travel to
+ * 1. `pinned` returns early leaving **both stages false** — the packet requires
+ *    that an active control is never hidden;
+ * 2. a **layout clamp** — the offset fell by the same distance the scrollable
+ *    range shrank — keeps both stages and re-bases the travel to zero. This gate
+ *    is deliberately **before** the top zone: collapsing the chrome gives its
+ *    height back to the feed, so on a short feed the browser pulls the offset all
+ *    the way to the top. That pull is the layout moving the offset, not the
+ *    reader swiping up, and reading it as intent revealed the chrome, re-grew the
+ *    range, and hid it again. A real upward swipe moves the offset while the range
+ *    stays put, so it is never mistaken for a clamp;
+ * 3. `y <= {@link CHROME_TOP_ZONE}` returns early leaving **both stages false** —
+ *    the top-zone return is why a bounce at the very top brings the wordmark back
+ *    with no up-travel at all;
+ * 4. `|delta| >= {@link CHROME_JUMP}` keeps the state and re-bases the travel to
  *    zero, so a jump evaluates neither stage;
- * 3. `|delta| < {@link CHROME_JITTER}` keeps the state **and the travel**, so a
+ * 5. `|delta| < {@link CHROME_JITTER}` keeps the state **and the travel**, so a
  *    1–2px nudge can carry banked travel past a threshold with neither stage
  *    evaluated at all;
- * 4. otherwise the travel accumulates — added to while the direction holds, and
+ * 6. otherwise the travel accumulates — added to while the direction holds, and
  *    **replaced** by the fresh delta when the direction reverses
  *    (`state.travel * delta > 0 ? state.travel + delta : delta`) — and the two
  *    stages read it: the wordmark
@@ -185,20 +195,25 @@ export function nextScrollChrome(
   const keep = (next: Omit<ScrollChromeState, "lastMaxY">): ScrollChromeState => ({ ...next, lastMaxY: tracked });
 
   if (pinned) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
-  if (y <= CHROME_TOP_ZONE) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
 
   const delta = y - state.lastY;
 
-  // Layout adjustment, not intent. Both facts must agree: the offset fell *and*
-  // the scrollable range shrank by the same distance, which is precisely what
-  // collapsing the chrome does at the bottom. A real upward swipe moves the
-  // offset while the range stays put, so it is never mistaken for this.
+  // Layout adjustment, not intent — and this MUST be decided before the top
+  // zone. Both facts must agree: the offset fell *and* the scrollable range
+  // shrank by the same distance, which is precisely what collapsing the chrome
+  // does at the bottom. A short feed can shrink all the way to zero, which pulls
+  // the offset to the top; reading that as a swipe up would re-grow the range
+  // and make the header reappear and disappear. A real upward swipe moves the
+  // offset while the range stays put, so it is never mistaken for this and the
+  // top-zone reveal below still fires.
   if (limit !== null && state.lastMaxY >= 0 && delta < 0) {
     const shrink = limit - state.lastMaxY;
     if (shrink < 0 && Math.abs(delta - shrink) <= CHROME_LAYOUT_TOLERANCE) {
       return keep({ hidden: state.hidden, compact: state.compact, lastY: y, travel: 0 });
     }
   }
+
+  if (y <= CHROME_TOP_ZONE) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
 
   if (Math.abs(delta) >= CHROME_JUMP) return keep({ ...state, lastY: y, travel: 0 });
   if (Math.abs(delta) < CHROME_JITTER) return keep({ ...state, lastY: y });

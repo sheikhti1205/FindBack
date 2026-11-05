@@ -4,21 +4,28 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthShell } from "./AuthShell";
 import { ThemeProvider } from "../../theme";
 import { MemoryRouter } from "react-router";
-import { getAuthReturnRoute, rememberAuthReturnTo } from "../../utils/authReturnTo";
-import { rememberReportLink } from "../../utils/pendingReportLink";
+import { getAuthReturnRoute, peekAuthReturnTo, rememberAuthReturnTo } from "../../utils/authReturnTo";
+import { getPendingReportRoute, rememberReportLink } from "../../utils/pendingReportLink";
 
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); sessionStorage.clear(); });
 
 describe("shared auth branding", () => {
-  it("Back cancels protected and shared intent without completing onboarding", () => {
+  it("opens public Home without destroying the pending destination", () => {
     sessionStorage.clear();
     vi.stubEnv("VITE_PUBLIC_SHARE_ORIGIN", "https://findbackapp.social");
     rememberAuthReturnTo("/chats/c1");
     rememberReportLink("https://findbackapp.social/r/00000000-0000-4000-8000-000000000001");
     expect(getAuthReturnRoute()).toBe("/posts/00000000-0000-4000-8000-000000000001");
-    render(<MemoryRouter><AuthShell title="Welcome"><p>Form</p></AuthShell></MemoryRouter>);
-    fireEvent.click(screen.getByRole("link", { name: "Back to Norfold" }));
-    expect(getAuthReturnRoute()).toBe("/");
+    render(<MemoryRouter initialEntries={["/auth"]}><AuthShell title="Welcome"><p>Form</p></AuthShell></MemoryRouter>);
+
+    // Browsing Home is a presentation choice, not a cancellation: both the brand
+    // mark and the explicit Home link keep the protected and shared intent.
+    const home = screen.getAllByRole("link").filter(link => link.getAttribute("href") === "/");
+    expect(home).toHaveLength(2);
+    for (const link of home) fireEvent.click(link);
+    expect(getAuthReturnRoute()).toBe("/posts/00000000-0000-4000-8000-000000000001");
+    expect(peekAuthReturnTo()).toBe("/chats/c1");
+    expect(getPendingReportRoute()).toBe("/posts/00000000-0000-4000-8000-000000000001");
   });
   it.each([false, true])("uses only the canonical mark with illustration=%s", illustration => {
     const { container } = render(<MemoryRouter><ThemeProvider><AuthShell title="Welcome to Norfold" illustration={illustration}><p>Form content</p></AuthShell></ThemeProvider></MemoryRouter>);
