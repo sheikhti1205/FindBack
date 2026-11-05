@@ -55,6 +55,19 @@ describe("HelpGuide", () => {
     expect(screen.queryByText(/Likes, comments, and mentions/)).toBeNull();
   });
 
+  it("explains the everyday jobs offline, including their limits", () => {
+    renderGuide();
+    expect(screen.getAllByText(/best-effort/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/ordinary text search/i)).toBeTruthy();
+    expect(screen.getAllByText(/safety records remain/i).length).toBeGreaterThan(0);
+  });
+
+  it("names the optional cloud assistant as a provider chat, not app support", () => {
+    renderGuide();
+    expect(screen.getByRole("link", { name: /Ask your AI provider \(cloud\)/ })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Chat with help" })).toBeNull();
+  });
+
   it("filters topics locally with no backend", () => {
     renderGuide();
 

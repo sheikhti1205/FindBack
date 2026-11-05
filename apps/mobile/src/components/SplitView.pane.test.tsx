@@ -31,6 +31,20 @@ afterEach(() => {
 });
 
 describe("the resizable conversation pane", () => {
+  it("collapses to one pane when the list would leave no usable detail width", () => {
+    setWidth(880);
+    const greedy = { ...PANE, minWidth: 600, maxWidth: 700, defaultWidth: 600 };
+    render(<SplitView selected={false} pane={greedy}
+      list={<p>List</p>}
+      detail={<p role="main">Thread</p>} />);
+    // A wide window is not enough: both panes need a viable width.
+    expect(document.querySelector(".fb-split-view")?.className).not.toContain("fb-split-wide");
+    cleanup();
+
+    renderSplit();
+    expect(document.querySelector(".fb-split-view")?.className).toContain("fb-split-wide");
+  });
+
   it("exposes the divider as a keyboard-operable splitter with real bounds", () => {
     renderSplit();
     const divider = screen.getByRole("separator", { name: "Resize conversation list" });

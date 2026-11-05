@@ -43,7 +43,11 @@ import {
   SettingsRow,
   SettingsSearch,
   PreferenceSwitchRow,
+  type SettingIconTone,
 } from "../components/settings";
+import { Capacitor } from "@capacitor/core";
+import { settingsDestinations, settingsSectionFor, type SettingsSection } from "../services/destinations";
+import type { LucideIcon } from "lucide-react";
 import { SettingsProfileHeader } from "./settings/SettingsProfileHeader";
 import { SettingsNestedGroup } from "./settings/SettingsNestedGroup";
 import { searchSettings } from "../services/settingsIndex";
@@ -58,6 +62,36 @@ import type { PushPermissionState } from "../services/pushNotifications";
 import { APP_VERSION } from "../services/appCapabilities";
 import { friendlyError } from "../utils/friendlyErrors";
 import "./Settings.css";
+
+/**
+ * Presentation for a Settings row. Titles here are the row labels (which differ
+ * deliberately from the catalogue's discoverable titles); routes, summaries and
+ * aliases come from the catalogue, so nothing about *where* a row goes is
+ * written twice.
+ */
+const ROW_PRESENTATION: Record<string, { title: string; icon: LucideIcon; iconTone: SettingIconTone; detail?: boolean }> = {
+  "recovered-items": { title: "Recovered items", icon: RotateCcw, iconTone: "success", detail: true },
+  account: { title: "Account & verification", icon: UserRound, iconTone: "account" },
+  devices: { title: "Devices", icon: MonitorSmartphone, iconTone: "teal", detail: true },
+  backup: { title: "Chat backup", icon: CloudUpload, iconTone: "blue", detail: true },
+  "chat-preferences": { title: "Chat preferences", icon: MessageSquare, iconTone: "neutral", detail: true },
+  appearance: { title: "Appearance", icon: Palette, iconTone: "appearance" },
+  notifications: { title: "Notification preferences", icon: Bell, iconTone: "notifications" },
+  accessibility: { title: "Accessibility", icon: Accessibility, iconTone: "accessibility" },
+  "feed-layout": { title: "Feed layout", icon: LayoutGrid, iconTone: "teal" },
+  "local-intelligence": { title: "Local tools", icon: Cpu, iconTone: "ai", detail: true },
+  ai: { title: "Optional AI Chat", icon: Sparkles, iconTone: "ai", detail: true },
+  privacy: { title: "Privacy & safety", icon: ShieldCheck, iconTone: "privacy" },
+  feedback: { title: "Send feedback", icon: MessageSquare, iconTone: "neutral", detail: true },
+  media: { title: "Media & uploads", icon: Image, iconTone: "media" },
+  diagnostics: { title: "Diagnostics", icon: Activity, iconTone: "privacy" },
+  terms: { title: "Terms of use", icon: Scale, iconTone: "about" },
+  "privacy-policy": { title: "Privacy policy", icon: ShieldCheck, iconTone: "privacy" },
+  "community-guidelines": { title: "Community guidelines", icon: Users, iconTone: "help" },
+  help: { title: "Help & guide", icon: CircleHelp, iconTone: "help" },
+  replay: { title: "Replay introduction", icon: RotateCcw, iconTone: "help" },
+  about: { title: "About Norfold", icon: Info, iconTone: "about" },
+};
 
 const THEME_LABELS: Record<Theme, string> = {
   system: "System",
@@ -216,6 +250,44 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   // The row appears for an ADMIN only.
   const isStaff = staffRole?.role === "ADMIN";
 
+  // Rows and the search index are generated from the same catalogue, filtered
+  // for this caller, so no row can advertise a route the catalogue does not
+  // know and no catalogue entry can go missing from the screen.
+  const rows = settingsDestinations({
+    platform: Capacitor.isNativePlatform() ? "android" : "web",
+    signedIn: true,
+    capabilities: [],
+  });
+  const rowValue = (id: string): string | undefined => {
+    switch (id) {
+      case "account": return accountSummary(user);
+      case "appearance": return appearanceSummary(theme, settings.accent, settings.accentSource);
+      case "notifications": return notifValue ?? "Review settings";
+      case "accessibility": return accessibilitySummary(settings.textScale, settings.reduceMotion);
+      case "feed-layout": return feedLayoutSummary(feedLayout, resolveFeedLayout(feedLayout, viewportWidth));
+      case "media": return mediaSummary(settings.highQualityPhoto);
+      case "about": return APP_VERSION;
+      default: return undefined;
+    }
+  };
+  const inSection = (section: SettingsSection) => rows
+    .filter((destination) => settingsSectionFor(destination.id) === section)
+    .map((destination) => {
+      const presentation = ROW_PRESENTATION[destination.id];
+      // A placed destination without a row presentation is a programming error:
+      // silently dropping the row would hide a real screen from Settings.
+      if (!presentation) throw new Error(`No Settings row presentation for ${destination.id}`);
+      return <SettingsRow
+        key={destination.id}
+        title={presentation.title}
+        description={presentation.detail ? destination.summary : undefined}
+        icon={presentation.icon}
+        iconTone={presentation.iconTone}
+        value={rowValue(destination.id)}
+        route={destination.route}
+      />;
+    });
+
   const handleSignOut = () => {
     if (signingOut) return;
     setSigningOut(true);
@@ -247,93 +319,18 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
       ) : (
         <>
           <AdminBootstrapRow />
-          <SettingsGroup title="Account">
-            <SettingsRow
-              title="Recovered items"
-              description="Returned items, ratings and your standing."
-              icon={RotateCcw}
-              iconTone="success"
-              route="/settings/returns"
-            />
-            <SettingsRow
-              title="Account & verification"
-              icon={UserRound}
-              iconTone="account"
-              value={accountSummary(user)}
-              route="/settings/account"
-            />
-            <SettingsRow
-              title="Devices"
-              description="Phones, tablets and browsers signed in to Chat."
-              icon={MonitorSmartphone}
-              iconTone="teal"
-              route="/settings/devices"
-            />
-            <SettingsRow
-              title="Chat backup"
-              description="Keep your conversations with you."
-              icon={CloudUpload}
-              iconTone="blue"
-              route="/settings/backup"
-            />
-          </SettingsGroup>
-          <SettingsGroup title="Preferences">
-            <SettingsRow
-              title="Appearance"
-              icon={Palette}
-              iconTone="appearance"
-              value={appearanceSummary(theme, settings.accent, settings.accentSource)}
-              route="/settings/appearance"
-            />
-            <SettingsRow
-              title="Notification preferences"
-              icon={Bell}
-              iconTone="notifications"
-              value={notifValue ?? "Review settings"}
-              route="/settings/notifications"
-            />
-            <SettingsRow
-              title="Accessibility"
-              icon={Accessibility}
-              iconTone="accessibility"
-              value={accessibilitySummary(settings.textScale, settings.reduceMotion)}
-              route="/settings/accessibility"
-            />
-            <SettingsRow
-              title="Feed layout"
-              icon={LayoutGrid}
-              iconTone="teal"
-              value={feedLayoutSummary(feedLayout, resolveFeedLayout(feedLayout, viewportWidth))}
-              route="/settings/feed-layout"
-            />
-          </SettingsGroup>
-          <SettingsGroup title="Intelligence">
-            <SettingsRow
-              title="Local tools"
-              description="Smart Search and matching tools."
-              icon={Cpu}
-              iconTone="ai"
-              route="/settings/local-intelligence"
-            />
-            <SettingsRow
-              title="Optional AI Chat"
-              description="Your provider, key and chat model."
-              icon={Sparkles}
-              iconTone="ai"
-              route="/settings/ai"
-            />
-          </SettingsGroup>
-          <SettingsGroup title="Chats">
-            <SettingsRow title="Chat preferences" description="Who can contact you." icon={MessageSquare} route="/settings/privacy/messages" />
-          </SettingsGroup>
-          <SettingsGroup title="Privacy">
-            <SettingsRow
-              title="Privacy & safety"
-              icon={ShieldCheck}
-              iconTone="privacy"
-              route="/settings/privacy"
-            />
-          </SettingsGroup>
+          {inSection("account").length > 0 && (
+            <SettingsGroup title="Account">{inSection("account")}</SettingsGroup>
+          )}
+          {inSection("preferences").length > 0 && (
+            <SettingsGroup title="Preferences">{inSection("preferences")}</SettingsGroup>
+          )}
+          {inSection("intelligence").length > 0 && (
+            <SettingsGroup title="Intelligence">{inSection("intelligence")}</SettingsGroup>
+          )}
+          {inSection("privacy").length > 0 && (
+            <SettingsGroup title="Privacy">{inSection("privacy")}</SettingsGroup>
+          )}
           {isStaff && (
             <SettingsGroup title="Moderation">
               <SettingsRow
@@ -362,33 +359,16 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
             </SettingsGroup>
           )}
           <SettingsGroup title="More">
-            <SettingsRow
-              title="Send feedback"
-              description="Tell us what is working and what is not."
-              icon={MessageSquare}
-              iconTone="neutral"
-              route="/settings/feedback"
-            />
+            {inSection("more")}
             <SettingsNestedGroup
               title="Advanced"
               description="Uploads and troubleshooting."
               icon={SlidersHorizontal}
               iconTone="neutral"
             >
-              <SettingsRow
-                title="Media & uploads"
-                icon={Image}
-                iconTone="media"
-                value={mediaSummary(settings.highQualityPhoto)}
-                route="/settings/media"
-              />
+              {inSection("advanced")}
               <SettingsNestedGroup title="Troubleshooting" icon={Activity} iconTone="privacy">
-                <SettingsRow
-                  title="Diagnostics"
-                  icon={Activity}
-                  iconTone="privacy"
-                  route="/settings/diagnostics"
-                />
+                {inSection("troubleshooting")}
               </SettingsNestedGroup>
             </SettingsNestedGroup>
             <SettingsNestedGroup
@@ -397,24 +377,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               icon={Scale}
               iconTone="about"
             >
-              <SettingsRow
-                title="Terms of use"
-                icon={Scale}
-                iconTone="about"
-                route="/settings/terms"
-              />
-              <SettingsRow
-                title="Privacy policy"
-                icon={ShieldCheck}
-                iconTone="privacy"
-                route="/settings/privacy-policy"
-              />
-              <SettingsRow
-                title="Community guidelines"
-                icon={Users}
-                iconTone="help"
-                route="/settings/community-guidelines"
-              />
+              {inSection("legal")}
             </SettingsNestedGroup>
             <SettingsNestedGroup
               title="Help & about"
@@ -422,25 +385,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
               icon={LifeBuoy}
               iconTone="help"
             >
-              <SettingsRow
-                title="Help & guide"
-                icon={CircleHelp}
-                iconTone="help"
-                route="/settings/help"
-              />
-              <SettingsRow
-                title="Replay introduction"
-                icon={RotateCcw}
-                iconTone="help"
-                route="/onboarding?replay=1"
-              />
-              <SettingsRow
-                title="About Norfold"
-                icon={Info}
-                iconTone="about"
-                value={APP_VERSION}
-                route="/settings/about"
-              />
+              {inSection("helpAbout")}
             </SettingsNestedGroup>
           </SettingsGroup>
           <div className="fb-settings-signout">

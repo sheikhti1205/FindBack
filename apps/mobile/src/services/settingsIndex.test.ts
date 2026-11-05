@@ -17,6 +17,7 @@ describe("settingsIndex", () => {
         "/settings/backup",
         "/settings/ai",
         "/settings/ai/connections",
+        "/settings/ai/privacy",
         "/settings/appearance",
         "/settings/diagnostics",
         // CF-010 (packet `09` §6, §23): the feed layout preference is a settings
@@ -34,6 +35,9 @@ describe("settingsIndex", () => {
         "/settings/media",
         "/settings/notifications",
         "/settings/privacy",
+        // Chat preferences is an Account row (S5) and is indexed from the
+        // shared destination catalogue rather than a second hand-written list.
+        "/settings/privacy/messages",
         "/settings/privacy/appeals",
         "/settings/privacy/blocked",
         "/settings/privacy/reports",
@@ -47,6 +51,11 @@ describe("settingsIndex", () => {
         "/onboarding?replay=1",
       ].sort(),
     );
+  });
+
+  it("indexes every Settings-placed destination from the catalogue", () => {
+    expect(SETTINGS_INDEX.some((entry) => entry.id === "chat-preferences")).toBe(true);
+    expect(searchSettings("who can contact").map((entry) => entry.id)).toContain("chat-preferences");
   });
 
   it("finds the three legal documents by the words a reader would type", () => {

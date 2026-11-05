@@ -184,6 +184,23 @@ describe("Settings home", () => {
     expect(screen.getByRole("link", { name: /Send feedback/i }).getAttribute("href")).toBe("/settings/feedback");
   });
 
+  it("keeps Chat preferences in Account and reachable through search", async () => {
+    renderSettings();
+    const account = screen.getByRole("region", { name: "Account" });
+    expect(within(account).getByRole("link", { name: "Chat preferences" }).getAttribute("href"))
+      .toBe("/settings/privacy/messages");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), { target: { value: "who can contact" } });
+    expect(await screen.findByRole("link", { name: /Chat preferences/ })).toBeTruthy();
+  });
+
+  it("gives the switch its own trailing control instead of a chevron slot", () => {
+    renderSettings();
+    const control = screen.getByRole("switch", { name: "Keep this account on this device" });
+    expect(control.querySelector(".fb-settings-chevron")).toBeNull();
+    expect(control.querySelector(".fb-switch-track")).toBeTruthy();
+    expect(control.lastElementChild?.className).toContain("fb-switch-track");
+  });
+
   it("exposes administrator setup only after caller eligibility resolves true", async () => {
     let resolve!: (value: unknown) => void;
     mockBootstrapStatus.mockReturnValue(new Promise((done) => { resolve = done; }));

@@ -20,13 +20,25 @@ import {
   UserRound,
   UserRoundX,
   Users,
+  type LucideIcon,
 } from "lucide-react";
-import type { SettingsSearchResult } from "../components/settings";
+import type { SettingIconTone, SettingsSearchResult } from "../components/settings";
+import {
+  destinationFor,
+  SETTINGS_PLACEMENT,
+  settingsSectionFor,
+  type SettingsSection,
+} from "./destinations";
 
 /**
  * Local settings search index (packet matrices/settings_search_index.csv).
- * Entirely static: no network, no storage reads. `description` carries the
- * group path hint shown under each search result.
+ *
+ * The titles, routes and aliases are NOT written here: every entry is generated
+ * from the navigation catalogue (`services/destinations.ts`), so Settings search
+ * cannot advertise a destination the catalogue does not know or disagree with it
+ * about where a row goes. This file adds only presentation (icon, group path).
+ *
+ * Entirely static: no network, no storage reads.
  */
 export interface SettingsIndexEntry extends SettingsSearchResult {
   /** Lowercase alias terms; never rendered, only matched. */
@@ -34,264 +46,95 @@ export interface SettingsIndexEntry extends SettingsSearchResult {
   group: string;
 }
 
+type SectionLabel = Readonly<{ group: string; description: string }>;
+
+const SECTION_LABEL: Record<SettingsSection, SectionLabel> = {
+  account: { group: "Account", description: "Account" },
+  preferences: { group: "Preferences", description: "Preferences" },
+  intelligence: { group: "Intelligence", description: "Intelligence" },
+  privacy: { group: "Privacy", description: "Privacy" },
+  more: { group: "More", description: "More" },
+  advanced: { group: "Advanced", description: "More · Advanced" },
+  troubleshooting: { group: "Advanced", description: "More · Advanced" },
+  legal: { group: "Legal", description: "More · Legal" },
+  helpAbout: { group: "Help & about", description: "More · Help & about" },
+};
+
+/**
+ * Destinations that are not Settings rows but are still worth finding from
+ * Settings search — the leaf screens inside a row, plus safety destinations
+ * that live under Privacy & safety.
+ */
+const SEARCH_ONLY: readonly { id: string; section: SettingsSection; description?: string }[] = [
+  { id: "blocked-accounts", section: "privacy", description: "Privacy · Safety" },
+  { id: "safety-reports", section: "privacy", description: "Privacy · Safety" },
+  { id: "appeals", section: "privacy", description: "Privacy · Safety" },
+  { id: "downloaded-models", section: "intelligence", description: "Local tools" },
+  { id: "chat-models", section: "intelligence", description: "Optional AI Chat" },
+  { id: "connections", section: "intelligence", description: "Optional AI Chat" },
+  { id: "ai-privacy", section: "intelligence", description: "Optional AI Chat" },
+];
+
+type Presentation = Readonly<{
+  icon: LucideIcon;
+  iconTone: SettingIconTone;
+  description?: string;
+}>;
+
+/** Icon and tone only. Never a title, route or alias. */
+const PRESENTATION: Record<string, Presentation> = {
+  "recovered-items": { icon: RotateCcw, iconTone: "success" },
+  account: { icon: UserRound, iconTone: "account" },
+  devices: { icon: MonitorSmartphone, iconTone: "teal" },
+  backup: { icon: CloudUpload, iconTone: "blue" },
+  "chat-preferences": { icon: MessageSquare, iconTone: "neutral" },
+  appearance: { icon: Palette, iconTone: "appearance" },
+  accessibility: { icon: Accessibility, iconTone: "accessibility" },
+  "feed-layout": { icon: LayoutGrid, iconTone: "teal" },
+  notifications: { icon: Bell, iconTone: "notifications" },
+  "local-intelligence": { icon: Cpu, iconTone: "ai" },
+  "downloaded-models": { icon: Cpu, iconTone: "ai" },
+  ai: { icon: Sparkles, iconTone: "ai" },
+  "chat-models": { icon: Sparkles, iconTone: "ai" },
+  connections: { icon: KeyRound, iconTone: "ai" },
+  "ai-privacy": { icon: ShieldCheck, iconTone: "privacy" },
+  privacy: { icon: ShieldCheck, iconTone: "privacy" },
+  "blocked-accounts": { icon: UserRoundX, iconTone: "privacy" },
+  "safety-reports": { icon: Flag, iconTone: "privacy" },
+  appeals: { icon: Scale, iconTone: "privacy" },
+  feedback: { icon: MessageSquare, iconTone: "neutral" },
+  media: { icon: Image, iconTone: "media" },
+  diagnostics: { icon: Activity, iconTone: "privacy" },
+  terms: { icon: Scale, iconTone: "about" },
+  "privacy-policy": { icon: ShieldCheck, iconTone: "privacy" },
+  "community-guidelines": { icon: Users, iconTone: "help" },
+  help: { icon: CircleHelp, iconTone: "help" },
+  replay: { icon: RotateCcw, iconTone: "help" },
+  about: { icon: Info, iconTone: "about" },
+};
+
+function entry(id: string, section: SettingsSection, description?: string): SettingsIndexEntry | null {
+  const destination = destinationFor(id);
+  if (!destination) return null;
+  const presentation = PRESENTATION[id];
+  if (!presentation) return null;
+  return {
+    id: destination.id,
+    title: destination.title,
+    keywords: destination.keywords.join(" "),
+    group: SECTION_LABEL[section].group,
+    route: destination.route,
+    description: description ?? presentation.description ?? SECTION_LABEL[section].description,
+    icon: presentation.icon,
+    iconTone: presentation.iconTone,
+  };
+}
+
 export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
-  {
-    id: "account",
-    title: "Account & profile",
-    keywords: "profile username email phone avatar manage",
-    group: "Account",
-    route: "/settings/account",
-    description: "Account",
-    icon: UserRound,
-    iconTone: "account",
-  },
-  {
-    id: "devices",
-    title: "Devices",
-    keywords: "device phone tablet browser laptop installation sign out remove rename",
-    group: "Account",
-    route: "/settings/devices",
-    description: "Account",
-    icon: MonitorSmartphone,
-    iconTone: "teal",
-  },
-  {
-    id: "backup",
-    title: "Chat backup",
-    keywords: "backup restore google drive conversations save device transfer",
-    group: "Account",
-    route: "/settings/backup",
-    description: "Account",
-    icon: CloudUpload,
-    iconTone: "blue",
-  },
-  {
-    id: "appearance",
-    title: "Appearance",
-    keywords: "theme dark amoled accent color personalization display",
-    group: "Preferences",
-    route: "/settings/appearance",
-    description: "Preferences",
-    icon: Palette,
-    iconTone: "appearance",
-  },
-  {
-    id: "accessibility",
-    title: "Accessibility",
-    keywords: "font text size motion reduce animation large",
-    group: "Preferences",
-    route: "/settings/accessibility",
-    description: "Preferences",
-    icon: Accessibility,
-    iconTone: "accessibility",
-  },
-  {
-    id: "feed-layout",
-    title: "Feed layout",
-    keywords: "feed layout masonry grid columns photos home auto compact list",
-    group: "Preferences",
-    route: "/settings/feed-layout",
-    description: "Preferences",
-    icon: LayoutGrid,
-    iconTone: "teal",
-  },
-  {
-    id: "media",
-    title: "Media & uploads",
-    keywords: "photo image quality data storage upload high",
-    group: "Advanced",
-    route: "/settings/media",
-    description: "More · Advanced",
-    icon: Image,
-    iconTone: "media",
-  },
-  {
-    id: "notifications",
-    title: "Notification preferences",
-    keywords: "notifications push comment mention like status report bell alert",
-    group: "Preferences",
-    route: "/settings/notifications",
-    description: "Preferences",
-    icon: Bell,
-    iconTone: "notifications",
-  },
-  {
-    id: "ai",
-    title: "Optional AI Chat",
-    keywords: "ai & models model cloud chat providers",
-    group: "Intelligence",
-    route: "/settings/ai",
-    description: "Intelligence",
-    icon: Sparkles,
-    iconTone: "ai",
-  },
-  {
-    id: "local-intelligence",
-    title: "Local tools",
-    keywords: "local intelligence on device offline phone search helper needle downloaded models smart search",
-    group: "Intelligence",
-    route: "/settings/local-intelligence",
-    description: "Intelligence",
-    icon: Cpu,
-    iconTone: "ai",
-  },
-  {
-    id: "downloaded-models",
-    title: "Downloaded models",
-    keywords: "downloaded models installed download storage verify repair remove local",
-    group: "Intelligence",
-    route: "/settings/local-intelligence/downloads",
-    description: "Local tools",
-    icon: Cpu,
-    iconTone: "ai",
-  },
-  {
-    id: "chat-models",
-    title: "Chat models",
-    keywords: "chat models default favorite last used provider model",
-    group: "Intelligence",
-    route: "/settings/ai/chat-models",
-    description: "Optional AI Chat",
-    icon: Sparkles,
-    iconTone: "ai",
-  },
-  {
-    id: "connections",
-    title: "Providers",
-    keywords: "providers cloud connections openrouter api key provider openai google mistral groq",
-    group: "Intelligence",
-    route: "/settings/ai/connections",
-    description: "Optional AI Chat",
-    icon: KeyRound,
-    iconTone: "ai",
-  },
-  {
-    id: "privacy",
-    title: "Privacy & permissions",
-    keywords: "privacy location permission sharing",
-    group: "Privacy",
-    route: "/settings/privacy",
-    description: "Privacy",
-    icon: ShieldCheck,
-    iconTone: "privacy",
-  },
-  {
-    id: "diagnostics",
-    title: "Diagnostics",
-    keywords: "debug build logs export support",
-    group: "Advanced",
-    route: "/settings/diagnostics",
-    description: "More · Advanced",
-    icon: Activity,
-    iconTone: "privacy",
-  },
-  {
-    id: "blocked-accounts",
-    title: "Blocked accounts",
-    keywords: "block unblock accounts people safety",
-    group: "Privacy",
-    route: "/settings/privacy/blocked",
-    description: "Privacy · Safety",
-    icon: UserRoundX,
-    iconTone: "privacy",
-  },
-  {
-    id: "safety-reports",
-    title: "Your safety reports",
-    keywords: "report abuse harassment sent receipts status",
-    group: "Privacy",
-    route: "/settings/privacy/reports",
-    description: "Privacy · Safety",
-    icon: Flag,
-    iconTone: "privacy",
-  },
-  {
-    id: "recovered-items",
-    title: "Recovered items",
-    keywords: "recovery returned return rating ratings reputation standing helper",
-    group: "Account",
-    route: "/settings/returns",
-    description: "Account",
-    icon: RotateCcw,
-    iconTone: "success",
-  },
-  {
-    id: "appeals", title: "Your appeals", keywords: "appeal decision warning restriction review outcome moderation",
-    group: "Privacy", route: "/settings/privacy/appeals", description: "Privacy · Safety", icon: Scale, iconTone: "privacy",
-  },
-  {
-    id: "feedback",
-    title: "Send feedback",
-    keywords: "feedback bug suggestion usability other support",
-    group: "More",
-    route: "/settings/feedback",
-    description: "More",
-    icon: MessageSquare,
-    iconTone: "neutral",
-  },
-  {
-    id: "help",
-    title: "Help & guide",
-    keywords: "faq tutorial onboarding lost found search recover",
-    group: "Help & about",
-    route: "/settings/help",
-    description: "More · Help & about",
-    icon: CircleHelp,
-    iconTone: "help",
-  },
-  {
-    id: "replay",
-    title: "Replay introduction",
-    keywords: "replay introduction tutorial walkthrough guide start",
-    group: "Help & about",
-    route: "/onboarding?replay=1",
-    description: "More · Help & about",
-    icon: RotateCcw,
-    iconTone: "help",
-  },
-  {
-    id: "about",
-    title: "About Norfold",
-    keywords: "version build application",
-    group: "Help & about",
-    route: "/settings/about",
-    description: "More · Help & about",
-    icon: Info,
-    iconTone: "about",
-  },
-  // The three consumer documents. They live in the collapsed "Legal" group,
-  // so without these rows a reader who types "terms" or "guidelines" into
-  // Settings search finds nothing at all.
-  {
-    id: "terms",
-    title: "Terms of use",
-    keywords: "terms conditions rules of use legal agreement",
-    group: "Legal",
-    route: "/settings/terms",
-    description: "More · Legal",
-    icon: Scale,
-    iconTone: "about",
-  },
-  {
-    id: "privacy-policy",
-    title: "Privacy policy",
-    keywords: "privacy policy data personal information legal",
-    group: "Legal",
-    route: "/settings/privacy-policy",
-    description: "More · Legal",
-    icon: ShieldCheck,
-    iconTone: "privacy",
-  },
-  {
-    id: "community-guidelines",
-    title: "Community guidelines",
-    keywords: "community guidelines rules conduct behaviour legal",
-    group: "Legal",
-    route: "/settings/community-guidelines",
-    description: "More · Legal",
-    icon: Users,
-    iconTone: "help",
-  },
+  ...SETTINGS_PLACEMENT.map(({ id, section }) => entry(id, section, PRESENTATION[id]?.description))
+    .filter((value): value is SettingsIndexEntry => value !== null),
+  ...SEARCH_ONLY.map(({ id, section, description }) => entry(id, section, description))
+    .filter((value): value is SettingsIndexEntry => value !== null),
 ];
 
 /**
@@ -305,4 +148,9 @@ export function searchSettings(query: string): SettingsSearchResult[] {
     const haystack = `${entry.title} ${entry.keywords} ${entry.group}`.toLowerCase();
     return tokens.every((token) => haystack.includes(token));
   }).map(({ keywords: _keywords, group: _group, ...result }) => result);
+}
+
+/** Whether a destination id is a Settings row (as opposed to a search-only leaf). */
+export function isSettingsRow(id: string): boolean {
+  return settingsSectionFor(id) !== null;
 }

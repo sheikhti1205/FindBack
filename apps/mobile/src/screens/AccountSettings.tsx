@@ -263,8 +263,9 @@ export function AccountSettings() {
 
       <SettingsGroup title="Delete account">
         <p className="fb-account-notice">
-          Permanently deletes your account, its reports and photos, and its
-          data on our servers. This cannot be undone.
+          Deletes your account, reports and photos. Limited safety records remain
+          as described in Privacy. Other people's existing copies cannot be
+          erased.
         </p>
         {!deleteArmed ? (
           <Button variant="error" onClick={() => { setDeleteArmed(true); setDeleteError(null); }}>

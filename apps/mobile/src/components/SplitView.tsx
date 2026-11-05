@@ -19,6 +19,17 @@ export type SplitPaneState = { wide: boolean; collapsed: boolean; toggle: () => 
 
 /** Width of the draggable divider between the panes, in pixels. */
 const DIVIDER_WIDTH = 7;
+/** Narrowest detail pane that can still hold a real form at a readable width. */
+export const DETAIL_PANE_MIN_PX = 320;
+/** The fixed two-column layout's list minimum, in rem (the CSS column). */
+const FIXED_LIST_MIN_REM = 16;
+
+/** Root font size in px; 16 when the environment does not report one. */
+function rootFontPx(): number {
+  if (typeof getComputedStyle !== "function") return 16;
+  const size = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return Number.isFinite(size) && size > 0 ? size : 16;
+}
 
 /** Retains pane state/drafts while compact layouts expose only one pane.
  * Data, routing and selection remain with the feature owner.
@@ -36,7 +47,14 @@ export function SplitView({ selected, list, detail, pane }: {
   const listPane = useRef<HTMLDivElement>(null);
   const detailPane = useRef<HTMLDivElement>(null);
   const width = useContentWidth(container, useViewportWidth());
-  const wide = width >= MEDIUM_MAX_PX;
+  // Viable widths for BOTH panes, not just a wide viewport: the list column is
+  // sized in rem, so it grows with the reader's text scale, and a constrained
+  // parent can leave no usable detail pane even on a wide window. In either case
+  // the split falls back to one routed pane, which keeps selection, drafts and
+  // the back stack because data ownership never moves.
+  const listMin = pane ? pane.minWidth : FIXED_LIST_MIN_REM * rootFontPx();
+  const detailMin = width - listMin - (pane ? DIVIDER_WIDTH : 0);
+  const wide = width >= MEDIUM_MAX_PX && detailMin >= DETAIL_PANE_MIN_PX;
   const listHidden = !wide && selected;
   const detailHidden = !wide && !selected;
   const [pref, setPref] = useState<PanePreference>(() => readPanePreference(pane));

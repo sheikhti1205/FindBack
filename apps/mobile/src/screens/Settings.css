@@ -5,10 +5,14 @@
 .fb-settings-layout .fb-settings-root { max-width:none; padding-inline:16px; }
 .fb-settings-root .fb-settings-sticky { margin-inline:-16px; padding-inline:16px; }
 .fb-settings-root .fb-settings-page-content { gap:.75rem; }
-.fb-settings-root .fb-settings-row { display:grid; grid-template-columns:28px minmax(0,1fr) 18px; column-gap:10px; row-gap:2px; min-height:48px; padding-block:.5rem; }
+.fb-settings-root .fb-settings-row { display:grid; grid-template-columns:28px minmax(0,1fr) auto; column-gap:10px; row-gap:2px; min-height:48px; padding-block:.5rem; }
 .fb-settings-root .fb-settings-row-copy { grid-column:2; }
 .fb-settings-root .fb-settings-row-value { grid-column:2; grid-row:2; max-width:none; text-align:start; }
 .fb-settings-root .fb-settings-chevron { grid-column:3; grid-row:1 / span 2; }
+/* A switch is its own trailing control, not a navigation chevron: the 44px track
+   must keep its width and sit at the row's end. The shared 18px chevron column
+   used to clip it. */
+.fb-settings-root .fb-switch-track { grid-column:3; grid-row:1 / span 2; justify-self:end; }
 .fb-settings-root .fb-settings-row[aria-current="page"] { background:var(--fb-surface-container); border-radius:8px; }
 .fb-settings-placeholder { padding:2rem; color:var(--fb-on-surface-variant); }
 .fb-settings-placeholder h2 { font-size:1.125rem; font-weight:600; color:var(--fb-on-surface); }
