@@ -22,14 +22,12 @@ vi.mock("../services/messaging/runtime", () => ({ refreshMessaging: mocks.refres
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: mocks.accountId }, authSessionId: mocks.authSessionId }) }));
 
 import { BackupSettings, describeBackupTime } from "./BackupSettings";
-import { DriveAuthError } from "../services/messaging/driveAuth";
-import { ApiError } from "../services/session";
 
 const NOW = 1_760_000_000_000;
-const UP_TO_DATE = { kind: "up-to-date" as const, lastUploadAt: NOW };
+const UP_TO_DATE = { kind: "up-to-date" as const, lastUploadAt: NOW, enabled: true };
 const COMMITTED = { kind: "committed" as const, lastUploadAt: NOW, snapshotRevision: 1 };
-const OFF = { kind: "off" as const };
-const WAITING = { kind: "waiting" as const, nextAttemptAt: NOW };
+const OFF = { kind: "off" as const, enabled: false };
+const WAITING = { kind: "waiting" as const, nextAttemptAt: NOW, enabled: true };
 
 afterEach(cleanup);
 
@@ -78,7 +76,7 @@ describe("the backup settings surface", () => {
   });
 
   it("says plainly when the build cannot connect, without a dead button", () => {
-    mocks.backup.status.mockReturnValue({ kind: "unavailable", reason: "native" });
+    mocks.backup.status.mockReturnValue({ kind: "unavailable", reason: "native", enabled: false });
     renderScreen();
     expect(screen.getByText("Not available")).toBeTruthy();
     expect(screen.getByText(/can't reach Google Drive/)).toBeTruthy();
@@ -103,18 +101,18 @@ describe("the backup settings surface", () => {
   });
 
   it("shows the human reason when Google access is declined", async () => {
-    mocks.backup.connect.mockRejectedValueOnce(new DriveAuthError("denied"));
+    mocks.backup.connect.mockResolvedValueOnce({ kind: "needs-connection", enabled: false });
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     expect((await screen.findByTestId("backup-error")).textContent)
-      .toBe("Google Drive access was not granted.");
+      .toBe("Reconnect Google Drive, then try again.");
     expect(screen.queryByTestId("backup-notice")).toBeNull();
   });
 
   it("updates a mounted screen when a background pass loses its connection", async () => {
     mocks.backup.status.mockReturnValue(UP_TO_DATE); renderScreen();
     act(() => {
-      mocks.backup.status.mockReturnValue({ kind: "needs-connection" });
+      mocks.backup.status.mockReturnValue({ kind: "needs-connection", enabled: true });
       for (const listener of mocks.listeners) listener();
     });
     expect(await screen.findByRole("button", { name: "Reconnect Google Drive" })).toBeTruthy();
@@ -137,12 +135,12 @@ describe("the backup settings surface", () => {
   });
 
   it("shows a removed installation's message instead of a retry loop", async () => {
-    mocks.backup.connect.mockRejectedValueOnce(
-      new ApiError("This device was removed from your account. Sign in again to use Chat.", 403));
+    mocks.backup.connect.mockResolvedValueOnce({ kind: "failed", reason: "account" });
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     expect((await screen.findByTestId("backup-error")).textContent)
-      .toBe("This device was removed from your account. Sign in again to use Chat.");
+      .toBe("This device can't use the backup key. Sign in again; if this device was removed, add it again.");
+    expect(screen.queryByText(/Check your connection/)).toBeNull();
   });
 
   it("backs up on demand and restores into chat", async () => {
@@ -186,8 +184,29 @@ describe("the backup settings surface", () => {
     expect(mocks.rotate).not.toHaveBeenCalled();
   });
 
+  it("pauses instead of offering controls that cannot work on an unreadable backup", () => {
+    mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "integrity", enabled: true });
+    renderScreen();
+    expect(screen.getByText(/Backup is paused so the copy already in your Drive stays intact/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Back up now" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restore from Drive" })).toBeNull();
+    // Disabling and disconnecting must stay possible.
+    expect(screen.getByRole("switch", { name: "Back up automatically" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Disconnect Google Drive…" })).toBeTruthy();
+  });
+
+  it("keeps the switch on when the opt-out could not be saved", () => {
+    // The durable policy is still enabled after a denied write: claiming "off"
+    // here would hide the upload that resumes on the next launch.
+    mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "storage", enabled: true });
+    renderScreen();
+    const toggle = screen.getByRole("switch", { name: "Back up automatically" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText(/Check available storage/)).toBeTruthy();
+  });
+
   it("keeps the switch on when reconnect is required", () => {
-    mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "auth" });
+    mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "auth", enabled: true });
     renderScreen();
     expect(screen.getByRole("button", { name: "Reconnect Google Drive" })).toBeTruthy();
     // Nothing is uploading right now, so no switch or restore is offered.

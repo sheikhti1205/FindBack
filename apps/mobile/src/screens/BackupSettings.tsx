@@ -3,8 +3,6 @@ import { Button } from "../components/Button";
 import { announce } from "../components/LiveRegion";
 import { PreferenceSwitchRow, SettingsGroup, SettingsPage, StatusPill } from "../components/settings";
 import { useAuth } from "../auth";
-import { ApiError } from "../services/session";
-import { DriveAuthError } from "../services/messaging/driveAuth";
 import type { BackupOperationResult, BackupStatus } from "../services/messaging/backupService";
 import { driveBackup } from "../services/messaging/backupRuntime";
 import { refreshMessaging } from "../services/messaging/runtime";
@@ -12,9 +10,8 @@ import { friendlyError } from "../utils/friendlyErrors";
 
 /** One human sentence for a backup action; never raw transport or provider text. */
 function backupError(err: unknown): string {
+  // Owner actions return typed outcomes; only a local failure can still throw.
   if (err instanceof BackupActionError) return err.message;
-  if (err instanceof DriveAuthError) return err.message;
-  if (err instanceof ApiError && err.message) return err.message;
   return friendlyError(err).message;
 }
 class BackupActionError extends Error {}
@@ -26,7 +23,11 @@ function requireOutcome(result: BackupOperationResult, kind: "committed" | "rest
     : "Backup didn't start. Wait for Chat to connect, then try again.");
   if (result.kind === "failed") throw new BackupActionError(result.reason === "integrity"
     ? "This backup couldn't be opened safely. Your chats and existing backup have not been replaced."
-    : result.reason === "storage" ? "Backup didn't finish. Check available storage, then try again."
+    : result.reason === "snapshot"
+      ? "Norfold couldn't read your chats on this device. Your existing backup was left as it was."
+      : result.reason === "account"
+        ? "This device can't use the backup key. Sign in again; if this device was removed, add it again."
+      : result.reason === "storage" ? "Backup didn't finish. Check available storage, then try again."
       : result.reason === "throttled" ? "Google Drive asked us to wait. Try again later."
         : "Backup didn't finish. Check your connection, then try again.");
   throw new BackupActionError("This action didn't finish. Try again.");
@@ -70,6 +71,9 @@ function statusCopy(status: BackupStatus): { title: string; description: string;
       return status.lastError === "auth"
         ? { title: "Google Drive backup", label: "Needs reconnecting", tone: "warning",
           description: "Reconnect Google Drive to keep backing up." }
+        : status.lastError === "account"
+          ? { title: "Google Drive backup", label: "Sign in again", tone: "warning",
+            description: "This device can't use the backup key. Sign in again; if this device was removed, add it again." }
         : status.lastError === "throttled"
           ? { title: "Google Drive backup", label: "Waiting on Google Drive", tone: "warning",
             description: "Google Drive asked us to slow down. We'll try again automatically." }
@@ -170,16 +174,22 @@ export function BackupSettings() {
 
   const copy = statusCopy(status);
   const available = status.kind !== "unavailable";
-  // Usable = connected and nothing needs a fresh consent. A Google refusal
-  // hides restore until the user reconnects, because it cannot succeed without
-  // a token. Key replacement is deliberately absent: it is uncontained scope.
-  const enabled = status.kind === "waiting" || status.kind === "up-to-date"
-    || status.kind === "running"
-    || (status.kind === "attention" && status.lastError !== "auth");
-  const connected = enabled;
+  // Key replacement is deliberately absent: it is uncontained scope.
+  // The switch shows the durable opt-in, never an inference from an error kind.
+  const optIn = status.enabled;
   const running = status.kind === "running" || status.kind === "stopping";
+  // A Google refusal or a sign-in problem hides the pass controls, because they
+  // cannot succeed without a fresh consent or session. Integrity needs the
+  // acceptance-gated repair protocol, so its upload/restore would be dead
+  // controls; the switch and Disconnect stay available there.
+  const actionable = optIn && (status.kind === "waiting" || status.kind === "up-to-date"
+    || running
+    || (status.kind === "attention" && status.lastError !== "auth"
+      && status.lastError !== "account"));
+  const repairNeeded = status.kind === "attention" && status.lastError === "integrity";
+  const canTransfer = actionable && !repairNeeded;
   const needsConnect = status.kind === "off" || status.kind === "needs-connection"
-    || (status.kind === "attention" && status.lastError === "auth");
+    || (status.kind === "attention" && (status.lastError === "auth" || status.lastError === "account"));
 
   return (
     <SettingsPage
@@ -221,23 +231,32 @@ export function BackupSettings() {
           </div>
         ) : null}
 
-        {available && enabled ? (
+        {available && repairNeeded ? (
+          <p className="px-3 pb-4 text-sm text-on-surface-variant">
+            Backup is paused so the copy already in your Drive stays intact. Nothing has been
+            deleted, and Norfold won't rebuild or replace it on its own.
+          </p>
+        ) : null}
+
+        {available && actionable ? (
           <div className="flex flex-wrap items-center gap-2 px-3 pb-4">
-            <Button variant="outline" loading={busy === "upload"} disabled={running || busy !== null}
-              onClick={() => void upload()}>
-              Back up now
-            </Button>
+            {canTransfer ? (
+              <Button variant="outline" loading={busy === "upload"} disabled={running || busy !== null}
+                onClick={() => void upload()}>
+                Back up now
+              </Button>
+            ) : null}
             <Button variant="text" disabled={busy !== null} onClick={() => { setConfirm("disconnect"); setError(null); }}>
               Disconnect Google Drive…
             </Button>
           </div>
         ) : null}
 
-        {available && connected ? (
+        {available && actionable ? (
           <PreferenceSwitchRow
             title="Back up automatically"
             description="Batches changes every few minutes while Norfold is open."
-            checked={enabled}
+            checked={optIn}
             disabled={busy !== null}
             onChange={(next) => {
               if (next) { void connect(); return; }
@@ -268,7 +287,7 @@ export function BackupSettings() {
         ) : null}
       </SettingsGroup>
 
-      {available && connected ? (
+      {available && canTransfer ? (
         <SettingsGroup
           title="Restore"
           description="On a new device, restore adds what Drive has to what is already here. Deleted and unsent messages stay deleted."

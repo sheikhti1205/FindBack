@@ -89,6 +89,7 @@ export type BackupDriveErrorCode =
   | "backup: invalid manifest"
   | "backup: account mismatch"
   | "backup: key generation changed"
+  | "backup: empty snapshot"
   | "backup: unsupported version"
   | "backup: chunk missing"
   | "backup: chunk mismatch";
@@ -364,6 +365,17 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
       manifestFile = previous!.file;
     }
   }
+  // An empty snapshot is not evidence that history is gone: a failed database
+  // open, a wiped local store and a platform read error all look identical here.
+  // Unless the snapshot itself records the deletion (clears, tombstones or
+  // per-user deletions), publishing it would replace a restorable backup with an
+  // empty manifest and then compact every chunk away. Refuse and keep both.
+  const empty = snapshot.messages.length === 0
+    && snapshot.clears.length === 0 && snapshot.tombstones.length === 0
+    && snapshot.deletedForMe.length === 0;
+  const storedHistory = (previous?.manifest.conversations.length ?? 0) > 0
+    || files.some((file) => file.name !== manifestName(scope.accountId));
+  if (empty && storedHistory) throw fail("backup: empty snapshot");
   const byConversation = new Map<string, SnapshotMessage[]>();
   for (const message of snapshot.messages) {
     const list = byConversation.get(message.conversationId) ?? [];

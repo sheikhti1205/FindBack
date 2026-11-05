@@ -7,6 +7,7 @@ import { importBackupKey } from "./backupCrypto";
 import { DriveStoreError } from "./driveStore";
 import { DriveAuthError, type DriveAccess } from "./driveAuth";
 import type { BackupKeyMaterial } from "./backupKey";
+import { ApiError } from "../session";
 import {
   BACKUP_COMPACT_MS,
   BACKUP_MAX_DELAY_MS,
@@ -170,6 +171,56 @@ describe("operation ownership", () => {
     expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "integrity" });
   });
 
+  it("keeps the committed backup when this device reports no history", async () => {
+    const run = harness(); await run.backup.connect();
+    const manifest = (await run.store.list()).find(file => file.name.includes("manifest"))!;
+    const before = new Uint8Array(await run.store.read(manifest.id)), names = run.store.names();
+
+    // A failed local database open must not erase the only restorable copy.
+    run.deps.snapshot = async () => ({ conversations: [], messages: [],
+      tombstones: [], deletedForMe: [], clears: [] });
+    run.backup.markDirty();
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "failed", reason: "snapshot" });
+    expect(new Uint8Array(await run.store.read(manifest.id))).toEqual(before);
+    expect(run.store.names()).toEqual(names);
+    const state = parseBackupState(run.storage.raw());
+    expect(state.dirtyRevision).toBeGreaterThan(state.uploadedRevision);
+    expect(state.lastError).toBe("snapshot");
+    expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "snapshot" });
+  });
+
+  it("names a removed installation instead of asking for a connection retry", async () => {
+    const run = harness(); await run.backup.connect();
+    run.deps.key = async () => {
+      throw new ApiError("This device was removed from your account. Sign in again to use Chat.", 403, "42501");
+    };
+    run.backup.markDirty();
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "failed", reason: "account" });
+    expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "account" });
+    expect(parseBackupState(run.storage.raw()).dirtyRevision)
+      .toBeGreaterThan(parseBackupState(run.storage.raw()).uploadedRevision);
+  });
+
+  it("does not claim an opt-out that the policy store refused", async () => {
+    const run = harness(); await run.backup.connect();
+    const setItem = run.storage.setItem;
+    run.storage.setItem = () => { throw new Error("quota"); };
+    run.backup.disable();
+    // The durable policy still enables backup, so the surface must not say off.
+    expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "storage" });
+    expect(run.backup.status().enabled).toBe(true);
+    expect(parseBackupState(run.storage.raw()).enabled).toBe(true);
+    run.storage.setItem = setItem;
+  });
+
+  it("reads a disabled policy as off even with a stale storage warning", async () => {
+    const run = harness(); await run.backup.connect();
+    run.backup.disable();
+    run.storage.setItem = () => { throw new Error("quota"); };
+    run.backup.markDirty();
+    expect(run.backup.status()).toMatchObject({ kind: "off", enabled: false });
+  });
+
   it("records the commit even when post-publication cleanup fails", async () => {
     const run = harness(); await run.backup.connect();
     run.store.remove = async () => { throw new Error("cleanup refused"); };
@@ -231,7 +282,7 @@ describe("operation ownership", () => {
   it("migrates an ambiguous global policy to disabled without transferring its success", () => {
     const run = harness();
     run.storage.setItem(BACKUP_STATE_KEY, JSON.stringify({ enabled: true, prompted: true, dirty: false, lastUploadAt: NOW }));
-    expect(new DriveBackup(run.deps).status()).toEqual({ kind: "off" });
+    expect(new DriveBackup(run.deps).status()).toEqual({ kind: "off", enabled: false });
   });
 
   it("treats a restart after committed upload as uncertain changed history", async () => {
@@ -313,7 +364,7 @@ describe("operation ownership", () => {
     consent.resolve({ token: "synthetic-grant-token", expiresAt: NOW + 3_600_000 });
     await pending;
     expect(run.store.names()).toEqual([]);
-    expect(run.backup.status()).toEqual({ kind: "off" });
+    expect(run.backup.status()).toEqual({ kind: "off", enabled: false });
     expect(parseBackupState(run.storage.raw()).enabled).toBe(false);
   });
 
@@ -354,7 +405,7 @@ describe("operation ownership", () => {
   it("does not inherit another account's opt-in policy", async () => {
     const run = harness(); await run.backup.connect();
     const second = harness({ storage: run.storage, accountId: B });
-    expect(second.backup.status()).toEqual({ kind: "off" });
+    expect(second.backup.status()).toEqual({ kind: "off", enabled: false });
   });
 
   it("preserves a readable committed snapshot after a cancelled changed pass", async () => {
@@ -383,7 +434,7 @@ describe("when backup may run", () => {
 
   it("does nothing until the user enables it", async () => {
     const { backup, store } = harness();
-    expect(backup.status()).toEqual({ kind: "off" });
+    expect(backup.status()).toEqual({ kind: "off", enabled: false });
     backup.markDirty();
     await expect(backup.uploadNow()).resolves.toEqual({ kind: "skipped", reason: "off" });
     expect(store.names()).toEqual([]);
@@ -432,9 +483,9 @@ describe("when backup may run", () => {
 
   it("reports an unavailable platform instead of a fake connection", () => {
     const native = harness({ available: false, reason: "native" });
-    expect(native.backup.status()).toEqual({ kind: "unavailable", reason: "native" });
+    expect(native.backup.status()).toEqual({ kind: "unavailable", reason: "native", enabled: false });
     const unconfigured = harness({ available: false, reason: "unconfigured" });
-    expect(unconfigured.backup.status()).toEqual({ kind: "unavailable", reason: "unconfigured" });
+    expect(unconfigured.backup.status()).toEqual({ kind: "unavailable", reason: "unconfigured", enabled: false });
   });
 
   it("asks for a connection instead of uploading when the token is gone", async () => {

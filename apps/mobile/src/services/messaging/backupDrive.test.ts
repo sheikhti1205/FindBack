@@ -292,6 +292,43 @@ describe("an encrypted Drive backup", () => {
     expect((await download(store)).snapshot.messages).toHaveLength(500);
   });
 
+  it("refuses to publish an empty snapshot over a backup that still has history", async () => {
+    const store = memoryStore();
+    const snapshot = snapshotOf([{ chat: CHAT, count: 3, base: 0x1000 }]);
+    await upload(store, snapshot);
+    const names = store.names(), manifest = store.raw(MANIFEST);
+
+    // A failed local read, a wiped store and an empty account look identical
+    // here, so the pass refuses instead of compacting the history away.
+    await expect(upload(store, snapshotOf([]))).rejects.toThrow("backup: empty snapshot");
+    expect(store.names()).toEqual(names);
+    expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(manifest));
+    expect((await download(store)).snapshot.messages).toEqual(snapshot.messages);
+  });
+
+  it("refuses an empty rebuild once chunks exist under the account", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    const manifestFile = (await store.list()).find((file) => file.name === MANIFEST)!;
+    await store.write({ id: manifestFile.id, name: MANIFEST,
+      bytes: new TextEncoder().encode("broken").buffer as ArrayBuffer });
+    const names = store.names();
+
+    await expect(upload(store, snapshotOf([]), { repair: true })).rejects.toThrow("backup: empty snapshot");
+    expect(store.names()).toEqual(names);
+  });
+
+  it("still records a deletion the snapshot itself proves", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    const cleared = snapshotOf([{ chat: CHAT, count: 0, base: 0x1000 }], {
+      clears: [{ conversationId: CHAT, throughSequence: 2, clearedAt: 1_759_000_000_000 }],
+    });
+
+    const report = await upload(store, cleared);
+    expect(report).toMatchObject({ uploaded: 0, reused: 0, removed: 1, conversations: 0, messages: 0 });
+  });
+
   it("reports a missing chunk and a replaced chunk instead of returning partial history", async () => {
     const store = memoryStore();
     const snapshot = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);

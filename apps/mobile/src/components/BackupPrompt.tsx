@@ -33,6 +33,8 @@ export function BackupPrompt({ sequences }: { sequences: number }) {
       const result = await backup.connect();
       if (result.kind !== "committed") {
         setError(result.kind === "needs-connection" ? "Google Drive access was not granted."
+          : result.kind === "failed" && result.reason === "account"
+            ? "This device can't use the backup key. Sign in again, then try backup."
           : result.kind === "failed" && result.reason === "storage"
             ? "Backup didn't finish. Check available storage, then try again."
             : "Backup didn't finish. Check your connection and try again.");

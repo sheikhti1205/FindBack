@@ -14,6 +14,8 @@ import {
   type BackupManifest,
 } from "./backupDrive";
 import { importBackupKey, BackupCryptoError } from "./backupCrypto";
+import { ApiError } from "../session";
+import { DriveAuthError } from "./driveAuth";
 import type { BackupKeyMaterial } from "./backupKey";
 import { DriveRestStore, DriveStoreError } from "./driveStore";
 import type { DriveAccess, DriveAuthUnavailable } from "./driveAuth";
@@ -45,7 +47,7 @@ export interface BackupState {
   nextAttemptAt: number | null;
   failures: number;
   generation: string | null;
-  lastError: "auth" | "throttled" | "offline" | "integrity" | "storage" | "other" | null;
+  lastError: "auth" | "account" | "throttled" | "offline" | "integrity" | "snapshot" | "storage" | "other" | null;
 }
 
 export const EMPTY_BACKUP_STATE: BackupState = Object.freeze({
@@ -83,8 +85,8 @@ export function parseBackupState(raw: unknown): BackupState {
     lastUploadAt: time("lastUploadAt"), nextAttemptAt: time("nextAttemptAt"),
     failures,
     generation: typeof value.generation === "string" ? value.generation : null,
-    lastError: error === "auth" || error === "throttled" || error === "offline" || error === "other"
-      || error === "integrity" || error === "storage"
+    lastError: error === "auth" || error === "account" || error === "throttled" || error === "offline"
+      || error === "other" || error === "integrity" || error === "snapshot" || error === "storage"
       ? error : null,
   };
 }
@@ -110,7 +112,11 @@ type BackupReadiness =
   | { kind: "waiting"; nextAttemptAt: number }
   | { kind: "up-to-date"; lastUploadAt: number }
   | { kind: "attention"; lastError: NonNullable<BackupState["lastError"]> };
-export type BackupStatus = BackupReadiness & { lastUploadAt?: number };
+export type BackupStatus = BackupReadiness & {
+  lastUploadAt?: number;
+  /** The durable opt-in. The surface must never infer this from an error kind. */
+  enabled: boolean;
+};
 
 export interface BackupAuthPort {
   generation(): number;
@@ -135,7 +141,7 @@ export type BackupOperationResult =
   | { kind: "restored"; messages: number; manifest: BackupManifest }
   | { kind: "skipped"; reason: "off" | "not-ready" | "superseded" }
   | { kind: "needs-connection" }
-  | { kind: "failed"; reason: "offline" | "throttled" | "integrity" | "storage" | "other" };
+  | { kind: "failed"; reason: "offline" | "throttled" | "integrity" | "snapshot" | "storage" | "account" | "other" };
 
 export interface BackupDeps {
   auth: BackupAuthPort;
@@ -252,8 +258,9 @@ export class DriveBackup {
   status(): BackupStatus {
     const readiness = this.readiness();
     const lease = this.capture();
-    const lastUploadAt = lease ? this.state(lease.accountId).lastUploadAt : null;
-    return lastUploadAt === null ? readiness : { ...readiness, lastUploadAt };
+    const state = lease ? this.state(lease.accountId) : null;
+    return { ...readiness, enabled: state?.enabled ?? false,
+      ...(state?.lastUploadAt == null ? {} : { lastUploadAt: state.lastUploadAt }) };
   }
 
   private readiness(): BackupReadiness {
@@ -265,8 +272,10 @@ export class DriveBackup {
     if (this.operation) return this.current(this.operation)
       ? { kind: "running", operation: this.operation.kind } : { kind: "stopping" };
     const state = this.state(lease.accountId);
-    if (state.lastError === "storage") return { kind: "attention", lastError: "storage" };
+    // A disabled policy is off regardless of any stale warning: a storage error
+    // must never make a switch look enabled, nor resurrect the opt-in.
     if (!state.enabled) return { kind: "off" };
+    if (state.lastError === "storage") return { kind: "attention", lastError: "storage" };
     if (!this.deps.auth.current()) return { kind: "needs-connection" };
     if (state.lastError) return { kind: "attention", lastError: state.lastError };
     if (state.lastUploadAt !== null && state.dirtyRevision === state.uploadedRevision) {
@@ -470,10 +479,22 @@ export class DriveBackup {
       retryAfter = error.kind === "throttled" ? error.retryAfterMs : 0;
       lastError = error.kind === "throttled" ? "throttled"
         : error.kind === "unauthorized" ? "auth" : "offline";
-    } else if (error instanceof BackupCryptoError || error instanceof BackupDriveError) {
+    } else if (error instanceof BackupCryptoError) {
       lastError = "integrity";
+    } else if (error instanceof BackupDriveError) {
+      // An unreadable local history is not a broken backup: name it separately
+      // so the surface can say the existing backup was left untouched.
+      lastError = error.code === "backup: empty snapshot" ? "snapshot" : "integrity";
     } else if (error instanceof BackupPolicyUnavailable) {
       lastError = "storage";
+    } else if (error instanceof DriveAuthError) {
+      // A refused or unavailable Google consent cannot be fixed by retrying the
+      // pass; the user has to reconnect (or this build cannot consent at all).
+      lastError = "auth";
+    } else if (error instanceof ApiError) {
+      // The backup key is admission-gated. A removed/rebound installation or a
+      // signed-out session needs Norfold sign-in, not another connection retry.
+      lastError = error.status === 401 || error.status === 403 ? "account" : "other";
     }
     if (!this.persist(accountId, { failures, lastError,
       nextAttemptAt: this.now() + backoffDelayMs(failures, retryAfter, this.random) })) lastError = "storage";
@@ -493,9 +514,9 @@ export class DriveBackup {
       this.publish();
       return true;
     } catch {
-      // Keep uncertain changes retryable; neither an opt-in nor a clean receipt
-      // is accepted after a denied/quota/ignored policy write.
-      this.states.set(accountId, { ...previous, enabled: patch.enabled === false ? false : previous.enabled,
+      // Keep uncertain changes retryable; neither an opt-in, a disable nor a
+      // clean receipt is accepted after a denied/quota/ignored policy write.
+      this.states.set(accountId, { ...previous,
         dirtyRevision: Math.max(previous.dirtyRevision, next.dirtyRevision), lastError: "storage" });
       this.publish();
       return false;

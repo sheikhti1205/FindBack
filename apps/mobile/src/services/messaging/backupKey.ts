@@ -8,8 +8,11 @@ import { backupKeyHex } from "./backupCrypto";
  * The key never lives in Drive beside the ciphertext: it is admission-gated by
  * the same installation binding as Chat, so a new device recovers it after
  * enrollment and a removed or rebound installation cannot obtain it at all.
- * `generation` is part of every object's AAD, so rotation makes older ciphertext
- * unreadable by design and the caller must rebuild under the new key.
+ * `generation` is part of every object's AAD, so a rotation makes older
+ * ciphertext unreadable by design. Consumers therefore treat a generation change
+ * as a repair-needed state that preserves the old objects; rebuilding under a
+ * new generation requires the acceptance-gated rotation protocol, not an
+ * automatic replacement.
  */
 export interface BackupKeyMaterial {
   accountId: string;

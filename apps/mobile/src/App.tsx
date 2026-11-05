@@ -74,25 +74,13 @@ import { useAuth } from "./auth";
 import { SavedReportsProvider } from "./hooks/useSavedReports";
 import { Connections, LegacyChatsRedirect, MessagingThread } from "./screens/Messaging";
 import { MessagingPrivacy } from "./screens/MessagingPrivacy";
-import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
-import { clearDriveBackup, startDriveBackup } from "./services/messaging/backupRuntime";
+import { MessagingLifecycle } from "./components/MessagingLifecycle";
 import { postBackgroundLocation, PostNavigationProvider } from "./components/PostNavigation";
 import { PostModal } from "./components/PostModal";
 import { UserIdentityProvider } from "./components/UserIdentityTrigger";
 import { PeerIdentityActions } from "./components/PeerIdentityActions";
 import { SignedOutEntry } from "./screens/RememberedAccounts";
 import { clearAuthReturnTo, getAuthReturnRoute, peekAuthReturnTo } from "./utils/authReturnTo";
-
-function MessagingLifecycle() {
-  const { user, authSessionId } = useAuth();
-  const accountId = user?.id ?? null;
-  useEffect(() => {
-    setMessagingAccount(accountId,authSessionId ?? null);
-    const stopBackup = accountId && authSessionId ? startDriveBackup() : () => {};
-    return () => { stopBackup(); clearDriveBackup(); clearMessagingRuntime(); };
-  }, [accountId,authSessionId]);
-  return null;
-}
 
 function StartScreen() {
   const { user, booting, bootError, needsProfile } = useAuth();
