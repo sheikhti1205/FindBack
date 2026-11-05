@@ -5,6 +5,7 @@ import { diag } from "./diag";
 import { MAX_REPORT_PHOTOS, PrepareError } from "./media/prepareImages";
 import { displaySizeOrNull } from "./media/displayDimensions";
 import { throwIfAborted } from "./timeout";
+import { duringAppActivity } from "./appActivity";
 
 export interface StoredUpload {
   id: string;
@@ -73,6 +74,10 @@ function safeFileName(name: string): string {
  * If staging fails the just-uploaded object is removed so nothing is orphaned.
  */
 export async function uploadImage(file: File, traceId?: string, signal?: AbortSignal): Promise<StoredUpload> {
+  return duringAppActivity(() => uploadImageWork(file, traceId, signal));
+}
+
+async function uploadImageWork(file: File, traceId?: string, signal?: AbortSignal): Promise<StoredUpload> {
   throwIfAborted(signal);
   const start = Date.now();
   const supabase = getSupabase();

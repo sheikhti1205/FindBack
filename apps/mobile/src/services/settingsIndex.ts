@@ -13,6 +13,7 @@ import {
   MessageSquare,
   MonitorSmartphone,
   Palette,
+  RefreshCw,
   RotateCcw,
   Scale,
   ShieldCheck,
@@ -51,6 +52,7 @@ export interface SettingsIndexEntry extends SettingsSearchResult {
 type SectionLabel = Readonly<{ group: string; description: string }>;
 
 const SECTION_LABEL: Record<SettingsSection, SectionLabel> = {
+  updates: { group: "Updates", description: "Updates & version history" },
   account: { group: "Account", description: "Account" },
   preferences: { group: "Preferences", description: "Preferences" },
   intelligence: { group: "Intelligence", description: "Intelligence" },
@@ -113,6 +115,7 @@ const PRESENTATION: Record<string, Presentation> = {
   help: { icon: CircleHelp, iconTone: "help" },
   replay: { icon: RotateCcw, iconTone: "help" },
   about: { icon: Info, iconTone: "about" },
+  updates: { icon: RefreshCw, iconTone: "about" },
 };
 
 function entry(id: string, section: SettingsSection, description?: string): SettingsIndexEntry | null {

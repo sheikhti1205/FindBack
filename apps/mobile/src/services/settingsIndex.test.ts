@@ -13,6 +13,7 @@ describe("settingsIndex", () => {
     expect(routes).toEqual(
       [
         "/settings/about",
+        "/settings/updates",
         "/settings/accessibility",
         "/settings/account",
         // Device management (packet 05/06 consumer surface) postdates the

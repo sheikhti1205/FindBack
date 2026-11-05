@@ -172,6 +172,15 @@ describe("Settings home", () => {
     expect(screen.getByRole("searchbox", { name: "Search settings" })).toBe(search);
   });
 
+  it("keeps update history outside disclosures and searchable", async () => {
+    renderSettings();
+    const link = screen.getByRole("link", { name: /Updates & version history/ });
+    expect(link.closest("details")).toBeNull();
+    expect(link.getAttribute("href")).toBe("/settings/updates");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), { target: { value: "version history" } });
+    expect(screen.getByRole("link", { name: /Updates & version history/ })).toBeTruthy();
+  });
+
   it("separates local tools, optional AI Chat and notification preferences", () => {
     renderSettings();
     expect(screen.getByRole("link", { name: "Local tools" }).getAttribute("href")).toBe("/settings/local-intelligence");

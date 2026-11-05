@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "releases": [],
+  "history": [
+    {
+      "id": "v0.10.0-beta.1",
+      "versionName": "0.10.0-beta.1",
+      "publishedAt": "2026-10-30T15:41:56Z",
+      "summary": "Historical beta announcement. No Android download was published for this version.",
+      "downloadStatus": "none"
+    },
+    {
+      "id": "v0.9.0-beta.1",
+      "versionName": "0.9.0-beta.1",
+      "publishedAt": "2026-10-06T19:52:08Z",
+      "summary": "Earlier Android beta with a refreshed Help landing and neutral appearance. Its archived downloads have not been verified for in-app installation.",
+      "downloadStatus": "unverified"
+    }
+  ],
+  "features": []
+}

@@ -59,7 +59,20 @@ export type AndroidRelease = Readonly<{
   artifacts: readonly AndroidArtifact[];
 }>;
 
-export type AndroidCatalogue = Readonly<{ releases: readonly AndroidRelease[] }>;
+/** Historical announcement, deliberately not an installable AndroidRelease. */
+export type ReleaseHistoryRecord = Readonly<{
+  id: string;
+  versionName: string;
+  publishedAt: string;
+  summary: string;
+  downloadStatus: "none" | "unverified";
+}>;
+
+export type AndroidCatalogue = Readonly<{
+  releases: readonly AndroidRelease[];
+  history?: readonly ReleaseHistoryRecord[];
+  features?: readonly FeatureAnnouncement[];
+}>;
 
 export type FeatureAnnouncement = Readonly<{
   id: string;

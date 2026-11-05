@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { removeStagedUpload, uploadImage, uploadPhotos } from "./posts";
+import { appActivityBusy } from "./appActivity";
 
 const { clientMock, uploadMock, removeMock, rpcMock, normalizeMock, diagMock } = vi.hoisted(() => {
   const diagMock = vi.fn();
@@ -42,6 +43,15 @@ beforeEach(() => {
 });
 
 describe("uploadImage", () => {
+  it("vetoes interruptions until a pending upload settles", async () => {
+    let complete!: (value: { error: null }) => void;
+    uploadMock.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const job = uploadImage(new File(["photo"], "photo.jpg", { type: "image/jpeg" }));
+    await vi.waitFor(() => expect(complete).toBeDefined());
+    expect(appActivityBusy()).toBe(true);
+    complete({ error: null }); await job;
+    expect(appActivityBusy()).toBe(false);
+  });
   it("uploads the normalized blob under the caller's folder and stages the row", async () => {
     const file = new File(["raw"], "photo.jpg", { type: "image/jpeg" });
 

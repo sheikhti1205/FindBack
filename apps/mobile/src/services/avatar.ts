@@ -3,6 +3,7 @@ import { getSupabase } from "./supabaseClient";
 import { ApiError } from "./session";
 import { fetchMe } from "./auth";
 import { IMAGES_BUCKET } from "./postsUpload";
+import { duringAppActivity } from "./appActivity";
 
 /**
  * Profile avatar uploads.
@@ -241,6 +242,10 @@ export async function uploadAvatar(
   source: AvatarSource,
   previousAvatarUrl?: string | null,
 ): Promise<PublicUser> {
+  return duringAppActivity(() => uploadAvatarWork(source, previousAvatarUrl));
+}
+
+async function uploadAvatarWork(source: AvatarSource, previousAvatarUrl?: string | null): Promise<PublicUser> {
   const supabase = getSupabase();
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) {

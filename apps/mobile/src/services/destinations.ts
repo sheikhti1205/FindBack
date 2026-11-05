@@ -55,6 +55,7 @@ export type DestinationResolution =
  * repeat here.
  */
 export type SettingsSection =
+  | "updates"
   | "account"
   | "preferences"
   | "intelligence"
@@ -299,6 +300,16 @@ export const DESTINATIONS: readonly Destination[] = [
     platforms: ["web", "android"],
   },
   {
+    id: "updates",
+    route: "/settings/updates",
+    title: "Updates & version history",
+    summary: "What this build is, whether a newer version is ready, and what changed.",
+    keywords: ["update", "updates", "version", "release", "upgrade", "newer", "changes", "history"],
+    category: "help",
+    auth: "signed-in",
+    platforms: ["web", "android"],
+  },
+  {
     id: "about",
     route: "/settings/about",
     title: "About Norfold",
@@ -434,6 +445,7 @@ export const SETTINGS_PLACEMENT: readonly { id: string; section: SettingsSection
   { id: "terms", section: "legal" },
   { id: "privacy-policy", section: "legal" },
   { id: "community-guidelines", section: "legal" },
+  { id: "updates", section: "updates" },
   { id: "help", section: "helpAbout" },
   { id: "replay", section: "helpAbout" },
   { id: "about", section: "helpAbout" },

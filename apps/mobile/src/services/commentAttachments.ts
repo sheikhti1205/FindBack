@@ -5,6 +5,7 @@ import { diag } from "./diag";
 import { ACCEPTED_STILL_MIME_TYPES } from "./media/mediaPolicy";
 import type { ImportedImage } from "./media/importImage";
 import type { CommentReportReference } from "@norfold/shared";
+import { duringAppActivity } from "./appActivity";
 
 /**
  * Comment attachments.
@@ -310,6 +311,11 @@ export async function uploadCommentAttachment(
   file: File,
   options: UploadAttachmentOptions,
 ): Promise<{ remoteUrl: string; objectKey: string }> {
+  return duringAppActivity(() => uploadCommentAttachmentWork(attachment, file, options));
+}
+
+async function uploadCommentAttachmentWork(attachment: CommentAttachment, file: File,
+  options: UploadAttachmentOptions): Promise<{ remoteUrl: string; objectKey: string }> {
   const supabase = getSupabase();
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) {

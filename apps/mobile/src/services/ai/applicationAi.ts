@@ -1,4 +1,5 @@
 import { Capacitor } from "@capacitor/core";
+import { duringAppActivity } from "../appActivity";
 import { bootProductionAi, type ProductionBoot } from "./production";
 import { ITEM_CATEGORIES } from "./ops/classifyCategory";
 import { CapacitorNeedleBridge, createNativeNeedleEmbedder } from "./needle/native";
@@ -344,6 +345,9 @@ export class ApplicationAiService {
     if (descriptor.cleanupOnly) throw new Error(RETIRED_MODEL_NOTICE);
   }
   async download(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
+    return duringAppActivity(() => this.downloadWork(modelId, mirror, signal));
+  }
+  private async downloadWork(modelId: string, mirror?: string | ArtifactMirrors, signal?: AbortSignal): Promise<void> {
     this.requireAndroid();
     // Claim the model BEFORE the first await.
     //

@@ -15,7 +15,8 @@
  * Trust comes from the pinned origin, and the native installer independently
  * verifies the signing identity against the installed app.
  */
-import type { AndroidArtifact, AndroidCatalogue, AndroidRelease, Installation } from "./types";
+import type { AndroidArtifact, AndroidCatalogue, AndroidRelease, Installation, ReleaseHistoryRecord } from "./types";
+import { parseFeatureAnnouncements } from "./availability";
 
 /** ABIs the Android product actually ships (mirrors verify-release-apks.sh). */
 export const SUPPORTED_ABIS = ["arm64-v8a", "armeabi-v7a", "x86_64"] as const;
@@ -200,6 +201,7 @@ export function parseAndroidCatalogue(
   policy: CataloguePolicy = DEFAULT_CATALOGUE_POLICY,
 ): AndroidCatalogue {
   if (!isRecord(raw)) fail("root", "must be an object");
+  if (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) fail("schemaVersion", "is unsupported");
   const releases = requireArray(raw.releases, "releases").map((release, index) =>
     parseRelease(release, `releases[${index}]`, policy),
   );
@@ -217,7 +219,25 @@ export function parseAndroidCatalogue(
     }
   }
 
-  return Object.freeze({ releases: Object.freeze(releases) });
+  const history = raw.history === undefined ? undefined : requireArray(raw.history, "history").map((entry, index): ReleaseHistoryRecord => {
+    const path = `history[${index}]`;
+    if (!isRecord(entry)) fail(path, "must be an object");
+    const id = requireString(entry.id, `${path}.id`);
+    if (ids.has(id)) fail(`${path}.id`, "duplicates a release");
+    ids.add(id);
+    const versionName = requireString(entry.versionName, `${path}.versionName`);
+    if (!SEMVER.test(versionName)) fail(`${path}.versionName`, "is not a version");
+    const publishedAt = requireString(entry.publishedAt, `${path}.publishedAt`);
+    if (Number.isNaN(Date.parse(publishedAt))) fail(`${path}.publishedAt`, "is not a date");
+    if (entry.downloadStatus !== "none" && entry.downloadStatus !== "unverified") fail(`${path}.downloadStatus`, "is unsupported");
+    return Object.freeze({ id, versionName, publishedAt, summary: requireString(entry.summary, `${path}.summary`), downloadStatus: entry.downloadStatus });
+  });
+  const features = raw.features === undefined ? undefined : parseFeatureAnnouncements(raw.features);
+  if (features?.some(feature => !ids.has(feature.releaseId))) fail("features", "references an unknown release");
+  return Object.freeze({ releases: Object.freeze(releases),
+    ...(history === undefined ? {} : { history: Object.freeze(history) }),
+    ...(features === undefined ? {} : { features: Object.freeze(features) }),
+  });
 }
 
 function usableInstallation(installation: Installation): boolean {
@@ -307,6 +327,8 @@ export interface CatalogueSourceOptions {
   readonly url: string;
   readonly fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
   readonly cache?: CatalogueCache;
+  /** Shipped history is readable offline; never count it as a network check. */
+  readonly fallback?: AndroidCatalogue;
   readonly now?: () => number;
   /** Minimum gap between successful checks. */
   readonly minIntervalMs?: number;
@@ -381,10 +403,10 @@ export function createCatalogueSource(options: CatalogueSourceOptions) {
   }
 
   async function check(): Promise<CatalogueCheck> {
-    const previous = await cached();
+    const previous = await cached() ?? (options.fallback ? { checkedAt: 0, catalogue: options.fallback } : null);
     const at = now();
 
-    if (previous !== null && at - previous.checkedAt < minIntervalMs) {
+    if (previous !== null && previous.checkedAt > 0 && at - previous.checkedAt < minIntervalMs) {
       return { status: "cached", catalogue: previous.catalogue, checkedAt: previous.checkedAt, reason: "rate-limited" };
     }
     if (at < retryAt) {
@@ -479,9 +501,11 @@ function onTrustedHost(raw: string, policy: CataloguePolicy): boolean {
  */
 export function localStorageCatalogueCache(
   key = "norfold.android-catalogue.v1",
-  storage: Pick<Storage, "getItem" | "setItem"> | null =
-    typeof localStorage === "undefined" ? null : localStorage,
+  storage?: Pick<Storage, "getItem" | "setItem"> | null,
 ): CatalogueCache {
+  if (storage === undefined) {
+    try { storage = typeof localStorage === "undefined" ? null : localStorage; } catch { storage = null; }
+  }
   return {
     async read() {
       if (storage === null) return null;

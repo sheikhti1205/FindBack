@@ -4,6 +4,7 @@ import { localSearchFailureOf } from "./localSearchDiagnosis";
 import { NEEDLE_DESCRIPTOR, SMOL_VISION_DESCRIPTOR, type ModelDescriptor } from "./modelDescriptors";
 import { NEEDLE_MODEL_ID } from "./needle/embedder";
 import type { ModelDownloadDriver } from "./download/driver";
+import { appActivityBusy } from "../appActivity";
 
 function platform() {
   const disk = new Map<string, string>();
@@ -90,6 +91,18 @@ describe("local intelligence lifecycle", () => {
     expect(p.calls).toContain("needle-load");
     await service.remove(NEEDLE_MODEL_ID);
     await expect(service.embedNeedle(["umbrella"])).rejects.toThrow();
+  });
+
+  it("vetoes passive interruptions throughout a model transfer and releases afterward", async () => {
+    const p = platform();
+    const transfer = p.driver.download;
+    let busyDuring = false;
+    p.driver.download = async attempt => { busyDuring = appActivityBusy(); return transfer(attempt); };
+    const service = new ApplicationAiService({ android: true, ...p });
+    await service.ready;
+    await service.download(NEEDLE_MODEL_ID);
+    expect(busyDuring).toBe(true);
+    expect(appActivityBusy()).toBe(false);
   });
 
   it("claims the model before the first await, so a second tap cannot start a second transfer", async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useUpdateSnapshot } from "../services/updates/runtime";
 import { useOutlet } from "react-router";
 import { SplitView } from "../components/SplitView";
 import {
@@ -17,6 +18,7 @@ import {
   MessageSquare,
   MonitorSmartphone,
   Palette,
+  RefreshCw,
   RotateCcw,
   Scale,
   ShieldCheck,
@@ -90,6 +92,7 @@ const ROW_PRESENTATION: Record<string, { title: string; icon: LucideIcon; iconTo
   "community-guidelines": { title: "Community guidelines", icon: Users, iconTone: "help" },
   help: { title: "Help & guide", icon: CircleHelp, iconTone: "help" },
   replay: { title: "Replay introduction", icon: RotateCcw, iconTone: "help" },
+  updates: { title: "Updates & version history", icon: RefreshCw, iconTone: "about", detail: true },
   about: { title: "About Norfold", icon: Info, iconTone: "about" },
 };
 
@@ -175,6 +178,7 @@ export function Settings() {
 }
 
 function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
+  const updates = useUpdateSnapshot();
   const { user, logout } = useAuth();
   const { theme } = useTheme();
   const { settings } = useAppearance();
@@ -281,7 +285,12 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
       return <SettingsRow
         key={destination.id}
         title={presentation.title}
-        description={presentation.detail ? destination.summary : undefined}
+        description={destination.id === "updates"
+          ? updates.checking ? "Checking for updates…"
+            : updates.lastCheck?.status === "error" ? "Couldn't check. Saved version history is still available."
+              : updates.eligible ? `${updates.eligible.versionName} is available.`
+                : "Version history and update notices."
+          : presentation.detail ? destination.summary : undefined}
         icon={presentation.icon}
         iconTone={presentation.iconTone}
         value={rowValue(destination.id)}
@@ -320,6 +329,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
       ) : (
         <>
           <AdminBootstrapRow />
+          <SettingsGroup>{inSection("updates")}</SettingsGroup>
           {inSection("account").length > 0 && (
             <SettingsGroup title="Account">{inSection("account")}</SettingsGroup>
           )}

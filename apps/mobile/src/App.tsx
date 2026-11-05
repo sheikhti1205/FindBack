@@ -26,6 +26,8 @@ import { Profile } from "./screens/Profile";
 import { ProfileEdit } from "./screens/ProfileEdit";
 import { PublicProfile } from "./screens/PublicProfile";
 import { About } from "./screens/About";
+import { Updates } from "./screens/Updates";
+import { UpdatePrompt } from "./components/UpdatePrompt";
 import { MyPosts } from "./screens/MyPosts";
 import { EditReport } from "./screens/EditReport";
 import { SavedReports } from "./screens/SavedReports";
@@ -145,7 +147,7 @@ export function App({ router }: { router: ReturnType<typeof createAppRouter> }) 
 
 function AppRouteTree() {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, booting, needsProfile } = useAuth();
   useEffect(() => {
     if (user && peekAuthReturnTo() === `${location.pathname}${location.search}${location.hash}`) clearAuthReturnTo();
   }, [user, location.pathname, location.search, location.hash]);
@@ -156,6 +158,7 @@ function AppRouteTree() {
           <ReportLinkHandler />
           <ChatPushLinkHandler />
           <BackButtonHandler />
+          {user && !booting && !needsProfile ? <UpdatePrompt /> : null}
           <ErrorBoundary>
             <AccountDeletionFeedback />
             <ReportDeletionFeedbackProvider>
@@ -272,6 +275,7 @@ function AppRouteTree() {
               <Route path="/settings/team" element={<RequireAdmin><AdminTeam /></RequireAdmin>} />
               <Route path="/settings/team/invite" element={<RequireAdmin><AdminInvite /></RequireAdmin>} />
               <Route path="/settings/team/audit" element={<RequireAdmin><AdminAuditLog /></RequireAdmin>} />
+              <Route path="/settings/updates" element={<Updates />} />
               <Route path="/settings/about" element={<About />} />
               <Route path="/settings/terms" element={<Terms />} />
               <Route path="/settings/privacy-policy" element={<PrivacyPolicy />} />

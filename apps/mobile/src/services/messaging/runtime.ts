@@ -1,4 +1,5 @@
 import { Capacitor } from "@capacitor/core";
+import { beginAppActivity } from "../appActivity";
 import type {
   HistorySnapshot, ImportReport, MediaAttachment, OutboxEntry, StaticLocation, StoredHumanMessage,
 } from "./history";
@@ -319,11 +320,15 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
         error: "Chat could not sync. Try again." });
     }
   };
+  // Observe the existing promise, without adding an async settlement tick:
+  // callers may request the next pass as soon as the ready/offline state emits.
+  const releaseActivity = beginAppActivity();
   owner.refreshing = work().finally(() => {
     owner.refreshing = null;
     const pending = owner.pendingRefresh;
     owner.pendingRefresh = null;
     if (pending && current === owner && owner.generation === generation) void requestRefresh(owner, pending);
+    releaseActivity();
   });
   return owner.refreshing;
 }

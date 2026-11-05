@@ -356,6 +356,21 @@ describe("production messaging mute owner", () => {
 });
 
 describe("production messaging media owner", () => {
+  it("vetoes passive interruptions while background media sync owns a transfer", async () => {
+    const { appActivityBusy } = await import("../appActivity");
+    runtime.setMessagingAccount(A); await waitForState(state => state.status === "ready");
+    const inbound = await mediaFixture(id(202), id(102), { direction: "IN", expiresAt: Date.now() + 60_000 });
+    remote.set(id(202), inbound);
+    await boundary.handles[0]!.history.persistInbound({ accountId: A, deviceId: DEVICE, mailboxId: id(402),
+      event: { kind: "TEXT", eventId: id(302), sequence: 2,
+        message: { id: id(102), conversationId: CONV, authorId: B, recipientId: A, body: "" } } });
+    deliveryGate = deferred(); const refresh = runtime.refreshMessaging(A);
+    await entered.promise;
+    const busyDuring = appActivityBusy();
+    deliveryGate.resolve(); await refresh;
+    expect(busyDuring).toBe(true);
+    expect(appActivityBusy()).toBe(false);
+  });
   async function seedUnknown() {
     const history = boundary.handles[0]!.history;
     await history.enqueueOutgoing({ id: id(101), conversationId: CONV, authorId: A, recipientId: B, body: "Older caption" });
