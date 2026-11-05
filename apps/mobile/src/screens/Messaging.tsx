@@ -28,7 +28,6 @@ import { fetchAccountLabels } from "../services/accountLabels";
 import { fetchPost } from "../services/posts";
 import { useMessaging } from "../services/messaging/useMessaging";
 import { BackupPrompt } from "../components/BackupPrompt";
-import { startDriveBackup } from "../services/messaging/backupRuntime";
 import {
   changeMessagingRelationship, markMessagingConversationRead, readMessagingThreadState,
   refreshMessaging, sendMessagingText, sendMessagingLocation, sendMessagingMedia, clearMessagingConversation, removeMessagingMessage,
@@ -277,7 +276,6 @@ function ConnectionsSession({ accountId, selectedId, pane }: {
     paneToggle.current?.focus({ preventScroll: true });
   }, [pane?.collapsed]);
   // One backup ticker per open Chat surface; it stops when the last one closes.
-  useEffect(() => startDriveBackup(), []);
   const requests = chat.conversations.filter(row => {
     const view = chat.currentProjections?.[row.conversationId] ?? row.cachedProjection;
     return !view?.ownHidden && !view?.ownDeclined && view?.mode === "REQUEST" && view.request === "INCOMING";

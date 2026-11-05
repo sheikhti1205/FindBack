@@ -258,6 +258,40 @@ describe("an encrypted Drive backup", () => {
     expect((await download(store)).snapshot.messages).toEqual(snapshot.messages);
   });
 
+  it("never deletes the only manifest before a repair is durable", async () => {
+    const store = memoryStore();
+    const snapshot = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);
+    await upload(store, snapshot);
+    const manifestFile = (await store.list()).find((file) => file.name === MANIFEST)!;
+    const corrupt = new TextEncoder().encode("not a sealed manifest").buffer as ArrayBuffer;
+    await store.write({ id: manifestFile.id, name: MANIFEST, bytes: corrupt });
+    const files = store.names();
+
+    store.failManifestWrite = true;
+    await expect(upload(store, snapshot, { repair: true })).rejects.toThrow("manifest write refused");
+    store.failManifestWrite = false;
+    // The unreadable-but-present manifest is preserved, not swapped for nothing.
+    expect(store.names()).toEqual(expect.arrayContaining(files));
+    expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(corrupt));
+    expect((await store.list()).find((file) => file.name === MANIFEST)!.id).toBe(manifestFile.id);
+
+    // A later repair reuses that same object instead of creating a second manifest.
+    await upload(store, snapshot, { repair: true });
+    expect(store.names().filter((name) => name === MANIFEST)).toHaveLength(1);
+    expect((await download(store)).snapshot.messages).toEqual(snapshot.messages);
+  });
+
+  it("keeps a committed backup when cleanup after publication fails", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 501, base: 0x1000 }]));
+    store.remove = async () => { throw new Error("cleanup refused"); };
+
+    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }]));
+    expect(report).toMatchObject({ uploaded: 0, reused: 1, removed: 0 });
+    // The manifest is already durable, so the last readable backup is the new one.
+    expect((await download(store)).snapshot.messages).toHaveLength(500);
+  });
+
   it("reports a missing chunk and a replaced chunk instead of returning partial history", async () => {
     const store = memoryStore();
     const snapshot = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);

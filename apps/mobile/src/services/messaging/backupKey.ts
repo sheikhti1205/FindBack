@@ -72,8 +72,11 @@ export function readBackupKey(): Promise<BackupKeyMaterial> {
 }
 
 /**
- * Replace the account key. Existing Drive objects can no longer be opened, so
- * the caller must rebuild the backup with `repair` before the next restore.
+ * Replace the account key. Every existing Drive object becomes unreadable, so
+ * this is NOT wired to any consumer surface and must not be reintroduced except
+ * through the acceptance-gated rotation protocol (pending generation, candidate
+ * manifest, readback, compare-and-swap, retire). Until then, a generation change
+ * surfaces as a repair-needed backup state that preserves the old objects.
  */
 export function rotateBackupKey(): Promise<BackupKeyMaterial> {
   return call("ROTATE");

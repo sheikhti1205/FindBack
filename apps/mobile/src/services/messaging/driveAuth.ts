@@ -76,13 +76,15 @@ function nativeFailure(error: unknown): DriveAuthError {
 }
 
 export interface DriveAuthorization {
+  /** Non-secret local fence; changes on explicit connection or disconnect. */
+  generation(): number;
   /** A real build can connect; false means the UI must not offer it. */
   available(): boolean;
   unavailableReason(): DriveAuthUnavailable | null;
   /** Requires a user gesture. */
-  authorize(): Promise<DriveAccess>;
+  authorize(signal?: AbortSignal): Promise<DriveAccess>;
   /** Silent renewal; resolves null when Google needs a gesture again. */
-  renew(): Promise<DriveAccess | null>;
+  renew(signal?: AbortSignal): Promise<DriveAccess | null>;
   /** The still-valid token, or null. */
   current(): DriveAccess | null;
   forget(): void;
@@ -162,6 +164,10 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   const transport = options.transport === undefined ? driveBridge() : options.transport;
   let live: DriveAccess | null = null;
   let loaded = false;
+  let generation = 0;
+  const assertRequest = (ticket: number, signal?: AbortSignal) => {
+    if (ticket !== generation || signal?.aborted) throw new DriveAuthError("failed");
+  };
 
   const read = (): DriveAccess | null => {
     if (live) {
@@ -198,14 +204,16 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   };
 
   /** One native grant, validated by the same rules as the web token. */
-  const askNative = async (silent: boolean): Promise<DriveAccess | null> => {
+  const askNative = async (silent: boolean, ticket: number, signal?: AbortSignal): Promise<DriveAccess | null> => {
     if (!transport) throw new DriveAuthError("native");
+    assertRequest(ticket, signal);
     let answer: NativeDriveAccess;
     try {
       answer = await transport.authorize({ silent });
     } catch (error) {
       throw nativeFailure(error);
     }
+    assertRequest(ticket, signal);
     const access = validAccess(
       { token: answer?.accessToken ?? "", expiresAt: Number(answer?.expiresAt ?? 0) }, now());
     if (!access) throw new DriveAuthError("failed");
@@ -214,11 +222,13 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     return access;
   };
 
-  const request = (silent: boolean): Promise<DriveAccess | null> => {
+  const request = (silent: boolean, ticket: number, signal?: AbortSignal): Promise<DriveAccess | null> => {
     const reason = unavailableReason();
     if (reason) return Promise.reject(new DriveAuthError(reason));
-    if (native) return askNative(silent);
-    return load().then((oauth2) => new Promise<DriveAccess | null>((resolve, reject) => {
+    if (native) return askNative(silent, ticket, signal);
+    return load().then((oauth2) => {
+      assertRequest(ticket, signal);
+      return new Promise<DriveAccess | null>((resolve, reject) => {
       let settled = false;
       const finish = (access: DriveAccess | null, error?: DriveAuthError) => {
         if (settled) return;
@@ -230,6 +240,10 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
         client_id: clientId,
         scope: DRIVE_SCOPE,
         callback: (response) => {
+          if (settled) return;
+          try { assertRequest(ticket, signal); } catch {
+            finish(null, new DriveAuthError("failed")); return;
+          }
           const token = typeof response.access_token === "string" ? response.access_token : "";
           const expires = typeof response.expires_in === "number" ? response.expires_in : 0;
           if (!TOKEN.test(token) || !Number.isFinite(expires) || expires < 1 || expires > 86_400) {
@@ -237,7 +251,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
             return;
           }
           const access = { token, expiresAt: now() + Math.round(expires * 1000) };
-          save(access);
+          try { save(access); } catch { finish(null, new DriveAuthError("failed")); return; }
           finish(access);
         },
         error_callback: (error) => {
@@ -252,32 +266,39 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
       } catch {
         finish(null, new DriveAuthError("failed"));
       }
-    }));
+      });
+    });
   };
 
   return {
+    generation: () => generation,
     available: () => unavailableReason() === null,
     unavailableReason,
-    authorize: async () => {
-      const access = await request(false);
-      if (!access) throw new DriveAuthError("failed");
-      return access;
+    authorize: (signal) => {
+      const ticket = ++generation;
+      return request(false, ticket, signal).then(access => {
+        assertRequest(ticket, signal);
+        if (!access) throw new DriveAuthError("failed");
+        return access;
+      });
     },
-    renew: async () => {
+    renew: async (signal) => {
       // A silent renewal is only worth trying for a grant the user already
       // made: on the web it would otherwise inject the GIS script for someone
       // who declined, and on Android it would open a consent sheet.
       if (!loaded && !read()) return null;
       try {
-        return await request(true);
+        return await request(true, generation, signal);
       } catch {
         return null;
       }
     },
     current: read,
     forget: () => {
+      generation++;
       const last = read();
       live = null;
+      loaded = false;
       storage?.removeItem(DRIVE_TOKEN_KEY);
       // Revoking the Google grant is best-effort: the local token is gone
       // either way, so a device that is offline still reports disconnected.

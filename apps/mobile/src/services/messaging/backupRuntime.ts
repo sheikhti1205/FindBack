@@ -8,65 +8,100 @@
  * itself only uploads after the 5–15 minute delay or a daily compaction).
  */
 import { readBackupKey } from "./backupKey";
-import { DriveBackup } from "./backupService";
+import { DriveBackup, type BackupLease } from "./backupService";
 import { driveAuth } from "./driveAuth";
 import {
   exportMessagingSnapshot, getMessagingRuntimeSnapshot, importMessagingSnapshot,
-  subscribeMessagingRuntime, webInstallationId,
+  subscribeMessagingRuntime, webInstallationId, getMessagingRuntimeGeneration,
 } from "./runtime";
 
 let instance: DriveBackup | null = null;
+let detachDirty: (() => void) | null = null;
+let scheduling: { timer: ReturnType<typeof setInterval>; subscribers: number } | null = null;
 
-/** A stable installation label for the manifest; bootstrapping failures keep it unique. */
+/** Only the canonical durable installation identity is eligible for backup. */
 function backupDeviceId(): string {
-  try {
-    return webInstallationId();
-  } catch {
-    return crypto.randomUUID();
-  }
+  return webInstallationId();
 }
 
-function openAccount(): string {
-  const accountId = getMessagingRuntimeSnapshot().accountId;
-  if (!accountId) throw new Error("Chat is not ready");
-  return accountId;
+function captureLease(): BackupLease | null {
+  const state = getMessagingRuntimeSnapshot();
+  if (!state.accountId || (state.status !== "ready" && state.status !== "offline")) return null;
+  try {
+    return Object.freeze({ accountId: state.accountId, deviceId: backupDeviceId(),
+      sessionGeneration: getMessagingRuntimeGeneration(), driveGeneration: driveAuth().generation(), operationGeneration: 0 });
+  } catch { return null; }
+}
+
+function isCurrent(lease: BackupLease): boolean {
+  const state = getMessagingRuntimeSnapshot();
+  return state.accountId === lease.accountId && getMessagingRuntimeGeneration() === lease.sessionGeneration
+    && driveAuth().generation() === lease.driveGeneration
+    && (state.status === "ready" || state.status === "offline");
+}
+function assertCurrent(lease: BackupLease): void {
+  if (!isCurrent(lease)) throw new Error("Chat is not ready");
 }
 
 export function driveBackup(): DriveBackup {
-  instance ??= new DriveBackup({
+  const backup = instance ??= new DriveBackup({
     auth: driveAuth(),
-    key: readBackupKey,
-    accountId: () => getMessagingRuntimeSnapshot().accountId,
-    deviceId: backupDeviceId,
-    snapshot: () => exportMessagingSnapshot(openAccount()),
-    importSnapshot: async (snapshot) => {
-      await importMessagingSnapshot(openAccount(), snapshot);
+    captureLease, isCurrent,
+    key: async lease => { assertCurrent(lease); const key = await readBackupKey(); assertCurrent(lease); return key; },
+    snapshot: async lease => {
+      assertCurrent(lease);
+      const snapshot = await exportMessagingSnapshot(lease.accountId);
+      assertCurrent(lease); return snapshot;
+    },
+    importSnapshot: async (lease, snapshot) => {
+      assertCurrent(lease);
+      await importMessagingSnapshot(lease.accountId, snapshot);
+      assertCurrent(lease);
     },
   });
-  return instance;
+  if (detachDirty) return backup;
+  let previous = getMessagingRuntimeSnapshot();
+  detachDirty = subscribeMessagingRuntime(() => {
+    const state = getMessagingRuntimeSnapshot();
+    if (state.accountId === previous.accountId && state.revision !== previous.revision) backup.markDirty();
+    previous = state;
+    backup.reconcile();
+  });
+  return backup;
 }
 
-let subscribers = 0;
-let detachDirty: (() => void) | null = null;
+/** Called by canonical Auth/session cleanup. Never purges history or Drive. */
+export function clearDriveBackup(): void {
+  if (scheduling) clearInterval(scheduling.timer);
+  scheduling = null;
+  detachDirty?.(); detachDirty = null;
+  // Retain one stable process-wide admission owner. A replacement instance
+  // would admit a second writer while an aborted native/fetch request settles.
+  // It holds only account policy, never keys, history or provider tokens.
+  instance?.cancel();
+  // Another Norfold account must explicitly choose its own Drive connection.
+  driveAuth().forget();
+}
 
 /**
- * Keep the dirty flag and the ticker alive while at least one screen is open.
- * Returns an idempotent stop function; the last stop clears both.
+ * Foreground app scheduling only; dirty ownership does not depend on a screen.
+ * Repeated mounts share one ticker; no Android background guarantee.
  */
 export function startDriveBackup(intervalMs = 60_000): () => void {
   const backup = driveBackup();
-  if (subscribers++ === 0) {
-    detachDirty = subscribeMessagingRuntime(() => backup.markDirty());
-  }
-  const timer = setInterval(() => { void backup.tick(); }, intervalMs);
+  scheduling ??= { subscribers: 0, timer: setInterval(() => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    void backup.tick();
+  }, intervalMs) };
+  const owner = scheduling;
+  owner.subscribers++;
   let stopped = false;
   return () => {
     if (stopped) return;
     stopped = true;
-    clearInterval(timer);
-    if (--subscribers === 0 && detachDirty) {
-      detachDirty();
-      detachDirty = null;
+    if (--owner.subscribers === 0) {
+      clearInterval(owner.timer);
+      if (scheduling === owner) scheduling = null;
     }
   };
 }

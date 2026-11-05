@@ -1,21 +1,25 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
 const mocks = vi.hoisted(() => ({
   backup: {
+    subscribe: vi.fn(),
     status: vi.fn(), promptDecision: vi.fn(), connect: vi.fn(), disable: vi.fn(),
     forget: vi.fn(), markDirty: vi.fn(), uploadNow: vi.fn(), restore: vi.fn(), tick: vi.fn(),
   },
   rotate: vi.fn(),
   refresh: vi.fn(),
+  listeners: new Set<() => void>(),
+  accountId: "00000000-0000-4000-9a01-000000000001",
+  authSessionId: "synthetic-session-a",
 }));
 
 vi.mock("../services/messaging/backupRuntime", () => ({ driveBackup: () => mocks.backup, startDriveBackup: () => () => undefined }));
 vi.mock("../services/messaging/backupKey", () => ({ rotateBackupKey: mocks.rotate }));
 vi.mock("../services/messaging/runtime", () => ({ refreshMessaging: mocks.refresh }));
-vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "00000000-0000-4000-9a01-000000000001" } }) }));
+vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: mocks.accountId }, authSessionId: mocks.authSessionId }) }));
 
 import { BackupSettings, describeBackupTime } from "./BackupSettings";
 import { DriveAuthError } from "../services/messaging/driveAuth";
@@ -23,6 +27,7 @@ import { ApiError } from "../services/session";
 
 const NOW = 1_760_000_000_000;
 const UP_TO_DATE = { kind: "up-to-date" as const, lastUploadAt: NOW };
+const COMMITTED = { kind: "committed" as const, lastUploadAt: NOW, snapshotRevision: 1 };
 const OFF = { kind: "off" as const };
 const WAITING = { kind: "waiting" as const, nextAttemptAt: NOW };
 
@@ -30,11 +35,17 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.accountId = "00000000-0000-4000-9a01-000000000001";
+  mocks.authSessionId = "synthetic-session-a";
+  mocks.listeners.clear();
+  mocks.backup.subscribe.mockImplementation((listener: () => void) => {
+    mocks.listeners.add(listener); return () => mocks.listeners.delete(listener);
+  });
   vi.spyOn(Date, "now").mockReturnValue(NOW);
   mocks.backup.status.mockReturnValue(OFF);
-  mocks.backup.connect.mockResolvedValue(UP_TO_DATE);
-  mocks.backup.uploadNow.mockResolvedValue(UP_TO_DATE);
-  mocks.backup.restore.mockResolvedValue({ messages: 3, manifest: {} });
+  mocks.backup.connect.mockResolvedValue(COMMITTED);
+  mocks.backup.uploadNow.mockResolvedValue(COMMITTED);
+  mocks.backup.restore.mockResolvedValue({ kind: "restored", messages: 3, manifest: {} });
   mocks.rotate.mockResolvedValue({ accountId: "a", generation: "b", keyHex: "c", createdAt: 1 });
   mocks.refresh.mockResolvedValue(undefined);
 });
@@ -44,6 +55,20 @@ function renderScreen() {
 }
 
 describe("the backup settings surface", () => {
+  it.each(["account", "session"])("drops late restore notices and HEAD work after %s changes", async change => {
+    mocks.backup.status.mockReturnValue(UP_TO_DATE);
+    let resolve!: (value: unknown) => void;
+    mocks.backup.restore.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const view = renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Restore from Drive" }));
+    if (change === "account") mocks.accountId = "00000000-0000-4000-9a01-000000000002";
+    else mocks.authSessionId = "synthetic-session-b";
+    view.rerender(<MemoryRouter><BackupSettings /></MemoryRouter>);
+    await act(async () => { resolve({ kind: "restored", messages: 3, manifest: {} }); });
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("backup-notice")).toBeNull();
+  });
+
   it("offers a connection when backup is off", () => {
     renderScreen();
     expect(screen.getByText("Google Drive backup")).toBeTruthy();
@@ -66,7 +91,7 @@ describe("the backup settings surface", () => {
   it("connects and reports that backup is on", async () => {
     mocks.backup.connect.mockImplementation(async () => {
       mocks.backup.status.mockReturnValue(UP_TO_DATE);
-      return UP_TO_DATE;
+      return COMMITTED;
     });
     renderScreen();
     fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
@@ -83,6 +108,31 @@ describe("the backup settings surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     expect((await screen.findByTestId("backup-error")).textContent)
       .toBe("Google Drive access was not granted.");
+    expect(screen.queryByTestId("backup-notice")).toBeNull();
+  });
+
+  it("updates a mounted screen when a background pass loses its connection", async () => {
+    mocks.backup.status.mockReturnValue(UP_TO_DATE); renderScreen();
+    act(() => {
+      mocks.backup.status.mockReturnValue({ kind: "needs-connection" });
+      for (const listener of mocks.listeners) listener();
+    });
+    expect(await screen.findByRole("button", { name: "Reconnect Google Drive" })).toBeTruthy();
+    expect(screen.queryByText("Up to date")).toBeNull();
+  });
+
+  it("does not promise the first backup will finish after a failed connect pass", async () => {
+    mocks.backup.connect.mockResolvedValue({ kind: "failed", reason: "offline" }); renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
+    expect((await screen.findByTestId("backup-error")).textContent).toContain("didn't finish");
+    expect(screen.queryByTestId("backup-notice")).toBeNull();
+  });
+
+  it("does not claim restored chat caught up when HEAD reconciliation fails", async () => {
+    mocks.backup.status.mockReturnValue(UP_TO_DATE);
+    mocks.refresh.mockRejectedValueOnce(new Error("synthetic HEAD offline")); renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Restore from Drive" }));
+    expect((await screen.findByTestId("backup-error")).textContent).toContain("catch up");
     expect(screen.queryByTestId("backup-notice")).toBeNull();
   });
 
@@ -128,18 +178,12 @@ describe("the backup settings surface", () => {
     expect(mocks.backup.forget).toHaveBeenCalledTimes(1);
   });
 
-  it("replaces the key only after confirming the consequence", async () => {
+  it("does not offer a consumer key replacement that would orphan backups", () => {
     mocks.backup.status.mockReturnValue(UP_TO_DATE);
     renderScreen();
-    fireEvent.click(screen.getByRole("button", { name: "Replace backup key…" }));
+    expect(screen.queryByRole("button", { name: /Replace backup key/ })).toBeNull();
+    expect(screen.queryByText(/Older backups can no longer be opened/)).toBeNull();
     expect(mocks.rotate).not.toHaveBeenCalled();
-    expect(screen.getByText(/Older backups can no longer be opened/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Replace key" }));
-    await waitFor(() => expect(mocks.rotate).toHaveBeenCalledTimes(1));
-    expect(mocks.backup.markDirty).toHaveBeenCalledTimes(1);
-    expect(mocks.backup.uploadNow).toHaveBeenCalledTimes(1);
-    expect((await screen.findByTestId("backup-notice")).textContent)
-      .toBe("A new backup key was created. Older backups can no longer be opened.");
   });
 
   it("keeps the switch on when reconnect is required", () => {
@@ -165,6 +209,6 @@ describe("the backup settings surface", () => {
     mocks.backup.status.mockReturnValue(WAITING);
     renderScreen();
     expect(screen.getByText("On")).toBeTruthy();
-    expect(screen.getByText("Changes are backed up automatically while you use Chat.")).toBeTruthy();
+    expect(screen.getByText(/Changes are backed up while Norfold is open/)).toBeTruthy();
   });
 });

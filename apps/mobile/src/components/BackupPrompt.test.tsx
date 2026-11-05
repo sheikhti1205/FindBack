@@ -55,12 +55,22 @@ describe("the one backup prompt", () => {
   });
 
   it("connects, announces success once and disappears", async () => {
+    mocks.backup.connect.mockResolvedValue({ kind: "committed", lastUploadAt: 1, snapshotRevision: 1 });
     renderPrompt();
     fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     await waitFor(() => expect(mocks.backup.connect).toHaveBeenCalledTimes(1));
     expect(mocks.announce).toHaveBeenCalledWith(
       "Backup is on. Your chats are saved to your Google Drive.");
     expect(screen.queryByText("Keep your conversations with you")).toBeNull();
+  });
+
+  it("keeps the prompt and reports honestly when the first pass does not commit", async () => {
+    mocks.backup.connect.mockResolvedValue({ kind: "failed", reason: "offline" });
+    renderPrompt();
+    fireEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("didn't finish");
+    expect(mocks.announce).not.toHaveBeenCalled();
+    expect(screen.getByText("Keep your conversations with you")).toBeTruthy();
   });
 
   it("keeps the prompt and shows the human reason when Drive is declined", async () => {

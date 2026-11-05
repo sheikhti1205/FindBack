@@ -25,6 +25,35 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
 const bodyText = (body: BodyInit | null | undefined): string =>
   new TextDecoder().decode(body as unknown as Uint8Array);
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("transport cancellation fences", () => {
+  it("never dispatches a write when cancellation arrives during token renewal", async () => {
+    const access = deferred<string>(), controller = new AbortController();
+    const network = responder(() => json({ id: FILE, name: "backup", size: 1 }));
+    const store = new DriveRestStore({ token: () => access.promise }, { fetch: network.fetch,
+      ...{ signal: controller.signal } });
+    const pending = store.write({ name: "backup", bytes: new Uint8Array([1]).buffer }).catch(() => null);
+    controller.abort(); access.resolve(TOKEN); await pending;
+    expect(network.calls).toHaveLength(0);
+  });
+
+  it("passes cancellation to a dispatched fetch and does not retry its 401", async () => {
+    const response = deferred<Response>(), entered = deferred<void>(), controller = new AbortController();
+    const network = responder(() => { entered.resolve(); return response.promise; });
+    const store = new DriveRestStore(tokens().source, { fetch: network.fetch,
+      ...{ signal: controller.signal } });
+    const pending = store.list().catch(() => null); await entered.promise;
+    controller.abort(); response.resolve(new Response(null, { status: 401 })); await pending;
+    expect(network.calls).toHaveLength(1);
+    expect(network.calls[0]!.init.signal?.aborted).toBe(true);
+  });
+});
+
 describe("the Drive store", () => {
   it("lists the app folder with the narrow query and bounded fields", async () => {
     const { fetch, calls } = responder((url) => json(url.includes("pageToken")

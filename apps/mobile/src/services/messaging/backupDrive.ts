@@ -88,6 +88,7 @@ export interface BackupManifest {
 export type BackupDriveErrorCode =
   | "backup: invalid manifest"
   | "backup: account mismatch"
+  | "backup: key generation changed"
   | "backup: unsupported version"
   | "backup: chunk missing"
   | "backup: chunk mismatch";
@@ -349,13 +350,18 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   validateSnapshot(snapshot, scope.accountId);
   const files = (await store.list()).filter((file) => isBackupName(file.name, scope.accountId));
   let previous: { manifest: BackupManifest; file: BackupDriveFile } | null = null;
-  if (files.some((file) => file.name === manifestName(scope.accountId))) {
+  let manifestFile: BackupDriveFile | undefined;
+  const existingManifests = files.filter((file) => file.name === manifestName(scope.accountId));
+  if (existingManifests.length > 0) {
+    if (existingManifests.length > 1) throw fail("backup: invalid manifest");
     if (input.repair) {
-      for (const file of files.filter((item) => item.name === manifestName(scope.accountId))) {
-        await store.remove(file.id);
-      }
+      // A rebuild is never destructive: the unreadable manifest's own object is
+      // overwritten only by the finished replacement. Deleting it first would
+      // leave no backup at all if the pass failed after that removal.
+      manifestFile = existingManifests[0];
     } else {
       previous = await readManifest(store, key, scope, crypto);
+      manifestFile = previous!.file;
     }
   }
   const byConversation = new Map<string, SnapshotMessage[]>();
@@ -423,16 +429,20 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   if (plaintext.byteLength > MAX_MANIFEST_BYTES) throw fail("backup: invalid manifest");
   const sealed = await sealBackupObject(key, manifestName(scope.accountId), plaintext, crypto);
   if (sealed.byteLength > MAX_MANIFEST_BYTES) throw fail("backup: invalid manifest");
-  await store.write({ id: previous?.file.id, name: manifestName(scope.accountId), bytes: sealed });
+  await store.write({ id: manifestFile?.id, name: manifestName(scope.accountId), bytes: sealed });
 
   // Compaction now that the new manifest is durable: superseded chunks and
-  // orphans from an interrupted pass. The manifest itself is never removed.
+  // orphans from an interrupted pass. The manifest itself is never removed, and
+  // a cleanup failure cannot invalidate a published backup — the caller keeps
+  // its committed receipt and a later pass retries the bounded cleanup.
   let removed = 0;
   for (const file of files) {
     if (file.name === manifestName(scope.accountId) || written.has(file.name)) continue;
     if (!isBackupName(file.name, scope.accountId)) continue;
-    await store.remove(file.id);
-    removed++;
+    try {
+      await store.remove(file.id);
+      removed++;
+    } catch { /* retained for the next pass */ }
   }
   return { uploaded, reused, removed, conversations: conversations.length, messages };
 }

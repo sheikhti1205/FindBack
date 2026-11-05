@@ -30,7 +30,14 @@ export function BackupPrompt({ sequences }: { sequences: number }) {
     setBusy(true);
     setError(null);
     try {
-      await backup.connect();
+      const result = await backup.connect();
+      if (result.kind !== "committed") {
+        setError(result.kind === "needs-connection" ? "Google Drive access was not granted."
+          : result.kind === "failed" && result.reason === "storage"
+            ? "Backup didn't finish. Check available storage, then try again."
+            : "Backup didn't finish. Check your connection and try again.");
+        return;
+      }
       setShow(false);
       announce("Backup is on. Your chats are saved to your Google Drive.");
     } catch (err) {

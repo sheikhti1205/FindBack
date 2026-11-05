@@ -4,6 +4,7 @@ import { clearPhotoStore } from "./photoStore";
 import { resetLocalAiForAccount } from "./ai/applicationAi";
 import { clearDraft } from "./reportDraft";
 import { clearMessagingRuntime } from "./messaging/runtime";
+import { clearDriveBackup } from "./messaging/backupRuntime";
 
 /**
  * Drops all user-scoped local data: the in-memory report draft, stashed
@@ -17,6 +18,7 @@ import { clearMessagingRuntime } from "./messaging/runtime";
  * logout never wipes verified model files.
  */
 export function clearUserScopedLocalState(): void {
+  clearDriveBackup();
   clearMessagingRuntime();
   clearDraft();
   clearPhotoStore();

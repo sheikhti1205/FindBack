@@ -2,6 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistorySnapshot, SnapshotMessage } from "./history";
 import type { BackupDriveStore } from "./backupDrive";
+import { downloadBackup } from "./backupDrive";
+import { importBackupKey } from "./backupCrypto";
 import { DriveStoreError } from "./driveStore";
 import { DriveAuthError, type DriveAccess } from "./driveAuth";
 import type { BackupKeyMaterial } from "./backupKey";
@@ -9,13 +11,16 @@ import {
   BACKUP_COMPACT_MS,
   BACKUP_MAX_DELAY_MS,
   BACKUP_STATE_KEY,
+  backupStateKey,
   DriveBackup,
   backoffDelayMs,
   parseBackupState,
   type BackupDeps,
+  type BackupLease,
 } from "./backupService";
 
 const A = "00000000-0000-4000-9f01-000000000001";
+const B = "00000000-0000-4000-9f01-000000000003";
 const PEER = "00000000-0000-4000-9f01-000000000002";
 const CHAT = "00000000-0000-4000-9f01-000000000010";
 const DEVICE = "00000000-0000-4000-9f01-000000000020";
@@ -41,7 +46,7 @@ function memoryStorage() {
   return {
     getItem: (key: string) => map.get(key) ?? null,
     setItem: (key: string, value: string) => { map.set(key, value); },
-    raw: () => map.get(BACKUP_STATE_KEY) ?? null,
+    raw: (accountId = A) => map.get(backupStateKey(accountId)) ?? null,
   };
 }
 
@@ -73,7 +78,9 @@ function memoryStore(): BackupDriveStore & { names(): string[] } {
 
 function fakeAuth(options: { available?: boolean; reason?: "native" | "unconfigured" } = {}) {
   let access: DriveAccess | null = { token: "ya29.example.token.value", expiresAt: NOW + 3_600_000 };
+  let generation = 0;
   const state = {
+    generation: () => generation,
     available: () => options.available ?? true,
     unavailableReason: () => (options.available === false ? options.reason ?? "native" : null),
     current: () => access,
@@ -83,7 +90,7 @@ function fakeAuth(options: { available?: boolean; reason?: "native" | "unconfigu
       return access;
     }),
     renew: vi.fn(async () => access),
-    forget: vi.fn(() => { access = null; }),
+    forget: vi.fn(() => { generation++; access = null; }),
     drop: () => { access = null; },
   };
   return state;
@@ -98,12 +105,15 @@ interface Harness {
   key: () => BackupKeyMaterial;
   advance(ms: number): void;
   deps: BackupDeps;
+  switchAccount(accountId: string | null): void;
+  switchSession(): void;
 }
 
 function harness(options: {
   available?: boolean; reason?: "native" | "unconfigured";
   snapshot?: HistorySnapshot; key?: () => BackupKeyMaterial; store?: BackupDriveStore;
   storage?: ReturnType<typeof memoryStorage>;
+  accountId?: string;
 } = {}): Harness {
   let now = NOW;
   const material: BackupKeyMaterial = { accountId: A, generation: GEN, keyHex: KEY_HEX, createdAt: NOW };
@@ -111,13 +121,16 @@ function harness(options: {
   const store = memoryStore();
   const storage = options.storage ?? memoryStorage();
   const state = { imported: null as HistorySnapshot | null };
+  let accountId: string | null = options.accountId ?? A, sessionGeneration = 0;
   const deps: BackupDeps = {
     auth,
     key: async () => (options.key ? options.key() : material),
     snapshot: async () => options.snapshot ?? snapshotOf(3),
-    importSnapshot: async (snapshot) => { state.imported = snapshot; },
-    accountId: () => A,
-    deviceId: () => DEVICE,
+    importSnapshot: async (_lease, snapshot) => { state.imported = snapshot; },
+    captureLease: () => accountId ? Object.freeze({ accountId, deviceId: DEVICE,
+      sessionGeneration, driveGeneration: auth.generation(), operationGeneration: 0 }) : null,
+    isCurrent: (lease: BackupLease) => lease.accountId === accountId
+      && lease.sessionGeneration === sessionGeneration && lease.driveGeneration === auth.generation(),
     storage,
     now: () => now,
     random: () => 0.5,
@@ -130,10 +143,231 @@ function harness(options: {
     key: () => material,
     advance: (ms) => { now += ms; },
     deps,
+    switchAccount: next => { accountId = next; sessionGeneration++; },
+    switchSession: () => { sessionGeneration++; },
   };
 }
 
 beforeEach(() => { vi.restoreAllMocks(); });
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("operation ownership", () => {
+  it("preserves the committed backup and asks for repair when the key generation changes", async () => {
+    const run = harness(); await run.backup.connect();
+    const manifest = (await run.store.list()).find(file => file.name.includes("manifest"))!;
+    const before = new Uint8Array(await run.store.read(manifest.id)), names = run.store.names();
+
+    run.deps.key = async () => ({ accountId: A, generation: GEN2, keyHex: KEY_HEX, createdAt: NOW });
+    run.backup.markDirty();
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "failed", reason: "integrity" });
+    expect(new Uint8Array(await run.store.read(manifest.id))).toEqual(before);
+    expect(run.store.names()).toEqual(names);
+    expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "integrity" });
+  });
+
+  it("records the commit even when post-publication cleanup fails", async () => {
+    const run = harness(); await run.backup.connect();
+    run.store.remove = async () => { throw new Error("cleanup refused"); };
+    run.deps.snapshot = async () => snapshotOf(4, "changed");
+    run.backup.markDirty();
+    await expect(run.backup.uploadNow()).resolves.toMatchObject({ kind: "committed" });
+    const state = parseBackupState(run.storage.raw());
+    expect(state.lastUploadAt).toBe(NOW);
+    expect(state.dirtyRevision).toBe(state.uploadedRevision);
+    expect(run.backup.status().kind).toBe("up-to-date");
+  });
+
+  it.each(["session", "logout", "drive"])("revokes %s work before a delayed key can publish", async change => {
+    const run = harness(); await run.backup.connect(); run.backup.markDirty();
+    const entered = deferred(), release = deferred();
+    run.deps.key = async () => { entered.resolve(); await release.promise; return run.key(); };
+    const pending = run.backup.uploadNow(); await entered.promise;
+    if (change === "session") run.switchSession();
+    if (change === "logout") run.switchAccount(null);
+    if (change === "drive") run.auth.forget();
+    release.resolve(); expect(await pending).toEqual({ kind: "skipped", reason: "superseded" });
+    const state = parseBackupState(run.storage.raw());
+    expect(state.dirtyRevision).toBeGreaterThan(state.uploadedRevision);
+    expect(state.failures).toBe(0);
+  });
+
+  it("reports stopping until a dispatched manifest write settles and never records stale success", async () => {
+    const run = harness(); await run.backup.connect(); run.backup.markDirty(); run.advance(1000);
+    const entered = deferred(), release = deferred(), write = run.store.write.bind(run.store);
+    const statuses: string[] = [], stop = run.backup.subscribe(() => statuses.push(run.backup.status().kind));
+    run.store.write = async input => {
+      if (input.name.includes("manifest")) { entered.resolve(); await release.promise; }
+      return write(input);
+    };
+    const pending = run.backup.uploadNow(); await entered.promise;
+    run.backup.disable(); expect(run.backup.status().kind).toBe("stopping");
+    await expect(run.backup.restore()).resolves.toEqual({ kind: "skipped", reason: "not-ready" });
+    release.resolve(); expect(await pending).toEqual({ kind: "skipped", reason: "superseded" });
+    expect(run.backup.status().kind).toBe("off"); expect(statuses).toContain("stopping");
+    expect(parseBackupState(run.storage.raw()).lastUploadAt).toBe(NOW); stop();
+  });
+
+  it("fails opt-in when durable policy storage is absent", async () => {
+    const run = harness(), backup = new DriveBackup({ ...run.deps, storage: null });
+    await expect(backup.connect()).resolves.toEqual({ kind: "failed", reason: "storage" });
+    expect(run.store.names()).toEqual([]);
+  });
+
+  it("refuses transport when a dirty policy revision cannot be saved", async () => {
+    const run = harness(); await run.backup.connect();
+    const files = await run.store.list(), manifest = files.find(f => f.name.includes("manifest"))!;
+    const before = new Uint8Array(await run.store.read(manifest.id));
+    run.storage.setItem = () => { throw new Error("synthetic quota"); };
+    run.backup.markDirty();
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "failed", reason: "storage" });
+    expect(new Uint8Array(await run.store.read(manifest.id))).toEqual(before);
+  });
+
+  it("migrates an ambiguous global policy to disabled without transferring its success", () => {
+    const run = harness();
+    run.storage.setItem(BACKUP_STATE_KEY, JSON.stringify({ enabled: true, prompted: true, dirty: false, lastUploadAt: NOW }));
+    expect(new DriveBackup(run.deps).status()).toEqual({ kind: "off" });
+  });
+
+  it("treats a restart after committed upload as uncertain changed history", async () => {
+    const run = harness(); await run.backup.connect();
+    const reloaded = new DriveBackup(run.deps);
+    expect(reloaded.status().kind).toBe("waiting");
+    await expect(reloaded.uploadNow()).resolves.toMatchObject({ kind: "committed" });
+  });
+
+  it("coalesces timer and manual passes into one manifest writer", async () => {
+    const run = harness();
+    await run.backup.connect();
+    run.backup.markDirty(); run.advance(BACKUP_MAX_DELAY_MS);
+    const entered = deferred(), release = deferred();
+    const list = run.store.list.bind(run.store), write = run.store.write.bind(run.store);
+    let lists = 0, manifests = 0;
+    run.store.list = async () => {
+      if (++lists === 1) { entered.resolve(); await release.promise; }
+      return list();
+    };
+    run.store.write = async input => {
+      if (input.name.includes("manifest")) manifests++;
+      return write(input);
+    };
+    const manual = run.backup.uploadNow(); await entered.promise;
+    const timer = run.backup.tick(); release.resolve();
+    await Promise.all([manual, timer]);
+    expect(manifests).toBe(1);
+  });
+
+  it.each(["snapshot", "transport"])("keeps changes made while %s is awaiting", async boundary => {
+    const run = harness(); await run.backup.connect(); run.backup.markDirty();
+    const entered = deferred(), release = deferred();
+    if (boundary === "snapshot") {
+      const snapshot = run.deps.snapshot;
+      run.deps.snapshot = async lease => { entered.resolve(); await release.promise; return snapshot(lease); };
+    } else {
+      const list = run.store.list.bind(run.store);
+      run.store.list = async () => { entered.resolve(); await release.promise; return list(); };
+    }
+    const pass = run.backup.uploadNow(); await entered.promise;
+    run.backup.markDirty(); release.resolve(); await pass;
+    const state = parseBackupState(run.storage.raw());
+    expect(state.dirtyRevision).toBeGreaterThan(state.uploadedRevision);
+  });
+
+  it.each(["key", "snapshot", "list", "chunk"])("disable at %s prevents later publication", async boundary => {
+    const run = harness(); await run.backup.connect();
+    const oldFiles = await run.store.list();
+    const oldManifest = oldFiles.find(f => f.name.includes("manifest"))!;
+    const oldBytes = await run.store.read(oldManifest.id);
+    run.deps.snapshot = async () => snapshotOf(4, "changed"); run.backup.markDirty();
+    const entered = deferred(), release = deferred();
+    if (boundary === "key") {
+      run.deps.key = async () => { entered.resolve(); await release.promise; return run.key(); };
+    } else if (boundary === "snapshot") {
+      run.deps.snapshot = async () => { entered.resolve(); await release.promise; return snapshotOf(4); };
+    } else if (boundary === "list") {
+      const list = run.store.list.bind(run.store);
+      run.store.list = async () => { entered.resolve(); await release.promise; return list(); };
+    } else {
+      const write = run.store.write.bind(run.store);
+      run.store.write = async input => {
+        if (input.name.includes("chunk")) { entered.resolve(); await release.promise; }
+        return write(input);
+      };
+    }
+    const pass = run.backup.uploadNow(); await entered.promise;
+    run.backup.disable(); release.resolve(); await pass;
+    expect(new Uint8Array(await run.store.read(oldManifest.id))).toEqual(new Uint8Array(oldBytes));
+    expect(run.backup.status()).toMatchObject({ kind: "off" });
+    expect(parseBackupState(run.storage.raw()).lastUploadAt).toBe(NOW);
+  });
+
+  it("disconnect during consent cannot re-enable backup when the grant arrives late", async () => {
+    const run = harness(), consent = deferred<DriveAccess>();
+    run.auth.authorize.mockImplementationOnce(() => consent.promise);
+    const pending = run.backup.connect(); run.backup.forget();
+    consent.resolve({ token: "synthetic-grant-token", expiresAt: NOW + 3_600_000 });
+    await pending;
+    expect(run.store.names()).toEqual([]);
+    expect(run.backup.status()).toEqual({ kind: "off" });
+    expect(parseBackupState(run.storage.raw()).enabled).toBe(false);
+  });
+
+  it("account switch during export cannot publish or clear the old account dirty state", async () => {
+    const run = harness(); await run.backup.connect(); run.backup.markDirty();
+    const entered = deferred(), release = deferred();
+    run.deps.snapshot = async () => { entered.resolve(); await release.promise; return snapshotOf(4); };
+    const files = await run.store.list(), manifest = files.find(f => f.name.includes("manifest"))!;
+    const bytes = await run.store.read(manifest.id);
+    const pending = run.backup.uploadNow(); await entered.promise;
+    run.switchAccount(B); release.resolve(); await pending;
+    expect(new Uint8Array(await run.store.read(manifest.id))).toEqual(new Uint8Array(bytes));
+    const state = parseBackupState(run.storage.raw());
+    expect(state.dirtyRevision).toBeGreaterThan(state.uploadedRevision);
+  });
+
+  it("restore cannot dispatch an import after account switch during download", async () => {
+    const run = harness(); await run.backup.connect();
+    const entered = deferred(), release = deferred(), read = run.store.read.bind(run.store);
+    run.store.read = async id => { entered.resolve(); await release.promise; return read(id); };
+    const pending = run.backup.restore(); await entered.promise;
+    run.switchAccount(B); release.resolve();
+    await pending.catch(() => undefined);
+    expect(run.imported).toBeNull();
+  });
+
+  it("never calls transport with another account's backup key", async () => {
+    const run = harness({ key: () => ({ accountId: B, generation: GEN, keyHex: KEY_HEX, createdAt: NOW }) });
+    await run.backup.connect();
+    expect(run.store.names()).toEqual([]);
+  });
+
+  it("requires current authorization even after a historical successful upload", async () => {
+    const run = harness(); await run.backup.connect(); run.auth.drop();
+    expect(run.backup.status().kind).toBe("needs-connection");
+  });
+
+  it("does not inherit another account's opt-in policy", async () => {
+    const run = harness(); await run.backup.connect();
+    const second = harness({ storage: run.storage, accountId: B });
+    expect(second.backup.status()).toEqual({ kind: "off" });
+  });
+
+  it("preserves a readable committed snapshot after a cancelled changed pass", async () => {
+    const run = harness(); await run.backup.connect();
+    const entered = deferred(), release = deferred();
+    run.deps.snapshot = async () => { entered.resolve(); await release.promise; return snapshotOf(4); };
+    const pending = run.backup.uploadNow(); await entered.promise;
+    run.backup.forget(); release.resolve(); await pending;
+    const restored = await downloadBackup({ store: run.store,
+      key: await importBackupKey(GEN, KEY_HEX), scope: { accountId: A, deviceId: DEVICE } });
+    expect(restored.snapshot.messages).toHaveLength(3);
+  });
+});
 
 describe("when backup may run", () => {
   it("offers the optional prompt once, only for a meaningful history", () => {
@@ -151,19 +385,19 @@ describe("when backup may run", () => {
     const { backup, store } = harness();
     expect(backup.status()).toEqual({ kind: "off" });
     backup.markDirty();
-    await expect(backup.uploadNow()).resolves.toEqual({ kind: "off" });
+    await expect(backup.uploadNow()).resolves.toEqual({ kind: "skipped", reason: "off" });
     expect(store.names()).toEqual([]);
   });
 
   it("connects, uploads the first pass, and then reports up to date", async () => {
     const { backup, auth, store, storage, deps } = harness();
-    await expect(backup.connect()).resolves.toMatchObject({ kind: "up-to-date" });
+    await expect(backup.connect()).resolves.toMatchObject({ kind: "committed" });
     expect(auth.authorize).toHaveBeenCalledTimes(1);
     expect(store.names().length).toBe(2);
     expect(parseBackupState(storage.raw()).enabled).toBe(true);
-    expect(parseBackupState(storage.raw()).dirty).toBe(false);
+    expect(parseBackupState(storage.raw()).dirtyRevision).toBe(parseBackupState(storage.raw()).uploadedRevision);
     expect(parseBackupState(storage.raw()).generation).toBe(GEN);
-    await expect(deps.snapshot()).resolves.toBeTruthy();
+    await expect(deps.snapshot(deps.captureLease()!)).resolves.toBeTruthy();
   });
 
   it("batches marked changes and waits for the batching delay", async () => {
@@ -171,11 +405,11 @@ describe("when backup may run", () => {
     await run.backup.connect();
     const files = run.store.names();
     run.backup.markDirty();
-    await expect(run.backup.tick()).resolves.toMatchObject({ kind: "waiting" });
+    await expect(run.backup.tick()).resolves.toMatchObject({ kind: "skipped", reason: "not-ready" });
     expect(run.store.names()).toEqual(files);
     run.advance(BACKUP_MAX_DELAY_MS);
-    await expect(run.backup.tick()).resolves.toMatchObject({ kind: "up-to-date" });
-    expect(parseBackupState(run.storage.raw()).dirty).toBe(false);
+    await expect(run.backup.tick()).resolves.toMatchObject({ kind: "committed" });
+    expect(parseBackupState(run.storage.raw()).dirtyRevision).toBe(parseBackupState(run.storage.raw()).uploadedRevision);
   });
 
   it("refreshes once a day even without changes", async () => {
@@ -186,7 +420,7 @@ describe("when backup may run", () => {
     run.advance(BACKUP_MAX_DELAY_MS);
     await run.backup.tick();
     expect(run.store.names()).toEqual(before);
-    expect(parseBackupState(run.storage.raw()).dirty).toBe(false);
+    expect(parseBackupState(run.storage.raw()).dirtyRevision).toBe(parseBackupState(run.storage.raw()).uploadedRevision);
     expect(parseBackupState(run.storage.raw()).lastUploadAt)
       .toBe(NOW + BACKUP_COMPACT_MS - 1 + BACKUP_MAX_DELAY_MS);
     run.advance(BACKUP_COMPACT_MS);
@@ -208,7 +442,7 @@ describe("when backup may run", () => {
     await run.backup.connect();
     run.auth.drop();
     run.auth.renew.mockResolvedValueOnce(null);
-    await expect(run.backup.uploadNow()).resolves.toMatchObject({ kind: "attention", lastError: "auth" });
+    await expect(run.backup.uploadNow()).resolves.toMatchObject({ kind: "needs-connection" });
     expect(parseBackupState(run.storage.raw()).lastError).toBe("auth");
   });
 });
@@ -241,10 +475,11 @@ describe("failure handling", () => {
     expect(backoffDelayMs(2, 45 * 60_000, () => 0)).toBe(45 * 60_000);
   });
 
-  it("rebuilds when the account key generation changed", async () => {
+  it("keeps a repair-needed receipt instead of rebuilding after rotation", async () => {
     const run = harness();
     await run.backup.connect();
-    // A rotation later yields a new key and generation over the same Drive files.
+    const files = run.store.names();
+    // A rotated key over the same Drive files cannot open the committed backup.
     const rotated = { accountId: A, generation: GEN2, keyHex: "cd".repeat(32), createdAt: NOW };
     const second = harness({
       storage: run.storage,
@@ -252,12 +487,11 @@ describe("failure handling", () => {
       key: () => rotated,
       snapshot: snapshotOf(2, "after rotation"),
     });
-    await second.backup.uploadNow();
-    const state = parseBackupState(second.storage.raw());
-    expect(state.generation).toBe(GEN2);
-    expect(state.repair).toBe(false);
-    expect(run.store.names().filter((name) => name.includes(GEN2)).length).toBe(0);
-    expect(run.store.names().length).toBeGreaterThanOrEqual(2);
+    await expect(second.backup.uploadNow()).resolves.toEqual({ kind: "failed", reason: "integrity" });
+    // Nothing was deleted, replaced or re-published under the new generation.
+    expect(run.store.names()).toEqual(files);
+    expect(parseBackupState(second.storage.raw()).generation).toBe(GEN);
+    expect(second.backup.status()).toMatchObject({ kind: "attention", lastError: "integrity" });
   });
 
   it("keeps the old manifest when the provider fails mid-pass", async () => {
@@ -288,6 +522,8 @@ describe("restore", () => {
       await target.store.write({ name: file.name, bytes: await source.store.read(file.id) });
     }
     const result = await target.backup.restore();
+    expect(result.kind).toBe("restored");
+    if (result.kind !== "restored") throw new Error("restore was not admitted");
     expect(result.messages).toBe(4);
     expect(target.imported?.messages).toHaveLength(4);
   });
@@ -296,9 +532,9 @@ describe("restore", () => {
     const run = harness();
     run.auth.drop();
     run.auth.renew.mockResolvedValueOnce(null);
-    await expect(run.backup.restore()).rejects.toBeInstanceOf(DriveStoreError);
+    await expect(run.backup.restore()).resolves.toEqual({ kind: "needs-connection" });
     const anonymous = harness();
-    anonymous.deps.accountId = () => null;
-    await expect(anonymous.backup.restore()).rejects.toBeInstanceOf(DriveStoreError);
+    anonymous.switchAccount(null);
+    await expect(anonymous.backup.restore()).resolves.toEqual({ kind: "skipped", reason: "not-ready" });
   });
 });

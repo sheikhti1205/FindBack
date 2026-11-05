@@ -27,6 +27,7 @@ export interface DriveTokenSource {
 }
 
 export interface DriveStoreOptions {
+  signal?: AbortSignal;
   fetch?: typeof fetch;
   /** Upper bound on objects listed in the app folder. */
   maxFiles?: number;
@@ -106,24 +107,34 @@ function multipart(metadata: Record<string, unknown>, bytes: ArrayBuffer): {
 export class DriveRestStore implements BackupDriveStore {
   private readonly request: typeof fetch;
   private readonly maxFiles: number;
+  private readonly signal?: AbortSignal;
 
   constructor(private readonly auth: DriveTokenSource, options: DriveStoreOptions = {}) {
     this.request = options.fetch ?? fetch.bind(globalThis);
     this.maxFiles = Math.min(options.maxFiles ?? MAX_FILES, MAX_FILES);
+    this.signal = options.signal;
   }
 
   /** One 401 retry with a forced renewal; a second 401 is a consent problem. */
   private async send(path: string, init: RequestInit, attempt = 0): Promise<Response> {
+    this.signal?.throwIfAborted();
     const access = token(await this.auth.token(attempt > 0));
+    this.signal?.throwIfAborted();
     let response: Response;
     try {
       response = await this.request(path, {
         ...init,
+        signal: this.signal,
         headers: { ...init.headers, Authorization: `Bearer ${access}` },
       });
     } catch {
+      this.signal?.throwIfAborted();
       // A dropped connection or DNS failure is transient, never a contract break.
       throw new DriveStoreError("unavailable");
+    }
+    if (this.signal?.aborted) {
+      void response.body?.cancel().catch(() => undefined);
+      this.signal.throwIfAborted();
     }
     if (response.status === 401 && attempt === 0) {
       void response.body?.cancel().catch(() => undefined);

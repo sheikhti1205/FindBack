@@ -92,6 +92,8 @@ export function subscribeMessagingRuntime(listener: () => void): () => void {
 }
 
 export function getMessagingRuntimeSnapshot(): MessagingRuntimeSnapshot { return snapshot; }
+/** Non-secret session-lifetime fence; never an Auth token/session identifier. */
+export function getMessagingRuntimeGeneration(): number { return generation; }
 
 export function webInstallationId(): string {
   const key = "findback.messaging.installation.v1";

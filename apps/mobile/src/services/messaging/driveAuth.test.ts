@@ -53,6 +53,43 @@ const success = (expires = 3600) => (config: TokenConfig) => {
   config.callback({ access_token: TOKEN, expires_in: expires, token_type: "Bearer" });
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("revoked authorization", () => {
+  it("cannot save a late native consent after disconnect", async () => {
+    const grant = deferred<NativeDriveAccess>(), store = storage();
+    const native = nativeTransport(() => grant.promise);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    const pending = auth.authorize().catch(() => null);
+    auth.forget(); grant.resolve({ accessToken: TOKEN, expiresAt: Date.now() + 3_600_000 });
+    await pending;
+    expect(auth.current()).toBeNull(); expect(store.size()).toBe(0);
+  });
+
+  it("does not start a web consent after a revoked GIS load", async () => {
+    const loaded = deferred<ReturnType<typeof google>["oauth2"]>();
+    const api = google(success()), store = storage();
+    const auth = createDriveAuth({ clientId: CLIENT, load: () => loaded.promise, storage: store, native: false });
+    const pending = auth.authorize().catch(() => null);
+    auth.forget(); loaded.resolve(api.oauth2); await pending;
+    expect(api.configs).toHaveLength(0); expect(auth.current()).toBeNull();
+  });
+
+  it("ignores a late web callback after disconnect", async () => {
+    const entered = deferred<TokenConfig>(), api = google(config => entered.resolve(config)), store = storage();
+    const auth = createDriveAuth({ clientId: CLIENT, load: api.load, storage: store, native: false });
+    const pending = auth.authorize().catch(() => null), config = await entered.promise;
+    auth.forget(); config.callback({ access_token: TOKEN, expires_in: 3600 }); await pending;
+    expect(auth.current()).toBeNull(); expect(store.size()).toBe(0);
+    await expect(auth.renew()).resolves.toBeNull();
+    expect(api.configs).toHaveLength(1);
+  });
+});
+
 describe("connecting a Google account for backup", () => {
   it("requests only the app-private Drive scope, never a login scope", async () => {
     const api = google(success());

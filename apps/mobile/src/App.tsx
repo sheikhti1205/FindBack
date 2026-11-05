@@ -75,6 +75,7 @@ import { SavedReportsProvider } from "./hooks/useSavedReports";
 import { Connections, LegacyChatsRedirect, MessagingThread } from "./screens/Messaging";
 import { MessagingPrivacy } from "./screens/MessagingPrivacy";
 import { clearMessagingRuntime, setMessagingAccount } from "./services/messaging/runtime";
+import { clearDriveBackup, startDriveBackup } from "./services/messaging/backupRuntime";
 import { postBackgroundLocation, PostNavigationProvider } from "./components/PostNavigation";
 import { PostModal } from "./components/PostModal";
 import { UserIdentityProvider } from "./components/UserIdentityTrigger";
@@ -87,7 +88,8 @@ function MessagingLifecycle() {
   const accountId = user?.id ?? null;
   useEffect(() => {
     setMessagingAccount(accountId,authSessionId ?? null);
-    return clearMessagingRuntime;
+    const stopBackup = accountId && authSessionId ? startDriveBackup() : () => {};
+    return () => { stopBackup(); clearDriveBackup(); clearMessagingRuntime(); };
   }, [accountId,authSessionId]);
   return null;
 }
