@@ -60,6 +60,45 @@ function deferred<T>() {
 }
 
 describe("revoked authorization", () => {
+  it.each(["getItem", "removeItem", "both"])("invalidates authority despite denied %s and never reuses the persisted grant", async (failure) => {
+    const map = new Map([[DRIVE_TOKEN_KEY, JSON.stringify({ token: TOKEN, expiresAt: Date.now() + 3_600_000 })]]);
+    let denied = true;
+    const store = {
+      getItem: (key: string) => { if (denied && failure !== "removeItem") throw new Error("denied"); return map.get(key) ?? null; },
+      removeItem: (key: string) => { if (denied && failure !== "getItem") throw new Error("denied"); map.delete(key); },
+      setItem: (key: string, value: string) => { if (denied && failure === "both") throw new Error("denied"); map.set(key, value); },
+    };
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    expect(() => auth.forget()).not.toThrow();
+    denied = false;
+    expect(auth.current()).toBeNull();
+    await expect(auth.renew()).resolves.toBeNull();
+    expect(native.calls).toEqual([]);
+    await auth.authorize(); // Only explicit new consent releases the fence.
+    expect(auth.current()?.token).toBe(TOKEN);
+  });
+
+  it("reports uncertain durable cleanup without retaining live authority", async () => {
+    const store = storage(), native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    await auth.authorize();
+    store.removeItem = () => { throw new Error("denied"); };
+    store.setItem = () => { throw new Error("denied"); };
+    expect(auth.forget()).toMatchObject({ durable: false });
+    expect(auth.current()).toBeNull();
+    await expect(auth.renew()).resolves.toBeNull();
+  });
+
+  it("contains synchronous native revoke failures after invalidating live authority", async () => {
+    const native = nativeTransport(granted), store = storage();
+    native.transport.revoke = () => { throw new Error("bridge unavailable"); };
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    await auth.authorize();
+    expect(() => auth.forget()).not.toThrow();
+    expect(auth.current()).toBeNull(); expect(store.size()).toBe(0);
+  });
+
   it("cannot save a late native consent after disconnect", async () => {
     const grant = deferred<NativeDriveAccess>(), store = storage();
     const native = nativeTransport(() => grant.promise);

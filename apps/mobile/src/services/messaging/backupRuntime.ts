@@ -10,6 +10,7 @@
 import { readBackupKey } from "./backupKey";
 import { DriveBackup, type BackupLease } from "./backupService";
 import { driveAuth } from "./driveAuth";
+import { reportLogToMonitoring } from "../monitoring/sentry";
 import {
   exportMessagingSnapshot, getMessagingRuntimeSnapshot, importMessagingSnapshot,
   subscribeMessagingRuntime, webInstallationId, getMessagingRuntimeGeneration,
@@ -80,7 +81,11 @@ export function clearDriveBackup(): void {
   // It holds only account policy, never keys, history or provider tokens.
   instance?.cancel();
   // Another Norfold account must explicitly choose its own Drive connection.
-  driveAuth().forget();
+  // Optional provider cleanup must not veto Auth's private-state boundary.
+  try {
+    const outcome = driveAuth().forget();
+    if (outcome?.durable === false) reportLogToMonitoring("warn", "Drive grant storage cleanup unverified");
+  } catch { reportLogToMonitoring("warn", "Drive authorization cleanup unverified"); }
 }
 
 /**

@@ -205,12 +205,34 @@ describe("operation ownership", () => {
     const run = harness(); await run.backup.connect();
     const setItem = run.storage.setItem;
     run.storage.setItem = () => { throw new Error("quota"); };
-    run.backup.disable();
+    const disabled = run.backup.disable();
     // The durable policy still enables backup, so the surface must not say off.
     expect(run.backup.status()).toMatchObject({ kind: "attention", lastError: "storage" });
     expect(run.backup.status().enabled).toBe(true);
     expect(parseBackupState(run.storage.raw()).enabled).toBe(true);
     run.storage.setItem = setItem;
+    const writes = vi.spyOn(run.store, "write");
+    run.backup.markDirty(); run.advance(BACKUP_COMPACT_MS + 1);
+    await expect(run.backup.tick()).resolves.toEqual({ kind: "skipped", reason: "off" });
+    expect(disabled).toBe(false);
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "skipped", reason: "off" });
+    expect(writes).not.toHaveBeenCalled();
+    expect(run.backup.status()).toMatchObject({ enabled: true, optOutPending: true });
+    expect(run.backup.disable()).toBe(true);
+    expect(run.backup.status()).toMatchObject({ kind: "off", enabled: false });
+    expect(parseBackupState(run.storage.raw()).enabled).toBe(false);
+  });
+
+  it("only explicit successful reconnect releases a failed-opt-out upload veto", async () => {
+    const run = harness(); await run.backup.connect();
+    const setItem = run.storage.setItem;
+    run.storage.setItem = () => { throw new Error("quota"); };
+    run.backup.disable();
+    await expect(run.backup.connect()).resolves.toEqual({ kind: "failed", reason: "storage" });
+    run.storage.setItem = setItem;
+    await expect(run.backup.uploadNow()).resolves.toEqual({ kind: "skipped", reason: "off" });
+    await expect(run.backup.connect()).resolves.toMatchObject({ kind: "committed" });
+    expect(run.backup.status()).not.toHaveProperty("optOutPending");
   });
 
   it("reads a disabled policy as off even with a stale storage warning", async () => {

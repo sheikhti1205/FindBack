@@ -179,7 +179,9 @@ describe("an encrypted Drive backup", () => {
   it("compacts chunks the new manifest no longer references", async () => {
     const store = memoryStore();
     await upload(store, snapshotOf([{ chat: CHAT, count: 501, base: 0x1000 }]));
-    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }]));
+    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }], {
+      deletedForMe: [{ messageId: uuid(0x1000 + 501), conversationId: CHAT, deletedAt: 10 }],
+    }));
     expect(report).toMatchObject({ uploaded: 0, reused: 1, removed: 1, messages: 500 });
     expect(chunkNames(store)).toHaveLength(1);
     expect((await download(store)).snapshot.messages).toHaveLength(500);
@@ -205,11 +207,13 @@ describe("an encrypted Drive backup", () => {
     expect(restored.snapshot.messages).toHaveLength(6);
   });
 
-  it("drops a conversation whose messages are all gone, and describes none without parts", async () => {
+  it("drops a conversation only when its messages have a matching clear", async () => {
     const store = memoryStore();
     await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 },
       { chat: CHAT2, count: 2, base: 0x2000 }]));
-    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }], {
+      clears: [{ conversationId: CHAT2, throughSequence: 2, clearedAt: 10 }],
+    }));
     expect(report).toMatchObject({ conversations: 1, removed: 1 });
     expect((await download(store)).snapshot.conversations.map((row) => row.id)).toEqual([CHAT]);
 
@@ -242,7 +246,7 @@ describe("an encrypted Drive backup", () => {
     expect(restored.snapshot.messages).toEqual(first.messages);
   });
 
-  it("fails closed on a corrupt manifest and rebuilds only when repair is asked for", async () => {
+  it("refuses a corrupt manifest even with repair requested: prior coverage is unknowable", async () => {
     const store = memoryStore();
     const snapshot = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);
     await upload(store, snapshot);
@@ -253,9 +257,12 @@ describe("an encrypted Drive backup", () => {
     await expect(download(store)).rejects.toBeInstanceOf(Error);
     await expect(upload(store, snapshot)).rejects.toBeInstanceOf(Error);
 
-    const report = await upload(store, snapshot, { repair: true });
-    expect(report).toMatchObject({ uploaded: 1, conversations: 1 });
-    expect((await download(store)).snapshot.messages).toEqual(snapshot.messages);
+    const names = store.names(), bytes = store.raw(MANIFEST);
+    store.writes = [];
+    await expect(upload(store, snapshot, { repair: true })).rejects.toBeInstanceOf(Error);
+    expect(store.names()).toEqual(names);
+    expect(store.writes).toEqual([]);
+    expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(bytes));
   });
 
   it("never deletes the only manifest before a repair is durable", async () => {
@@ -268,17 +275,17 @@ describe("an encrypted Drive backup", () => {
     const files = store.names();
 
     store.failManifestWrite = true;
-    await expect(upload(store, snapshot, { repair: true })).rejects.toThrow("manifest write refused");
+    await expect(upload(store, snapshot, { repair: true })).rejects.toBeInstanceOf(Error);
     store.failManifestWrite = false;
     // The unreadable-but-present manifest is preserved, not swapped for nothing.
     expect(store.names()).toEqual(expect.arrayContaining(files));
     expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(corrupt));
     expect((await store.list()).find((file) => file.name === MANIFEST)!.id).toBe(manifestFile.id);
 
-    // A later repair reuses that same object instead of creating a second manifest.
-    await upload(store, snapshot, { repair: true });
+    // Retrying cannot establish completeness of unreadable previous content.
+    await expect(upload(store, snapshot, { repair: true })).rejects.toBeInstanceOf(Error);
     expect(store.names().filter((name) => name === MANIFEST)).toHaveLength(1);
-    expect((await download(store)).snapshot.messages).toEqual(snapshot.messages);
+    expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(corrupt));
   });
 
   it("keeps a committed backup when cleanup after publication fails", async () => {
@@ -286,7 +293,9 @@ describe("an encrypted Drive backup", () => {
     await upload(store, snapshotOf([{ chat: CHAT, count: 501, base: 0x1000 }]));
     store.remove = async () => { throw new Error("cleanup refused"); };
 
-    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }]));
+    const report = await upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }], {
+      deletedForMe: [{ messageId: uuid(0x1000 + 501), conversationId: CHAT, deletedAt: 10 }],
+    }));
     expect(report).toMatchObject({ uploaded: 0, reused: 1, removed: 0 });
     // The manifest is already durable, so the last readable backup is the new one.
     expect((await download(store)).snapshot.messages).toHaveLength(500);
@@ -314,8 +323,60 @@ describe("an encrypted Drive backup", () => {
       bytes: new TextEncoder().encode("broken").buffer as ArrayBuffer });
     const names = store.names();
 
-    await expect(upload(store, snapshotOf([]), { repair: true })).rejects.toThrow("backup: empty snapshot");
+    await expect(upload(store, snapshotOf([]), { repair: true })).rejects.toBeInstanceOf(Error);
     expect(store.names()).toEqual(names);
+  });
+
+  it.each([false, true])("refuses an incomplete second installation, unrelated clear=%s", async (unrelated) => {
+    const store = memoryStore();
+    const first = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 },
+      { chat: CHAT2, count: 2, base: 0x2000 }]);
+    await upload(store, first);
+    const names = store.names(), manifest = store.raw(MANIFEST);
+    store.writes = [];
+    const incomplete = snapshotOf(unrelated ? [] : [{ chat: CHAT2, count: 2, base: 0x2000 }], {
+      clears: unrelated ? [{ conversationId: uuid(99), throughSequence: 100, clearedAt: 10 }] : [],
+    });
+    await expect(upload(store, incomplete, { scope: { ...scope, deviceId: OTHER_DEVICE } }))
+      .rejects.toThrow("backup: incomplete snapshot");
+    expect(store.writes).toEqual([]);
+    expect(store.names()).toEqual(names);
+    expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(manifest));
+    expect((await download(store)).snapshot.messages).toEqual(first.messages);
+  });
+
+  it("refuses a missing tail without per-message retirement evidence", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 501, base: 0x1000 }]));
+    await expect(upload(store, snapshotOf([{ chat: CHAT, count: 500, base: 0x1000 }])))
+      .rejects.toThrow("backup: incomplete snapshot");
+    expect((await download(store)).snapshot.messages).toHaveLength(501);
+  });
+
+  it.each(["clears", "tombstones", "deletedForMe"] as const)("retains prior %s even when a newer installation has messages", async (kind) => {
+    const store = memoryStore();
+    const first = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }], {
+      clears: [{ conversationId: CHAT2, throughSequence: 9, clearedAt: 10 }],
+      tombstones: [{ messageId: uuid(900), conversationId: CHAT2, recipientId: PEER, unsentBy: A, unsentAt: 10 }],
+      deletedForMe: [{ messageId: uuid(901), conversationId: CHAT2, deletedAt: 10 }],
+    });
+    await upload(store, first);
+    const incomplete = structuredClone(first); incomplete[kind] = [];
+    await expect(upload(store, incomplete)).rejects.toThrow("backup: incomplete snapshot");
+    expect((await download(store)).snapshot[kind]).toEqual(first[kind]);
+  });
+
+  it("refuses a regressed clear watermark or resurrection of a suppressed body", async () => {
+    const store = memoryStore();
+    const first = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }], {
+      clears: [{ conversationId: CHAT2, throughSequence: 9, clearedAt: 10 }],
+    });
+    first.messages[0]!.body = null; first.messages[0]!.unsentAt = 10;
+    await upload(store, first);
+    const regressed = structuredClone(first); regressed.clears[0]!.throughSequence = 8;
+    await expect(upload(store, regressed)).rejects.toThrow("backup: incomplete snapshot");
+    const resurrected = structuredClone(first); resurrected.messages[0]!.body = "stale"; resurrected.messages[0]!.unsentAt = null;
+    await expect(upload(store, resurrected)).rejects.toThrow("backup: incomplete snapshot");
   });
 
   it("still records a deletion the snapshot itself proves", async () => {

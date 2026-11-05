@@ -8,7 +8,8 @@ const seams = vi.hoisted(() => ({
   callback: undefined as ((event: string, session: unknown) => void) | undefined,
   fetchMe: vi.fn(), restoreSession: vi.fn(),
   login: vi.fn(), register: vi.fn(), seed: vi.fn(),
-  resetAi: undefined as (() => Promise<void>) | undefined
+  resetAi: undefined as (() => Promise<void>) | undefined,
+  drive: undefined as import("./services/messaging/driveAuth").DriveAuthorization | undefined
 }));
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: () => false, getPlatform: () => "web" }, registerPlugin: vi.fn()
@@ -38,6 +39,10 @@ vi.mock("./services/ai/applicationAi", async (importOriginal) => ({
   ...await importOriginal<typeof import("./services/ai/applicationAi")>(),
   resetLocalAiForAccount: () => seams.resetAi?.()
 }));
+vi.mock("./services/messaging/driveAuth", async (original) => {
+  const actual = await original<typeof import("./services/messaging/driveAuth")>();
+  return { ...actual, driveAuth: () => seams.drive ?? actual.driveAuth() };
+});
 
 import { AuthProvider, useAuth } from "./auth";
 import { GuestOnly } from "./components/Guards";
@@ -48,6 +53,8 @@ import { ApiError, beginAccountSwitch, getPendingEmail, getToken, setPendingEmai
 import { loadDraft, saveDraft } from "./services/reportDraft";
 import { disconnectRealtime } from "./services/realtime";
 import * as messagingRuntime from "./services/messaging/runtime";
+import { createDriveAuth, DRIVE_TOKEN_KEY } from "./services/messaging/driveAuth";
+import { stashPhotoFile, getStashedPhoto } from "./services/photoStore";
 
 const A: PublicUser = {
   id: "switch-a", username: "alice", email: "alice@example.invalid", phone: "", emailVerified: true,
@@ -102,10 +109,45 @@ beforeEach(() => {
   seams.seed.mockResolvedValue(null);
 });
 afterEach(() => {
-  cleanup(); vi.clearAllMocks(); aiCredentials.clearSession(); seams.resetAi = undefined; setPendingEmail(null);
+  cleanup(); vi.clearAllMocks(); aiCredentials.clearSession(); seams.resetAi = undefined; seams.drive = undefined; setPendingEmail(null);
 });
 
 describe("direct SDK account replacement isolation", () => {
+  it.each(["getItem", "removeItem"])("clears A private state on replacement and sign-out despite Drive %s throwing", async (failure) => {
+    const map = new Map([[DRIVE_TOKEN_KEY, JSON.stringify({ token: "synthetic-drive-token", expiresAt: Date.now() + 3_600_000 })]]);
+    let denied = false;
+    seams.drive = createDriveAuth({ native: false, clientId: "", storage: {
+      getItem: key => { if (denied && failure === "getItem") throw new Error("denied Drive read"); return map.get(key) ?? null; },
+      setItem: (key, value) => { map.set(key, value); },
+      removeItem: key => { if (denied && failure === "removeItem") throw new Error("denied Drive removal"); map.delete(key); },
+    } });
+    const closed = vi.spyOn(messagingRuntime, "clearMessagingRuntime");
+    try {
+      render(<AuthProvider><Probe /></AuthProvider>);
+      await waitFor(() => expect(auth.user?.id).toBe(A.id));
+      saveDraft({ type: "LOST", title: "A private draft", description: "", category: "", eventDate: "", location: { label: "", latitude: null, longitude: null }, youtubeUrl: "" }, A.id);
+      const photo = stashPhotoFile(new File(["synthetic"], "a.jpg", { type: "image/jpeg" }), { accountId: A.id });
+      denied = true;
+      await act(async () => { event(B); });
+      expect(auth.user).toBeNull();
+      expect(loadDraft(A.id)).toBeNull(); expect(getStashedPhoto(photo)).toBeNull();
+      expect(closed).toHaveBeenCalled();
+      await waitFor(() => expect(seams.fetchMe).toHaveBeenCalledWith(B.id));
+      expect(getToken()).toBe("synthetic-switch-b");
+      denied = false;
+      expect(seams.drive.current()).toBeNull();
+
+      seams.fetchMe.mockResolvedValue(B);
+      await act(async () => { event(B); });
+      await waitFor(() => expect(auth.user?.id).toBe(B.id));
+      saveDraft({ type: "LOST", title: "B private draft", description: "", category: "", eventDate: "", location: { label: "", latitude: null, longitude: null }, youtubeUrl: "" }, B.id);
+      denied = true;
+      await act(async () => { seams.callback?.("SIGNED_OUT", null); });
+      expect(auth.user).toBeNull(); expect(loadDraft(B.id)).toBeNull();
+      expect(getToken()).toBeNull();
+    } finally { closed.mockRestore(); }
+  });
+
   it("routes same-account Auth-session replacement synchronously but not ordinary token refresh",async()=>{
     const user={...A,id:"00000000-0000-4000-8000-000000000001"};
     const sid="00000000-0000-4000-8000-000000000011", next="00000000-0000-4000-8000-000000000012";

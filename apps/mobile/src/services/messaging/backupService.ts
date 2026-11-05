@@ -116,6 +116,8 @@ export type BackupStatus = BackupReadiness & {
   lastUploadAt?: number;
   /** The durable opt-in. The surface must never infer this from an error kind. */
   enabled: boolean;
+  /** Opt-out failed to persist; uploads stay vetoed for this process/account. */
+  optOutPending?: true;
 };
 
 export interface BackupAuthPort {
@@ -184,6 +186,7 @@ class BackupPolicyUnavailable extends Error {}
 
 export class DriveBackup {
   private readonly states = new Map<string, BackupState>();
+  private readonly uploadVeto = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private operation: Operation | null = null;
   private operationGeneration = 0;
@@ -260,6 +263,7 @@ export class DriveBackup {
     const lease = this.capture();
     const state = lease ? this.state(lease.accountId) : null;
     return { ...readiness, enabled: state?.enabled ?? false,
+      ...(lease && this.uploadVeto.has(lease.accountId) ? { optOutPending: true as const } : {}),
       ...(state?.lastUploadAt == null ? {} : { lastUploadAt: state.lastUploadAt }) };
   }
 
@@ -275,6 +279,7 @@ export class DriveBackup {
     // A disabled policy is off regardless of any stale warning: a storage error
     // must never make a switch look enabled, nor resurrect the opt-in.
     if (!state.enabled) return { kind: "off" };
+    if (this.uploadVeto.has(lease.accountId)) return { kind: "attention", lastError: "storage" };
     if (state.lastError === "storage") return { kind: "attention", lastError: "storage" };
     if (!this.deps.auth.current()) return { kind: "needs-connection" };
     if (state.lastError) return { kind: "attention", lastError: state.lastError };
@@ -306,19 +311,21 @@ export class DriveBackup {
     return this.admit("connect");
   }
 
-  disable(): void {
+  disable(): boolean {
     // Keep the authorization: the user may turn backup back on without another
     // consent, and nothing is uploaded while disabled.
     const lease = this.capture();
+    if (lease) this.uploadVeto.add(lease.accountId);
     this.revoke();
-    if (lease) this.persist(lease.accountId, { enabled: false, nextAttemptAt: null, lastError: null, failures: 0 });
+    if (!lease) return false;
+    const saved = this.persist(lease.accountId, { enabled: false, nextAttemptAt: null, lastError: null, failures: 0 });
+    if (saved) { this.uploadVeto.delete(lease.accountId); this.publish(); }
+    return saved;
   }
 
   forget(): void {
-    const lease = this.capture();
-    this.revoke();
+    this.disable();
     this.deps.auth.forget();
-    if (lease) this.persist(lease.accountId, { enabled: false, nextAttemptAt: null, lastError: null, failures: 0 });
   }
 
   /** Canonical sign-out/account-runtime disposal. Keep committed policy/history. */
@@ -351,7 +358,7 @@ export class DriveBackup {
     const lease = this.capture();
     if (!lease) return Promise.resolve({ kind: "skipped", reason: "not-ready" });
     const state = this.state(lease.accountId);
-    if (!state.enabled) return Promise.resolve({ kind: "skipped", reason: "off" });
+    if (!state.enabled || this.uploadVeto.has(lease.accountId)) return Promise.resolve({ kind: "skipped", reason: "off" });
     if (state.nextAttemptAt !== null && state.nextAttemptAt > this.now()) {
       return Promise.resolve({ kind: "skipped", reason: "not-ready" });
     }
@@ -378,7 +385,7 @@ export class DriveBackup {
     }
     const lease = this.capture();
     if (!lease) return Promise.resolve({ kind: "skipped", reason: "not-ready" });
-    if (kind === "upload" && !this.state(lease.accountId).enabled) {
+    if (kind === "upload" && (!this.state(lease.accountId).enabled || this.uploadVeto.has(lease.accountId))) {
       return Promise.resolve({ kind: "skipped", reason: "off" });
     }
     const op: Operation = { kind, lease, controller: new AbortController(), promise: Promise.resolve({ kind: "skipped", reason: "not-ready" }) };
@@ -407,6 +414,7 @@ export class DriveBackup {
           dirtyRevision: state.dirtyRevision + 1, failures: 0, lastError: null, nextAttemptAt: null })) {
           throw new BackupPolicyUnavailable();
         }
+        this.uploadVeto.delete(op.lease.accountId);
       }
       const access = this.deps.auth.current() ?? await this.deps.auth.renew(op.controller.signal);
       this.assertCurrent(op);
@@ -484,7 +492,7 @@ export class DriveBackup {
     } else if (error instanceof BackupDriveError) {
       // An unreadable local history is not a broken backup: name it separately
       // so the surface can say the existing backup was left untouched.
-      lastError = error.code === "backup: empty snapshot" ? "snapshot" : "integrity";
+      lastError = error.code === "backup: empty snapshot" || error.code === "backup: incomplete snapshot" ? "snapshot" : "integrity";
     } else if (error instanceof BackupPolicyUnavailable) {
       lastError = "storage";
     } else if (error instanceof DriveAuthError) {

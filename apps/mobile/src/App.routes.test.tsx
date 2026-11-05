@@ -341,8 +341,10 @@ describe("consumer route map", () => {
     expect((screen.getByLabelText("Feed draft") as HTMLInputElement).value).toBe("Keep my context");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(window.location.hash).toBe("#/"));
-    expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull();
+    // Hash history updates before React commits the corresponding route tree.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report" })).toBeNull());
     expect(screen.getByText("Home screen")).toBe(home);
+    expect((screen.getByLabelText("Feed draft") as HTMLInputElement).value).toBe("Keep my context");
   });
 
   it("closes contextual report on history Back without remounting the feed", async () => {

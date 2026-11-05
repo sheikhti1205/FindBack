@@ -18,6 +18,7 @@
  * when neither path exists, rather than pretending to be connected.
  */
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { reportLogToMonitoring } from "../monitoring/sentry";
 
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 export const DRIVE_TOKEN_KEY = "norfold.drive.token.v1";
@@ -75,6 +76,8 @@ function nativeFailure(error: unknown): DriveAuthError {
   return new DriveAuthError("failed");
 }
 
+export interface DriveForgetOutcome { durable: boolean }
+
 export interface DriveAuthorization {
   /** Non-secret local fence; changes on explicit connection or disconnect. */
   generation(): number;
@@ -87,7 +90,8 @@ export interface DriveAuthorization {
   renew(signal?: AbortSignal): Promise<DriveAccess | null>;
   /** The still-valid token, or null. */
   current(): DriveAccess | null;
-  forget(): void;
+  /** Local authority is always revoked; durable cleanup can remain uncertain. */
+  forget(): DriveForgetOutcome | void;
 }
 
 interface TokenResponse {
@@ -157,41 +161,61 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   const clientId = options.clientId ?? driveClientId();
   const native = options.native ?? Capacitor.isNativePlatform();
   const now = options.now ?? Date.now;
-  const storage = options.storage === undefined
-    ? (typeof sessionStorage === "undefined" ? null : sessionStorage)
-    : options.storage;
+  let storage: DriveAuthOptions["storage"] = options.storage;
+  let storageUnavailable = false;
+  if (storage === undefined) {
+    try { storage = typeof sessionStorage === "undefined" ? null : sessionStorage; }
+    catch { storage = null; storageUnavailable = true; }
+  }
   const load = options.load ?? (() => loadGoogleIdentity(document));
   const transport = options.transport === undefined ? driveBridge() : options.transport;
   let live: DriveAccess | null = null;
   let loaded = false;
   let generation = 0;
+  let disconnected = false;
   const assertRequest = (ticket: number, signal?: AbortSignal) => {
     if (ticket !== generation || signal?.aborted) throw new DriveAuthError("failed");
   };
 
+  const clearPersisted = (): boolean => {
+    if (!storage) return !storageUnavailable;
+    try {
+      storage.removeItem(DRIVE_TOKEN_KEY);
+      if (storage.getItem(DRIVE_TOKEN_KEY) === null) return true;
+    } catch { /* Try a non-authorizing replacement when removal is denied. */ }
+    try {
+      storage.setItem(DRIVE_TOKEN_KEY, "null");
+      return storage.getItem(DRIVE_TOKEN_KEY) === "null";
+    } catch { return false; }
+  };
+
   const read = (): DriveAccess | null => {
+    // A failed removal must never let current()/renew() reload the old grant
+    // when storage later recovers. Only explicit successful consent releases it.
+    if (disconnected) return null;
     if (live) {
       const valid = validAccess(live, now());
       if (valid) return valid;
       live = null;
-      storage?.removeItem(DRIVE_TOKEN_KEY);
+      clearPersisted();
     }
     if (!storage) return null;
-    const raw = storage.getItem(DRIVE_TOKEN_KEY);
-    if (!raw) return null;
     try {
+      const raw = storage.getItem(DRIVE_TOKEN_KEY);
+      if (!raw) return null;
       const parsed = validAccess(JSON.parse(raw), now());
-      if (!parsed) storage.removeItem(DRIVE_TOKEN_KEY);
+      if (!parsed) clearPersisted();
+      live = parsed;
       return parsed;
     } catch {
-      storage.removeItem(DRIVE_TOKEN_KEY);
       return null;
     }
   };
 
   const save = (access: DriveAccess): void => {
-    live = access;
     storage?.setItem(DRIVE_TOKEN_KEY, JSON.stringify(access));
+    live = access;
+    disconnected = false;
   };
 
   const unavailableReason = (): DriveAuthUnavailable | null => {
@@ -286,7 +310,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
       // A silent renewal is only worth trying for a grant the user already
       // made: on the web it would otherwise inject the GIS script for someone
       // who declined, and on Android it would open a consent sheet.
-      if (!loaded && !read()) return null;
+      if (disconnected || (!loaded && !read())) return null;
       try {
         return await request(true, generation, signal);
       } catch {
@@ -297,14 +321,18 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     forget: () => {
       generation++;
       const last = read();
+      disconnected = true;
       live = null;
       loaded = false;
-      storage?.removeItem(DRIVE_TOKEN_KEY);
-      // Revoking the Google grant is best-effort: the local token is gone
-      // either way, so a device that is offline still reports disconnected.
+      const durable = clearPersisted();
+      // Native revocation is best-effort, and even a synchronous bridge throw
+      // cannot interrupt the canonical account teardown. Never log its payload.
       if (native && transport && last) {
-        void Promise.resolve(transport.revoke({ token: last.token })).catch(() => undefined);
+        const failed = () => { reportLogToMonitoring("warn", "Drive grant revocation unverified"); };
+        try { void Promise.resolve(transport.revoke({ token: last.token })).catch(failed); }
+        catch { failed(); }
       }
+      return { durable };
     },
   };
 }

@@ -90,6 +90,7 @@ export type BackupDriveErrorCode =
   | "backup: account mismatch"
   | "backup: key generation changed"
   | "backup: empty snapshot"
+  | "backup: incomplete snapshot"
   | "backup: unsupported version"
   | "backup: chunk missing"
   | "backup: chunk mismatch";
@@ -317,7 +318,7 @@ export interface BackupUploadInput {
   snapshot: HistorySnapshot;
   now: number;
   crypto?: Crypto;
-  /** Rebuild from scratch when the current manifest cannot be read. */
+  /** Legacy caller hint. Never bypasses validation of an existing backup. */
   repair?: boolean;
 }
 
@@ -338,6 +339,42 @@ async function readManifest(store: BackupDriveStore, key: BackupKey, scope: Back
   return { manifest, file };
 }
 
+/** Missing local history is not deletion authority. Keep prior suppressions and
+ * require every prior accepted message to remain present or explicitly retired.
+ * This is a sequential preservation check, not atomic arbitration across Drive writers.
+ */
+function assertCoverage(previous: HistorySnapshot, next: HistorySnapshot): void {
+  const messages = new Map(next.messages.map(row => [row.id, row]));
+  const clears = new Map(next.clears.map(row => [row.conversationId, row.throughSequence]));
+  const tombstones = new Map(next.tombstones.map(row => [row.messageId, row]));
+  const deletions = new Map(next.deletedForMe.map(row => [row.messageId, row]));
+  const incomplete = () => { throw fail("backup: incomplete snapshot"); };
+  for (const row of previous.clears) {
+    if ((clears.get(row.conversationId) ?? -1) < row.throughSequence) incomplete();
+  }
+  for (const row of previous.tombstones) {
+    const kept = tombstones.get(row.messageId);
+    if (!kept || kept.conversationId !== row.conversationId || kept.unsentBy !== row.unsentBy
+      || kept.recipientId !== row.recipientId) incomplete();
+  }
+  for (const row of previous.deletedForMe) {
+    const kept = deletions.get(row.messageId);
+    if (!kept || (kept.conversationId !== null && kept.conversationId !== row.conversationId)) incomplete();
+  }
+  for (const row of previous.messages) {
+    const tombstone = tombstones.get(row.id), deletion = deletions.get(row.id);
+    const retired = (clears.get(row.conversationId) ?? -1) >= row.serverSequence
+      || (tombstone?.conversationId === row.conversationId
+        && tombstone.unsentBy === row.authorId && tombstone.recipientId === row.recipientId)
+      || (deletion !== undefined && (deletion.conversationId === null || deletion.conversationId === row.conversationId));
+    const kept = messages.get(row.id);
+    if (retired) continue;
+    if (!kept || kept.conversationId !== row.conversationId || kept.serverSequence !== row.serverSequence
+      || kept.serverEventId !== row.serverEventId || kept.authorId !== row.authorId || kept.recipientId !== row.recipientId
+      || (row.body === null && kept.body !== null) || (row.unsentAt !== null && kept.unsentAt === null)) incomplete();
+  }
+}
+
 /**
  * One incremental pass: chunks whose plaintext hash is already referenced are
  * reused, changed parts get new content-addressed names, and the manifest is
@@ -355,15 +392,9 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   const existingManifests = files.filter((file) => file.name === manifestName(scope.accountId));
   if (existingManifests.length > 0) {
     if (existingManifests.length > 1) throw fail("backup: invalid manifest");
-    if (input.repair) {
-      // A rebuild is never destructive: the unreadable manifest's own object is
-      // overwritten only by the finished replacement. Deleting it first would
-      // leave no backup at all if the pass failed after that removal.
-      manifestFile = existingManifests[0];
-    } else {
-      previous = await readManifest(store, key, scope, crypto);
-      manifestFile = previous!.file;
-    }
+    // An unreadable backup cannot establish what a replacement would omit.
+    previous = await readManifest(store, key, scope, crypto);
+    manifestFile = previous!.file;
   }
   // An empty snapshot is not evidence that history is gone: a failed database
   // open, a wiped local store and a platform read error all look identical here.
@@ -376,6 +407,7 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   const storedHistory = (previous?.manifest.conversations.length ?? 0) > 0
     || files.some((file) => file.name !== manifestName(scope.accountId));
   if (empty && storedHistory) throw fail("backup: empty snapshot");
+  if (previous) assertCoverage(await readSnapshot(store, key, scope, previous.manifest, crypto), snapshot);
   const byConversation = new Map<string, SnapshotMessage[]>();
   for (const message of snapshot.messages) {
     const list = byConversation.get(message.conversationId) ?? [];
@@ -487,15 +519,21 @@ export async function downloadBackup(input: { store: BackupDriveStore; key: Back
   const crypto = input.crypto ?? globalThis.crypto;
   const current = await readManifest(input.store, input.key, input.scope, crypto);
   if (!current) throw fail("backup: chunk missing");
-  const byName = new Map((await input.store.list()).map((file) => [file.name, file]));
+  return { manifest: current.manifest,
+    snapshot: await readSnapshot(input.store, input.key, input.scope, current.manifest, crypto) };
+}
+
+async function readSnapshot(store: BackupDriveStore, key: BackupKey, scope: BackupScope,
+  manifest: BackupManifest, crypto: Crypto): Promise<HistorySnapshot> {
+  const byName = new Map((await store.list()).map((file) => [file.name, file]));
   const messages: SnapshotMessage[] = [];
-  for (const entry of current.manifest.conversations) {
+  for (const entry of manifest.conversations) {
     let previousSequence = 0;
     for (const part of entry.parts) {
       const file = byName.get(part.chunk);
       if (!file) throw fail("backup: chunk missing");
-      const bytes = await input.store.read(file.id);
-      const opened = await openBackupObject(input.key, part.chunk, bytes, crypto);
+      const bytes = await store.read(file.id);
+      const opened = await openBackupObject(key, part.chunk, bytes, crypto);
       if (await sha256Hex(opened, crypto) !== part.sha256) throw fail("backup: chunk mismatch");
       const rows = chunkMessages(opened, entry.conversationId);
       if (rows.length !== part.messages) throw fail("backup: chunk mismatch");
@@ -510,15 +548,15 @@ export async function downloadBackup(input: { store: BackupDriveStore; key: Back
     }
   }
   const snapshot = normaliseSnapshot({
-    conversations: current.manifest.conversations.map((entry) => ({
+    conversations: manifest.conversations.map((entry) => ({
       id: entry.conversationId, lastSequence: entry.headSequence,
       createdAt: 0, updatedAt: 0,
     })),
     messages,
-    tombstones: current.manifest.tombstones,
-    deletedForMe: current.manifest.deletedForMe,
-    clears: current.manifest.clears,
+    tombstones: manifest.tombstones,
+    deletedForMe: manifest.deletedForMe,
+    clears: manifest.clears,
   });
-  validateSnapshot(snapshot, input.scope.accountId);
-  return { manifest: current.manifest, snapshot };
+  validateSnapshot(snapshot, scope.accountId);
+  return snapshot;
 }

@@ -41,6 +41,7 @@ beforeEach(() => {
   });
   vi.spyOn(Date, "now").mockReturnValue(NOW);
   mocks.backup.status.mockReturnValue(OFF);
+  mocks.backup.disable.mockReturnValue(true);
   mocks.backup.connect.mockResolvedValue(COMMITTED);
   mocks.backup.uploadNow.mockResolvedValue(COMMITTED);
   mocks.backup.restore.mockResolvedValue({ kind: "restored", messages: 3, manifest: {} });
@@ -164,6 +165,21 @@ describe("the backup settings surface", () => {
     expect(mocks.backup.disable).toHaveBeenCalledTimes(1);
     expect(mocks.backup.forget).not.toHaveBeenCalled();
     expect(screen.getByTestId("backup-notice").textContent).toBe("Automatic backup is off.");
+  });
+
+  it("does not announce off after failed durable opt-out and explains the session-only pause", () => {
+    mocks.backup.status.mockReturnValue(UP_TO_DATE);
+    mocks.backup.disable.mockImplementationOnce(() => {
+      mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "storage", enabled: true, optOutPending: true });
+      return false;
+    });
+    renderScreen();
+    fireEvent.click(screen.getByRole("switch", { name: "Back up automatically" }));
+    expect(screen.queryByTestId("backup-notice")).toBeNull();
+    expect(screen.getByText(/Automatic backup is paused on this device/)).toBeTruthy();
+    expect(screen.getByTestId("backup-error").textContent).toContain("before reopening");
+    expect(screen.getByRole("switch", { name: "Back up automatically" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByRole("button", { name: "Back up now" })).toBeNull();
   });
 
   it("disconnects only after an explicit second confirmation", () => {

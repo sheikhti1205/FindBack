@@ -187,7 +187,7 @@ export function BackupSettings() {
     || (status.kind === "attention" && status.lastError !== "auth"
       && status.lastError !== "account"));
   const repairNeeded = status.kind === "attention" && status.lastError === "integrity";
-  const canTransfer = actionable && !repairNeeded;
+  const canTransfer = actionable && !repairNeeded && !status.optOutPending;
   const needsConnect = status.kind === "off" || status.kind === "needs-connection"
     || (status.kind === "attention" && (status.lastError === "auth" || status.lastError === "account"));
 
@@ -201,15 +201,17 @@ export function BackupSettings() {
         title="Google Drive"
         description="Backups are encrypted on this device before they reach Drive, so Google can't read them. The key stays with your Norfold account and is re-issued to your signed-in devices so a reinstall can restore."
       >
-        <div className="flex items-start justify-between gap-3 px-3 py-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-on-surface">{copy.title}</p>
-            <p className="mt-1 text-sm text-on-surface-variant">{copy.description}</p>
-            {status.lastUploadAt !== undefined && status.kind !== "up-to-date" ? (
-              <p className="mt-1 text-sm text-on-surface-variant">Last backed up {describeBackupTime(status.lastUploadAt)}.</p>
-            ) : null}
+        <div className="flex flex-col gap-2 px-3 py-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <p className="min-w-0 text-sm font-medium text-on-surface">{copy.title}</p>
+            <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
           </div>
-          <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
+          <p className="text-sm text-on-surface-variant">{status.optOutPending
+            ? "Automatic backup is paused on this device. Turning it off hasn't been saved for the next launch."
+            : copy.description}</p>
+          {status.lastUploadAt !== undefined && status.kind !== "up-to-date" ? (
+            <p className="text-sm text-on-surface-variant">Last backed up {describeBackupTime(status.lastUploadAt)}.</p>
+          ) : null}
         </div>
 
         {notice ? (
@@ -260,8 +262,13 @@ export function BackupSettings() {
             disabled={busy !== null}
             onChange={(next) => {
               if (next) { void connect(); return; }
-              backup.disable();
-              refresh();
+               const saved = backup.disable();
+               refresh();
+               setNotice(null); setError(null);
+               if (!saved) {
+                 const sentence = "Couldn't save this change. Try turning backup off again before reopening Norfold.";
+                 setError(sentence); announce(sentence); return;
+               }
               const sentence = "Automatic backup is off.";
               setNotice(sentence);
               announce(sentence);
