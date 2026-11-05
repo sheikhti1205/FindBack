@@ -244,7 +244,12 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   if (!user) return null;
 
   const trimmed = query.trim();
-  const matches = trimmed ? searchSettings(trimmed) : null;
+  const destinationContext = {
+    platform: Capacitor.isNativePlatform() ? "android" as const : "web" as const,
+    signedIn: true,
+    capabilities: [],
+  };
+  const matches = trimmed ? searchSettings(trimmed, destinationContext) : null;
   // Staff console entry. Moderators are staff, but every console destination
   // is admin-only, so offering them a row would be a tap that bounces back.
   // The row appears for an ADMIN only.
@@ -253,11 +258,7 @@ function SettingsNavigation({ detailSelected }: { detailSelected: boolean }) {
   // Rows and the search index are generated from the same catalogue, filtered
   // for this caller, so no row can advertise a route the catalogue does not
   // know and no catalogue entry can go missing from the screen.
-  const rows = settingsDestinations({
-    platform: Capacitor.isNativePlatform() ? "android" : "web",
-    signedIn: true,
-    capabilities: [],
-  });
+  const rows = settingsDestinations(destinationContext);
   const rowValue = (id: string): string | undefined => {
     switch (id) {
       case "account": return accountSummary(user);

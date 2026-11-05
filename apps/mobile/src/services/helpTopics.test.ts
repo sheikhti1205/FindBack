@@ -33,7 +33,9 @@ describe("offline help articles", () => {
     expect(text("backup")).toContain("best-effort");
     expect(text("backup")).toContain("google drive");
     expect(text("local-search")).toContain("ordinary text search");
-    expect(text("search-filter")).toContain("loaded on this device");
+    // Word search is a server query; only the place scope is device-side.
+    expect(text("search-filter")).toContain("on norfold's servers");
+    expect(text("search-filter")).toContain("already loaded here");
     expect(text("delete-account")).toContain("safety records remain");
   });
 

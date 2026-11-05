@@ -158,7 +158,7 @@ export const NL_SUGGESTION_FAILURE_NOTE: Record<NlHelperState, string> = {
  * so those stages also keep the helper row (install/repair) on screen.
  */
 export const LOCAL_SEARCH_FAILURE_NOTE: Record<LocalSearchStage, string> = {
-  helper: NL_HELPER_NOT_SET_UP_NOTE,
+  helper: "Smart Search couldn't start on this device. Searching your words normally.",
   plugin: "Smart Search isn't available on this device. Searching your words normally.",
   storage: "Norfold couldn't read the search helper's files on this device. Searching your words normally.",
   source: "The search helper needs to download again. Searching your words normally.",
@@ -182,6 +182,12 @@ export function localSearchFailureNote(failure: LocalSearchFailure): string {
     case "UNSUPPORTED_PLATFORM": return OFFLINE_NEEDS_ANDROID;
     case "UNSUPPORTED_DEVICE": return DEVICE_INCOMPATIBLE_REASON;
     case "NOT_SET_UP": return NL_HELPER_NOT_SET_UP_NOTE;
+    // Installed and verified, but the native side could not make it resident.
+    // The helper row would not fix that, so the note must not imply an install.
+    case "MODEL_NOT_READY": return "Smart Search couldn't load on this device. Searching your words normally.";
+    // Missing model profile: an app-side configuration fault, not a fact about
+    // the reader's device. Say so without blaming them or promising an install.
+    case "NO_PROFILE": return LOCAL_SEARCH_FAILURE_NOTE.runtime;
     default: return LOCAL_SEARCH_FAILURE_NOTE[failure.stage];
   }
 }

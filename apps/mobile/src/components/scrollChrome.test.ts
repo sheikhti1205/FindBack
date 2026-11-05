@@ -23,13 +23,19 @@ function run(offsets: number[], opts: { pinned?: boolean; from?: ScrollChromeSta
 }
 
 describe("scroll-reactive chrome state", () => {
-  it("keeps hidden chrome when a short feed's range clamps to zero", () => {
+  it("does not mistake a short feed's collapsed range for a swipe, and still reveals at the top", () => {
     // Collapsing the chrome gave its own height back to the feed, so a feed
     // that only scrolled by exactly that height is pulled back to the top. That
-    // is the layout moving the offset, not the reader swiping up.
+    // is the layout moving the offset, not the reader swiping up — so it must
+    // not bank travel. But a zero-range feed sits at offset 0, where the top
+    // zone makes the chrome fully visible and no gesture is left to reveal it.
     const hidden: ScrollChromeState = { hidden: true, compact: true, lastY: 60, travel: 0, lastMaxY: 60 };
-    expect(nextScrollChrome(hidden, 0, false, 0).hidden).toBe(true);
-    expect(nextScrollChrome(hidden, 0, false, 0).compact).toBe(true);
+    expect(nextScrollChrome(hidden, 0, false, 0).hidden).toBe(false);
+    expect(nextScrollChrome(hidden, 0, false, 0).compact).toBe(false);
+    // A clamp that leaves the offset below the top zone keeps the chrome as it
+    // was: it is layout movement, not intent.
+    const clampedMidFeed = nextScrollChrome(hidden, 40, false, 40);
+    expect(clampedMidFeed.hidden).toBe(true);
 
     // An explicit pin always wins, and a real upward swipe at the same offset
     // (range unchanged) still reveals it.
@@ -39,7 +45,26 @@ describe("scroll-reactive chrome state", () => {
     // The clamp banks no travel: the next real downward move decides normally.
     const clamped = nextScrollChrome(hidden, 0, false, 0);
     expect(clamped.travel).toBe(0);
+    // Revealing the top chrome may restore the scroll range. Its symmetric
+    // layout rebound must not hide the chrome again and start a feedback loop.
+    expect(nextScrollChrome(clamped, 60, false, 60).hidden).toBe(false);
+    // Growth beyond the pre-clamp range is not the chrome returning its height.
     expect(nextScrollChrome(clamped, 80, false, 80).hidden).toBe(true);
+  });
+
+  it("bounds top-clamp rebound to the old range and then accepts deliberate travel", () => {
+    let state: ScrollChromeState = { hidden: true, compact: true, lastY: 60, travel: 0, lastMaxY: 60 };
+    for (let cycle = 0; cycle < 3; cycle++) {
+      state = nextScrollChrome(state, 0, false, 0);
+      for (const y of [20, 40, 60]) {
+        state = nextScrollChrome(state, y, false, y);
+        expect([state.hidden, state.compact, state.travel]).toEqual([false, false, 0]);
+      }
+      // Deliberate travel after the layout has settled hides normally.
+      state = nextScrollChrome(state, 30, false, 60);
+      state = nextScrollChrome(state, 60, false, 60);
+      expect(state.hidden).toBe(true);
+    }
   });
 
   it("starts visible and stays visible at the top", () => {

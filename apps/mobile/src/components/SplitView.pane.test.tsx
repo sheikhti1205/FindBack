@@ -26,11 +26,29 @@ function stored() {
 beforeEach(() => { setWidth(1200); globalThis.localStorage.clear(); });
 afterEach(() => {
   cleanup();
+  document.documentElement.style.removeProperty("font-size");
   setWidth(originalWidth);
   globalThis.localStorage.clear();
 });
 
 describe("the resizable conversation pane", () => {
+  it("reserves the actual fixed list ceiling at large text", () => {
+    document.documentElement.style.fontSize = "24px";
+    setWidth(840);
+    render(<SplitView selected={false} list={<p>List</p>} detail={<p>Details</p>} />);
+    expect(document.querySelector(".fb-split-view")?.className).not.toContain("fb-split-wide");
+    cleanup();
+    setWidth(848); // 22rem at 24px + 320px detail.
+    render(<SplitView selected={false} list={<p>List</p>} detail={<p>Details</p>} />);
+    expect(document.querySelector(".fb-split-view")?.className).toContain("fb-split-wide");
+  });
+
+  it("reserves the maximum adjustable width, not the current minimum", () => {
+    setWidth(840);
+    const pane = { ...PANE, minWidth: 260, maxWidth: 600 };
+    render(<SplitView selected={false} pane={pane} list={<p>List</p>} detail={<p>Details</p>} />);
+    expect(document.querySelector(".fb-split-view")?.className).not.toContain("fb-split-wide");
+  });
   it("collapses to one pane when the list would leave no usable detail width", () => {
     setWidth(880);
     const greedy = { ...PANE, minWidth: 600, maxWidth: 700, defaultWidth: 600 };

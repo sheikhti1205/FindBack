@@ -65,7 +65,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     destinationId: "search",
     platforms: ["web", "android"],
     body: [
-      "Search matches words in the reports that are loaded on this device; a place name narrows the reports already loaded rather than searching the whole world.",
+      "Word search runs on Norfold's servers, so it can match shared reports this device has never loaded. A place name narrows the reports already loaded here rather than searching the whole world.",
       "You can always review and change the filters yourself, including when Smart Search suggests some.",
     ],
   },

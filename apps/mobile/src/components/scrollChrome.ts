@@ -18,12 +18,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * 1. `pinned` returns early leaving **both stages false** — the packet requires
  *    that an active control is never hidden;
  * 2. a **layout clamp** — the offset fell by the same distance the scrollable
- *    range shrank — keeps both stages and re-bases the travel to zero. This gate
+ *    range shrank — re-bases travel and keeps both stages unless it reaches the
+ *    top zone, where it reveals them. Only that reveal arms a bounded rebound
+ *    up to the pre-clamp range; unrelated range growth remains scroll intent. This gate
  *    is deliberately **before** the top zone: collapsing the chrome gives its
  *    height back to the feed, so on a short feed the browser pulls the offset all
  *    the way to the top. That pull is the layout moving the offset, not the
- *    reader swiping up, and reading it as intent revealed the chrome, re-grew the
- *    range, and hid it again. A real upward swipe moves the offset while the range
+ *    reader swiping up. The bounded rebound prevents a reveal/hide feedback loop
+ *    without stranding controls on a zero-range feed. A real upward swipe moves the offset while the range
  *    stays put, so it is never mistaken for a clamp;
  * 3. `y <= {@link CHROME_TOP_ZONE}` returns early leaving **both stages false** —
  *    the top-zone return is why a bounce at the very top brings the wordmark back
@@ -141,7 +143,7 @@ export const CHROME_JUMP = 320;
 /**
  * How closely a lost scroll offset must match the shrink of the scrollable
  * range before it is treated as a layout adjustment rather than a gesture.
- * Layout rounding is sub-pixel; a real swipe never matches this.
+ * Matching geometry alone is insufficient for growth: it needs an armed rebound.
  */
 export const CHROME_LAYOUT_TOLERANCE = 2;
 
@@ -163,6 +165,8 @@ export interface ScrollChromeState {
    * browser clamp apart from a gesture — see `nextScrollChrome`.
    */
   lastMaxY: number;
+  /** Pre-clamp ceiling for the layout rebound caused by revealing at the top. */
+  reboundMaxY?: number;
 }
 
 export function initialScrollChrome(): ScrollChromeState {
@@ -198,24 +202,40 @@ export function nextScrollChrome(
 
   const delta = y - state.lastY;
 
-  // Layout adjustment, not intent — and this MUST be decided before the top
-  // zone. Both facts must agree: the offset fell *and* the scrollable range
+  // Layout adjustment, not intent — and this MUST be decided before the travel
+  // gates. Both facts must agree: the offset fell *and* the scrollable range
   // shrank by the same distance, which is precisely what collapsing the chrome
   // does at the bottom. A short feed can shrink all the way to zero, which pulls
   // the offset to the top; reading that as a swipe up would re-grow the range
   // and make the header reappear and disappear. A real upward swipe moves the
-  // offset while the range stays put, so it is never mistaken for this and the
-  // top-zone reveal below still fires.
-  if (limit !== null && state.lastMaxY >= 0 && delta < 0) {
-    const shrink = limit - state.lastMaxY;
-    if (shrink < 0 && Math.abs(delta - shrink) <= CHROME_LAYOUT_TOLERANCE) {
-      return keep({ hidden: state.hidden, compact: state.compact, lastY: y, travel: 0 });
+  // offset while the range stays put, so it is never mistaken for this.
+  if (limit !== null && state.lastMaxY >= 0 && delta !== 0) {
+    const rangeDelta = limit - state.lastMaxY;
+    const clamp = delta < 0 && rangeDelta < 0;
+    const reboundCeiling = state.reboundMaxY ?? -1;
+    const rebound = delta > 0 && rangeDelta > 0 && reboundCeiling >= 0
+      && limit <= reboundCeiling + CHROME_LAYOUT_TOLERANCE;
+    if ((clamp || rebound) && Math.abs(delta - rangeDelta) <= CHROME_LAYOUT_TOLERANCE) {
+      // A clamp or its armed range-growth rebound banks no travel. A feed
+      // whose range collapsed to zero sits at offset 0, where the chrome is
+      // always fully visible and no gesture is available to reveal it.
+      const atTop = y <= CHROME_TOP_ZONE;
+      return keep({
+        hidden: atTop ? false : state.hidden,
+        compact: atTop ? false : state.compact,
+        lastY: y,
+        travel: 0,
+        ...(clamp && atTop && (state.hidden || state.compact)
+          ? { reboundMaxY: state.lastMaxY }
+          : rebound && limit < reboundCeiling - CHROME_LAYOUT_TOLERANCE
+            ? { reboundMaxY: reboundCeiling } : {}),
+      });
     }
   }
 
   if (y <= CHROME_TOP_ZONE) return keep({ hidden: false, compact: false, lastY: y, travel: 0 });
 
-  if (Math.abs(delta) >= CHROME_JUMP) return keep({ ...state, lastY: y, travel: 0 });
+  if (Math.abs(delta) >= CHROME_JUMP) return keep({ hidden: state.hidden, compact: state.compact, lastY: y, travel: 0 });
   if (Math.abs(delta) < CHROME_JITTER) return keep({ ...state, lastY: y });
 
   // Same direction as the travel already accumulated, or a fresh direction.

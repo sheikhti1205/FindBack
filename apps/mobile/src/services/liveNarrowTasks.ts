@@ -224,7 +224,9 @@ export async function nlHelperState(source?: NlHelperSource): Promise<NlHelperSt
  */
 export async function nlExtractLive(input: string): Promise<NlExtractOutcome> {
   const profile = profileFor(NARROW_TASK_PROFILE_ID);
-  if (!profile) return { kind: "failed", failure: { stage: "helper", code: "NO_PROFILE" } };
+  // A missing model profile is an app-side fault, not "the reader has no helper":
+  // it must not be reported as the install-me state.
+  if (!profile) return { kind: "failed", failure: { stage: "runtime", code: "NO_PROFILE" } };
   if (input.trim() === "") return { kind: "extracted", patch: {} };
   try {
     const result = await extractSearchFilters(liveGenerateFor("extract-search-filters"), input, profile);

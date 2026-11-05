@@ -25,6 +25,8 @@ import {
 import type { SettingIconTone, SettingsSearchResult } from "../components/settings";
 import {
   destinationFor,
+  resolveDestination,
+  type DestinationContext,
   SETTINGS_PLACEMENT,
   settingsSectionFor,
   type SettingsSection,
@@ -141,10 +143,11 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
  * Local token filter: every whitespace-separated query token must appear
  * somewhere in the entry's title, keywords, or group (case-insensitive).
  */
-export function searchSettings(query: string): SettingsSearchResult[] {
+export function searchSettings(query: string, context?: DestinationContext): SettingsSearchResult[] {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return [];
   return SETTINGS_INDEX.filter((entry) => {
+    if (context && resolveDestination(entry.id, context).kind !== "available") return false;
     const haystack = `${entry.title} ${entry.keywords} ${entry.group}`.toLowerCase();
     return tokens.every((token) => haystack.includes(token));
   }).map(({ keywords: _keywords, group: _group, ...result }) => result);

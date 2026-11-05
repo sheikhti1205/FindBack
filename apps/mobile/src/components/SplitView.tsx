@@ -21,8 +21,8 @@ export type SplitPaneState = { wide: boolean; collapsed: boolean; toggle: () => 
 const DIVIDER_WIDTH = 7;
 /** Narrowest detail pane that can still hold a real form at a readable width. */
 export const DETAIL_PANE_MIN_PX = 320;
-/** The fixed two-column layout's list minimum, in rem (the CSS column). */
-const FIXED_LIST_MIN_REM = 16;
+/** The fixed two-column layout's list ceiling, in rem (the CSS column). */
+const FIXED_LIST_MAX_REM = 22;
 
 /** Root font size in px; 16 when the environment does not report one. */
 function rootFontPx(): number {
@@ -52,9 +52,17 @@ export function SplitView({ selected, list, detail, pane }: {
   // parent can leave no usable detail pane even on a wide window. In either case
   // the split falls back to one routed pane, which keeps selection, drafts and
   // the back stack because data ownership never moves.
-  const listMin = pane ? pane.minWidth : FIXED_LIST_MIN_REM * rootFontPx();
-  const detailMin = width - listMin - (pane ? DIVIDER_WIDTH : 0);
-  const wide = width >= MEDIUM_MAX_PX && detailMin >= DETAIL_PANE_MIN_PX;
+  //
+  // Reserve the WIDEST the list may become, not its minimum: the fixed split's
+  // CSS column may grow to 22rem, and a resizable pane can be dragged to its
+  // maximum or collapsed to a rail. Reserving the minimum promised a detail pane
+  // that the browser could then size below the floor (at 150% text an 840px
+  // window reserved 384px and rendered a 528px list, leaving 312px).
+  const listReserved = pane
+    ? Math.max(pane.maxWidth, pane.collapsedWidth)
+    : FIXED_LIST_MAX_REM * rootFontPx();
+  const detailWidth = width - listReserved - (pane ? DIVIDER_WIDTH : 0);
+  const wide = width >= MEDIUM_MAX_PX && detailWidth >= DETAIL_PANE_MIN_PX;
   const listHidden = !wide && selected;
   const detailHidden = !wide && !selected;
   const [pref, setPref] = useState<PanePreference>(() => readPanePreference(pane));

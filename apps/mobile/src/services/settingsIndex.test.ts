@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { SETTINGS_INDEX, searchSettings } from "./settingsIndex";
 
 describe("settingsIndex", () => {
+  it("filters search by the same signed-in context as Settings rows", () => {
+    expect(searchSettings("theme", { platform: "web", signedIn: false, capabilities: [] })).toEqual([]);
+    expect(searchSettings("theme", { platform: "web", signedIn: true, capabilities: [] }).map(row => row.id))
+      .toContain("appearance");
+  });
   it("covers every settings row target from route_map.csv", () => {
     const routes = SETTINGS_INDEX.map((entry) => entry.route).sort();
     expect(routes).toEqual(

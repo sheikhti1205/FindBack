@@ -22,6 +22,8 @@ import {
   nlSearchAppliedAndKeptNote,
   nlSearchAppliedNote,
   nlSearchRefusedNote,
+  localSearchFailureNote,
+  localSearchFailureOffersHelper,
 } from "./nlHelperCopy";
 
 const STATES: readonly NlHelperState[] = [
@@ -31,6 +33,20 @@ const STATES: readonly NlHelperState[] = [
   "unsupported-device",
   "unknown",
 ];
+
+describe("truthful helper failure copy", () => {
+  it("does not prescribe an install for a verified helper that failed to load", () => {
+    const failure = { stage: "helper" as const, code: "MODEL_NOT_READY" };
+    expect(localSearchFailureNote(failure)).toContain("couldn't load");
+    expect(localSearchFailureNote(failure)).not.toMatch(/needs the local search helper/);
+    expect(localSearchFailureOffersHelper(failure)).toBe(false);
+  });
+
+  it("does not blame a reader's device for absent app configuration", () => {
+    expect(localSearchFailureNote({ stage: "runtime", code: "NO_PROFILE" }))
+      .not.toMatch(/needs the local search helper/);
+  });
+});
 
 const MAPS = [NL_EMPTY_PATCH_NOTE, NL_SUGGESTION_FAILURE_NOTE];
 
