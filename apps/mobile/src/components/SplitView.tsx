@@ -1,5 +1,5 @@
 import {
-  useCallback, useLayoutEffect, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useRef, useState,
   type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from "react";
 import { MEDIUM_MAX_PX, useContentWidth, useViewportWidth } from "./responsive";
@@ -58,9 +58,29 @@ export function SplitView({ selected, list, detail, pane }: {
   // maximum or collapsed to a rail. Reserving the minimum promised a detail pane
   // that the browser could then size below the floor (at 150% text an 840px
   // window reserved 384px and rendered a 528px list, leaving 312px).
+  // The list column scales with the reader's text: a user who enlarges text
+  // while this screen is open must move this decision too, so re-probe the
+  // root font on mutation instead of freezing the mount-time value.
+  const [rootFont, setRootFont] = useState(rootFontPx);
+  useEffect(() => {
+    const sync = () => {
+      const next = rootFontPx();
+      setRootFont((current) => (current === next ? current : next));
+    };
+    sync();
+    const observer = typeof MutationObserver === "function"
+      ? new MutationObserver(sync)
+      : null;
+    observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    window.addEventListener("resize", sync);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
   const listReserved = pane
     ? Math.max(pane.maxWidth, pane.collapsedWidth)
-    : FIXED_LIST_MAX_REM * rootFontPx();
+    : FIXED_LIST_MAX_REM * rootFont;
   const detailWidth = width - listReserved - (pane ? DIVIDER_WIDTH : 0);
   const wide = width >= MEDIUM_MAX_PX && detailWidth >= DETAIL_PANE_MIN_PX;
   const listHidden = !wide && selected;

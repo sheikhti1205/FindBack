@@ -138,6 +138,8 @@ android {
         // CI/local can point at a different project.
         def nativeSupabaseUrl = System.getenv("VITE_SUPABASE_URL") ?: System.getenv("SUPABASE_URL") ?: "https://nfjhpigbsyyoaaktfaev.supabase.co"
         buildConfigField "String", "REPLY_ENDPOINT", "\"${nativeSupabaseUrl}/functions/v1/reply-comment\""
+        // Distribution label only; installed signing authority is checked independently.
+        buildConfigField "String", "UPDATE_CHANNEL", '"beta"'
         // Google Sign-In (W0-A S1): Web/server OAuth client ID used as the
         // Credential Manager Google ID option audience. Env-provided
         // (GOOGLE_WEB_CLIENT_ID from the owner-configured Google Cloud
@@ -193,6 +195,9 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField "String", "UPDATE_CHANNEL", '"development"'
+        }
         release {
             // Signed only when the release pipeline provides credentials
             // (ANDROID_KEYSTORE_PASSWORD et al). Local release builds stay
@@ -214,6 +219,7 @@ android {
             // package it at all — it NEVER falls back to the debug signer
             // (FBX-025). No new secret paths, no committed keystore/passwords.
             initWith debug
+            buildConfigField "String", "UPDATE_CHANNEL", '"beta"'
             // Library modules (:capacitor-android,
             // :capacitor-cordova-android-plugins) ship only debug/release
             // variants: resolve their debug variant for this build type.
@@ -342,6 +348,7 @@ repositories {
 }
 
 dependencies {
+    implementation "com.android.tools.build:apksig:8.13.0"
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"

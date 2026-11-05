@@ -28,6 +28,7 @@ import { PublicProfile } from "./screens/PublicProfile";
 import { About } from "./screens/About";
 import { Updates } from "./screens/Updates";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { NativeUpdateLifecycle } from "./services/updates/nativeRuntime";
 import { MyPosts } from "./screens/MyPosts";
 import { EditReport } from "./screens/EditReport";
 import { SavedReports } from "./screens/SavedReports";
@@ -158,6 +159,7 @@ function AppRouteTree() {
           <ReportLinkHandler />
           <ChatPushLinkHandler />
           <BackButtonHandler />
+          <NativeUpdateLifecycle />
           {user && !booting && !needsProfile ? <UpdatePrompt /> : null}
           <ErrorBoundary>
             <AccountDeletionFeedback />

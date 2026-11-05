@@ -12,8 +12,8 @@
  * means "not verifiable here", never a guessed channel or ABI.
  */
 import { useSyncExternalStore } from "react";
-import { Capacitor, registerPlugin } from "@capacitor/core";
-import { readBuildInfo } from "../buildInfo";
+import { Capacitor } from "@capacitor/core";
+import { nativeUpdateBridge } from "./nativeRuntime";
 import { createUpdateController } from "./controller";
 import type { UpdateController, UpdateSnapshot } from "./controller";
 import { createCatalogueSource, localStorageCatalogueCache, parseAndroidCatalogue, DEFAULT_TRUSTED_HOSTS } from "./catalogue";
@@ -39,8 +39,7 @@ interface NativeUpdateIdentityBridge {
 }
 
 function positiveInteger(value: unknown): number | undefined {
-  const parsed = typeof value === "string" ? Number.parseInt(value, 10) : value;
-  return typeof parsed === "number" && Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function text(value: unknown): string | undefined {
@@ -56,15 +55,14 @@ function text(value: unknown): string | undefined {
  */
 export async function readInstalledIdentity(): Promise<Installation | null> {
   if (!Capacitor.isNativePlatform()) return null;
-  const build = await readBuildInfo();
   let native: Awaited<ReturnType<NativeUpdateIdentityBridge["getIdentity"]>>;
   try {
-    native = await registerPlugin<NativeUpdateIdentityBridge>("FindBackUpdateIdentity").getIdentity();
+    native = await nativeUpdateBridge().getIdentity() as Awaited<ReturnType<NativeUpdateIdentityBridge["getIdentity"]>>;
   } catch {
     return null;
   }
   const packageName = text(native?.packageName);
-  const versionCode = positiveInteger(native?.versionCode) ?? build.versionCode;
+  const versionCode = positiveInteger(native?.versionCode);
   const signingChannel = text(native?.signingChannel);
   const abi = text(native?.abi);
   const sdk = positiveInteger(native?.sdk);

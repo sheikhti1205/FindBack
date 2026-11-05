@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SplitView } from "./SplitView";
 import { CHAT_PANE } from "./panePreference";
@@ -41,6 +41,16 @@ describe("the resizable conversation pane", () => {
     setWidth(848); // 22rem at 24px + 320px detail.
     render(<SplitView selected={false} list={<p>List</p>} detail={<p>Details</p>} />);
     expect(document.querySelector(".fb-split-view")?.className).toContain("fb-split-wide");
+  });
+
+  it("re-evaluates the wide decision when the root text size changes after mount", async () => {
+    setWidth(840);
+    render(<SplitView selected={false} list={<p>List</p>} detail={<p>Details</p>} />);
+    // 16px root: 22rem = 352px, detail = 840-352 = 488px — wide is viable.
+    expect(document.querySelector(".fb-split-view")?.className).toContain("fb-split-wide");
+    document.documentElement.style.fontSize = "32px";
+    await act(async () => {});
+    expect(document.querySelector(".fb-split-view")?.className).not.toContain("fb-split-wide");
   });
 
   it("reserves the maximum adjustable width, not the current minimum", () => {

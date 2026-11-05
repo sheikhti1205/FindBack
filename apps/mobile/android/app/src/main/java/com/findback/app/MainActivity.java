@@ -27,6 +27,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ShortLinkResolverPlugin.class);
         registerPlugin(FindBackDiagPlugin.class);
         registerPlugin(ModelDownloadPlugin.class);
+        registerPlugin(com.findback.app.update.AppUpdatePlugin.class);
         registerPlugin(FindbackNeedle.class);
         registerPlugin(OpenRouterKeyPlugin.class);
         registerPlugin(EmbeddingPlugin.class);

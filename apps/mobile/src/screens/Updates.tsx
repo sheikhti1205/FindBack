@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Button } from "../components/Button";
 import { UpdateChanges } from "../components/UpdateChanges";
+import { UpdateJob } from "../components/UpdateJob";
+import { nativeUpdates, useNativeUpdateState } from "../services/updates/nativeRuntime";
 import { announce } from "../components/LiveRegion";
 import { PreferenceSwitchRow, SettingsGroup, SettingsPage, StatusPill } from "../components/settings";
 import { APP_VERSION } from "../services/appCapabilities";
@@ -79,6 +81,7 @@ function InstalledIdentity({ snapshot, native }: { snapshot: UpdateSnapshot; nat
 export function Updates() {
   const snapshot = useUpdateSnapshot();
   const native = Capacitor.isNativePlatform();
+  const job = useNativeUpdateState();
   const check = snapshot.lastCheck;
   const status = checkStatusCopy(snapshot, native);
   const [buildGitSha, setBuildGitSha] = useState("");
@@ -101,6 +104,7 @@ export function Updates() {
   }, [snapshot.history]);
 
   const checking = snapshot.checking;
+  const jobActive=["downloading","verifying","ready","installing","needs-permission","needs-confirmation"].includes(job.kind);
 
   return (
     <div data-testid="updates-screen">
@@ -127,9 +131,10 @@ export function Updates() {
           {snapshot.eligible !== null ? (
             <div className="px-3 pb-3">
               <p className="text-sm font-medium text-on-surface" data-testid="updates-eligible">
-                {snapshot.eligible.versionName} is ready
+                {snapshot.eligible.versionName} is available
               </p>
               <p className="mt-1 text-sm text-on-surface-variant">{snapshot.eligible.summary}</p>
+              {native && !jobActive ? <Button className="mt-2" variant="outline" onClick={()=>void nativeUpdates.download(snapshot.eligible!,snapshot.installed)}>Download update</Button> : null}
             </div>
           ) : null}
 
@@ -157,6 +162,10 @@ export function Updates() {
             ) : null}
           </div>
         </SettingsGroup>
+
+        {native && job.kind !== "idle" ? <SettingsGroup title="Update progress">
+          <UpdateJob state={job} onInstall={()=>void nativeUpdates.install()} onCancel={()=>void nativeUpdates.cancel()} onPermission={()=>void nativeUpdates.openPermission()} />
+        </SettingsGroup> : null}
 
         <SettingsGroup
           title="Update notices"
