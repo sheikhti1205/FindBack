@@ -73,6 +73,18 @@ assert_abi_matches_set() {
   return 1
 }
 
+# One machine-readable fact row per verified APK. Values are controlled:
+# hex digests, integers, a known ABI token and the app id the caller passed.
+# The certificate digest is public metadata (it is inside every APK); this
+# never echoes it to stdout/stderr — it goes only to the facts file.
+facts_json() {
+  local key="$1" pkg="$2" name="$3" code="$4" min="$5" target="$6" fp="$7" abis_csv="$8"
+  local abis="" abi
+  for abi in $abis_csv; do abis="${abis:+$abis,}\"$abi\""; done
+  printf '{"abi":"%s","abis":[%s],"packageName":"%s","versionName":"%s","versionCode":%s,"minSdk":%s,"targetSdk":%s,"signerSha256":"%s"}\n' \
+    "$key" "$abis" "$pkg" "$name" "$code" "$min" "$target" "$(tr '[:upper:]' '[:lower:]' <<<"$fp")"
+}
+
 # Unit-test hook: sourcing with VERIFY_RELEASE_APKS_TEST=1 exposes the
 # functions above without running verification.
 if [[ "${VERIFY_RELEASE_APKS_TEST:-}" == "1" ]]; then
@@ -81,12 +93,14 @@ fi
 
 APK_DIR=""
 AAB=""
+FACTS_OUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apk-dir) APK_DIR="$2"; shift 2 ;;
     --aab) AAB="$2"; shift 2 ;;
-    *) echo "verify-release-apks: unknown arg $1 (expected --apk-dir DIR [--aab FILE])" >&2; exit 1 ;;
+    --facts-out) FACTS_OUT="$2"; shift 2 ;;
+    *) echo "verify-release-apks: unknown arg $1 (expected --apk-dir DIR [--aab FILE] [--facts-out FILE])" >&2; exit 1 ;;
   esac
 done
 
@@ -96,6 +110,7 @@ done
 [[ -n "${EXPECTED_APP_ID:-}" ]] || { echo "verify-release-apks: EXPECTED_APP_ID is empty" >&2; exit 1; }
 [[ -n "${EXPECTED_VERSION_NAME:-}" ]] || { echo "verify-release-apks: EXPECTED_VERSION_NAME is empty" >&2; exit 1; }
 [[ -n "${EXPECTED_VERSION_CODE:-}" ]] || { echo "verify-release-apks: EXPECTED_VERSION_CODE is empty" >&2; exit 1; }
+[[ "$EXPECTED_APP_ID" =~ ^[A-Za-z0-9._]+$ ]] || { echo "verify-release-apks: EXPECTED_APP_ID is not a package id" >&2; exit 1; }
 
 EXPECTED_FP="$(norm_fp "$ANDROID_SIGNING_CERT_SHA256")"
 [[ -n "$EXPECTED_FP" ]] || { echo "verify-release-apks: fingerprint normalizes to empty" >&2; exit 1; }
@@ -134,7 +149,11 @@ UNIVERSAL_APK="$(find "$APK_DIR" -maxdepth 1 -name '*universal*.apk' | sort | he
 [[ -n "$UNIVERSAL_APK" ]] || { echo "verify-release-apks: FAIL: no universal APK in $APK_DIR (reference inventory required)" >&2; exit 1; }
 UNIVERSAL_LISTING="$(unzip -Z1 "$UNIVERSAL_APK")"
 REQ_DIR="$(mktemp -d)"
-trap 'rm -rf "$REQ_DIR"' EXIT
+FACTS_DIR=""
+if [[ -n "$FACTS_OUT" ]]; then
+  FACTS_DIR="$(mktemp -d)"
+fi
+trap 'rm -rf "$REQ_DIR" "${FACTS_DIR:-}"' EXIT
 for ABI in $SUPPORTED_ABIS; do
   so_basenames_for_abi "$ABI" <<<"$UNIVERSAL_LISTING" > "$REQ_DIR/$ABI.txt" || true
   [[ -s "$REQ_DIR/$ABI.txt" ]] || { echo "verify-release-apks: FAIL: universal $(basename "$UNIVERSAL_APK") ships no native .so for $ABI" >&2; exit 1; }
@@ -195,10 +214,10 @@ for APK in "${APKS[@]}"; do
   LISTING="$(unzip -Z1 "$APK")"
   LIBS="$(echo "$LISTING" | grep -Eo 'lib/[^/]+/' | cut -d/ -f2 | sort -u | tr '\n' ' ' || true)"
   case "$NAME" in
-    *arm64-v8a*) WANT="arm64-v8a" ;;
-    *armeabi-v7a*) WANT="armeabi-v7a" ;;
-    *x86_64*) WANT="x86_64" ;;
-    *universal*) WANT="$SUPPORTED_ABIS" ;;
+    *arm64-v8a*) KEY="arm64-v8a"; WANT="arm64-v8a" ;;
+    *armeabi-v7a*) KEY="armeabi-v7a"; WANT="armeabi-v7a" ;;
+    *x86_64*) KEY="x86_64"; WANT="x86_64" ;;
+    *universal*) KEY="universal"; WANT="$SUPPORTED_ABIS" ;;
     *) echo "verify-release-apks: FAIL $NAME: unexpected APK name (want an ABI or universal split)" >&2; exit 1 ;;
   esac
   for ABI in $WANT; do
@@ -219,11 +238,38 @@ for APK in "${APKS[@]}"; do
   # 5. Baked Supabase + Sentry client config.
   node "$REPO_ROOT/scripts/check-mobile-build-config.mjs" --apk "$APK"
 
-  # 6. Integrity record (hashes only).
+  # 6. Verified facts for the release manifest (one row per APK variant).
+  if [[ -n "$FACTS_DIR" ]]; then
+    facts_json "$KEY" "$EXPECTED_APP_ID" "$EXPECTED_VERSION_NAME" "$EXPECTED_VERSION_CODE" \
+      "$MIN_SDK" "$TARGET_SDK" "$GOT_FP" "$WANT" > "$FACTS_DIR/$KEY.json"
+  fi
+
+  # 7. Integrity record (hashes only).
   sha256sum "$APK"
 done
 
-# 7. AAB carries the same certificate (keytool on the packaged signature).
+# 8. Machine-readable facts for generate-release-manifest.mjs (no fingerprints
+# are printed: they live only in this file, which is public release metadata).
+if [[ -n "$FACTS_OUT" ]]; then
+  node - "$FACTS_DIR" "$FACTS_OUT" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.argv[2];
+const out = process.argv[3];
+const rows = fs.readdirSync(dir)
+  .filter((name) => name.endsWith(".json"))
+  .sort()
+  .map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")));
+if (rows.length === 0) {
+  console.error("verify-release-apks: FAIL: no APK facts collected");
+  process.exit(1);
+}
+fs.writeFileSync(out, `${JSON.stringify(rows, null, 2)}\n`);
+NODE
+  echo "verify-release-apks: wrote per-APK facts for ${#APKS[@]} variant(s)"
+fi
+
+# 9. AAB carries the same certificate (keytool on the packaged signature).
 if [[ -n "$AAB" ]]; then
   [[ -f "$AAB" ]] || { echo "verify-release-apks: FAIL: AAB not found at $AAB" >&2; exit 1; }
   TMPD="$(mktemp -d)"

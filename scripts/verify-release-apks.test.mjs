@@ -162,3 +162,36 @@ describe("R2 ABI completeness", () => {
     }
   });
 });
+
+describe("verified APK facts", () => {
+  it("writes one parseable row with a lowercase public digest", () => {
+    const raw = sh('facts_json arm64-v8a com.findback.app 0.9.0-beta.1 100471 24 36 AB12CD34 "arm64-v8a"');
+    const row = JSON.parse(raw);
+    assert.deepEqual(row, {
+      abi: "arm64-v8a",
+      abis: ["arm64-v8a"],
+      packageName: "com.findback.app",
+      versionName: "0.9.0-beta.1",
+      versionCode: 100471,
+      minSdk: 24,
+      targetSdk: 36,
+      signerSha256: "ab12cd34",
+    });
+  });
+
+  it("lists every ABI a universal artifact carries", () => {
+    const row = JSON.parse(
+      sh('facts_json universal com.findback.app 0.9.0-beta.1 100471 24 36 AB12CD34 "arm64-v8a armeabi-v7a x86_64"'),
+    );
+    assert.deepEqual(row.abis, ["arm64-v8a", "armeabi-v7a", "x86_64"]);
+  });
+
+  it("never echoes the digest to stderr", () => {
+    const out = execFileSync(
+      "bash",
+      ["-c", `VERIFY_RELEASE_APKS_TEST=1 source "${SHELL_LIB}"; facts_json arm64-v8a com.findback.app 0.9.0-beta.1 100471 24 36 AB12CD34 "arm64-v8a" 2>&1 1>/dev/null`],
+      { encoding: "utf8" },
+    );
+    assert.equal(out.trim(), "");
+  });
+});

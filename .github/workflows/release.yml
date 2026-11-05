@@ -351,7 +351,8 @@ jobs:
           export EXPECTED_VERSION_CODE="$((100000 + $(git rev-list --count HEAD)))"
           bash scripts/verify-release-apks.sh \
             --apk-dir apps/mobile/android/app/build/outputs/apk/release \
-            --aab apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+            --aab apps/mobile/android/app/build/outputs/bundle/release/app-release.aab \
+            --facts-out "$RUNNER_TEMP/apk-facts.json"
         env:
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
           EXPECTED_APP_ID: com.findback.app
@@ -421,6 +422,8 @@ jobs:
             --git-sha "$SHA" \
             --min-sdk "$MIN_SDK" \
             --target-sdk "$TARGET_SDK" \
+            --facts "$RUNNER_TEMP/apk-facts.json" \
+            --signing-channel beta \
             --out release-stage/release-manifest.json
           cat release-stage/release-manifest.json
           (cd release-stage && sha256sum *.apk *.aab release-manifest.json > SHA256SUMS.txt)
