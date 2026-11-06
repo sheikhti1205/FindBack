@@ -2,12 +2,13 @@
 // release downloads directly (CORS); native APK downloads remain direct.
 const URL = 'https://github.com/sheikhti1205/Norfold/releases/download/android-latest/catalogue.v1.json';
 const MAX_BYTES = 128 * 1024;
-async function handleUpdates(req, fetchImpl = fetch) {
+const { Buffer } = require('node:buffer');
+async function handleUpdates(req, fetchImpl = globalThis.fetch) {
   // Public, credential-free metadata is also read by the bundled Android
   // WebView at https://localhost, not only by the same-origin hosted site.
   const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
   try {
-    const response = await fetchImpl(URL, { signal: AbortSignal.timeout(10000), redirect: 'follow' });
+    const response = await fetchImpl(URL, { signal: globalThis.AbortSignal.timeout(10000), redirect: 'follow' });
     if (!response.ok || Number(response.headers.get('content-length')) > MAX_BYTES) throw Error();
     const reader = response.body.getReader();
     let size = 0;
