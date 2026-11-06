@@ -49,6 +49,8 @@ export interface NativeDriveAccess { accessToken: string; expiresAt: number; acc
 export interface NativeDriveAuth {
   isAvailable(): Promise<{ available: boolean; reason?: string }>;
   authorize(options: { silent: boolean }): Promise<NativeDriveAccess>;
+  /** Evicts only the rejected access credential, not the account's grant. */
+  clearToken(options: { token: string }): Promise<unknown>;
   revoke(options: { token: string }): Promise<{ revoked?: boolean }>;
 }
 
@@ -88,6 +90,8 @@ export interface DriveAuthorization {
   authorize(signal?: AbortSignal): Promise<DriveAccess>;
   /** Silent renewal; resolves null when Google needs a gesture again. */
   renew(signal?: AbortSignal): Promise<DriveAccess | null>;
+  /** Resource-server refusal: forget locally and evict the native token cache. */
+  invalidate(token: string, signal?: AbortSignal): Promise<void>;
   /** The still-valid token, or null. */
   current(): DriveAccess | null;
   /** Local authority is always revoked; durable cleanup can remain uncertain. */
@@ -173,8 +177,11 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   let loaded = false;
   let generation = 0;
   let disconnected = false;
-  const assertRequest = (ticket: number, signal?: AbortSignal) => {
-    if (ticket !== generation || signal?.aborted) throw new DriveAuthError("failed");
+  let invalidated = false;
+  let credentialVersion = 0;
+  let rejectedToken: string | null = null;
+  const assertRequest = (ticket: number, signal?: AbortSignal, version = credentialVersion) => {
+    if (ticket !== generation || version !== credentialVersion || signal?.aborted) throw new DriveAuthError("failed");
   };
 
   const clearPersisted = (): boolean => {
@@ -192,7 +199,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   const read = (): DriveAccess | null => {
     // A failed removal must never let current()/renew() reload the old grant
     // when storage later recovers. Only explicit successful consent releases it.
-    if (disconnected) return null;
+    if (disconnected || invalidated) return null;
     if (live) {
       const valid = validAccess(live, now());
       if (valid) return valid;
@@ -216,6 +223,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     storage?.setItem(DRIVE_TOKEN_KEY, JSON.stringify(access));
     live = access;
     disconnected = false;
+    invalidated = false;
   };
 
   const unavailableReason = (): DriveAuthUnavailable | null => {
@@ -228,16 +236,28 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   };
 
   /** One native grant, validated by the same rules as the web token. */
-  const askNative = async (silent: boolean, ticket: number, signal?: AbortSignal): Promise<DriveAccess | null> => {
-    if (!transport) throw new DriveAuthError("native");
+  const clearRejected = async (ticket: number, signal?: AbortSignal): Promise<void> => {
+    const rejected = rejectedToken;
+    if (!native || !transport || !rejected) return;
     assertRequest(ticket, signal);
+    try { await transport.clearToken({ token: rejected }); }
+    catch { throw new DriveAuthError("failed"); }
+    assertRequest(ticket, signal);
+    if (rejectedToken === rejected) rejectedToken = null;
+  };
+
+  const askNative = async (silent: boolean, ticket: number, signal: AbortSignal | undefined,
+    version: number): Promise<DriveAccess | null> => {
+    if (!transport) throw new DriveAuthError("native");
+    await clearRejected(ticket, signal);
+    assertRequest(ticket, signal, version);
     let answer: NativeDriveAccess;
     try {
       answer = await transport.authorize({ silent });
     } catch (error) {
       throw nativeFailure(error);
     }
-    assertRequest(ticket, signal);
+    assertRequest(ticket, signal, version);
     const access = validAccess(
       { token: answer?.accessToken ?? "", expiresAt: Number(answer?.expiresAt ?? 0) }, now());
     if (!access) throw new DriveAuthError("failed");
@@ -247,11 +267,12 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
   };
 
   const request = (silent: boolean, ticket: number, signal?: AbortSignal): Promise<DriveAccess | null> => {
+    const version = credentialVersion;
     const reason = unavailableReason();
     if (reason) return Promise.reject(new DriveAuthError(reason));
-    if (native) return askNative(silent, ticket, signal);
+    if (native) return askNative(silent, ticket, signal, version);
     return load().then((oauth2) => {
-      assertRequest(ticket, signal);
+      assertRequest(ticket, signal, version);
       return new Promise<DriveAccess | null>((resolve, reject) => {
       let settled = false;
       const finish = (access: DriveAccess | null, error?: DriveAuthError) => {
@@ -265,7 +286,7 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
         scope: DRIVE_SCOPE,
         callback: (response) => {
           if (settled) return;
-          try { assertRequest(ticket, signal); } catch {
+          try { assertRequest(ticket, signal, version); } catch {
             finish(null, new DriveAuthError("failed")); return;
           }
           const token = typeof response.access_token === "string" ? response.access_token : "";
@@ -321,12 +342,29 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
       }
     },
     current: read,
+    invalidate: async (token, signal) => {
+      const ticket = generation;
+      assertRequest(ticket, signal);
+      if (!TOKEN.test(token)) throw new DriveAuthError("failed");
+      // Do not evict a newer successful credential for an older request's 401.
+      const current = read();
+      if (!current || current.token === token) {
+        credentialVersion++;
+        invalidated = true;
+        live = null;
+        clearPersisted();
+      }
+      if (native) rejectedToken = token;
+      await clearRejected(ticket, signal);
+      assertRequest(ticket, signal);
+    },
     forget: () => {
       generation++;
       const last = read();
       disconnected = true;
       live = null;
       loaded = false;
+      rejectedToken = null;
       const durable = clearPersisted();
       // Native revocation is best-effort, and even a synchronous bridge throw
       // cannot interrupt the canonical account teardown. Never log its payload.

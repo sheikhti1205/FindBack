@@ -7,6 +7,7 @@ import { kickChatWake } from "./chatWake";
 import { createDeviceEnrollment } from "./deviceEnrollment";
 import { openWebDeviceIdentity } from "./webDeviceIdentity";
 import { openAndroidDeviceIdentity } from "./androidDeviceIdentity";
+import type { HistoryCandidate } from "./peerHistory";
 
 /** Shares the caller's lifetime; does not create another session or scheduler. */
 export function createSupabaseMediaTransport(scope: MessagingScope, signal: AbortSignal, prepare?: () => Promise<void>) {
@@ -82,5 +83,22 @@ export function createSupabaseMessagingSession(identity: MessagingScope, history
     if (action === "SEND" && typeof args.messageId === "string") kickChatWake(accountId, args.messageId);
     return data;
   }, (mediaScope, signal) => createSupabaseMediaTransport(mediaScope, signal, () => session.prepare()), admission);
-  return session;
+  const peerRpc = async (action: string, args: Record<string,unknown>, signal: AbortSignal) => {
+    await session.prepare();signal.throwIfAborted();session.signal.throwIfAborted();
+    const {data,error}=await getSupabase().rpc("findback_history_peer",{p_action:action,p_args:args}).abortSignal(signal);
+    signal.throwIfAborted();session.signal.throwIfAborted();
+    if(error)throw new Error("Peer could not connect");return data;
+  };
+  return {...session,peerRpc,
+    async peerAuthority(sessionId: string,candidates: HistoryCandidate[],signal: AbortSignal) {
+      await session.prepare();signal.throwIfAborted();session.signal.throwIfAborted();
+      const {data,error}=await getSupabase().rpc("findback_peer_history_authority",{p_session_id:sessionId,p_candidates:candidates}).abortSignal(signal);
+      signal.throwIfAborted();session.signal.throwIfAborted();
+      if(error)throw new Error("History could not sync");return data;
+    },
+    async signPeer(input: Parameters<ReturnType<typeof createDeviceEnrollment>["signPeer"]>[0],signal: AbortSignal) {
+      await session.prepare();signal.throwIfAborted();
+      const result=await enrollment!.signPeer(input);signal.throwIfAborted();return result;
+    },
+  };
 }

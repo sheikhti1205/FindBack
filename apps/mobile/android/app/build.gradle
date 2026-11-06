@@ -385,7 +385,8 @@ dependencies {
     // the drive.appdata grant is obtained here instead. Pinned exact — never
     // floating. Already present transitively; depended on explicitly because
     // the plugin compiles against AuthorizationClient directly.
-    implementation "com.google.android.gms:play-services-auth:21.1.1"
+    // AuthorizationClient.clearToken is required for resource-rejected grants.
+    implementation "com.google.android.gms:play-services-auth:22.0.0"
     // Keyless map renderer (MAP pivot): MapLibre Native Android, OpenGL ES
     // backend only. Pinned exact via $mapLibreVersion in variables.gradle —
     // never floating.

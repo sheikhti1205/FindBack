@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   PEER_MANIFEST_MAX_BYTES, PEER_MANIFEST_MAX_CONVERSATIONS, PEER_MANIFEST_MAX_MEDIA,
   buildPeerManifest, diffPeerManifest, parsePeerManifest, peerServeManifest,
@@ -17,6 +17,17 @@ const base = (overrides: Partial<PeerManifest> = {}): PeerManifest => ({
 const scope = { accountId, deviceId };
 
 describe("peer manifest authority scoping", () => {
+  it("validates UTF-8 byte bounds without Node globals in a browser", () => {
+    const value = base({ conversations: [{ ...base().conversations[0]!, epoch: "é".repeat(100) }] });
+    vi.stubGlobal("Buffer", undefined);
+    try {
+      expect(parsePeerManifest(value, scope)).toEqual(value);
+      const large = base({ conversations: Array.from({ length: PEER_MANIFEST_MAX_CONVERSATIONS },
+        (_, index) => ({ ...value.conversations[0]!, conversationId: id(1000 + index), epoch: "界".repeat(128) })) });
+      expect(() => parsePeerManifest(large, scope)).toThrow("Peer sync is unavailable");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("builds from local summaries/head checkpoints and cached committed media only", async () => {
     const manifest = await buildPeerManifest({
       scope, now: () => 2_000,

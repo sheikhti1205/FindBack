@@ -13,6 +13,7 @@ import { isUuid, uuid } from "./validation";
 import type { MessagingPreferences } from "./session";
 import { onRealtime } from "../realtime";
 import { getSupabaseBackendUrl } from "../supabaseClient";
+import { createPeerHistoryOwner } from "./peerHistoryOwner";
 
 export interface MessagingThreadSync {
   conversationId: string;
@@ -53,6 +54,7 @@ export interface MessagingThreadState {
   messages: StoredHumanMessage[]; outbox: OutboxEntry[]; media: MediaAttachment[];
 }
 interface Owner {
+  peers?:ReturnType<typeof createPeerHistoryOwner>;
   retryTimer: ReturnType<typeof setTimeout> | null;
   retryAttempts: number;
   historyRevision: number;
@@ -246,6 +248,7 @@ function closePlatformHandle(handle: PlatformMessagingHandle): Promise<void> {
 }
 
 function closeOwner(owner: Owner): Promise<void> {
+  owner.peers?.close();
   if (owner.retryTimer !== null) clearTimeout(owner.retryTimer);
   owner.retryTimer = null;
   owner.detach();
@@ -259,7 +262,7 @@ function closeOwner(owner: Owner): Promise<void> {
  * ever interpreted as a message, relationship change, or persistence receipt. */
 function attachResume(owner: Owner): () => void {
   if (typeof window === "undefined") return () => undefined;
-  const resume = () => { void requestRefresh(owner, "full"); };
+  const resume = () => { owner.peers?.resume();void requestRefresh(owner, "full"); };
   const visible = () => { if (document.visibilityState === "visible") resume(); };
   const offline = () => {
     if (current === owner) {
@@ -327,6 +330,7 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
         // Only a completed full pass earns the fast path: SYNC without current
         // projections would leave the composer unable to judge eligibility.
         owner.started = true;
+        owner.peers?.start();
       }
       // Open/reconnect compare the active thread before pending SEND admission.
       // A thread failure stays gated while unrelated mailbox recovery can proceed.
@@ -433,6 +437,14 @@ export function setMessagingAccount(accountId: string | null, sessionId?: string
         generation: ticket, refreshing: null, pendingRefresh: null, started: false,
         authorityVersion: 0, activeThread: null, restorations: new Map(), historyRevision: 0, threadCache: new Map(), retryTimer: null, retryAttempts: 0, detach: () => undefined };
       current = owner;
+      // Scope belongs to this canonical owner. Native/browser signers remain in
+      // its Supabase session; account switch closes peer jobs before storage.
+      owner.peers=createPeerHistoryOwner(handle.scope,handle.history,{signal:owner.session.signal,
+        backendUrl:getSupabaseBackendUrl(),active:()=>current===owner && owner.generation===generation
+          && document.visibilityState==="visible" && navigator.onLine,
+        rpc:owner.session.peerRpc,authority:owner.session.peerAuthority,signPeer:owner.session.signPeer,
+        beforeImport:async()=>{assertOwner(owner);await owner.session.syncState();assertOwner(owner);},
+        onImport:async()=>{assertOwner(owner);await reload(owner);assertOwner(owner);}});
       owner.detach = attachResume(owner);
       await reload(owner); // Publish local rows before attempting network work.
       void requestRefresh(owner, "full");

@@ -91,6 +91,7 @@ function fakeAuth(options: { available?: boolean; reason?: "native" | "unconfigu
       return access;
     }),
     renew: vi.fn(async () => access),
+    invalidate: vi.fn(async (token: string) => { if (access?.token === token) access = null; }),
     forget: vi.fn(() => { generation++; access = null; }),
     drop: () => { access = null; },
   };

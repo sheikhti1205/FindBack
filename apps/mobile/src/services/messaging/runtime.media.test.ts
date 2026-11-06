@@ -44,6 +44,7 @@ let rangeGate: ReturnType<typeof deferred> | null;
 let rangeEntered: ReturnType<typeof deferred> | null;
 let authSession: string | null, enrollmentGate: ReturnType<typeof deferred> | null;
 let enrollmentCalls: string[], challenges: Map<string, Record<string, unknown>>;
+let peerCalls: Array<{action: string; args: Record<string, unknown>}>;
 
 async function waitForState(predicate: (state: ReturnType<typeof runtime.getMessagingRuntimeSnapshot>) => boolean) {
   if (predicate(runtime.getMessagingRuntimeSnapshot())) return;
@@ -58,6 +59,7 @@ async function waitForState(predicate: (state: ReturnType<typeof runtime.getMess
 beforeEach(async () => {
   vi.resetModules(); boundary.handles = []; account = A; online = true; uploadFails = false;
   authSession = id(11); enrollmentGate = null; enrollmentCalls = []; challenges = new Map();
+  peerCalls=[];
   headPosition = 0; headRevision = 1; headState = 0; rangeGate = null; rangeEntered = null;
   requestLog = []; mail = []; remote = new Map(); acked = new Set(); deliveryGate = null;
   entered = deferred(); lastGetSignal = null;
@@ -69,6 +71,9 @@ beforeEach(async () => {
     setItem: (key: string, value: string) => { items.set(key, value); } });
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
+  // Preserve the real synthetic Web Locks owner; an online stub must not
+  // disable the origin-wide storage admission used by the production adapter.
+  vi.stubGlobal("navigator",{locks:navigator.locks,get onLine(){return online;}});
   const network: typeof fetch = async (input, init) => {
     const request = new Request(input, init);
     if (!online) throw new Error("offline");
@@ -98,6 +103,10 @@ beforeEach(async () => {
           sessionId: authSession, publicKey: args.p_public_key, nonce: "a".repeat(64), issuedAt: Date.now() - 1, expiresAt: Date.now() + 60_000 };
         challenges.set(c.challengeId, c); enrollmentCalls.push("challenge"); return Response.json(c);
       }
+       if(request.url.endsWith("findback_history_peer")){
+         peerCalls.push({action:args.p_action as string,args:args.p_args as Record<string,unknown>});
+         return Response.json([]);
+       }
        expect(args.p_account_id).toBe(account); expect(args.p_device_id).toBe(DEVICE);
        if (request.url.endsWith("findback_chat_set_muted")) {
          expect(args.p_conversation_id).toBe(CONV); expect(typeof args.p_muted).toBe("boolean");
@@ -189,6 +198,13 @@ afterEach(async () => {
 });
 
 describe("Auth session lifetime within the same account",()=>{
+  it("executes production foreground discovery through the enrolled SDK and cached empty conversation",async()=>{
+    runtime.setMessagingAccount(A,id(11));await waitForState(s=>s.status==="ready");
+    await vi.waitFor(()=>expect(peerCalls).toContainEqual({action:"DISCOVER",args:{conversationId:CONV}}),{timeout:5500});
+    expect(peerCalls[0]).toEqual({action:"PENDING",args:{}});
+    expect(enrollmentCalls).toEqual(["challenge","commit"]);
+    expect(await boundary.handles[0]!.history.listMessages(CONV)).toEqual([]);
+  });
   it("lets push join the latest same-session lifetime across StrictMode cleanup/setup", async () => {
     const shared = runtime.ensureMessagingDevice(A, id(11));
     runtime.clearMessagingRuntime();

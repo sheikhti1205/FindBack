@@ -392,6 +392,8 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     return mediaSyncing;
   };
   return {
+    /** Canonical lifetime for optional peer work; no second Auth owner. */
+    signal: controller.signal,
     prepare,
     async start(platform: "web" | "android" | "ios") { await call("REGISTER", { platform }); },
     async request(otherId: string) { return uuid(await call("CREATE", { otherId: uuid(otherId) }) as string); },

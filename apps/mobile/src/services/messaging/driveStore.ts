@@ -26,6 +26,7 @@ export class DriveStoreError extends Error {
 /** Short-lived access tokens; a 401 asks the auth port for one renewal. */
 export interface DriveTokenSource {
   token(force: boolean): Promise<string>;
+  invalidate(token: string): Promise<void>;
 }
 
 export interface DriveStoreOptions {
@@ -145,9 +146,27 @@ export class DriveRestStore implements BackupDriveStore {
       void response.body?.cancel().catch(() => undefined);
       this.signal.throwIfAborted();
     }
-    if (response.status === 401 && attempt === 0) {
+    if (response.status === 401) {
       void response.body?.cancel().catch(() => undefined);
-      return this.send(path, init, 1);
+      // Play services may return the same locally cached rejected token unless
+      // it is explicitly cleared. The final refusal must also stop current()
+      // trusting that credential, so a subsequent reconnect really authorizes.
+      try { await this.auth.invalidate(access); }
+      catch {
+        this.signal?.throwIfAborted();
+        throw new DriveStoreError("unauthorized", 0, 401);
+      }
+      this.signal?.throwIfAborted();
+      if (attempt === 0) return this.send(path, init, 1);
+    }
+    if (response.status === 403) {
+      const error = await failure(response.clone());
+      if (error.kind === "unauthorized") {
+        // A missing grant requires explicit consent, not a silent retry loop.
+        try { await this.auth.invalidate(access); } catch { /* current() is already invalidated */ }
+        this.signal?.throwIfAborted();
+        throw error;
+      }
     }
     return response;
   }
@@ -222,9 +241,11 @@ export class DriveRestStore implements BackupDriveStore {
 
 /** Build the production store from the shared drive authorization port. */
 export function driveStore(auth: { current(): { token: string } | null;
-  authorize(): Promise<{ token: string }>; renew(): Promise<{ token: string } | null> },
+  authorize(): Promise<{ token: string }>; renew(): Promise<{ token: string } | null>;
+  invalidate(token: string, signal?: AbortSignal): Promise<void> },
   options: DriveStoreOptions = {}): DriveRestStore {
   return new DriveRestStore({
+    invalidate: value => auth.invalidate(value, options.signal),
     async token(force) {
       const access = force ? await auth.renew() : auth.current() ?? await auth.renew();
       if (!access) throw new DriveStoreError("unauthorized");

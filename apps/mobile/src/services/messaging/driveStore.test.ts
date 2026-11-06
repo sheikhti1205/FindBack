@@ -16,7 +16,8 @@ function responder(handler: (url: string, init: RequestInit) => Response | Promi
 
 const tokens = (value = TOKEN) => {
   const calls: boolean[] = [];
-  return { calls, source: { token: async (force: boolean) => { calls.push(force); return value; } } };
+  return { calls, source: { token: async (force: boolean) => { calls.push(force); return value; },
+    invalidate: async () => undefined } };
 };
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -35,7 +36,7 @@ describe("transport cancellation fences", () => {
   it("never dispatches a write when cancellation arrives during token renewal", async () => {
     const access = deferred<string>(), controller = new AbortController();
     const network = responder(() => json({ id: FILE, name: "backup", size: 1 }));
-    const store = new DriveRestStore({ token: () => access.promise }, { fetch: network.fetch,
+    const store = new DriveRestStore({ token: () => access.promise, invalidate: async () => undefined }, { fetch: network.fetch,
       ...{ signal: controller.signal } });
     const pending = store.write({ name: "backup", bytes: new Uint8Array([1]).buffer }).catch(() => null);
     controller.abort(); access.resolve(TOKEN); await pending;
@@ -55,6 +56,49 @@ describe("transport cancellation fences", () => {
 });
 
 describe("the Drive store", () => {
+  it("invalidates every rejected token before retry, including the final refusal", async () => {
+    let credential: string | null = TOKEN;
+    const events: string[] = [];
+    const store = new DriveRestStore({
+      token: async force => {
+        events.push(force ? "renew" : "current");
+        credential ??= "ya29.next.synthetic.credential";
+        return credential;
+      },
+      invalidate: async value => {
+        expect(value).toBe(credential);
+        events.push("invalidate");
+        credential = null;
+      },
+    }, { fetch: responder(() => { events.push("401"); return new Response(null, { status: 401 }); }).fetch });
+    await expect(store.list()).rejects.toMatchObject({ kind: "unauthorized", httpStatus: 401 });
+    expect(events).toEqual(["current", "401", "invalidate", "renew", "401", "invalidate"]);
+    expect(credential).toBeNull();
+  });
+
+  it("does not retry if rejected-token eviction fails", async () => {
+    let requests = 0;
+    const store = new DriveRestStore({ token: async () => TOKEN,
+      invalidate: async () => { throw new Error("synthetic eviction failure"); } },
+    { fetch: responder(() => { requests++; return new Response(null, { status: 401 }); }).fetch });
+    await expect(store.list()).rejects.toMatchObject({ kind: "unauthorized", httpStatus: 401 });
+    expect(requests).toBe(1);
+  });
+
+  it("drops insufficient-scope credentials so explicit reconnect can ask for consent", async () => {
+    const rejected: string[] = [];
+    let requests = 0;
+    const store = new DriveRestStore({ token: async () => TOKEN,
+      invalidate: async value => { rejected.push(value); } },
+    { fetch: responder(() => {
+      requests++;
+      return json({ error: { errors: [{ reason: "insufficientPermissions" }] } }, 403);
+    }).fetch });
+    await expect(store.list()).rejects.toMatchObject({ kind: "unauthorized", httpStatus: 403, providerReason: "scope" });
+    expect(rejected).toEqual([TOKEN]);
+    expect(requests).toBe(1);
+  });
+
   it("lists the app folder with the narrow query and bounded fields", async () => {
     const { fetch, calls } = responder((url) => json(url.includes("pageToken")
       ? { files: [{ id: FILE, name: "norfold.manifest.v1.bin", size: "42" }] }
@@ -179,7 +223,7 @@ describe("the Drive store", () => {
     });
     await expect(offline.list()).rejects.toMatchObject({ kind: "unavailable" });
 
-    const badToken = new DriveRestStore({ token: async () => "nope nope nope" },
+    const badToken = new DriveRestStore({ token: async () => "nope nope nope", invalidate: async () => undefined },
       { fetch: responder(() => json({ files: [] })).fetch });
     await expect(badToken.list()).rejects.toMatchObject({ kind: "unauthorized" });
   });
@@ -211,6 +255,7 @@ describe("the production store port", () => {
       current: () => null,
       renew: async () => { calls.push("renew"); return null; },
       authorize: async () => ({ token: TOKEN }),
+      invalidate: async () => undefined,
     };
     const store = driveStore(auth);
     await expect(store.list()).rejects.toMatchObject({ kind: "unauthorized" });
@@ -218,7 +263,7 @@ describe("the production store port", () => {
 
     const { fetch, calls: requests } = responder(() => json({ files: [] }));
     const live = driveStore({ current: () => ({ token: TOKEN }), renew: async () => null,
-      authorize: async () => ({ token: TOKEN }) }, { fetch });
+      authorize: async () => ({ token: TOKEN }), invalidate: async () => undefined }, { fetch });
     await live.list();
     expect((requests[0]!.init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
   });

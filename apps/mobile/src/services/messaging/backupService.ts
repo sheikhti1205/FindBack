@@ -129,6 +129,7 @@ export interface BackupAuthPort {
   current(): DriveAccess | null;
   authorize(signal?: AbortSignal): Promise<DriveAccess>;
   renew(signal?: AbortSignal): Promise<DriveAccess | null>;
+  invalidate(token: string, signal?: AbortSignal): Promise<void>;
   forget(): void;
 }
 
@@ -177,6 +178,7 @@ export interface BackupUploadOutcome {
 
 function productionStore(auth: BackupAuthPort, signal: AbortSignal): BackupDriveStore {
   return new DriveRestStore({
+    invalidate: value => auth.invalidate(value, signal),
     async token(force) {
       const access = (force ? await auth.renew() : auth.current() ?? await auth.renew());
       if (!access) throw new DriveStoreError("unauthorized");

@@ -4,6 +4,7 @@ import { derivePeerChannelBinding } from "./peerChannelBinding";
 import { diffPeerManifest, parsePeerManifest, type PeerManifest, type PeerManifestDiff } from "./peerManifest";
 import type { PeerTransferChannel } from "./peerTransfer";
 import { isUuid, uuid } from "./validation";
+import { queuePeerChannel } from "./peerChannelQueue";
 
 /** Server-admitted peer session returned by findback_peer_signal OPEN/READ. */
 export interface PeerSessionInfo {
@@ -26,7 +27,7 @@ export interface PeerConnectionPort {
   readonly connectionState: string;
   onicecandidate: ((event: { candidate: PeerIceCandidate | null }) => void) | null;
   ondatachannel: ((event: { channel: PeerTransferChannel }) => void) | null;
-  createDataChannel(label: string, options: { ordered: boolean }): PeerTransferChannel;
+  createDataChannel(label: string, options: { ordered: boolean; protocol: string }): PeerTransferChannel;
   createOffer(): Promise<PeerDescription>;
   createAnswer(): Promise<PeerDescription>;
   setLocalDescription(description: PeerDescription): Promise<void>;
@@ -80,7 +81,8 @@ export interface PeerSession {
   close(): void;
 }
 
-export interface PeerSessionInput { accountId: string; deviceId: string; targetDeviceId: string; sessionId?: string }
+export interface PeerSessionInput { accountId: string; deviceId: string; targetDeviceId: string; sessionId?: string;
+  peerAccountId?: string; conversationId?: string; epoch?: string }
 
 const unavailable = () => new Error("Peer sync is unavailable");
 const MAX_MESSAGE = 64 * 1024 + 4_096;
@@ -103,9 +105,13 @@ function sdp(value: unknown): string {
     || !value.startsWith("v=0") || !FINGERPRINT.test(value)) throw unavailable();
   return value;
 }
-function sessionInfo(input: unknown, scope: DeviceIdentityScope, now: number, withSignals = false): PeerSessionInfo {
+function sessionInfo(input: unknown, scope: DeviceIdentityScope, now: number, withSignals = false,
+  bound?: PeerSessionInput): PeerSessionInfo {
   const value = exact(input, ["accountId", "sessionId", "initiatorDeviceId", "targetDeviceId",
-    "peerPublicKey", "nonce", "issuedAt", "expiresAt", ...(withSignals ? ["signals"] : [])]);
+    "peerPublicKey", "nonce", "issuedAt", "expiresAt", ...(withSignals ? ["signals"] : []),
+    ...(bound ? ["peerAccountId","conversationId","epoch"]:[])]);
+  if(bound && (value.peerAccountId!==bound.peerAccountId || value.conversationId!==bound.conversationId
+    || value.epoch!==bound.epoch))throw unavailable();
   if (value.accountId !== scope.accountId || !isUuid(value.sessionId)
     || !isUuid(value.initiatorDeviceId) || !isUuid(value.targetDeviceId)
     || value.initiatorDeviceId === value.targetDeviceId
@@ -187,6 +193,9 @@ function challenge(input: unknown): DeviceChallenge {
 export async function openPeerSession(input: PeerSessionInput, ports: PeerSessionPorts): Promise<PeerSession> {
   const scope = normalizeDeviceScope({ backendUrl: ports.backendUrl, accountId: input.accountId, deviceId: input.deviceId });
   const targetDeviceId = uuid(input.targetDeviceId);
+  const bound=input.conversationId!==undefined ? input:undefined;
+  const peerAccountId=bound ? uuid(input.peerAccountId as string):scope.accountId;
+  if(bound && (!isUuid(bound.conversationId) || typeof bound.epoch!=="string" || !SHA256.test(bound.epoch)))throw unavailable();
   if (targetDeviceId === scope.deviceId) throw unavailable();
   const now = ports.now ?? Date.now, crypto = ports.crypto ?? globalThis.crypto;
   const sleep = ports.sleep ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms); }));
@@ -218,7 +227,10 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
   };
 
   try {
-    roster(await ports.devices(lifetime.signal), scope, targetDeviceId); live();
+    // Scoped endpoints are admitted on OPEN/READ; own-account roster cannot
+    // enumerate a correspondent's private installations. The server supplies
+    // exactly this target's public key, account and conversation boundary.
+    if(!bound)roster(await ports.devices(lifetime.signal), scope, targetDeviceId); live();
     // INITIATOR: OPEN creates the server-admitted session. TARGET: the id was
     // delivered out of band (wake/UI); adopt it with one READ that also carries
     // the already-written offer, never a second session or a competing owner.
@@ -228,11 +240,11 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
       const adopt = uuid(input.sessionId);
       const page = await ports.signaling.read(adopt, 0, lifetime.signal);
       live();
-      info = sessionInfo(page, scope, now(), true);
+      info = sessionInfo(page, scope, now(), true,bound);
       if (info.sessionId !== adopt) throw unavailable();
       adopted = signalList((page as Record<string, unknown>).signals, 0);
     } else {
-      info = sessionInfo(await ports.signaling.open(targetDeviceId, lifetime.signal), scope, now());
+      info = sessionInfo(await ports.signaling.open(targetDeviceId, lifetime.signal), scope, now(),false,bound);
     }
     sessionId = info.sessionId;
     const initiator = info.initiatorDeviceId === scope.deviceId;
@@ -263,7 +275,8 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
     };
     conn.ondatachannel = event => {
       if (closed) return;
-      channel = event.channel;
+      if(channel){close(true);return;}
+      channel = queuePeerChannel(event.channel,lifetime.signal);
       channel.addEventListener("message", onEarly);
     };
 
@@ -301,7 +314,7 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
     };
 
     if (initiator) {
-      channel = conn.createDataChannel("norfold-sync-v1", { ordered: true });
+      channel = queuePeerChannel(conn.createDataChannel("norfold-sync-v1", { ordered: true, protocol: "norfold-sync-v1" }),lifetime.signal);
       channel.addEventListener("message", onEarly);
       const offer = await conn.createOffer();
       await conn.setLocalDescription(offer);
@@ -328,6 +341,11 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
     const local = await ports.signPeer({ peerDeviceId, transferId, nonce: info.nonce, channelBinding }, lifetime.signal);
     live();
     const localManifest = await ports.manifest();
+    const checkManifest=(m:PeerManifest)=>{
+      if(bound && (m.stateSequence!==0 || m.conversations.some(c=>c.conversationId!==bound.conversationId || c.epoch!==bound.epoch)
+        || m.media.some(c=>c.conversationId!==bound.conversationId)))throw unavailable();
+    };
+    checkManifest(localManifest);
     transport.send(JSON.stringify({ version: 1, type: "PROOF", transferId,
       proof: local.proof, signature: hex(local.signature) }));
     transport.send(JSON.stringify({ version: 1, type: "MANIFEST", manifest: localManifest }));
@@ -363,7 +381,7 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
               proof = challenge(value.proof);
               // The transfer id, channel binding and server nonce tie this proof
               // to exactly this connection and admitted session.
-              if (proof.purpose !== "PEER" || proof.accountId !== scope.accountId
+              if (proof.purpose !== "PEER" || proof.accountId !== peerAccountId
                 || proof.signerDeviceId !== peerDeviceId || proof.peerDeviceId !== scope.deviceId
                 || proof.sessionId !== remoteTransferId || proof.nonce !== info.nonce
                 || proof.channelBinding !== channelBinding) throw unavailable();
@@ -371,7 +389,8 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
               if (manifest) throw unavailable();
               exact(value, ["version", "type", "manifest"]);
               if (value.version !== 1) throw unavailable();
-              manifest = parsePeerManifest(value.manifest, { accountId: scope.accountId, deviceId: peerDeviceId }, now());
+              manifest = parsePeerManifest(value.manifest, { accountId: peerAccountId, deviceId: peerDeviceId }, now());
+              checkManifest(manifest);
             } else throw unavailable();
             if (proof && proofSignature && manifest) finish();
           } catch { finish(unavailable()); }
@@ -384,7 +403,7 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
         for (const pendingMessage of early.splice(0)) handle(pendingMessage);
       });
     live();
-    if (!await verifyDeviceProof({ backendUrl: scope.backendUrl, accountId: scope.accountId, deviceId: peerDeviceId },
+    if (!await verifyDeviceProof({ backendUrl: scope.backendUrl, accountId: peerAccountId, deviceId: peerDeviceId },
       info.peerPublicKey, result.proof, result.signature, { crypto, now: now() })) throw unavailable();
     live();
     const plan = diffPeerManifest(localManifest, ports.known(), result.manifest, now());
@@ -403,8 +422,10 @@ export async function openPeerSession(input: PeerSessionInput, ports: PeerSessio
  * optional transport is unavailable, so callers continue on canonical sync. */
 export function browserPeerConnection(): PeerConnectionPort {
   if (typeof RTCPeerConnection === "undefined") throw new Error("Peer transport unavailable");
-  const connection = new RTCPeerConnection({ iceServers: [] });
-  return {
+  // STUN permits direct cross-network candidates; this is not a TURN relay
+  // guarantee for networks that forbid direct connectivity.
+  const connection = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  const port: PeerConnectionPort = {
     get connectionState() { return connection.connectionState; },
     onicecandidate: null,
     ondatachannel: null,
@@ -417,6 +438,19 @@ export function browserPeerConnection(): PeerConnectionPort {
     async setRemoteDescription(value) { await connection.setRemoteDescription(value); },
     async addIceCandidate(value) { await connection.addIceCandidate(value); },
     async getStats() { return connection.getStats(); },
-    close() { connection.close(); },
+    close() {
+      connection.onicecandidate = null;
+      connection.ondatachannel = null;
+      port.onicecandidate = null;
+      port.ondatachannel = null;
+      connection.close();
+    },
   };
+  connection.onicecandidate = event => {
+    const value = event.candidate;
+    port.onicecandidate?.({ candidate: value ? { candidate: value.candidate,
+      sdpMid: value.sdpMid, sdpMLineIndex: value.sdpMLineIndex } : null });
+  };
+  connection.ondatachannel = event => port.ondatachannel?.({ channel: event.channel as PeerTransferChannel });
+  return port;
 }

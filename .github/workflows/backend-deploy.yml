@@ -31,6 +31,10 @@ on:
         description: "Deploy ONLY the accepted Chat media ACK repair, with exact live readback"
         type: boolean
         default: false
+      deploy_history_peers:
+        description: "Deploy ONLY the accepted Chat history/peer migrations, with exact schema readback"
+        type: boolean
+        default: false
       deploy_push_dispatch:
         description: "Deploy the push-dispatch Edge Function"
         type: boolean
@@ -97,19 +101,19 @@ jobs:
         with:
           version: latest
       - name: Push pending migrations
-        if: inputs.push_migrations && !inputs.deploy_device_list && !inputs.deploy_chat_media_ack
+        if: inputs.push_migrations && !inputs.deploy_device_list && !inputs.deploy_chat_media_ack && !inputs.deploy_history_peers
         run: |
           supabase link --project-ref "$PROJECT_REF"
           supabase db push
       - uses: actions/setup-node@v5
-        if: inputs.deploy_device_list || inputs.deploy_chat_media_ack
+        if: inputs.deploy_device_list || inputs.deploy_chat_media_ack || inputs.deploy_history_peers
         with:
           node-version: 24
       - name: Deploy only the accepted Devices LIST repair
         if: inputs.deploy_device_list
         run: |
           set -euo pipefail
-          [ '${{ inputs.push_migrations }}' = 'false' ] && [ '${{ inputs.deploy_chat_media_ack }}' = 'false' ] || { echo 'Do not combine narrow and general migration deployment'; exit 1; }
+          [ '${{ inputs.push_migrations }}' = 'false' ] && [ '${{ inputs.deploy_chat_media_ack }}' = 'false' ] && [ '${{ inputs.deploy_history_peers }}' = 'false' ] || { echo 'Do not combine narrow and general migration deployment'; exit 1; }
           supabase link --project-ref "$PROJECT_REF"
           # Current CLI defaults to local even after linking. Select remote
           # explicitly; vault synchronization is outside this narrow repair.
@@ -121,12 +125,22 @@ jobs:
         if: inputs.deploy_chat_media_ack
         run: |
           set -euo pipefail
-          [ '${{ inputs.push_migrations }}' = 'false' ] && [ '${{ inputs.deploy_device_list }}' = 'false' ] || { echo 'Do not combine narrow deployments'; exit 1; }
+          [ '${{ inputs.push_migrations }}' = 'false' ] && [ '${{ inputs.deploy_device_list }}' = 'false' ] && [ '${{ inputs.deploy_history_peers }}' = 'false' ] || { echo 'Do not combine narrow deployments'; exit 1; }
           supabase link --project-ref "$PROJECT_REF"
           supabase db push --remote --skip-vault --dry-run 2>&1 | tee "$RUNNER_TEMP/media-ack-plan.txt"
           node scripts/chat-media-ack-deployment.mjs --plan "$RUNNER_TEMP/media-ack-plan.txt"
           supabase db push --remote --skip-vault --yes
           node scripts/chat-media-ack-deployment.mjs --verify
+      - name: Deploy only the accepted history peer repair
+        if: inputs.deploy_history_peers
+        run: |
+          set -euo pipefail
+          [ '${{ inputs.push_migrations }}' = 'false' ] && [ '${{ inputs.deploy_device_list }}' = 'false' ] && [ '${{ inputs.deploy_chat_media_ack }}' = 'false' ] || { echo 'Do not combine narrow deployments'; exit 1; }
+          supabase link --project-ref "$PROJECT_REF"
+          supabase db push --remote --skip-vault --dry-run 2>&1 | tee "$RUNNER_TEMP/history-peer-plan.txt"
+          node scripts/history-peer-deployment.mjs --plan "$RUNNER_TEMP/history-peer-plan.txt"
+          supabase db push --remote --skip-vault --yes
+          node scripts/history-peer-deployment.mjs --verify
       - name: Enable and verify leaked-password protection
         if: inputs.enable_leaked_password_protection
         run: node scripts/enable-leaked-password-protection.mjs

@@ -15,6 +15,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.android.gms.auth.api.identity.AuthorizationClient;
 import com.google.android.gms.auth.api.identity.AuthorizationRequest;
 import com.google.android.gms.auth.api.identity.AuthorizationResult;
+import com.google.android.gms.auth.api.identity.ClearTokenRequest;
 import com.google.android.gms.auth.api.identity.Identity;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
@@ -189,6 +190,26 @@ public final class DriveAuthPlugin extends Plugin {
                 rejectPending("unavailable", "Drive backup is not available right now.");
             }
         });
+    }
+
+    /** Evict a resource-server-rejected credential, without revoking consent or
+     * forgetting the selected account. Renewal must await completion. */
+    @PluginMethod
+    public void clearToken(PluginCall call) {
+        String token = call.getString("token");
+        if (token == null || token.length() < TOKEN_MIN || token.length() > TOKEN_MAX) {
+            rejectKind(call, "unknown", "Google Drive could not be reached.");
+            return;
+        }
+        try {
+            Identity.getAuthorizationClient(getContext())
+                .clearToken(ClearTokenRequest.builder().setToken(token).build())
+                .addOnSuccessListener(ignored -> call.resolve(new JSObject()))
+                .addOnFailureListener(ignored ->
+                    rejectKind(call, "unknown", "Google Drive could not be reached."));
+        } catch (Exception ignored) {
+            rejectKind(call, "unknown", "Google Drive could not be reached.");
+        }
     }
 
     /**

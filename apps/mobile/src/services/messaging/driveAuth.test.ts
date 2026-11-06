@@ -228,6 +228,7 @@ function nativeTransport(answer: (options: { silent: boolean }) => Promise<Nativ
   const transport: NativeDriveAuth = {
     isAvailable: async () => ({ available: true }),
     authorize: async (options) => { calls.push(options); return answer(options); },
+    clearToken: async () => ({}),
     revoke: async ({ token }) => { revoked.push(token); return { revoked: true }; },
   };
   return { transport, calls, revoked };
@@ -236,6 +237,79 @@ function nativeTransport(answer: (options: { silent: boolean }) => Promise<Nativ
 const granted = () => Promise.resolve({ accessToken: TOKEN, expiresAt: Date.now() + 3_600_000 });
 
 describe("connecting a Google account on Android", () => {
+  it("evicts a rejected cached credential without revoking the account grant", async () => {
+    const events: string[] = [];
+    let cached = TOKEN;
+    const native = nativeTransport(async () => {
+      events.push("authorize");
+      return { accessToken: cached, expiresAt: Date.now() + 3_600_000 };
+    });
+    native.transport.clearToken = async ({ token }) => {
+      expect(token).toBe(TOKEN);
+      events.push("clear");
+      cached = "ya29.fresh.synthetic.credential";
+      return {};
+    };
+    const store = storage();
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: store });
+    await auth.authorize();
+    const generation = auth.generation();
+    await auth.invalidate(TOKEN);
+    expect(auth.current()).toBeNull();
+    expect(store.size()).toBe(0);
+    expect(auth.generation()).toBe(generation);
+    await expect(auth.renew()).resolves.toMatchObject({ token: cached });
+    expect(events).toEqual(["authorize", "clear", "authorize"]);
+    expect(native.revoked).toEqual([]);
+  });
+
+  it("does not reauthorize until failed cache invalidation succeeds", async () => {
+    const native = nativeTransport(granted);
+    let clears = 0;
+    native.transport.clearToken = async () => {
+      if (++clears < 3) throw new Error("synthetic cache failure");
+      return {};
+    };
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    await auth.authorize();
+    await expect(auth.invalidate(TOKEN)).rejects.toMatchObject({ kind: "failed" });
+    expect(auth.current()).toBeNull();
+    await expect(auth.renew()).resolves.toBeNull();
+    expect(native.calls).toHaveLength(1);
+    await auth.authorize();
+    expect(clears).toBe(3);
+    expect(native.calls).toHaveLength(2);
+  });
+
+  it("fences invalidation completion after disconnect", async () => {
+    const native = nativeTransport(granted);
+    let done!: () => void;
+    native.transport.clearToken = () => new Promise(resolve => { done = () => resolve({}); });
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    await auth.authorize();
+    const pending = auth.invalidate(TOKEN);
+    auth.forget();
+    done();
+    await expect(pending).rejects.toMatchObject({ kind: "failed" });
+    expect(auth.current()).toBeNull();
+    await expect(auth.renew()).resolves.toBeNull();
+  });
+
+  it("does not let an in-flight renewal republish a resource-rejected token", async () => {
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    await auth.authorize();
+    let answer!: (value: NativeDriveAccess) => void;
+    native.transport.authorize = () => new Promise(resolve => { answer = resolve; });
+    const renewing = auth.renew();
+    // askNative first awaits any pending cache eviction.
+    await Promise.resolve();
+    await auth.invalidate(TOKEN);
+    answer({ accessToken: TOKEN, expiresAt: Date.now() + 3_600_000 });
+    await expect(renewing).resolves.toBeNull();
+    expect(auth.current()).toBeNull();
+  });
+
   it("renews the OS-owned grant after a cold start with no WebView token", async () => {
     const native = nativeTransport(granted);
     const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });

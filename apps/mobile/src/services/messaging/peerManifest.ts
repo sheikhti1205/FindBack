@@ -98,7 +98,7 @@ export function parsePeerManifest(input: unknown, scope: PeerManifestScope, now 
   const manifest: PeerManifest = { version: 1, accountId: expected.accountId, deviceId: expected.deviceId,
     generatedAt: integer(value.generatedAt, Number.MAX_SAFE_INTEGER), conversations, media,
     stateSequence: integer(value.stateSequence, Number.MAX_SAFE_INTEGER) };
-  if (Buffer.byteLength(JSON.stringify(manifest)) > PEER_MANIFEST_MAX_BYTES) throw unavailable();
+  if (new TextEncoder().encode(JSON.stringify(manifest)).byteLength > PEER_MANIFEST_MAX_BYTES) throw unavailable();
   return manifest;
 }
 
