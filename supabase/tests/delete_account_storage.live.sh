@@ -20,6 +20,9 @@
 #     layout exists live (SKIP when the owner-prefix RLS refuses the seed —
 #     the layout was never writable, so there is nothing to sweep);
 #   * objects under findback-comment-media/<uid>/ are deleted;
+#   * objects under findback-report-media/<uid>/ are deleted (P11 report photos;
+#     this namespace was missing from the deployed function until v3, so this
+#     assertion is the live proof that the deployed sweep matches source);
 #   * the JWT's own session cannot call the function after deletion (auth
 #     user is gone), and an unauthenticated call is refused (FBX-037 guard
 #     surface: the function takes no uid parameter — cross-user deletion is
@@ -72,7 +75,7 @@ check_gone() { # $1=bucket $2=relative-path $3=label
 }
 
 echo "== seed probe objects (FBX-023 namespaces) =="
-IMAGES_SEEDED=0; AVATARS_SEEDED=0; COMMENTS_SEEDED=0
+IMAGES_SEEDED=0; AVATARS_SEEDED=0; COMMENTS_SEEDED=0; REPORTS_SEEDED=0
 
 if seed_object findback-images "$UID_VAL/probe.jpg"; then
   IMAGES_SEEDED=1; ok "seeded findback-images/$UID_VAL/probe.jpg"
@@ -92,7 +95,13 @@ else
   no "cannot seed findback-comment-media/$UID_VAL/probe.jpg (HTTP $HTTP_CODE): $(cat "$TMP/body") (apply 20261011030000 first)"
 fi
 
-SEEDED=$((IMAGES_SEEDED + AVATARS_SEEDED + COMMENTS_SEEDED))
+if seed_object findback-report-media "$UID_VAL/probe.jpg"; then
+  REPORTS_SEEDED=1; ok "seeded findback-report-media/$UID_VAL/probe.jpg"
+else
+  sk "report-media seed refused (HTTP $HTTP_CODE) — the owner-prefix policy did not allow this upload"
+fi
+
+SEEDED=$((IMAGES_SEEDED + AVATARS_SEEDED + COMMENTS_SEEDED + REPORTS_SEEDED))
 
 echo "== invoke delete-account with the scratch JWT =="
 api POST "/functions/v1/delete-account" -H "Content-Type: application/json" -d '{}'
@@ -117,6 +126,7 @@ echo "== verify seeded objects are gone =="
 [ "$IMAGES_SEEDED" = "1" ] && check_gone findback-images "$UID_VAL/probe.jpg" "findback-images/<uid>/"
 [ "$AVATARS_SEEDED" = "1" ] && check_gone findback-images "avatars/$UID_VAL/probe.jpg" "findback-images/avatars/<uid>/"
 [ "$COMMENTS_SEEDED" = "1" ] && check_gone findback-comment-media "$UID_VAL/probe.jpg" "findback-comment-media/<uid>/"
+[ "$REPORTS_SEEDED" = "1" ] && check_gone findback-report-media "$UID_VAL/probe.jpg" "findback-report-media/<uid>/"
 
 echo "== the deleted account's own session is dead (FBX-037) =="
 api POST "/functions/v1/delete-account" -H "Content-Type: application/json" -d '{}'
