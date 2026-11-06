@@ -50,6 +50,19 @@ function walkTs(dir, out = []) {
   return out;
 }
 
+/** Workflow files present under the given root, as root-relative paths. */
+function workflowFiles(root) {
+  const dir = join(root, ".github", "workflows");
+  try {
+    return readdirSync(dir)
+      .filter((name) => /\.ya?ml$/.test(name))
+      .sort()
+      .map((name) => `.github/workflows/${name}`);
+  } catch {
+    return [];
+  }
+}
+
 /** Pure audit over a repo root. Returns failure strings (file:line + cause). */
 export function checkParity(root = REPO_ROOT) {
   const failures = [];
@@ -119,16 +132,28 @@ export function checkParity(root = REPO_ROOT) {
     ]) {
       if (!read(file).includes(`--dist ${dist}`)) fail(file, `upload --dist ${dist} missing`);
     }
+    // Every workflow that builds a shippable bundle must declare a dist the
+    // client can actually report. An out-of-set label resolves to `undefined`
+    // at runtime, so the upload and the event can never be associated — silent
+    // by design, which is why it is asserted here instead of trusted.
+    for (const file of workflowFiles(root)) {
+      const declared = /VITE_SENTRY_DIST:\s*(\S+)/.exec(read(file))?.[1];
+      if (declared === undefined) continue;
+      if (!SENTRY_DIST_VALUES.includes(declared)) {
+        fail(file, `VITE_SENTRY_DIST ${declared} outside canonical set (resolves to no dist at runtime)`);
+      }
+    }
   }
 
-  // 5. CLI pin sameness.
+  // 5. CLI pin sameness (every workflow that builds and uploads a bundle).
   {
-    for (const wf of ["release.yml", "ci.yml", "web.yml"]) {
-      const pins = [...read(`.github/workflows/${wf}`).matchAll(/@sentry\/cli@([0-9.]+)/g)].map((m) => m[1]);
+    for (const wf of workflowFiles(root)) {
+      if (!read(wf).includes("VITE_SENTRY_DIST")) continue;
+      const pins = [...read(wf).matchAll(/@sentry\/cli@([0-9.]+)/g)].map((m) => m[1]);
       const distinct = [...new Set(pins)];
-      if (distinct.length === 0) fail(`.github/workflows/${wf}`, "no sentry-cli pin found");
+      if (distinct.length === 0) fail(wf, "no sentry-cli pin found");
       for (const pin of distinct) {
-        if (`@sentry/cli@${pin}` !== SENTRY_CLI_PIN) fail(`.github/workflows/${wf}`, `cli pin drift (@sentry/cli@${pin} vs canonical)`);
+        if (`@sentry/cli@${pin}` !== SENTRY_CLI_PIN) fail(wf, `cli pin drift (@sentry/cli@${pin} vs canonical)`);
       }
     }
   }

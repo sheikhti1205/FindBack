@@ -29,14 +29,51 @@ env:
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
   VITE_SENTRY_ENVIRONMENT: production
-  VITE_SENTRY_DIST: android
+  VITE_SENTRY_DIST: android-release
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}
   SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
   GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
 
 jobs:
+  guard:
+    # A numbered release is immutable, so a commit that reuses an already
+    # published version has nothing to publish. Decide that cheaply here and
+    # skip the 45-minute build instead of failing it: "same version, already
+    # released" is a normal state, not a build error.
+    name: Decide whether this commit needs a release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          TAG="v${VERSION}"
+          PUBLISHED_SHA=""
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            PUBLISHED_SHA=$(git rev-parse "${TAG}^{commit}")
+          elif RELEASE_SHA=$(gh release view "$TAG" --json targetCommitish --jq .targetCommitish 2>/dev/null); then
+            PUBLISHED_SHA="$RELEASE_SHA"
+          fi
+          if [ -n "$PUBLISHED_SHA" ] && [ "$PUBLISHED_SHA" != "$SHA" ]; then
+            echo "::warning::${TAG} is already published from ${PUBLISHED_SHA}. Bump the app version to publish ${SHA}; nothing was changed."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
   apk:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    needs: guard
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository && needs.guard.outputs.publish == 'true'
     name: Signed APKs + catalogue
     runs-on: ubuntu-24.04
     timeout-minutes: 45

@@ -22,6 +22,7 @@ const SCANNED = [
   ".github/workflows/release.yml",
   ".github/workflows/ci.yml",
   ".github/workflows/web.yml",
+  ".github/workflows/android-builds.yml",
   "scripts/build-context.mjs",
   "scripts/build-apk.mjs",
   "scripts/check-sentry-config.mjs",
@@ -71,6 +72,9 @@ test("fails closed on every tampered contract", () => {
     ["workflow trace fallback drift", (d) => writeFileSync(join(d, ".github/workflows/web.yml"),
       readFileSync(".github/workflows/web.yml", "utf8").replace('${SENTRY_TRACES_RAW:-0.1}', '${SENTRY_TRACES_RAW:-1}')),
       /trace-rate fallback/],
+    ["publisher dist outside canonical set", (d) => writeFileSync(join(d, ".github/workflows/android-builds.yml"),
+      readFileSync(".github/workflows/android-builds.yml", "utf8").replace(/VITE_SENTRY_DIST:\s*\S+/, "VITE_SENTRY_DIST: android")),
+      /android-builds\.yml.*VITE_SENTRY_DIST android outside canonical set/],
   ];
   for (const [name, tamper, pattern] of cases) {
     const dir = fixtureRoot(tamper);
