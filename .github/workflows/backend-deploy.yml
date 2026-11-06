@@ -103,6 +103,8 @@ jobs:
           set -euo pipefail
           [ '${{ inputs.push_migrations }}' = 'false' ] || { echo 'Do not combine narrow and general migration deployment'; exit 1; }
           supabase link --project-ref "$PROJECT_REF"
+          # Current CLI defaults to local even after linking. Select remote
+          # explicitly; vault synchronization is outside this narrow repair.
           supabase db push --remote --skip-vault --dry-run 2>&1 | tee "$RUNNER_TEMP/device-migration-plan.txt"
           node scripts/device-list-deployment.mjs --plan "$RUNNER_TEMP/device-migration-plan.txt"
           supabase db push --remote --skip-vault --yes
