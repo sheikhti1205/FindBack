@@ -692,6 +692,18 @@ describe("two installations writing one account", () => {
     expect(restoredTarget.unsentAt).toBe(500);
   });
 
+  it("refuses to guess which installation to drop when the manifest bound is exceeded", async () => {
+    const store = memoryStore();
+    // Every reinstall can leave its own manifest behind; past the bound a restore
+    // fails closed instead of silently ignoring one installation's history.
+    for (let index = 0; index < 17; index++) {
+      const deviceId = uuid(0x200 + index);
+      const snapshot = snapshotOf([{ chat: CHAT, count: 1, base: 0x3000 + index * 0x10 }]);
+      await upload(store, snapshot, { scope: { accountId: A, deviceId }, now: NOW + index });
+    }
+    await expect(download(store)).rejects.toMatchObject({ code: "backup: invalid manifest" });
+  });
+
   it("keeps a legacy single-manifest backup readable and untouched", async () => {
     const store = memoryStore();
     const legacy = await writeLegacyBackup(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x7000 }]));
