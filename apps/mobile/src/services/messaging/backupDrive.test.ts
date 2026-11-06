@@ -8,13 +8,15 @@ import {
   chunkName,
   downloadBackup,
   isBackupName,
+  legacyChunkName,
+  legacyManifestName,
   manifestName,
   parseManifest,
   uploadBackup,
   type BackupDriveStore,
   type BackupManifest,
 } from "./backupDrive";
-import { importBackupKey, sealBackupObject } from "./backupCrypto";
+import { importBackupKey, sealBackupObject, sha256Hex } from "./backupCrypto";
 
 const uuid = (n: number) => `00000000-0000-4000-9d02-${n.toString(16).padStart(12, "0")}`;
 const A = uuid(1);
@@ -25,7 +27,7 @@ const DEVICE = uuid(20);
 const OTHER_DEVICE = uuid(21);
 const GEN = uuid(30);
 const KEY_HEX = "ab".repeat(32);
-const MANIFEST = manifestName(A);
+const MANIFEST = manifestName(A, DEVICE);
 
 interface Row { chat: string; count: number; base: number; start?: number; body?: (seq: number) => string }
 
@@ -111,7 +113,7 @@ const upload = async (store: MemoryStore, snapshot: HistorySnapshot, overrides: 
 const download = async (store: MemoryStore, overrides: DownloadOverrides = {}) =>
   downloadBackup({ store, key: await key(), scope, ...overrides });
 
-const chunkNames = (store: MemoryStore) => store.names().filter((name) => name !== MANIFEST);
+const chunkNames = (store: MemoryStore) => store.names().filter((name) => !name.includes(".manifest."));
 
 describe("an encrypted Drive backup", () => {
   it("writes a sealed manifest and content-addressed chunks, then restores the history", async () => {
@@ -127,8 +129,8 @@ describe("an encrypted Drive backup", () => {
     expect(store.names()).toHaveLength(2);
     expect(store.names()).toContain(MANIFEST);
     for (const name of chunkNames(store)) {
-      expect(name.startsWith(`norfold.${A}.chunk.${CHAT}.`)).toBe(true);
-      expect(name.endsWith(".v1.bin")).toBe(true);
+      expect(name.startsWith(`norfold.${A}.chunk.${DEVICE}.${CHAT}.`)).toBe(true);
+      expect(name.endsWith(".v2.bin")).toBe(true);
       expect(isBackupName(name, A)).toBe(true);
     }
 
@@ -327,22 +329,22 @@ describe("an encrypted Drive backup", () => {
     expect(store.names()).toEqual(names);
   });
 
-  it.each([false, true])("refuses an incomplete second installation, unrelated clear=%s", async (unrelated) => {
+  it.each([false, true])("never lets an incomplete second installation replace the first, unrelated clear=%s", async (unrelated) => {
     const store = memoryStore();
     const first = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 },
       { chat: CHAT2, count: 2, base: 0x2000 }]);
     await upload(store, first);
     const names = store.names(), manifest = store.raw(MANIFEST);
-    store.writes = [];
     const incomplete = snapshotOf(unrelated ? [] : [{ chat: CHAT2, count: 2, base: 0x2000 }], {
       clears: unrelated ? [{ conversationId: uuid(99), throughSequence: 100, clearedAt: 10 }] : [],
     });
-    await expect(upload(store, incomplete, { scope: { ...scope, deviceId: OTHER_DEVICE } }))
-      .rejects.toThrow("backup: incomplete snapshot");
-    expect(store.writes).toEqual([]);
-    expect(store.names()).toEqual(names);
+    // A second installation owns a different manifest and chunk namespace, so an
+    // incomplete local view can neither overwrite the first installation's
+    // manifest nor compact the chunks it references.
+    await upload(store, incomplete, { scope: { ...scope, deviceId: OTHER_DEVICE } });
     expect(new Uint8Array(store.raw(MANIFEST))).toEqual(new Uint8Array(manifest));
-    expect((await download(store)).snapshot.messages).toEqual(first.messages);
+    expect(store.names()).toEqual(expect.arrayContaining(names));
+    expect((await download(store)).snapshot.messages).toHaveLength(4);
   });
 
   it("refuses a missing tail without per-message retirement evidence", async () => {
@@ -404,7 +406,7 @@ describe("an encrypted Drive backup", () => {
     const keyValue = await key();
     await store.write({ name: part.chunk,
       bytes: await sealBackupObject(keyValue, part.chunk,
-        new TextEncoder().encode(JSON.stringify({ version: BACKUP_VERSION, messages: [] }))) });
+        new TextEncoder().encode(JSON.stringify({ version: 1, messages: [] }))) });
     await expect(download(store)).rejects.toMatchObject({ code: "backup: chunk mismatch" });
   });
 
@@ -432,8 +434,9 @@ describe("an encrypted Drive backup", () => {
     const claimed = structuredClone((await download(store)).manifest);
     const foreignScope = { accountId: uuid(3), deviceId: OTHER_DEVICE };
     claimed.accountId = A;
-    await store.write({ name: manifestName(foreignScope.accountId),
-      bytes: await sealBackupObject(await key(), manifestName(foreignScope.accountId),
+    const foreignName = manifestName(foreignScope.accountId, foreignScope.deviceId);
+    await store.write({ name: foreignName,
+      bytes: await sealBackupObject(await key(), foreignName,
         new TextEncoder().encode(JSON.stringify(claimed))) });
     await expect(download(store, { scope: foreignScope }))
       .rejects.toMatchObject({ code: "backup: account mismatch" });
@@ -466,7 +469,7 @@ describe("the manifest contract", () => {
     format: BACKUP_FORMAT, version: BACKUP_VERSION, accountId: A, deviceId: DEVICE,
     generation: GEN, exportedAt: 1_760_000_000_000,
     conversations: [{ conversationId: CHAT, headSequence: 2, parts: [{
-      part: 1, chunk: chunkName(A, CHAT, "11".repeat(32)), sha256: "11".repeat(32),
+      part: 1, chunk: chunkName(A, DEVICE, CHAT, "11".repeat(32)), sha256: "11".repeat(32),
       bytes: 128, messages: 2, firstSequence: 1, lastSequence: 2,
     }] }],
     tombstones: [], deletedForMe: [], clears: [],
@@ -475,7 +478,7 @@ describe("the manifest contract", () => {
   const rehash = (manifest: BackupManifest): BackupManifest => {
     for (const entry of manifest.conversations ?? []) {
       for (const part of entry.parts ?? []) {
-        part.chunk = `norfold.${manifest.accountId}.chunk.${entry.conversationId}.${part.sha256}.v1.bin`;
+        part.chunk = chunkName(manifest.accountId, manifest.deviceId, entry.conversationId, part.sha256);
       }
     }
     return manifest;
@@ -487,21 +490,25 @@ describe("the manifest contract", () => {
     }).toThrow(BackupDriveError);
   };
 
-  it("accepts its own shape and names chunks by account, conversation and hash", () => {
+  it("accepts its own shape and names chunks by account, device, conversation and hash", () => {
     expect(parseManifest(rehash(base()))).toEqual(base());
-    expect(chunkName(A, CHAT, "11".repeat(32)))
-      .toBe(`norfold.${A}.chunk.${CHAT}.${"11".repeat(32)}.v1.bin`);
-    expect(manifestName(A)).toBe(MANIFEST);
-    expect(() => chunkName("not-a-uuid", CHAT, "11".repeat(32))).toThrow(BackupDriveError);
-    expect(() => chunkName(A, CHAT, "11")).toThrow(BackupDriveError);
-    // Another account's objects are never treated as this account's.
+    expect(chunkName(A, DEVICE, CHAT, "11".repeat(32)))
+      .toBe(`norfold.${A}.chunk.${DEVICE}.${CHAT}.${"11".repeat(32)}.v2.bin`);
+    expect(manifestName(A, DEVICE)).toBe(MANIFEST);
+    expect(() => chunkName("not-a-uuid", DEVICE, CHAT, "11".repeat(32))).toThrow(BackupDriveError);
+    expect(() => chunkName(A, "not-a-uuid", CHAT, "11".repeat(32))).toThrow(BackupDriveError);
+    expect(() => chunkName(A, DEVICE, CHAT, "11")).toThrow(BackupDriveError);
+    // A legacy v1 backup is still recognised as this account's, never another's.
     expect(isBackupName(MANIFEST, uuid(3))).toBe(false);
+    expect(isBackupName(legacyManifestName(A), A)).toBe(true);
+    expect(isBackupName(legacyChunkName(A, CHAT, "11".repeat(32)), A)).toBe(true);
+    expect(isBackupName(legacyManifestName(A), uuid(3))).toBe(false);
     expect(isBackupName("norfold.loose.txt", A)).toBe(false);
   });
 
   it.each([
     ["unknown format", (m: BackupManifest) => ({ ...m, format: "other" })],
-    ["unsupported version", (m: BackupManifest) => ({ ...m, version: 2 })],
+    ["unsupported version", (m: BackupManifest) => ({ ...m, version: 3 })],
     ["extra key", (m: BackupManifest) => ({ ...m, extra: 1 })],
     ["bad account", (m: BackupManifest) => ({ ...m, accountId: "nope" })],
     ["no exportedAt", (m: BackupManifest) => ({ ...m, exportedAt: 0 })],
@@ -546,19 +553,157 @@ describe("the manifest contract", () => {
 
   it("rejects a chunk whose name does not carry its own hash", () => {
     reject((m) => {
-      m.conversations[0]!.parts[0]!.chunk = chunkName(A, CHAT, "22".repeat(32));
+      m.conversations[0]!.parts[0]!.chunk = chunkName(A, DEVICE, CHAT, "22".repeat(32));
       return m;
     }, false);
   });
 
-  it("rejects a chunk belonging to another conversation or account", () => {
+  it("rejects a chunk belonging to another conversation, device or account", () => {
     reject((m) => {
-      m.conversations[0]!.parts[0]!.chunk = chunkName(A, CHAT2, m.conversations[0]!.parts[0]!.sha256);
+      m.conversations[0]!.parts[0]!.chunk = chunkName(A, DEVICE, CHAT2, m.conversations[0]!.parts[0]!.sha256);
       return m;
     }, false);
     reject((m) => {
-      m.conversations[0]!.parts[0]!.chunk = chunkName(uuid(3), CHAT, m.conversations[0]!.parts[0]!.sha256);
+      m.conversations[0]!.parts[0]!.chunk = chunkName(A, OTHER_DEVICE, CHAT, m.conversations[0]!.parts[0]!.sha256);
       return m;
     }, false);
+    reject((m) => {
+      m.conversations[0]!.parts[0]!.chunk = chunkName(uuid(3), DEVICE, CHAT, m.conversations[0]!.parts[0]!.sha256);
+      return m;
+    }, false);
+  });
+});
+
+/**
+ * Write a version-1 backup exactly as the previous single-manifest writer did:
+ * `norfold.<account>.manifest.v1.bin` plus `norfold.<account>.chunk.<chat>.<sha>.v1.bin`.
+ */
+async function writeLegacyBackup(store: MemoryStore, snapshot: HistorySnapshot): Promise<string[]> {
+  const keyValue = await key();
+  const messages = snapshot.messages.map((message) => ({
+    id: message.id, conversationId: message.conversationId, authorId: message.authorId,
+    recipientId: message.recipientId, body: message.body, messageType: message.messageType ?? null,
+    contextReportId: message.contextReportId ?? null, location: message.location ?? null,
+    serverEventId: message.serverEventId, serverSequence: message.serverSequence,
+    unsentAt: message.unsentAt, createdAt: message.createdAt,
+  }));
+  const plaintext = new TextEncoder().encode(JSON.stringify({ version: 1, messages }));
+  const sha256 = await sha256Hex(plaintext);
+  const conversation = snapshot.conversations[0]!;
+  const chunk = legacyChunkName(A, conversation.id, sha256);
+  const sealed = await sealBackupObject(keyValue, chunk, plaintext);
+  await store.write({ name: chunk, bytes: sealed });
+  const manifest: BackupManifest = {
+    format: BACKUP_FORMAT, version: 1, accountId: A, deviceId: DEVICE, generation: GEN,
+    exportedAt: 1_750_000_000_000,
+    conversations: [{ conversationId: conversation.id, headSequence: conversation.lastSequence,
+      parts: [{ part: 1, chunk, sha256, bytes: sealed.byteLength, messages: messages.length,
+        firstSequence: 1, lastSequence: conversation.lastSequence }] }],
+    tombstones: snapshot.tombstones, deletedForMe: snapshot.deletedForMe, clears: snapshot.clears,
+  };
+  const name = legacyManifestName(A);
+  await store.write({ name, bytes: await sealBackupObject(keyValue, name,
+    new TextEncoder().encode(JSON.stringify(manifest))) });
+  return [chunk, name];
+}
+
+/**
+ * Two installations of the same account share one Drive app folder. Each one
+ * owns a manifest and a chunk namespace of its own, so neither publication nor
+ * compaction can overwrite or dangle the other's objects; reading unions them.
+ */
+describe("two installations writing one account", () => {
+  const second = { accountId: A, deviceId: OTHER_DEVICE };
+  const A_MANIFEST = manifestName(A, DEVICE);
+  const B_MANIFEST = manifestName(A, OTHER_DEVICE);
+  const NOW = 1_760_000_000_000;
+
+  it("publishes one manifest per installation instead of one shared file", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    await upload(store, snapshotOf([{ chat: CHAT2, count: 3, base: 0x2000 }]),
+      { scope: second, now: NOW + 1 });
+    expect(store.names()).toEqual(expect.arrayContaining([A_MANIFEST, B_MANIFEST]));
+    expect(chunkNames(store)).toHaveLength(2);
+    expect(chunkNames(store).some((name) => name.includes(`.chunk.${OTHER_DEVICE}.${CHAT2}.`))).toBe(true);
+  });
+
+  it("restores the union rather than discarding the other installation's history", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    await upload(store, snapshotOf([{ chat: CHAT2, count: 3, base: 0x2000 }]),
+      { scope: second, now: NOW + 1 });
+
+    const restored = await download(store);
+    expect(restored.snapshot.messages).toHaveLength(5);
+    expect(restored.snapshot.conversations.map((row) => row.id).sort()).toEqual([CHAT, CHAT2].sort());
+    // The newest contributing snapshot identifies the restore, not the reader's device.
+    expect(restored.manifest.deviceId).toBe(OTHER_DEVICE);
+  });
+
+  it("compacts only its own installation's superseded chunks", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 3, base: 0x1000 }]));
+    await upload(store, snapshotOf([{ chat: CHAT2, count: 2, base: 0x2000 }]), { scope: second });
+    const foreign = chunkNames(store).filter((name) => name.includes(`.chunk.${OTHER_DEVICE}.`));
+    expect(foreign).toHaveLength(1);
+
+    // This installation retires a message: its own chunk goes, the other's stays.
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }], {
+      deletedForMe: [{ messageId: uuid(0x1000 + 3), conversationId: CHAT, deletedAt: 10 }],
+    }));
+    expect(chunkNames(store)).toEqual(expect.arrayContaining(foreign));
+    expect((await download(store)).snapshot.messages).toHaveLength(4);
+  });
+
+  it("never leaves a published manifest pointing at a deleted chunk", async () => {
+    const store = memoryStore();
+    await upload(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]));
+    await upload(store, snapshotOf([{ chat: CHAT2, count: 2, base: 0x2000 }]), { scope: second });
+    // Each installation then replaces its own snapshot twice, in both orders.
+    for (const body of ["one", "two"]) {
+      const edit = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000,
+        body: (seq: number) => `${body}-${seq}` }]);
+      await upload(store, edit);
+      const other = snapshotOf([{ chat: CHAT2, count: 2, base: 0x2000,
+        body: (seq: number) => `${body}-${seq}` }]);
+      await upload(store, other, { scope: second });
+    }
+    const restored = await download(store);
+    expect(restored.snapshot.messages).toHaveLength(4);
+    expect(restored.snapshot.messages.filter((row) => row.conversationId === CHAT)
+      .map((row) => row.body)).toEqual(["two-1", "two-2"]);
+  });
+
+  it("does not resurrect a body another installation recorded as suppressed", async () => {
+    const store = memoryStore();
+    const live = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);
+    const suppressed = structuredClone(live);
+    const target = suppressed.messages[1]!;
+    target.body = null; target.unsentAt = 500;
+    suppressed.tombstones = [{ messageId: target.id, conversationId: CHAT,
+      recipientId: PEER, unsentAt: 500, unsentBy: A }];
+
+    await upload(store, suppressed);
+    await upload(store, live, { scope: second, now: NOW + 1 });
+    const restored = await download(store);
+    const restoredTarget = restored.snapshot.messages.find((row) => row.id === target.id)!;
+    expect(restoredTarget.body).toBeNull();
+    expect(restoredTarget.unsentAt).toBe(500);
+  });
+
+  it("keeps a legacy single-manifest backup readable and untouched", async () => {
+    const store = memoryStore();
+    const legacy = await writeLegacyBackup(store, snapshotOf([{ chat: CHAT, count: 2, base: 0x7000 }]));
+
+    const restored = await download(store);
+    expect(restored.snapshot.messages).toHaveLength(2);
+    expect(restored.manifest.version).toBe(1);
+
+    // The first version-2 pass covers the legacy history and never rewrites it.
+    await upload(store, structuredClone(restored.snapshot));
+    expect(store.names()).toEqual(expect.arrayContaining(legacy));
+    expect(store.names()).toEqual(expect.arrayContaining([A_MANIFEST]));
+    expect((await download(store)).snapshot.messages).toHaveLength(2);
   });
 });

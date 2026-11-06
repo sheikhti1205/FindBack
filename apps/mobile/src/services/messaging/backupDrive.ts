@@ -9,6 +9,22 @@
  * An interrupted pass therefore leaves the previous backup fully readable; the
  * new manifest is written last, and only then are superseded objects compacted.
  *
+ * ## Why one manifest per installation
+ *
+ * Two installations of the same account share one app folder, and Drive offers no
+ * verified conditional write: an unconditional `PATCH` of a single shared manifest
+ * is a last-writer-wins race, and a writer compacting from its own stale listing
+ * can delete a chunk a later manifest still references. Each installation
+ * therefore owns `norfold.<account>.manifest.<device>.v2.bin` and its own
+ * `norfold.<account>.chunk.<device>.*` namespace. No object is shared, so
+ * publication cannot clobber another writer, and compaction only ever removes
+ * chunks this installation itself superseded. Reading unions every installation's
+ * manifest, so one device's older snapshot cannot hide another's history.
+ *
+ * Version-1 objects (`...manifest.v1.bin`, `...chunk.<chat>.<sha>.v1.bin`) are
+ * still read as a fallback and are never rewritten or deleted: a device that has
+ * not updated may keep writing them.
+ *
  * ## What a backup is
  *
  * A snapshot of accepted history and its suppressions — never mailbox receipts,
@@ -31,10 +47,15 @@ import { openBackupObject, sealBackupObject, sha256Hex, type BackupKey } from ".
 import { isUuid } from "./validation";
 
 export const BACKUP_FORMAT = "norfold.drive.backup";
-export const BACKUP_VERSION = 1;
-export const BACKUP_PREFIX = "norfold.";
-const CHUNK = /^norfold\.([0-9a-f-]{36})\.chunk\.([0-9a-f-]{36})\.([0-9a-f]{64})\.v1\.bin$/;
-const MANIFEST = /^norfold\.([0-9a-f-]{36})\.manifest\.v1\.bin$/;
+/** v2 namespaces each installation's manifest and chunks; v1 stays readable. */
+export const BACKUP_VERSION = 2;
+const LEGACY_VERSION = 1;
+/** Chunk framing version, independent of the manifest format the writer uses. */
+const PAYLOAD_VERSION = 1;
+const LEGACY_CHUNK = /^norfold\.([0-9a-f-]{36})\.chunk\.([0-9a-f-]{36})\.([0-9a-f]{64})\.v1\.bin$/;
+const LEGACY_MANIFEST = /^norfold\.([0-9a-f-]{36})\.manifest\.v1\.bin$/;
+const CHUNK = /^norfold\.([0-9a-f-]{36})\.chunk\.([0-9a-f-]{36})\.([0-9a-f-]{36})\.([0-9a-f]{64})\.v2\.bin$/;
+const MANIFEST = /^norfold\.([0-9a-f-]{36})\.manifest\.([0-9a-f-]{36})\.v2\.bin$/;
 const HASH = /^[0-9a-f]{64}$/;
 
 export const MAX_CONVERSATIONS = 512;
@@ -43,6 +64,8 @@ export const MAX_MESSAGES_PER_PART = 500;
 export const MAX_PART_BYTES = 2 * 1024 * 1024;
 export const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 export const MAX_SUPPRESSION_ROWS = 20_000;
+/** Bound on distinct installations whose manifests one restore will union. */
+export const MAX_BACKUP_DEVICES = 16;
 
 export interface BackupDriveFile { id: string; name: string; size: number }
 export interface BackupDriveStore {
@@ -74,7 +97,7 @@ export interface BackupConversation {
 
 export interface BackupManifest {
   format: typeof BACKUP_FORMAT;
-  version: typeof BACKUP_VERSION;
+  version: 1 | 2;
   accountId: string;
   deviceId: string;
   generation: string;
@@ -132,18 +155,32 @@ function array(value: unknown, max: number): unknown[] {
 }
 
 /**
- * A chunk name is exactly its account, conversation and plaintext hash. The
- * account prefix keeps two Norfold accounts that share one Google account from
- * listing, reusing or compacting each other's objects.
+ * A chunk name is exactly its account, installation, conversation and plaintext
+ * hash. The installation segment is what makes compaction safe: this writer can
+ * only ever delete objects no other installation's manifest can reference.
  */
-export function chunkName(accountId: string, conversationId: string, sha256: string): string {
+export function chunkName(accountId: string, deviceId: string, conversationId: string,
+  sha256: string): string {
+  if (!isUuid(accountId) || !isUuid(deviceId) || !isUuid(conversationId) || !HASH.test(sha256)) {
+    throw fail("backup: invalid manifest");
+  }
+  return `norfold.${accountId}.chunk.${deviceId}.${conversationId}.${sha256}.v2.bin`;
+}
+
+export function manifestName(accountId: string, deviceId: string): string {
+  if (!isUuid(accountId) || !isUuid(deviceId)) throw fail("backup: invalid manifest");
+  return `norfold.${accountId}.manifest.${deviceId}.v2.bin`;
+}
+
+/** Version-1 names: read-only legacy objects written by older installations. */
+export function legacyChunkName(accountId: string, conversationId: string, sha256: string): string {
   if (!isUuid(accountId) || !isUuid(conversationId) || !HASH.test(sha256)) {
     throw fail("backup: invalid manifest");
   }
   return `norfold.${accountId}.chunk.${conversationId}.${sha256}.v1.bin`;
 }
 
-export function manifestName(accountId: string): string {
+export function legacyManifestName(accountId: string): string {
   if (!isUuid(accountId)) throw fail("backup: invalid manifest");
   return `norfold.${accountId}.manifest.v1.bin`;
 }
@@ -151,13 +188,24 @@ export function manifestName(accountId: string): string {
 /** Storage names are transport only; their shape is re-checked on read. */
 export function isBackupName(name: string, accountId: string): boolean {
   if (!isUuid(accountId)) return false;
-  const manifest = MANIFEST.exec(name);
+  const manifest = MANIFEST.exec(name) ?? LEGACY_MANIFEST.exec(name);
   if (manifest) return manifest[1] === accountId;
-  const chunk = CHUNK.exec(name);
+  const chunk = CHUNK.exec(name) ?? LEGACY_CHUNK.exec(name);
   return chunk !== null && chunk[1] === accountId;
 }
 
-function part(input: unknown, accountId: string, conversationId: string): BackupPart {
+function isDeviceManifestName(name: string, accountId: string, deviceId: string): boolean {
+  const match = MANIFEST.exec(name);
+  return match !== null && match[1] === accountId && match[2] === deviceId;
+}
+
+function isDeviceChunkName(name: string, accountId: string, deviceId: string): boolean {
+  const match = CHUNK.exec(name);
+  return match !== null && match[1] === accountId && match[2] === deviceId;
+}
+
+function part(input: unknown, accountId: string, conversationId: string,
+  deviceId: string | null): BackupPart {
   const row = exact(input, ["part", "chunk", "sha256", "bytes", "messages", "firstSequence", "lastSequence"]);
   const value: BackupPart = {
     part: positive(row.part),
@@ -168,17 +216,20 @@ function part(input: unknown, accountId: string, conversationId: string): Backup
     firstSequence: positive(row.firstSequence),
     lastSequence: positive(row.lastSequence),
   };
-  const match = CHUNK.exec(value.chunk);
-  if (!match || match[1] !== accountId || match[2] !== conversationId || match[3] !== value.sha256
+  const chunk = deviceId === null ? LEGACY_CHUNK.exec(value.chunk) : CHUNK.exec(value.chunk);
+  const scoped = deviceId === null || (chunk !== null && chunk[2] === deviceId);
+  const conversation = deviceId === null ? chunk?.[2] : chunk?.[3];
+  const hash = deviceId === null ? chunk?.[3] : chunk?.[4];
+  if (!chunk || chunk[1] !== accountId || !scoped || conversation !== conversationId || hash !== value.sha256
     || value.bytes > MAX_PART_BYTES || value.messages > MAX_MESSAGES_PER_PART
     || value.lastSequence < value.firstSequence) throw fail("backup: invalid manifest");
   return value;
 }
 
-function conversation(input: unknown, accountId: string): BackupConversation {
+function conversation(input: unknown, accountId: string, deviceId: string | null): BackupConversation {
   const row = exact(input, ["conversationId", "headSequence", "parts"]);
   const conversationId = isUuid(row.conversationId) ? row.conversationId : "";
-  const parts = array(row.parts, MAX_PARTS).map((entry) => part(entry, accountId, conversationId));
+  const parts = array(row.parts, MAX_PARTS).map((entry) => part(entry, accountId, conversationId, deviceId));
   if (!conversationId || parts.length === 0) throw fail("backup: invalid manifest");
   const chunks = new Set<string>();
   parts.forEach((entry, index) => {
@@ -227,18 +278,22 @@ export function parseManifest(input: unknown): BackupManifest {
   const row = exact(input, ["format", "version", "accountId", "deviceId", "generation", "exportedAt",
     "conversations", "tombstones", "deletedForMe", "clears"]);
   if (row.format !== BACKUP_FORMAT) throw fail("backup: invalid manifest");
-  if (row.version !== BACKUP_VERSION) throw fail("backup: unsupported version");
+  if (row.version !== LEGACY_VERSION && row.version !== BACKUP_VERSION) {
+    throw fail("backup: unsupported version");
+  }
+  const version = row.version;
   if (!isUuid(row.accountId) || !isUuid(row.deviceId) || !isUuid(row.generation)) {
     throw fail("backup: invalid manifest");
   }
   const accountId = isUuid(row.accountId) ? row.accountId : "";
   if (!accountId) throw fail("backup: invalid manifest");
+  const deviceId = version === LEGACY_VERSION ? null : row.deviceId as string;
   const conversations = array(row.conversations, MAX_CONVERSATIONS)
-    .map((entry) => conversation(entry, accountId));
+    .map((entry) => conversation(entry, accountId, deviceId));
   const ids = new Set(conversations.map((entry) => entry.conversationId));
   if (ids.size !== conversations.length) throw fail("backup: invalid manifest");
   return {
-    format: BACKUP_FORMAT, version: BACKUP_VERSION,
+    format: BACKUP_FORMAT, version,
     accountId: row.accountId as string, deviceId: row.deviceId as string,
     generation: row.generation as string, exportedAt: positive(row.exportedAt),
     conversations, tombstones: tombstones(row.tombstones),
@@ -267,7 +322,7 @@ const FRAMING_BYTES = 64;
 const MAX_PART_PLAINTEXT = MAX_PART_BYTES - FRAMING_BYTES;
 
 function encodePart(messages: SnapshotMessage[]): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify({ version: BACKUP_VERSION,
+  return new TextEncoder().encode(JSON.stringify({ version: PAYLOAD_VERSION,
     messages: messages.map(portable) }));
 }
 
@@ -322,26 +377,27 @@ export interface BackupUploadInput {
   repair?: boolean;
 }
 
-async function readManifest(store: BackupDriveStore, key: BackupKey, scope: BackupScope,
-  crypto: Crypto): Promise<{ manifest: BackupManifest; file: BackupDriveFile } | null> {
-  const files = (await store.list()).filter((file) => file.name === manifestName(scope.accountId));
-  if (files.length === 0) return null;
-  if (files.length > 1) throw fail("backup: invalid manifest");
-  const file = files[0]!;
+async function readManifestFile(store: BackupDriveStore, file: BackupDriveFile, key: BackupKey,
+  scope: BackupScope, crypto: Crypto): Promise<BackupManifest> {
   if (file.size <= 0 || file.size > MAX_MANIFEST_BYTES) throw fail("backup: invalid manifest");
   const bytes = await store.read(file.id);
-  const opened = await openBackupObject(key, manifestName(scope.accountId), bytes, crypto);
+  const opened = await openBackupObject(key, file.name, bytes, crypto);
   let value: unknown;
   try { value = JSON.parse(new TextDecoder().decode(opened)); } catch { throw fail("backup: invalid manifest"); }
   const manifest = parseManifest(value);
   if (manifest.accountId !== scope.accountId) throw fail("backup: account mismatch");
   if (manifest.generation !== key.generation) throw fail("backup: invalid manifest");
-  return { manifest, file };
+  if (manifest.version === BACKUP_VERSION && !isDeviceManifestName(file.name, scope.accountId, manifest.deviceId)) {
+    throw fail("backup: invalid manifest");
+  }
+  return manifest;
 }
 
 /** Missing local history is not deletion authority. Keep prior suppressions and
  * require every prior accepted message to remain present or explicitly retired.
- * This is a sequential preservation check, not atomic arbitration across Drive writers.
+ * With one manifest per installation this is a sequential preservation check
+ * inside that installation's own namespace; it is not needed as arbitration
+ * between installments, which no longer share an object.
  */
 function assertCoverage(previous: HistorySnapshot, next: HistorySnapshot): void {
   const messages = new Map(next.messages.map(row => [row.id, row]));
@@ -386,16 +442,21 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   const { store, key, scope, snapshot, now } = input;
   if (!Number.isSafeInteger(now) || now <= 0) throw fail("backup: invalid manifest");
   validateSnapshot(snapshot, scope.accountId);
+  const ownManifestName = manifestName(scope.accountId, scope.deviceId);
   const files = (await store.list()).filter((file) => isBackupName(file.name, scope.accountId));
-  let previous: { manifest: BackupManifest; file: BackupDriveFile } | null = null;
-  let manifestFile: BackupDriveFile | undefined;
-  const existingManifests = files.filter((file) => file.name === manifestName(scope.accountId));
-  if (existingManifests.length > 0) {
-    if (existingManifests.length > 1) throw fail("backup: invalid manifest");
-    // An unreadable backup cannot establish what a replacement would omit.
-    previous = await readManifest(store, key, scope, crypto);
-    manifestFile = previous!.file;
-  }
+  const existingManifests = files.filter((file) => file.name === ownManifestName);
+  if (existingManifests.length > 1) throw fail("backup: invalid manifest");
+  // An unreadable backup cannot establish what a replacement would omit.
+  const previousManifest = existingManifests[0]
+    ? await readManifestFile(store, existingManifests[0], key, scope, crypto) : null;
+  // A device that has never published a v2 manifest may still be upgrading from
+  // the single-manifest format. Cover its legacy history before superseding it,
+  // and refuse rather than silently drop what only the legacy backup holds.
+  const legacyFile = previousManifest ? undefined
+    : files.find((file) => file.name === legacyManifestName(scope.accountId));
+  const priorManifest = previousManifest
+    ?? (legacyFile ? await readManifestFile(store, legacyFile, key, scope, crypto) : null);
+
   // An empty snapshot is not evidence that history is gone: a failed database
   // open, a wiped local store and a platform read error all look identical here.
   // Unless the snapshot itself records the deletion (clears, tombstones or
@@ -404,10 +465,13 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   const empty = snapshot.messages.length === 0
     && snapshot.clears.length === 0 && snapshot.tombstones.length === 0
     && snapshot.deletedForMe.length === 0;
-  const storedHistory = (previous?.manifest.conversations.length ?? 0) > 0
-    || files.some((file) => file.name !== manifestName(scope.accountId));
+  const storedHistory = (priorManifest?.conversations.length ?? 0) > 0
+    || files.some((file) => !isDeviceManifestName(file.name, scope.accountId, scope.deviceId));
   if (empty && storedHistory) throw fail("backup: empty snapshot");
-  if (previous) assertCoverage(await readSnapshot(store, key, scope, previous.manifest, crypto), snapshot);
+  const byName = new Map(files.map((file) => [file.name, file]));
+  if (priorManifest) {
+    assertCoverage(await readSnapshot(store, key, scope, priorManifest, crypto, byName), snapshot);
+  }
   const byConversation = new Map<string, SnapshotMessage[]>();
   for (const message of snapshot.messages) {
     const list = byConversation.get(message.conversationId) ?? [];
@@ -416,7 +480,9 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   }
   const existing = new Map(files.map((file) => [file.name, file]));
   const previouslyReferenced = new Set<string>();
-  for (const entry of previous?.manifest.conversations ?? []) {
+  // Only this installation's own previous manifest can justify reuse: another
+  // installation's chunk is not ours to reference or to later compact.
+  for (const entry of previousManifest?.conversations ?? []) {
     for (const entryPart of entry.parts) previouslyReferenced.add(entryPart.chunk);
   }
 
@@ -434,7 +500,7 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
     const parts: BackupPart[] = [];
     for (const [index, entry] of partition(rows).entries()) {
       entry.sha256 = await sha256Hex(entry.plaintext, crypto);
-      const name = chunkName(scope.accountId, snapshotConversation.id, entry.sha256);
+      const name = chunkName(scope.accountId, scope.deviceId, snapshotConversation.id, entry.sha256);
       const file = existing.get(name);
       // Reuse only content the previous manifest actually referenced: an
       // orphan from an interrupted pass is rewritten rather than trusted.
@@ -471,18 +537,19 @@ export async function uploadBackup(input: BackupUploadInput): Promise<BackupUplo
   };
   const plaintext = new TextEncoder().encode(JSON.stringify(manifest));
   if (plaintext.byteLength > MAX_MANIFEST_BYTES) throw fail("backup: invalid manifest");
-  const sealed = await sealBackupObject(key, manifestName(scope.accountId), plaintext, crypto);
+  const sealed = await sealBackupObject(key, ownManifestName, plaintext, crypto);
   if (sealed.byteLength > MAX_MANIFEST_BYTES) throw fail("backup: invalid manifest");
-  await store.write({ id: manifestFile?.id, name: manifestName(scope.accountId), bytes: sealed });
+  await store.write({ id: existingManifests[0]?.id, name: ownManifestName, bytes: sealed });
 
-  // Compaction now that the new manifest is durable: superseded chunks and
-  // orphans from an interrupted pass. The manifest itself is never removed, and
-  // a cleanup failure cannot invalidate a published backup — the caller keeps
-  // its committed receipt and a later pass retries the bounded cleanup.
+  // Compaction now that the new manifest is durable: this installation's own
+  // superseded chunks and orphans from an interrupted pass. Only objects in this
+  // installation's namespace are eligible, so no other manifest can reference
+  // one; the manifest itself and every legacy v1 object are never removed, and a
+  // cleanup failure cannot invalidate a published backup — the caller keeps its
+  // committed receipt and a later pass retries the bounded cleanup.
   let removed = 0;
   for (const file of files) {
-    if (file.name === manifestName(scope.accountId) || written.has(file.name)) continue;
-    if (!isBackupName(file.name, scope.accountId)) continue;
+    if (written.has(file.name) || !isDeviceChunkName(file.name, scope.accountId, scope.deviceId)) continue;
     try {
       await store.remove(file.id);
       removed++;
@@ -501,7 +568,7 @@ function chunkMessages(opened: Uint8Array, conversationId: string): SnapshotMess
   let value: unknown;
   try { value = JSON.parse(new TextDecoder().decode(opened)); } catch { throw fail("backup: chunk mismatch"); }
   const row = exact(value, ["version", "messages"]);
-  if (row.version !== BACKUP_VERSION) throw fail("backup: unsupported version");
+  if (row.version !== PAYLOAD_VERSION) throw fail("backup: unsupported version");
   return array(row.messages, MAX_MESSAGES_PER_PART).map((entry) => {
     const message = object(entry);
     if (!isUuid(message.id) || message.conversationId !== conversationId
@@ -513,19 +580,114 @@ function chunkMessages(opened: Uint8Array, conversationId: string): SnapshotMess
   });
 }
 
-/** Read, verify and assemble the backup. Nothing is written to history here. */
+/**
+ * Merge every installation's snapshot into the one history a restore should see.
+ *
+ * The fold is ordered by `(exportedAt, deviceId)`, so the result does not depend
+ * on listing order. Later snapshots win for ordinary content, while a suppression
+ * (a null body, a tombstone, a clear) is a fact that an older snapshot carrying
+ * the body cannot undo.
+ */
+function mergeSnapshots(parts: readonly { manifest: BackupManifest; snapshot: HistorySnapshot }[]): HistorySnapshot {
+  const ordered = [...parts].sort((a, b) => a.manifest.exportedAt - b.manifest.exportedAt
+    || a.manifest.deviceId.localeCompare(b.manifest.deviceId));
+  const conversations = new Map<string, HistorySnapshot["conversations"][number]>();
+  const messages = new Map<string, SnapshotMessage>();
+  const tombstones = new Map<string, HistorySnapshot["tombstones"][number]>();
+  const deletedForMe = new Map<string, HistorySnapshot["deletedForMe"][number]>();
+  const clears = new Map<string, HistorySnapshot["clears"][number]>();
+  for (const { snapshot } of ordered) {
+    for (const row of snapshot.conversations) {
+      const prior = conversations.get(row.id);
+      conversations.set(row.id, prior ? {
+        id: row.id,
+        lastSequence: Math.max(prior.lastSequence, row.lastSequence),
+        createdAt: prior.createdAt === 0 ? row.createdAt
+          : row.createdAt === 0 ? prior.createdAt : Math.min(prior.createdAt, row.createdAt),
+        updatedAt: Math.max(prior.updatedAt, row.updatedAt),
+      } : { ...row });
+    }
+    for (const row of snapshot.messages) {
+      const prior = messages.get(row.id);
+      if (!prior) { messages.set(row.id, { ...row }); continue; }
+      const suppressed = prior.body === null || row.body === null;
+      messages.set(row.id, {
+        ...row,
+        body: suppressed ? null : row.body,
+        contextReportId: suppressed ? null : row.contextReportId,
+        location: suppressed ? null : row.location,
+        unsentAt: prior.unsentAt ?? row.unsentAt,
+      });
+    }
+    for (const row of snapshot.tombstones) {
+      const prior = tombstones.get(row.messageId);
+      tombstones.set(row.messageId, prior && prior.unsentAt >= row.unsentAt ? prior : { ...row });
+    }
+    for (const row of snapshot.deletedForMe) {
+      const prior = deletedForMe.get(row.messageId);
+      deletedForMe.set(row.messageId, prior ? {
+        ...prior, conversationId: prior.conversationId ?? row.conversationId,
+        deletedAt: Math.min(prior.deletedAt, row.deletedAt),
+      } : { ...row });
+    }
+    for (const row of snapshot.clears) {
+      const prior = clears.get(row.conversationId);
+      clears.set(row.conversationId, prior ? {
+        ...prior, throughSequence: Math.max(prior.throughSequence, row.throughSequence),
+        clearedAt: Math.max(prior.clearedAt, row.clearedAt),
+      } : { ...row });
+    }
+  }
+  return {
+    conversations: [...conversations.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    messages: [...messages.values()].sort((a, b) => a.conversationId.localeCompare(b.conversationId)
+      || a.serverSequence - b.serverSequence || a.id.localeCompare(b.id)),
+    tombstones: [...tombstones.values()],
+    deletedForMe: [...deletedForMe.values()],
+    clears: [...clears.values()],
+  };
+}
+
+/**
+ * Read, verify and assemble the backup. Every installation's manifest is read and
+ * unioned; a version-1 backup is read only when no version-2 manifest exists.
+ * Nothing is written to history here.
+ */
 export async function downloadBackup(input: { store: BackupDriveStore; key: BackupKey;
   scope: BackupScope; crypto?: Crypto }): Promise<BackupDownload> {
   const crypto = input.crypto ?? globalThis.crypto;
-  const current = await readManifest(input.store, input.key, input.scope, crypto);
-  if (!current) throw fail("backup: chunk missing");
-  return { manifest: current.manifest,
-    snapshot: await readSnapshot(input.store, input.key, input.scope, current.manifest, crypto) };
+  const { store, key, scope } = input;
+  const files = (await store.list()).filter((file) => isBackupName(file.name, scope.accountId));
+  const byName = new Map(files.map((file) => [file.name, file]));
+  const deviceManifests = files
+    .filter((file) => MANIFEST.exec(file.name)?.[1] === scope.accountId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const legacy = files.find((file) => file.name === legacyManifestName(scope.accountId));
+
+  if (deviceManifests.length === 0) {
+    if (!legacy) throw fail("backup: chunk missing");
+    const manifest = await readManifestFile(store, legacy, key, scope, crypto);
+    if (manifest.version !== LEGACY_VERSION) throw fail("backup: invalid manifest");
+    return { manifest, snapshot: await readSnapshot(store, key, scope, manifest, crypto, byName) };
+  }
+  if (deviceManifests.length > MAX_BACKUP_DEVICES) throw fail("backup: invalid manifest");
+
+  const read: { manifest: BackupManifest; snapshot: HistorySnapshot }[] = [];
+  const devices = new Set<string>();
+  for (const file of deviceManifests) {
+    const manifest = await readManifestFile(store, file, key, scope, crypto);
+    if (manifest.version !== BACKUP_VERSION) throw fail("backup: invalid manifest");
+    if (devices.has(manifest.deviceId)) throw fail("backup: invalid manifest");
+    devices.add(manifest.deviceId);
+    read.push({ manifest, snapshot: await readSnapshot(store, key, scope, manifest, crypto, byName) });
+  }
+  read.sort((a, b) => a.manifest.exportedAt - b.manifest.exportedAt
+    || a.manifest.deviceId.localeCompare(b.manifest.deviceId));
+  return { manifest: read.at(-1)!.manifest, snapshot: mergeSnapshots(read) };
 }
 
 async function readSnapshot(store: BackupDriveStore, key: BackupKey, scope: BackupScope,
-  manifest: BackupManifest, crypto: Crypto): Promise<HistorySnapshot> {
-  const byName = new Map((await store.list()).map((file) => [file.name, file]));
+  manifest: BackupManifest, crypto: Crypto, byName: Map<string, BackupDriveFile>): Promise<HistorySnapshot> {
   const messages: SnapshotMessage[] = [];
   for (const entry of manifest.conversations) {
     let previousSequence = 0;
