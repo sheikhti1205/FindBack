@@ -16,6 +16,12 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import org.json.JSONArray;
 import org.junit.Test;
 
 /** Runs the actual native validator; no Android database/runtime claim. */
@@ -136,6 +142,26 @@ public class MessagingSqliteStatementTest {
     private static void rejects(String sql) {
         Exception failure = assertThrows(Exception.class, () -> validate(sql));
         assertEquals("Messaging storage rejected an invalid request.", failure.getMessage());
+    }
+
+    @Test public void acceptsActualHistoryAdapterSql() throws Exception {
+        JSONArray statements = new JSONArray(new String(Files.readAllBytes(
+                Path.of(System.getProperty("messaging.sql.fixture"))), StandardCharsets.UTF_8));
+        org.junit.Assert.assertTrue("Fixture must contain the complete adapter statement map",
+                statements.length() > 100);
+        List<String> rejected = new ArrayList<>();
+        for (int index = 0; index < statements.length(); index++) {
+            JSONObject statement = statements.getJSONObject(index);
+            String sql = statement.getString("sql");
+            try {
+                assertEquals(sql.trim(), validate(sql));
+            } catch (Exception failure) {
+                // Only static statement identifiers, never SQL or parameters.
+                rejected.add(statement.getString("name"));
+            }
+        }
+        assertEquals("Actual adapter statements rejected by native transport: " + rejected,
+                List.of(), rejected);
     }
 
     @Test public void refusesCommentPrefixedDurabilityChanges() {

@@ -110,6 +110,9 @@ export const MESSAGING_SQLITE_SCHEMA = [
     created_at integer not null,
     updated_at integer not null
   )`,
+  // v9 payloads are bounded capabilities: a live report reference or explicit
+  // location coordinates. v5 permits an empty image caption within the body bound.
+  // Keep documentation outside SQL: the Android transport rejects SQL comments.
   `create table if not exists messages (
     id text primary key,
     conversation_id text not null references conversations(id) on delete cascade,
@@ -117,8 +120,6 @@ export const MESSAGING_SQLITE_SCHEMA = [
     recipient_id text not null,
     body text,
     message_type text check (message_type in ('TEXT','MEDIA','LOCATION')),
-    -- v9: bounded capabilities. The report id is a live reference, never a
-    -- snapshot; the coordinates exist only on an explicit LOCATION message.
     context_report_id text,
     location_lat real,
     location_lng real,
@@ -128,8 +129,6 @@ export const MESSAGING_SQLITE_SCHEMA = [
     created_at integer not null,
     unsent_at integer,
     check (author_id <> recipient_id),
-    -- v5: an image-only message carries no caption, so the empty string is a
-    -- valid body. Anything longer than the storage bound is still refused.
     check (body is null or length(body) <= 100000),
     check (context_report_id is null or message_type = 'TEXT'),
     check ((location_lat is null and location_lng is null and location_accuracy_m is null)
@@ -144,14 +143,14 @@ export const MESSAGING_SQLITE_SCHEMA = [
     on messages(server_event_id) where server_event_id is not null`,
   `create index if not exists ix_messages_conversation
     on messages(conversation_id, server_sequence)`,
+  // v8 retains the enqueue-time boundary; only pre-v8 rows may have a NULL epoch,
+  // which the server refuses rather than guessing a new relationship boundary.
   `create table if not exists outbox (
     message_id text primary key references messages(id) on delete cascade,
     status text not null check (status in ('QUEUED','SENDING','FAILED')),
     attempts integer not null default 0,
     token text,
     lease_until integer,
-    -- v8: the boundary observed at enqueue time. NULL only for rows queued by a
-    -- pre-v8 build; the server refuses those rather than guessing.
     expected_epoch text,
     check ((status = 'SENDING') = (token is not null and lease_until is not null))
   )`,
@@ -198,11 +197,12 @@ export const MESSAGING_SQLITE_SCHEMA = [
   // v6: chat attachment metadata, additive. Bytes live in the mediaBytes store,
   // never here. `state = 'UPLOADING'` *is* the lease, so token and lease_until
   // exist exactly then; a stale token cannot outlive the state that held it.
+  // The lowercase digest is compared as a string downstream. Inbound rows exist
+  // only after verified bytes arrive; they never enter the local upload queue.
   `create table if not exists media_attachments (
     id text primary key not null check (${uuidCheck("id")}),
     message_id text not null references messages(id) on delete cascade check (${uuidCheck("message_id")}),
     direction text not null check (direction in ('OUT','IN')),
-    -- Lowercase 64-hex only: the digest is compared as a string downstream.
     sha256 text not null check (length(sha256) = 64 and sha256 not glob '*[^0-9a-f]*'),
     mime text not null check (mime in ('image/jpeg','image/png','image/webp')),
     byte_size integer not null check (typeof(byte_size) = 'integer' and byte_size between 1 and 20971520),
@@ -217,7 +217,6 @@ export const MESSAGING_SQLITE_SCHEMA = [
     check ((state = 'UPLOADING' and token is not null and lease_until is not null)
       or (state <> 'UPLOADING' and token is null and lease_until is null)),
     check (direction = 'OUT' or expires_at is not null),
-    -- Inbound only exists once verified bytes arrived: there is no local queue.
     check (direction = 'OUT' or state in ('AWAITING_ACK','READY','EVICTED'))
   )`,
   // One attachment per message in this wave, and the lookup the adapters use.

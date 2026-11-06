@@ -252,6 +252,20 @@ android {
 
 // Fetch USE model task - runs before preBuild
 def repoRoot = rootProject.projectDir.parentFile.parentFile.parentFile
+// Exercise current adapter SQL through the actual native command validator.
+def messagingSqlFixture = layout.buildDirectory.file("generated/messaging-sql/statements.json")
+tasks.register("exportMessagingSqlFixture", Exec) {
+    inputs.file(new File(repoRoot, "apps/mobile/src/services/messaging/sqliteSchema.ts"))
+    inputs.file(new File(repoRoot, "scripts/export-messaging-sql-fixture.mjs"))
+    outputs.file(messagingSqlFixture)
+    commandLine "node", new File(repoRoot, "scripts/export-messaging-sql-fixture.mjs").absolutePath,
+        messagingSqlFixture.get().asFile.absolutePath
+}
+tasks.withType(Test).configureEach {
+    dependsOn("exportMessagingSqlFixture")
+    inputs.file(messagingSqlFixture)
+    systemProperty "messaging.sql.fixture", messagingSqlFixture.get().asFile.absolutePath
+}
 tasks.register("fetchUseModel", Exec) {
     commandLine "node", new File(repoRoot, "scripts/fetch-use-model.mjs").absolutePath
     outputs.file(new File(projectDir, "src/main/assets/models/use/universal_sentence_encoder.tflite"))
