@@ -46,6 +46,7 @@ env:
   VITE_SENTRY_DIST: android-latest
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}
   SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
 
 jobs:
   apk:
@@ -83,7 +84,7 @@ jobs:
       - name: Build shared package
         run: npm run build -w @norfold/shared
       - name: Restore Firebase Android client configuration
-        run: node scripts/materialize-google-services.mjs --export-google-client
+        run: node scripts/materialize-google-services.mjs
         env:
           GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
       - name: Strict installable config and build identity
