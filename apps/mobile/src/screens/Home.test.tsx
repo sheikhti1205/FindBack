@@ -212,92 +212,60 @@ describe("Home realtime", () => {
     expect(screen.queryByText(/new post/i)).toBeNull();
   });
 
-  it("collapses the brand wordmark on scroll and restores it at the top", async () => {
+  it("keeps the app bar inside the feed's own scroll", async () => {
     const { container } = renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
     const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    const wordmark = () =>
-      container.querySelector('[data-testid="home-brand-wordmark"]') as HTMLElement;
-    const chrome = () => container.querySelector('[data-testid="home-chrome"]') as HTMLElement;
+    const toolbar = screen.getByTestId("home-toolbar");
 
-    expect(wordmark().getAttribute("data-compact")).toBe("false");
+    // Owner feedback 2026-11-06: the bar must leave at exactly the reader's
+    // scroll speed. That is only true when the browser moves it as part of the
+    // scroll, so it has to be a child of the feed's scroller — not a fixed row
+    // reacting to a timer, which reflowed the feed under the finger.
+    expect(scroller.contains(toolbar)).toBe(true);
+    // The brand row is the first thing in the scroll, so the feed starts below
+    // it at rest and there is no gap to close.
+    expect(scroller.firstElementChild?.firstElementChild).toBe(toolbar);
 
-    // Deliberate downward travel, not yet enough to take the bar: the word goes
-    // first, the bar follows (owner ruling 2026-10-19).
-    scroller.scrollTop = 30;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("true"));
-
-    // The bar itself is still on screen — this stage is not the chrome collapse,
-    // and the wordmark keeps its box so nothing in the row reflows.
-    expect(chrome().getAttribute("data-collapsed")).toBe("false");
-    expect(wordmark().textContent).toBe("Norfold");
-    // The control keeps its name and its mark: only the word's ink is gone.
-    expect(screen.getByRole("button", { name: /scroll the feed to the top/i })).toBeTruthy();
-
-    // Far enough down and the whole chrome still leaves, as it always did.
-    // (Small steps: one 370px delta would be a programmatic jump, which the
-    // tracker deliberately ignores.)
-    scroller.scrollTop = 100;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("true"));
-
-    // A controlled pull back mid-feed restores both — not only a return to the
-    // top. Independent review BLOCKER-1: the wordmark restore used to be
-    // unreachable for every uniform drag step, and the old assertions could not
-    // see it (they restored via the top zone). This loop is the regression guard.
-    for (let top = 92; top > 24; top -= 8) {
+    for (const top of [12, 30, 75, 140, 460]) {
       scroller.scrollTop = top;
       fireEvent.scroll(scroller);
     }
-    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("false"));
-    expect(scroller.scrollTop).toBeGreaterThan(24); // mid-feed, not the top zone
-    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("false"));
 
-    // Back at the top the name returns.
+    // Nothing about the bar changes with scroll: no collapse state, no inert
+    // row, no height transition of its own.
+    expect(screen.getByTestId("home-toolbar")).toBe(toolbar);
+    expect(toolbar.hasAttribute("inert")).toBe(false);
+    expect(toolbar.getAttribute("data-collapsed")).toBeNull();
+    expect(toolbar.className).not.toContain("shrink-0");
+    // The wordmark stays whole: the entire row leaves, so shrinking the word
+    // would be a second, redundant stage. The old collapse attribute is gone.
+    const wordmark = container.querySelector('[data-testid="home-brand-wordmark"]');
+    expect(wordmark!.getAttribute("data-compact")).toBeNull();
+    expect(wordmark!.textContent).toBe("Norfold");
+
+    // Scrolling back up is the same mechanism in reverse — the row was never
+    // unmounted, so it returns with the content.
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
-    await waitFor(() => expect(wordmark().getAttribute("data-compact")).toBe("false"));
+    expect(scroller.contains(screen.getByTestId("home-toolbar"))).toBe(true);
   });
 
-  it("ignores scroll events from a descendant scroller", async () => {
-    // The screen root observes scrolls in the capture phase, so it sees every
-    // scroller inside Home — the filter rail and each card's photo carousel
-    // included. A horizontal swipe leaves that target's `scrollTop` at 0, which
-    // the collapse machine used to read as "back at the top": the chrome and the
-    // wordmark popped back in, and the next 3px of downward travel then counted
-    // as a fresh 103px jump against a rebased `lastY`. Only the feed's own
-    // scroller may decide the chrome.
+  it("scrolls the bar back into view when search is opened", async () => {
     const { container } = renderHome();
     await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
     const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    const rail = container.querySelector(".fb-scroll-row") as HTMLElement;
-    const wordmark = () =>
-      container.querySelector('[data-testid="home-brand-wordmark"]') as HTMLElement;
-    const chrome = () => container.querySelector('[data-testid="home-chrome"]') as HTMLElement;
-    const toolbar = () => screen.getByTestId("home-toolbar");
 
-    scroller.scrollTop = 100;
+    // Part-way through: the bar is on its way out at the reader's own speed.
+    scroller.scrollTop = 40;
     fireEvent.scroll(scroller);
-    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("true"));
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
-    expect(toolbar().className).toContain("border-outline-variant");
 
-    // A real horizontal scroll: the rail overflows at 320dp and its vertical
-    // offset is always 0.
-    rail.scrollTop = 0;
-    fireEvent.scroll(rail);
-
-    expect(chrome().getAttribute("data-collapsed")).toBe("true");
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
-    expect(toolbar().className).toContain("border-outline-variant");
-
-    // The tracker kept the feed's `lastY`: 3px of further travel is 3px, not a
-    // 103px rebase, so neither stage moves.
-    scroller.scrollTop = 103;
-    fireEvent.scroll(scroller);
-    expect(chrome().getAttribute("data-collapsed")).toBe("true");
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
+    // Activating search is a deliberate act on the bar, so the row returns
+    // before the field mounts — the field is never opened off-screen.
+    const field = openSearch();
+    expect(scroller.scrollTop).toBe(0);
+    fireEvent.focus(field);
+    expect(screen.getByLabelText("Search posts")).toBe(field);
   });
 
   it("restores the type filter from the URL on mount", async () => {
@@ -576,22 +544,9 @@ describe("Home realtime", () => {
     }
   });
 
-  it("gives the toolbar separation once the feed scrolls", async () => {
-    const { container } = renderHome();
-    await waitFor(() => expect(screen.getByText("b")).toBeTruthy());
-    const toolbar = screen.getByTestId("home-toolbar");
-    expect(toolbar.className).not.toContain("shadow-sm");
-
-    const scroller = container.querySelector(".overflow-y-auto");
-    expect(scroller).toBeTruthy();
-    (scroller as HTMLElement).scrollTop = 100;
-    fireEvent.scroll(scroller as HTMLElement);
-
-    await waitFor(() => expect(screen.getByTestId("home-toolbar").className).toContain("shadow-sm"));
-  });
 });
 
-describe("Home scroll-reactive chrome (CF-010)", () => {
+describe("Home brand and search affordances", () => {
   beforeEach(() => {
     fetchFeedMock.mockReset();
     onRealtimeMock.mockClear();
@@ -615,85 +570,6 @@ describe("Home scroll-reactive chrome (CF-010)", () => {
     const rendered = renderHome();
     return waitFor(() => expect(screen.getByText("b")).toBeTruthy()).then(() => rendered);
   }
-
-  it("collapses on a deliberate downward scroll and restores it on one upward move", async () => {
-    const { container } = await renderAndWait();
-    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    expect(scroller).toBeTruthy();
-    const collapsed = () => screen.getByTestId("home-chrome").getAttribute("data-collapsed");
-
-    expect(collapsed()).toBe("false");
-
-    // A short move inside the top zone leaves the chrome alone.
-    scroller.scrollTop = 12;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(collapsed()).toBe("false"));
-
-    // A real move that has not banked enough travel yet: still visible.
-    scroller.scrollTop = 30;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(collapsed()).toBe("false"));
-
-    // Enough deliberate downward travel past the zone: collapsed.
-    scroller.scrollTop = 75;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(collapsed()).toBe("true"));
-
-    // Hysteresis: a short upward nudge below the reveal travel is not enough.
-    scroller.scrollTop = 70;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(collapsed()).toBe("true"));
-
-    // One real upward move brings it back — with less travel than hiding took.
-    scroller.scrollTop = 60;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(collapsed()).toBe("false"));
-  });
-
-  it("marks the collapsed chrome inert so an off-screen control cannot take focus", async () => {
-    const { container } = await renderAndWait();
-    const chrome = screen.getByTestId("home-chrome");
-    expect(chrome.hasAttribute("inert")).toBe(false);
-
-    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    scroller.scrollTop = 140;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(chrome.hasAttribute("inert")).toBe(true));
-
-    // The reader gets it back the moment they scroll up.
-    scroller.scrollTop = 118;
-    fireEvent.scroll(scroller);
-    await waitFor(() => expect(chrome.hasAttribute("inert")).toBe(false));
-  });
-
-  it("keeps the chrome open while the search field is active, whatever the scroll", async () => {
-    const { container } = await renderAndWait();
-    const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    scroller.scrollTop = 140;
-    fireEvent.scroll(scroller);
-    await waitFor(() =>
-      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("true"),
-    );
-
-    // Activating the search affordance pins the chrome open for the whole session.
-    const field = openSearch();
-    fireEvent.focus(field);
-    await waitFor(() =>
-      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false"),
-    );
-
-    scroller.scrollTop = 400;
-    fireEvent.scroll(scroller);
-    expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("false");
-
-    // Blurring hands control back to the scroll direction.
-    fireEvent.blur(field);
-    scroller.scrollTop = 460;
-    fireEvent.scroll(scroller);
-    await waitFor(() =>
-      expect(screen.getByTestId("home-chrome").getAttribute("data-collapsed")).toBe("true"),
-    );
-  });
 
   it("scrolls to the top from the brand without spending a request", async () => {
     const scrollTo = vi.fn();

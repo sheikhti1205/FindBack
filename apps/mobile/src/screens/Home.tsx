@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PostType } from "@norfold/shared";
 import { HomeFilterChips, HomeScopeChips } from "./HomeFilterChips";
 import { HomeTopBar } from "./HomeTopBar";
@@ -7,8 +7,6 @@ import { PostList } from "../components/PostList";
 import { MASONRY_CANVAS_CLASS, READABLE_COLUMN_CLASS, feedDensity, masonryColumns, resolveFeedLayout, useContentWidth, useViewportWidth } from "../components/responsive";
 import { useFeedLayoutPreference } from "../services/feedLayoutPreference";
 import { PullToRefresh, type PullToRefreshHandle } from "../components/PullToRefresh";
-import { CHROME_TOP_ZONE, useScrollChrome } from "../components/scrollChrome";
-import { ScrollChrome } from "../components/ScrollChrome";
 import { NewPostsPill } from "../components/NewPostsPill";
 import { BottomSheet } from "../components/BottomSheet";
 import { MapPickerSheet } from "../components/MapPickerSheet";
@@ -42,12 +40,19 @@ import { useTabTap } from "../components/TabTap";
 import { buildFeedCacheKey, clearNewPostCount, getNewPostCount, incrementNewPostCount } from "../hooks/feedCache";
 import { AdvancedSearchFilters, FiltersIconButton, getActiveFilterCount, useAdvancedSearchFilters } from "./AdvancedSearchFilters";
 import type { FeedFilters } from "../services/posts";
-import { motionDurations, useShouldReduceMotion } from "../components/uiMotion";
+import { useShouldReduceMotion } from "../components/uiMotion";
 import { registerBackInterceptor } from "../components/backNavigation";
 
 type TypeFilter = PostType | "ALL";
 
 const HOME_CACHE_KEY = "home:feed";
+
+/**
+ * A tab re-tap refreshes only when the feed is still at the top. The bar now
+ * scrolls away with the feed, so "at the top" is the same test as before: the
+ * scroller has not left its first few pixels.
+ */
+const CHROME_TOP_ZONE = 24;
 
 export function Home() {
   const { user } = useAuth();
@@ -97,9 +102,6 @@ export function Home() {
   const searchFieldFocused = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchActive = searchFocused || query.length > 0;
-  // Toolbar separation: a subtle border/shadow once the feed scrolls.
-  const [toolbarSeparated, setToolbarSeparated] = useState(false);
-  const toolbarSeparatedRef = useRef(false);
   const advanced = useAdvancedSearchFilters();
   // Combinable scope row (UXN-1): Nearby | Open | Recent combine freely with
   // the exclusive All/Lost/Found type above. Only the radius travels in the
@@ -259,14 +261,12 @@ export function Home() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const scrollRef = useRef<PullToRefreshHandle>(null);
 
-  // CF-010 §3: the chrome collapses on an intentional downward scroll and comes
-  // back on the first intentional upward move. A control the reader is actively
-  // using pins it open — a search field with the keyboard up, the filter sheet,
-  // the Nearby sheet, the map picker — so an open control is never hidden.
-  // A typed-but-unfocused query is deliberately NOT a pin: the reader is
-  // browsing results by then, and the value survives in the URL and in state.
-  const chromePinned = searchFocused || filtersOpen || nearbySheetOpen || mapPickerOpen;
-  const { hidden: chromeHidden, compact: brandCompact, onScroll: onFeedScroll } = useScrollChrome(chromePinned);
+  // Owner feedback 2026-11-06: the app bar is part of the feed's own scroll.
+  // It used to sit outside the scroller and animate its height away on a timer,
+  // which reflowed the feed under the reader's finger (the reported yank). It
+  // now scrolls out with the content at exactly the speed the reader scrolls
+  // and returns the moment they reverse, so nothing ever changes the feed's
+  // geometry. `chromePinned` therefore has nothing left to pin.
 
   // Debounce the search box so each keystroke does not hit the API.
   useEffect(() => {
@@ -429,28 +429,9 @@ export function Home() {
     scrollRef.current?.scrollToTop(reduceMotion ? "auto" : "smooth");
   }
 
-  // Scroll events from the PullToRefresh container do not bubble, but React
-  // listens in the capture phase — one guarded setState per crossing, never
-  // per pixel, so the toolbar toggle cannot rerender the feed on scroll.
-  //
-  // Capture phase also means *every* scroll inside the screen arrives here: the
-  // filter rail and each card's photo carousel included. Their vertical offset
-  // is always 0, so reading `e.target.scrollTop` would read a horizontal swipe
-  // as "back at the top" — the chrome and the wordmark would pop in, and the
-  // next few pixels of real travel would rebase `lastY` and hide it again
-  // without the 24px hysteresis. Only the feed's own scroller may decide.
-  function handleFeedScroll(e: SyntheticEvent) {
-    const feed = scrollRef.current?.element ?? null;
-    if (!feed || e.target !== feed) return;
-    const top = feed.scrollTop;
-    const next = top > 8;
-    if (next !== toolbarSeparatedRef.current) {
-      toolbarSeparatedRef.current = next;
-      setToolbarSeparated(next);
-    }
-    onFeedScroll(top, feed.scrollHeight - feed.clientHeight);
-  }
-
+  // The bar no longer needs a scroll listener: it is part of the scroller, so
+  // the browser moves it. Nothing here reacts per pixel, nothing here can
+  // reflow the feed.
   function collapseSearch() {
     setQuery("");
     setSearchFocused(false);
@@ -463,6 +444,11 @@ export function Home() {
    * on the state change (the field mounts on it), never after the crossfade.
    */
   function openSearch() {
+    // The bar is feed content now, so a half-scrolled bar would mount the field
+    // partly off-screen. Bring the row fully into view first (instant: focus and
+    // the keyboard are already moving, and a smooth scroll would animate under
+    // them).
+    scrollRef.current?.scrollToTop("auto");
     setSearchFocused(true);
   }
 
@@ -488,70 +474,66 @@ export function Home() {
   );
 
   return (
-    <div className="flex h-full flex-col gap-4" onScrollCapture={handleFeedScroll}>
-      {/* CF-010 §3: the chrome collapses on an intentional downward scroll so
-          the feed gains real vertical room. The wrapper owns the geometry, the
-          reduced-motion override and the `inert` contract; the sheets stay
-          outside it (BottomSheet mounts in the tree, not a portal). */}
-      <ScrollChrome hidden={chromeHidden}>
-      <header
-        data-testid="home-toolbar"
-        style={{ transitionDuration: reduceMotion ? "0s" : `${motionDurations.fast}s` }}
-        className={`border-b pt-5 transition-[border-color,box-shadow] ${
-          toolbarSeparated ? "border-outline-variant shadow-sm" : "border-transparent shadow-none"
-        }`}
-      >
-        <div className={`${canvasClass} px-4`}>
-        <HomeTopBar
-          utilities={<TopUtilities showSearch={false} />}
-          expanded={searchActive}
-          compact={brandCompact}
-          query={query}
-          onQueryChange={setQuery}
-          onOpen={openSearch}
-          onClear={() => setQuery("")}
-          onClose={collapseSearch}
-          onFocus={() => {
-            searchFieldFocused.current = true;
-            setSearchFocused(true);
-          }}
-          onFieldBlur={() => {
-            searchFieldFocused.current = false;
-          }}
-          onBlur={() => {
-            searchFieldFocused.current = false;
-            setSearchFocused(false);
-          }}
-          onBrandTap={onBrandTap}
-          inputRef={searchInputRef}
-          filterButton={
-            <FiltersIconButton
-              activeCount={getActiveFilterCount(advanced)}
-              open={filtersOpen}
-              onClick={() => setFiltersOpen(true)}
+    <div className="flex h-full flex-col">
+      {/* Owner feedback 2026-11-06: the bar is inside the feed's own scroll.
+          It leaves at exactly the speed the reader scrolls and comes back the
+          moment they reverse — no timer, no height animation, so the feed's
+          geometry never changes under the finger. That is the whole fix for
+          the reported drag/yank. The sheets and the new-posts pill stay outside
+          the scroller (they are viewport chrome, not feed content). */}
+      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="fb-home-feed flex-1">
+        <div className="flex flex-col gap-4">
+          <header data-testid="home-toolbar" className="pt-5">
+            <div className={`${canvasClass} px-4`}>
+            <HomeTopBar
+              utilities={<TopUtilities showSearch={false} />}
+              expanded={searchActive}
+              query={query}
+              onQueryChange={setQuery}
+              onOpen={openSearch}
+              onClear={() => setQuery("")}
+              onClose={collapseSearch}
+              onFocus={() => {
+                searchFieldFocused.current = true;
+                setSearchFocused(true);
+              }}
+              onFieldBlur={() => {
+                searchFieldFocused.current = false;
+              }}
+              onBlur={() => {
+                searchFieldFocused.current = false;
+                setSearchFocused(false);
+              }}
+              onBrandTap={onBrandTap}
+              inputRef={searchInputRef}
+              filterButton={
+                <FiltersIconButton
+                  activeCount={getActiveFilterCount(advanced)}
+                  open={filtersOpen}
+                  onClick={() => setFiltersOpen(true)}
+                />
+              }
             />
-          }
-        />
-        </div>
-      </header>
+            </div>
+          </header>
 
-      <div className={`${canvasClass} flex flex-col gap-3 px-4`}>
-        <div className="fb-scroll-fade">
-          <div className="fb-scroll-row flex items-center gap-3" aria-label="Feed filters">
-            <HomeFilterChips value={type} onChange={setType} />
-            <span aria-hidden className="h-6 shrink-0 border-l border-outline-variant" />
-            <HomeScopeChips
-              nearbyActive={nearbyActive}
-              nearbyRadiusKm={nearbyRadiusKm}
-              locating={locating}
-              openActive={openActive}
-              recentActive={recentOn}
-              onNearbyTap={onNearbyTap}
-              onOpenTap={onOpenTap}
-              onRecentTap={onRecentTap}
-            />
-          </div>
-        </div>
+          <div className={`${canvasClass} flex flex-col gap-3 px-4`}>
+            <div className="fb-scroll-fade">
+              <div className="fb-scroll-row flex items-center gap-3" aria-label="Feed filters">
+                <HomeFilterChips value={type} onChange={setType} />
+                <span aria-hidden className="h-6 shrink-0 border-l border-outline-variant" />
+                <HomeScopeChips
+                  nearbyActive={nearbyActive}
+                  nearbyRadiusKm={nearbyRadiusKm}
+                  locating={locating}
+                  openActive={openActive}
+                  recentActive={recentOn}
+                  onNearbyTap={onNearbyTap}
+                  onOpenTap={onOpenTap}
+                  onRecentTap={onRecentTap}
+                />
+              </div>
+            </div>
         {snack && (
           <div
             role="status"
@@ -577,8 +559,38 @@ export function Home() {
             </button>
           </div>
         )}
-      </div>
-      </ScrollChrome>
+          </div>
+
+          {/* UXN-2: batch-hydrated Love state + optimistic feed-cache patching.
+              PostList itself is untouched — the provider flows state to each
+              home-feed card's Love toggle via context. */}
+          <FeedLoveProvider items={items} patchItem={patchItem}>
+            <div className={canvasClass} ref={feedRef} data-testid="home-feed-canvas">
+              <PostList
+                items={items}
+                loading={loading}
+                loadingMore={loadingMore}
+                error={error}
+                hasMore={hasMore}
+                onLoadMore={loadMore}
+                onRetry={refresh}
+                density={feedDensity(resolvedLayout)}
+                masonryColumns={masonryColumns(feedWidth)}
+                emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
+                emptySubtitle={
+                  nearbyActive
+                    ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
+                    : advanced.category || advanced.status
+                      ? "Try different filters or a broader search."
+                      : appliedQuery
+                        ? `No posts match “${appliedQuery}”.`
+                        : "Tap Create report to post a lost or found item."
+                }
+              />
+            </div>
+          </FeedLoveProvider>
+        </div>
+      </PullToRefresh>
 
       <AdvancedSearchFilters
         filters={advanced}
@@ -641,36 +653,6 @@ export function Home() {
 
       <NewPostsPill count={newPostCount} hasUpdates={hasUpdates} onTap={onNewPostsTap} />
 
-      <PullToRefresh ref={scrollRef} onRefresh={refresh} disabled={loading || refreshing} className="fb-home-feed flex-1">
-        {/* UXN-2: batch-hydrated Love state + optimistic feed-cache patching.
-            PostList itself is untouched — the provider flows state to each
-            home-feed card's Love toggle via context. */}
-        <FeedLoveProvider items={items} patchItem={patchItem}>
-          <div className={canvasClass} ref={feedRef} data-testid="home-feed-canvas">
-            <PostList
-              items={items}
-              loading={loading}
-              loadingMore={loadingMore}
-              error={error}
-              hasMore={hasMore}
-              onLoadMore={loadMore}
-              onRetry={refresh}
-              density={feedDensity(resolvedLayout)}
-              masonryColumns={masonryColumns(feedWidth)}
-              emptyTitle={appliedQuery || advanced.category || advanced.status || nearbyActive ? "No matches" : "Nothing here yet"}
-              emptySubtitle={
-                nearbyActive
-                  ? "Try a wider radius or different filters. Nearby uses reports with a map pin."
-                  : advanced.category || advanced.status
-                    ? "Try different filters or a broader search."
-                    : appliedQuery
-                      ? `No posts match “${appliedQuery}”.`
-                      : "Tap Create report to post a lost or found item."
-              }
-            />
-          </div>
-        </FeedLoveProvider>
-      </PullToRefresh>
     </div>
   );
 }

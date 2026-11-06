@@ -123,7 +123,13 @@ export const PullToRefresh = forwardRef<PullToRefreshHandle, PullToRefreshProps>
         // Track the destination too: a smooth scroll's events can still be in
         // flight when the consumer unmounts.
         lastScrollTopRef.current = 0;
-        scrollRef.current?.scrollTo({ top: 0, behavior });
+        const el = scrollRef.current;
+        if (!el) return;
+        // Not every DOM implements Element.scrollTo (jsdom has no layout at
+        // all); assigning scrollTop is the same destination without the
+        // animation, and it keeps callers from throwing in a test environment.
+        if (typeof el.scrollTo === "function") el.scrollTo({ top: 0, behavior });
+        else el.scrollTop = 0;
       },
       get element() {
         return scrollRef.current;

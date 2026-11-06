@@ -37,7 +37,6 @@ const swap = { duration: motionDurations.fast, ease: motionEasings.out } as cons
  */
 export function HomeTopBar({
   expanded,
-  compact,
   query,
   onQueryChange,
   onOpen,
@@ -52,15 +51,6 @@ export function HomeTopBar({
   utilities,
 }: {
   expanded: boolean;
-  /**
-   * The reader has scrolled the feed away: the brand row shows the mark alone.
-   * Owner ruling 2026-10-19 — the Threads behaviour, where the word leaves and
-   * comes back. It is the first stage of the chrome collapse (`scrollChrome.ts`).
-   * It is consumed only by the brand branch: the field branch replaces that row
-   * entirely, so a typed-but-unfocused query (which keeps the field mounted
-   * while the chrome is not pinned) never shows the mark-only stage.
-   */
-  compact: boolean;
   query: string;
   onQueryChange: (value: string) => void;
   onOpen: () => void;
@@ -208,23 +198,12 @@ export function HomeTopBar({
                 {/* Decorative beside the wordmark, and the button already
                     carries the accessible name. */}
                 <BrandMark size={28} shape="tile" alt="" />
-                {/* The wordmark leaves on scroll and returns on the way back
-                    (owner ruling 2026-10-19). Only opacity and a small x-shift
-                    animate — the span keeps its box, so nothing in the row or
-                    the feed reflows, the mark never moves, and the reduced-motion
-                    path (which the app root degrades to opacity) needs no branch
-                    of its own. It is NOT `aria-hidden` while collapsed: the text
-                    is the row's visible name and the heading stays non-empty. */}
-                <motion.span
-                  data-testid="home-brand-wordmark"
-                  data-compact={compact ? "true" : "false"}
-                  initial={false}
-                  animate={{ opacity: compact ? 0 : 1, x: compact ? -6 : 0 }}
-                  transition={swap}
-                  className="truncate"
-                >
+                {/* No collapse stage: the whole bar is feed content now, so it
+                    leaves and returns with the scroll (owner feedback
+                    2026-11-06). The word never shrinks on its own. */}
+                <span data-testid="home-brand-wordmark" className="truncate">
                   Norfold
-                </motion.span>
+                </span>
               </button>
             </h1>
           </motion.div>

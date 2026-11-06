@@ -27,7 +27,6 @@ import {
 const SECTIONS = [
   "home",
   "feed-layouts",
-  "home-chrome",
   "navigation",
   "detail",
   "create",

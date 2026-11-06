@@ -1,7 +1,6 @@
 import { FixtureLargeTextToggle } from "./FixtureSection";
 import { AdminFixtures } from "./sections/AdminFixtures";
 import { BlockedShieldFixtures } from "./sections/BlockedShieldFixtures";
-import { ChromeFixtures } from "./sections/ChromeFixtures";
 import { CreateFixtures } from "./sections/CreateFixtures";
 import { DetailFixtures } from "./sections/DetailFixtures";
 import { FeedLayoutFixtures } from "./sections/FeedLayoutFixtures";
@@ -15,7 +14,6 @@ import { SystemFixtures } from "./sections/SystemFixtures";
 const SECTION_LINKS = [
   { id: "home", label: "Home feed" },
   { id: "feed-layouts", label: "Feed layouts" },
-  { id: "home-chrome", label: "Home chrome" },
   { id: "navigation", label: "Navigation" },
   { id: "adaptive-foundation", label: "Adaptive foundation" },
   { id: "detail", label: "Post detail" },
@@ -81,7 +79,6 @@ export function FixtureRoute() {
         <FeedLayoutFixtures />
       </div>
       <div>
-        <ChromeFixtures />
       </div>
       <div>
         <BlockedShieldFixtures />

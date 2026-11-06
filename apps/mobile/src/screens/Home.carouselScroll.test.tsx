@@ -91,8 +91,8 @@ afterEach(() => {
   clearFeedCaches();
 });
 
-describe("Home feed scroll capture with the real feed", () => {
-  it("keeps the chrome collapsed when a card's photo carousel is swiped", async () => {
+describe("Home feed with the real card carousel", () => {
+  it("leaves the feed alone when a card's photo carousel is swiped", async () => {
     // Home resolves its default `auto` layout from the viewport width: at
     // jsdom's 1024 it would pick the masonry grid, whose cards render media
     // through a different component. A phone width selects the real Home
@@ -104,49 +104,34 @@ describe("Home feed scroll capture with the real feed", () => {
       </MemoryRouter>,
     );
 
-    // The real PostList rendered a card with the real carousel: this is the
-    // descendant that the mocked suite could never produce.
+    // The real PostList rendered a card with the real carousel: a horizontal
+    // scroller nested inside the feed's vertical one.
     await waitFor(() => expect(screen.getByTestId("feed-media-track")).toBeTruthy());
     const track = screen.getByTestId("feed-media-track");
     expect(track.className).toContain("overflow-x-auto");
 
     const scroller = container.querySelector(".overflow-y-auto") as HTMLElement;
-    const chrome = () => container.querySelector('[data-testid="home-chrome"]') as HTMLElement;
-    const wordmark = () =>
-      container.querySelector('[data-testid="home-brand-wordmark"]') as HTMLElement;
-    const toolbar = () => screen.getByTestId("home-toolbar");
+    // The bar is feed content, so it lives in the same vertical scroller.
+    expect(scroller.contains(screen.getByTestId("home-toolbar"))).toBe(true);
+    expect(scroller.contains(track)).toBe(true);
 
-    // Collapse both stages on the feed's own scroller.
     scroller.scrollTop = 100;
     fireEvent.scroll(scroller);
-    await waitFor(() => expect(chrome().getAttribute("data-collapsed")).toBe("true"));
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
-    expect(toolbar().className).toContain("border-outline-variant");
 
-    // A horizontal carousel swipe: the track's vertical offset is always 0, so
-    // a guard that reads any descendant's `scrollTop` reads "back at the top".
-    //
-    // The list re-renders on the chrome state change (and the collapsed frame
-    // replaces the card subtree), so hold the LIVE carousel — querying once at
-    // the top and firing at that handle afterwards dispatches the event into a
-    // detached node, which the capture handler never sees. That vacuous pass is
-    // exactly the failure mode MINOR-D is about, so the node is re-resolved and
-    // proven connected before the swipe.
+    // Swiping the carousel scrolls that track only: the feed's own offset and
+    // the bar's place in it never change, because nothing observes scrolls and
+    // nothing translates the row.
     const liveTrack = screen.getByTestId("feed-media-track");
     expect(liveTrack.isConnected).toBe(true);
-    expect(scroller.contains(liveTrack)).toBe(true);
     liveTrack.scrollLeft = 240;
     fireEvent.scroll(liveTrack);
 
-    expect(chrome().getAttribute("data-collapsed")).toBe("true");
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
-    expect(toolbar().className).toContain("border-outline-variant");
+    expect(scroller.scrollTop).toBe(100);
+    expect(scroller.contains(screen.getByTestId("home-toolbar"))).toBe(true);
+    expect(screen.getByTestId("home-toolbar").hasAttribute("inert")).toBe(false);
 
-    // And the feed's own tracker never left the feed: 3 more pixels of travel
-    // are 3px, not a rebased jump.
-    scroller.scrollTop = 103;
-    fireEvent.scroll(scroller);
-    expect(chrome().getAttribute("data-collapsed")).toBe("true");
-    expect(wordmark().getAttribute("data-compact")).toBe("true");
+    // The wordmark is never shrunk now: the whole row leaves with the feed.
+    const wordmark = container.querySelector('[data-testid="home-brand-wordmark"]');
+    expect(wordmark!.getAttribute("data-compact")).toBeNull();
   });
 });
