@@ -166,17 +166,24 @@ export async function handleCleanup(
 
 async function runAuthorizedCleanup(clients: CleanupClients, options: { maxBatches?: number } = {}): Promise<CleanupResponse> {
   let purgedStaging = 0;
+  // A purge failure is not fatal to the byte sweep below, but it must be visible
+  // in the response: `purgedStaging: 0` alone is indistinguishable from "nothing
+  // was abandoned", so a scheduler reading only the body would think the run
+  // fully succeeded.
+  let stagingPurgeFailed = false;
   if (clients.purgeStaging) {
     // A failure here must not stop the byte sweep: queued objects are the
     // higher-value work. It is reported, never swallowed.
     try {
       const purged = await clients.purgeStaging();
       if (purged.error) {
+        stagingPurgeFailed = true;
         console.warn(`cleanup-report-media: staging purge failed: ${purged.error.message}`);
       } else {
         purgedStaging = purged.purged;
       }
     } catch {
+      stagingPurgeFailed = true;
       console.warn("cleanup-report-media: staging purge threw");
     }
   }
@@ -186,10 +193,13 @@ async function runAuthorizedCleanup(clients: CleanupClients, options: { maxBatch
   let acked = 0;
   const failedKeys: string[] = [];
   let batches = 0;
+  // Only a claim that returns nothing proves the queue drained. Hitting the
+  // per-invocation batch budget first leaves work for the next run.
+  let drained = false;
   try {
     for (let i = 0; i < maxBatches; i++) {
       const batch = await sweepBatch(clients, CLAIM_BATCH_SIZE);
-      if (batch.claimed === 0) break;
+      if (batch.claimed === 0) { drained = true; break; }
       batches += 1;
       claimed += batch.claimed;
       removed += batch.removed.length;
@@ -200,15 +210,19 @@ async function runAuthorizedCleanup(clients: CleanupClients, options: { maxBatch
     const message = err instanceof Error ? err.message : "cleanup failed";
     return {
       status: 502,
-      body: { error: message, purgedStaging, claimed, removed, acked, failedKeys, batches, complete: false },
+      body: { error: message, purgedStaging, stagingPurgeFailed, claimed, removed, acked, failedKeys, batches, complete: false },
     };
   }
   console.log(
     `cleanup-report-media: purgedStaging=${purgedStaging} batches=${batches} claimed=${claimed} removed=${removed} acked=${acked} failed=${failedKeys.length}`,
   );
+  // `complete` is the honest answer to "is there nothing left to do": the queue
+  // drained, every claimed object was removed, every removal was acked, and no
+  // abandoned staging purge failed. Failed keys stay leased and are retried.
+  const complete = drained && failedKeys.length === 0 && acked === removed && !stagingPurgeFailed;
   return {
     status: 200,
-    body: { purgedStaging, claimed, removed, acked, failedKeys, batches, complete: true },
+    body: { purgedStaging, stagingPurgeFailed, claimed, removed, acked, failedKeys, batches, complete },
   };
 }
 
