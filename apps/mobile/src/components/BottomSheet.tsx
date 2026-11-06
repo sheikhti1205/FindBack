@@ -28,6 +28,9 @@ export interface BottomSheetProps {
    * Defaults to true to preserve every existing consumer.
    */
   contentScrollable?: boolean;
+  /** Blurs what is behind a blocking pop-up. Opt-in so ordinary sheets are
+   * unchanged. */
+  backdropBlur?: boolean;
   children: React.ReactNode;
 }
 
@@ -63,6 +66,7 @@ export function BottomSheet({
   closeLabel = "Close",
   header,
   contentScrollable = true,
+  backdropBlur,
   children,
 }: BottomSheetProps) {
   return (
@@ -78,6 +82,7 @@ export function BottomSheet({
           closeLabel={closeLabel}
           header={header}
           contentScrollable={contentScrollable}
+          backdropBlur={backdropBlur}
         >
           {children}
         </BottomSheetDialog>
@@ -95,6 +100,7 @@ function BottomSheetDialog({
   closeLabel,
   header,
   contentScrollable = true,
+  backdropBlur,
   children,
 }: Omit<BottomSheetProps, "open">) {
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -151,7 +157,7 @@ function BottomSheetDialog({
         data-testid="bottom-sheet-backdrop"
         aria-hidden="true"
         onClick={requestClose}
-        className="absolute inset-0"
+        className={backdropBlur ? "absolute inset-0 backdrop-blur-md" : "absolute inset-0"}
         style={{ background: "var(--scrim)" }}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}

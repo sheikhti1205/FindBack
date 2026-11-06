@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { MessagingThread } from "./Messaging";
 import { LiveRegion } from "../components/LiveRegion";
+import { MessagingRestoration } from "../components/MessagingRestoration";
 import { Capacitor } from "@capacitor/core";
 import { PhotoUnavailableError } from "../services/messaging/mediaTransport";
 import type { MessagingThreadSync } from "../services/messaging/runtime";
@@ -13,13 +14,13 @@ const m = vi.hoisted(() => {
   return { view, watch: vi.fn(), chat: { accountId: "account", status: "ready", revision: 1,
     threadSync: { conversationId: "chat", mode: "ready", missing: 0 } as MessagingThreadSync | null,
     conversations: [{ conversationId: "chat", peerId: "peer", cachedProjection: view }], currentProjections: { chat: view } },
-    messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[], threadRead: vi.fn(),
+    messages: [] as unknown[], media: [] as unknown[], outbox: [] as unknown[], cached: null as null | { messages: unknown[]; media: unknown[]; outbox: unknown[] }, threadRead: vi.fn(),
     location: vi.fn(), mute: vi.fn(), prepare: vi.fn(), relationship: vi.fn(), text: vi.fn(), send: vi.fn(), read: vi.fn(), download: vi.fn(), remove: vi.fn(), recover: vi.fn(), retry: vi.fn(), receipt: vi.fn(), observe: vi.fn(), refresh: vi.fn(), choose: vi.fn(), import: vi.fn(), file: vi.fn() };
 });
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "account" } }) }));
-vi.mock("../services/accountLabels", () => ({ fetchAccountLabels: async () => new Map() }));
+vi.mock("../services/accountLabels", () => ({ fetchAccountIdentities: async () => new Map(), readCachedAccountIdentities: () => new Map() }));
 vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => m.chat }));
-vi.mock("../services/messaging/runtime", () => ({ watchMessagingThread: m.watch, sendMessagingLocation: m.location, setMessagingMuted: m.mute, readMessagingThreadState: () => m.threadRead(), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: m.text, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: m.relationship, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover, retryMessagingMessage: m.retry }));
+vi.mock("../services/messaging/runtime", () => ({ getCachedMessagingThreadState: () => m.cached, watchMessagingThread: m.watch, sendMessagingLocation: m.location, setMessagingMuted: m.mute, readMessagingThreadState: () => m.threadRead(), fetchMessagingReceiptView: m.receipt, observeMessagingReceipt: m.observe, markMessagingConversationRead: async () => {}, refreshMessaging: m.refresh, sendMessagingText: m.text, sendMessagingMedia: m.send, readMessagingMedia: m.read, downloadMessagingMedia: m.download, changeMessagingRelationship: m.relationship, clearMessagingConversation: async () => {}, removeMessagingMessage: m.remove, recoverMessagingText: m.recover, retryMessagingMessage: m.retry }));
 vi.mock("../services/messaging/preparePhoto", () => ({ prepareMessagingPhoto: m.prepare }));
 vi.mock("../services/media/nativeMedia", () => ({ chooseNativeImages: m.choose, importNativeImageUri: m.import, importedImageToFile: m.file }));
 beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL: vi.fn() })); m.view.mode = "CONNECTED"; m.view.ownBlocked = false; m.chat.revision = 1; m.messages = []; m.media = []; m.outbox = []; m.prepare.mockReset(); m.send.mockReset(); m.read.mockReset().mockResolvedValue(null); m.download.mockReset().mockResolvedValue(undefined); m.remove.mockReset().mockResolvedValue(undefined); m.recover.mockReset().mockResolvedValue(undefined); m.receipt.mockReset().mockResolvedValue({ context: "authority", readIds: [] }); m.observe.mockReset().mockResolvedValue(true); m.refresh.mockReset().mockResolvedValue(undefined);
@@ -33,6 +34,7 @@ beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { cr
   m.view.epoch = "relationship-a"; m.view.revision = 1; m.chat.currentProjections = { chat: m.view };
   m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0 };
   m.watch.mockReset().mockReturnValue(() => {});
+  m.cached = null;
   m.threadRead.mockReset().mockImplementation(async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -42,7 +44,7 @@ async function open() {
   return rendered;
 }
 function RouteState() { return <output data-testid="query">{useLocation().search}</output>; }
-function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><LiveRegion /><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
+function thread(search = "") { return <MemoryRouter initialEntries={[`/connections/chat${search}`]}><LiveRegion /><MessagingRestoration /><Routes><Route path="/connections/:conversationId" element={<><MessagingThread /><RouteState /></>} /></Routes></MemoryRouter>; }
 
 it("leases active thread catch-up without restarting it on snapshot refresh and releases it on close", async () => {
   const detach = vi.fn(); m.watch.mockReturnValue(detach);
@@ -63,40 +65,42 @@ it("saves a new message without waiting for a failed thread refresh", async () =
   await waitFor(() => expect(field).toHaveProperty("value", ""));
 });
 
-it("keeps saved messages and the draft usable while a large gap fills in", async () => {
+it("holds the screen on a blurred restore pop-up while a large gap fills in", async () => {
   sentText(); const rendered = await open();
   const field = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(field, { target: { value: "Keep this draft" } });
-  m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 11 }; rendered.rerender(thread());
-  // Owner feedback 2026-11-06: a gap is a status, never a lock. The reader keeps
-  // the saved transcript, the draft and the ability to continue.
-  expect(screen.getByText("Showing your saved messages.")).toBeTruthy();
-  expect(screen.getByText("Already read")).toBeTruthy();
-  expect(field).toHaveProperty("readOnly", false);
-  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", false);
-  expect(screen.getByRole("button", { name: "Conversation options" })).toHaveProperty("disabled", false);
-  expect(screen.getByRole("link", { name: "Back to chats" })).toBeTruthy();
-  expect(document.querySelector(".fb-chat-messages")?.hasAttribute("inert")).toBe(false);
-  // Enter is a newline by design; continuing means an enabled send control.
-  fireEvent.change(field, { target: { value: "Keep this draft and more" } });
-  expect(field).toHaveProperty("value", "Keep this draft and more");
-  fireEvent.change(field, { target: { value: "Keep this draft" } });
-  expect(m.text).not.toHaveBeenCalled();
+  m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 11, reason: "gap" }; rendered.rerender(thread());
+  // Owner direction 2026-11-06: more than ten missing messages is a restore, not
+  // a status line. The reader is held on a non-dismissible pop-up, with the page
+  // blurred behind it, until reconciliation publishes its durable result.
+  const dialog = screen.getByRole("dialog", { name: "Restoring messages" });
+  expect(within(dialog).getByRole("status").textContent).toContain("up to date");
+  expect(dialog.closest(".fixed")?.querySelector("[data-testid='bottom-sheet-backdrop']")?.className)
+    .toContain("backdrop-blur");
+  expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
   m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0 }; rendered.rerender(thread());
-  expect(screen.getByRole("textbox", { name: "Message" })).toBe(field);
-  expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Keep this draft");
-  expect(screen.queryByText("Showing your saved messages.")).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("value", "Keep this draft");
 });
 it("silently leaves a small harmless gap usable and offers a safe retry only after catch-up fails", async () => {
   m.chat.threadSync = { conversationId: "chat", mode: "soft", missing: 10 };
   const rendered = await open(); const field = screen.getByRole("textbox", { name: "Message" });
-  expect(field).toHaveProperty("readOnly", false); expect(screen.queryByText("Updating this conversation…")).toBeNull();
+  expect(field).toHaveProperty("readOnly", false); expect(screen.queryByText("Updating…")).toBeNull();
   fireEvent.change(field, { target: { value: "Still here" } });
   m.chat.threadSync = { conversationId: "chat", mode: "error", missing: null }; rendered.rerender(thread());
-  expect(screen.getByText("Showing your saved messages.")).toBeTruthy();
+  expect(screen.getByText(/Showing your saved messages/)).toBeTruthy();
   expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Still here");
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(m.refresh).toHaveBeenCalledWith("account");
+});
+it.each([null, { conversationId: "chat", mode: "checking", missing: null },
+  { conversationId: "chat", mode: "blocking", missing: 10, reason: "gap" }])("does not announce routine synchronization %j", async sync => {
+  sentText(); m.chat.threadSync = sync as MessagingThreadSync | null;
+  await open();
+  expect(screen.getByText("Already read")).toBeTruthy();
+  expect(screen.queryByText("Updating…")).toBeNull();
+  expect(screen.queryByText(/Showing your saved messages/)).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 it("keeps the rendered transcript visible while the reconciled copy is read", async () => {
   sentText(); const rendered = await open();
@@ -165,54 +169,74 @@ it("preserves a newer draft even when its text equals the in-flight admission", 
 function sentText() {
   m.messages = [{ id: "sent", conversationId: "chat", authorId: "account", recipientId: "peer", body: "Already read", messageType: "TEXT", server: { sequence: 1 } }];
 }
+it("renders a reopened cached thread and Read before any asynchronous refresh settles", () => {
+  sentText(); m.messages = m.messages.map(message => ({ ...message as object, readByPeer: true }));
+  m.cached = { messages: m.messages, outbox: [], media: [] };
+  m.threadRead.mockReturnValue(new Promise(() => {}));
+  render(thread());
+  expect(screen.getByText("Already read")).toBeTruthy();
+  expect(screen.getByText("Read")).toBeTruthy();
+  expect(screen.queryByText("Opening messages…")).toBeNull();
+});
+it("reopens durable Read offline without receipt lookups for confirmed messages", async () => {
+  sentText(); m.messages = m.messages.map(message => ({ ...message as object, readByPeer: true }));
+  const rendered = await open();
+  expect(screen.getByText("Read")).toBeTruthy();
+  m.chat.status = "offline"; m.chat.currentProjections = null as never; rendered.rerender(thread());
+  expect(screen.getByText("Read")).toBeTruthy();
+  m.chat.status = "ready"; m.chat.currentProjections = { chat: { ...m.view } }; m.chat.revision++;
+  rendered.rerender(thread());
+  await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+  expect(m.receipt).not.toHaveBeenCalled();
+});
 it("keeps known Read through transcript refresh, projection copies and a failed receipt lookup", async () => {
   sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
   const rendered = await open(); await screen.findByText("Read");
-  let finish!: (value: { context: string; readIds: string[] }) => void;
-  m.receipt.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  m.receipt.mockRejectedValue(new Error("temporary network failure"));
   m.chat.currentProjections = { chat: { ...m.view } }; m.chat.revision++;
   rendered.rerender(thread());
-  await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(2));
+  await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
   expect(screen.getByText("Read")).toBeTruthy(); expect(screen.queryByText("Sent")).toBeNull();
-  await act(async () => { finish({ context: "authority", readIds: [] }); });
-  expect(screen.getByText("Read")).toBeTruthy();
-  m.receipt.mockRejectedValue(new Error("temporary network failure"));
   m.messages = [...m.messages]; m.chat.revision++; rendered.rerender(thread());
-  await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(3));
+  await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+  expect(m.receipt).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Read")).toBeTruthy();
 });
-it("keeps Read across mute-only member revisions while receipt lookup is pending or fails", async () => {
+it("keeps Read across mute-only member revisions without rechecking it", async () => {
   sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
   const rendered = await open(); await screen.findByText("Read");
-  let fail!: (error: Error) => void;
-  m.receipt.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject; }));
   m.chat.currentProjections = { chat: { ...m.view, ownMuted: true, revision: 2 } };
-  rendered.rerender(thread()); await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(2));
-  expect(screen.getByText("Read")).toBeTruthy();
-  await act(async () => { fail(new Error("temporary failure")); });
+  rendered.rerender(thread());
+  await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+  expect(m.receipt).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Read")).toBeTruthy();
 });
-it.each([null, "new-consent"])("invalidates known Read on an authoritative receipt context %s", async context => {
+it.each([null, "new-consent"])("keeps historical Read when a new message gets receipt context %s", async context => {
   sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
   const rendered = await open(); await screen.findByText("Read");
   m.receipt.mockResolvedValue({ context, readIds: [] });
-  m.messages = [...m.messages]; m.chat.revision++; rendered.rerender(thread());
-  await waitFor(() => expect(screen.queryByText("Read")).toBeNull());
+  m.messages = [...m.messages, { id: "new", conversationId: "chat", authorId: "account", recipientId: "peer", body: "New message", messageType: "TEXT", server: { sequence: 2 } }];
+  m.chat.revision++; rendered.rerender(thread());
+  await screen.findByText("New message");
+  await waitFor(() => expect(m.receipt).toHaveBeenCalledTimes(2));
+  expect(m.receipt.mock.calls[1]?.[2]).toEqual(["new"]);
+  expect(screen.getByText("Read")).toBeTruthy();
   expect(screen.getByText("Sent")).toBeTruthy();
 });
-it("does not restore old receipt knowledge in a new relationship while its lookup is pending", async () => {
+it("retains historical Read across relationship changes without using it as receipt permission", async () => {
   sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
   const rendered = await open(); await screen.findByText("Read");
   m.receipt.mockImplementation(() => new Promise(() => {}));
   m.chat.currentProjections = { chat: { ...m.view, epoch: "relationship-b", revision: 2 } };
   rendered.rerender(thread());
-  expect(screen.queryByText("Read")).toBeNull();
+  expect(screen.getByText("Read")).toBeTruthy();
+  expect(m.observe).not.toHaveBeenCalled();
 });
-it("hides read authority while offline without claiming Sent or forgetting the same-context read", async () => {
+it("keeps historical Read while offline", async () => {
   sentText(); m.receipt.mockResolvedValue({ context: "authority", readIds: ["sent"] });
   const rendered = await open(); await screen.findByText("Read");
   m.chat.status = "offline"; rendered.rerender(thread());
-  expect(screen.queryByText("Read")).toBeNull(); expect(screen.queryByText("Sent")).toBeNull();
+  expect(screen.getByText("Read")).toBeTruthy(); expect(screen.queryByText("Sent")).toBeNull();
   m.chat.status = "ready";
   m.receipt.mockResolvedValue({ context: "authority", readIds: [] });
   rendered.rerender(thread()); await screen.findByText("Read");
@@ -441,7 +465,7 @@ it("offers Download again when a photo is evicted", async () => {
   m.messages = [{ id: "message", conversationId: "chat", authorId: "peer", recipientId: "account", body: "", messageType: "MEDIA", server: { eventId: "event", sequence: 1 } }];
   m.media = [{ id: "photo", messageId: "message", direction: "IN", state: "EVICTED", width: 2, height: 1, mime: "image/jpeg", expiresAt: Date.now() + 100000 }];
   await open();
-  fireEvent.click(screen.getByRole("button", { name: /download again/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /download again/i }));
   await waitFor(() => expect(m.download).toHaveBeenCalledWith("account", "chat", "photo"));
 });
 it("allows removing a locally pending photo without unsending", async () => {
@@ -485,7 +509,7 @@ it("shows unavailable without downloading after known expiry", async () => {
   m.messages = [{ id: "message", conversationId: "chat", authorId: "peer", recipientId: "account", body: "", messageType: "MEDIA", server: { eventId: "event", sequence: 1 } }];
   m.media = [{ id: "photo", messageId: "message", direction: "IN", state: "EVICTED", width: 2, height: 1, mime: "image/jpeg", expiresAt: 1 }];
   await open();
-  expect(screen.getByText("Photo unavailable")).toBeTruthy();
+  expect(await screen.findByText("Photo unavailable")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /download again/i })).toBeNull();
 });
 it("does not display a photo draft after the connection becomes a request", async () => {
@@ -516,7 +540,7 @@ const received = (messageType?: string) => ({ id: "message", conversationId: "ch
 async function settleGeometry() { await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); }); }
 it.each([undefined, "MEDIA"])("never observes a caption as TEXT when classification is %s and metadata is absent", async (type) => {
   m.messages = [received(type)]; await open(); await settleGeometry();
-  expect(m.receipt).toHaveBeenCalled(); // Authority lookup ran, geometry did not qualify the caption.
+  expect(m.receipt).not.toHaveBeenCalled(); // No eligible geometry, so no context lookup either.
   expect(m.observe).not.toHaveBeenCalled();
   expect(document.querySelector("[data-receipt-message]")).toBeNull();
 });
@@ -647,7 +671,7 @@ it("makes permanent-unavailable downloads opaque while a transient failure stays
   m.messages = [received("MEDIA")];
   m.media = [{ id: "photo", messageId: "message", direction: "IN", state: "EVICTED", width: 2, height: 1, mime: "image/jpeg", expiresAt: Date.now() + 100000 }];
   m.download.mockRejectedValueOnce(new Error("synthetic network failure")).mockRejectedValueOnce(new PhotoUnavailableError());
-  await open(); fireEvent.click(screen.getByRole("button", { name: "Download again" }));
+  await open(); fireEvent.click(await screen.findByRole("button", { name: "Download again" }));
   await screen.findByText("Could not load photo.");
   fireEvent.click(screen.getByRole("button", { name: "Download again" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Download again" })).toBeNull());

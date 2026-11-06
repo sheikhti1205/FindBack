@@ -28,6 +28,74 @@
  * server carries it.
  */
 import { getSupabase } from "./supabaseClient";
+import type { SearchedProfile } from "@norfold/shared";
+
+type AccountIdentity = Pick<SearchedProfile, "id" | "username" | "displayName" | "avatarUrl">;
+type CachedIdentity = { person: AccountIdentity; fetchedAt: number };
+const identityCaches = new Map<string, Map<string, CachedIdentity>>();
+const identityRequests = new Map<string, Promise<void>>();
+let identityGeneration = 0;
+const identityKey = (accountId: string) => `norfold.account-identities.v1:${accountId}`;
+
+function identityCache(accountId: string): Map<string, CachedIdentity> {
+  let cache = identityCaches.get(accountId);
+  if (!cache) {
+    cache = new Map();
+    try {
+      const rows: unknown = JSON.parse(localStorage.getItem(identityKey(accountId)) ?? "[]");
+      if (Array.isArray(rows)) for (const row of rows.slice(-200)) {
+        if (row && typeof row === "object" && typeof row.fetchedAt === "number"
+          && row.person && typeof row.person.id === "string" && typeof row.person.username === "string"
+          && (row.person.displayName === null || typeof row.person.displayName === "string")
+          && (row.person.avatarUrl === null || typeof row.person.avatarUrl === "string")) {
+          cache.set(row.person.id, row as CachedIdentity);
+        }
+      }
+    } catch { /* Public-name caching is best effort, never a storage requirement. */ }
+    identityCaches.set(accountId, cache);
+  }
+  return cache;
+}
+
+/** Public profile data only, scoped to the reader. Never a receipt/permission cache. */
+export function readCachedAccountIdentities(accountId: string, ids: readonly string[]): Map<string, AccountIdentity> {
+  const cache = identityCache(accountId);
+  return new Map(ids.flatMap(id => { const row = cache.get(id); return row ? [[id, row.person] as const] : []; }));
+}
+
+/** Clear in-memory readers and fence late fetches; durable public labels survive reopening. */
+export function clearAccountIdentityCache(): void {
+  identityGeneration++; identityCaches.clear(); identityRequests.clear();
+}
+
+export async function fetchAccountIdentities(accountId: string, userIds: readonly string[]): Promise<Map<string, AccountIdentity>> {
+  const cache = identityCache(accountId), ticket = identityGeneration;
+  const ids = [...new Set(userIds.map(id => id.trim()).filter(Boolean))].sort();
+  const missing = ids.filter(id => !cache.has(id) || Date.now() - cache.get(id)!.fetchedAt > 300_000);
+  if (missing.length) {
+    const key = JSON.stringify([accountId, missing]);
+    let request = identityRequests.get(key);
+    if (!request) {
+      request = (async () => {
+        const { data, error } = await getSupabase().from("users").select("id, username, display_name, avatar_url").in("id", missing);
+        if (error) throw error;
+        if (ticket !== identityGeneration) return;
+        for (const row of (data ?? []) as Record<string, unknown>[]) {
+          if (typeof row.id !== "string" || typeof row.username !== "string" || !row.username.trim()) continue;
+          cache.set(row.id, { fetchedAt: Date.now(), person: { id: row.id, username: row.username.trim(),
+            displayName: typeof row.display_name === "string" ? row.display_name.trim() || null : null,
+            avatarUrl: typeof row.avatar_url === "string" ? row.avatar_url : null } });
+        }
+        while (cache.size > 200) cache.delete(cache.keys().next().value!);
+        try { localStorage.setItem(identityKey(accountId), JSON.stringify([...cache.values()])); } catch { /* Memory cache remains usable. */ }
+      })();
+      identityRequests.set(key, request);
+      void request.finally(() => { if (identityRequests.get(key) === request) identityRequests.delete(key); }).catch(() => undefined);
+    }
+    await request;
+  }
+  return ticket === identityGeneration ? readCachedAccountIdentities(accountId, ids) : new Map();
+}
 
 /**
  * The display label for each id, for the ids that have one.

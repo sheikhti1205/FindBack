@@ -230,7 +230,11 @@ const MESSAGE_COLUMNS = `m.id as id, m.conversation_id as conversationId,
   m.author_id as authorId, m.recipient_id as recipientId, m.body as body, m.message_type as messageType,
   m.context_report_id as contextReportId, m.location_lat as locationLat, m.location_lng as locationLng,
   m.location_accuracy_m as locationAccuracy,
-  m.server_event_id as eventId, m.server_sequence as sequence, m.unsent_at as unsentAt`;
+  m.server_event_id as eventId, m.server_sequence as sequence, m.unsent_at as unsentAt,
+  (coalesce((select cast(value as integer) from messaging_meta where key = 'read_facts:' || m.id), 0)
+    | case when m.recipient_id = (select value from messaging_meta where key = 'account_id')
+      and m.server_sequence <= coalesce((select read_through from conversation_state where conversation_id = m.conversation_id), 0)
+      then 2 else 0 end) as readFacts`;
 
 const MEDIA_COLUMNS = `a.id as id, a.message_id as messageId, a.direction as direction,
   a.sha256 as sha256, a.mime as mime, a.byte_size as byteSize, a.width as width,
@@ -300,7 +304,7 @@ export const MESSAGING_SQLITE_STATEMENTS = {
       and (m.server_sequence is null or m.server_sequence > coalesce(
         (select c.through_sequence from conversation_cleared c
           where c.conversation_id = m.conversation_id), 0))
-    order by (m.server_sequence is null), m.server_sequence, m.created_at`,
+    order by (m.server_sequence is null), m.server_sequence, m.id`,
   listInboxMessages: `select ${MESSAGE_COLUMNS} from messages m
     where not exists (select 1 from deleted_for_me d where d.message_id = m.id)
       and (m.server_sequence is null or m.server_sequence > coalesce(
@@ -576,7 +580,7 @@ export const MESSAGING_SQLITE_STATEMENTS = {
       and (m.server_sequence is null or m.server_sequence > coalesce(
         (select c.through_sequence from conversation_cleared c
           where c.conversation_id = m.conversation_id), 0))
-    order by (m.server_sequence is null), m.server_sequence, m.created_at, a.id`,
+    order by (m.server_sequence is null), m.server_sequence, m.id, a.id`,
   /**
    * The only claimable rows. The text echo must already be stored: reserve
    * requires an authored server message, so claiming earlier would POST for a

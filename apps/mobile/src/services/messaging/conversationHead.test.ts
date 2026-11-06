@@ -19,7 +19,7 @@ describe("authorized conversation HEAD gate", () => {
       .toEqual({ mode: "blocking", missing, reason: "gap" });
   });
   it("does not fabricate a baseline for a new installation or a restored backup", () => {
-    expect(assessConversationHead(null, base)).toEqual({ mode: "blocking", missing: null, reason: "unknown" });
+    expect(assessConversationHead(null, base)).toEqual({ mode: "blocking", missing: 20, reason: "unknown" });
   });
   it("hard-gates even one erasure event without erasing harmless events from the count", () => {
     expect(assessConversationHead(base, { ...base, position: 21, stateHead: 21 }))

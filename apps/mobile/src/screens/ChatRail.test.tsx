@@ -23,9 +23,9 @@ function renderRail(overrides: Partial<Parameters<typeof ChatRail>[0]> = {}) {
 describe("the collapsed conversation rail", () => {
   it("keeps every person reachable as a labelled destination", () => {
     renderRail();
-    expect(screen.getByRole("link", { name: "@river, 3 unread" }).getAttribute("href")).toBe("/chats/c-1");
-    expect(screen.getByRole("link", { name: "@meadow" }).getAttribute("href")).toBe("/chats/c-2");
-    expect(screen.getByRole("link", { name: "@river, 3 unread" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "river, 3 unread" }).getAttribute("href")).toBe("/chats/c-1");
+    expect(screen.getByRole("link", { name: "meadow" }).getAttribute("href")).toBe("/chats/c-2");
+    expect(screen.getByRole("link", { name: "river, 3 unread" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("does not put names, previews or counts where the rail has no room", () => {

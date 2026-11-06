@@ -43,6 +43,7 @@
  */
 import type { HistorySnapshot, SnapshotMessage } from "./history";
 import { normaliseSnapshot, validateSnapshot } from "./backup";
+import { mergeReadFacts } from "./readFacts";
 import { openBackupObject, sealBackupObject, sha256Hex, type BackupKey } from "./backupCrypto";
 import { isUuid } from "./validation";
 
@@ -308,6 +309,7 @@ function portable(message: SnapshotMessage): Record<string, unknown> {
     id: message.id, conversationId: message.conversationId,
     authorId: message.authorId, recipientId: message.recipientId, body: message.body,
     messageType: message.messageType ?? null,
+    ...mergeReadFacts(message),
     contextReportId: message.contextReportId ?? null,
     location: message.location ?? null,
     serverEventId: message.serverEventId, serverSequence: message.serverSequence,
@@ -613,6 +615,7 @@ function mergeSnapshots(parts: readonly { manifest: BackupManifest; snapshot: Hi
       const suppressed = prior.body === null || row.body === null;
       messages.set(row.id, {
         ...row,
+        ...mergeReadFacts(prior, row),
         body: suppressed ? null : row.body,
         contextReportId: suppressed ? null : row.contextReportId,
         location: suppressed ? null : row.location,

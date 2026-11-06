@@ -48,7 +48,7 @@ describe("portable history backup envelope", () => {
     const history = { exportSnapshot: async () => ({ ...legacy,
       messages: [{ ...legacy.messages[0]!, messageType: "MEDIA" as const }] }) } as MessagingHistory;
     const current = await createBackup(history, { accountId: ACCOUNT, deviceId: DEVICE }, 99);
-    expect(current.version).toBe(3);
+    expect(current.version).toBe(4);
     expect((await decodeBackup(encodeBackup(current))).snapshot.messages[0]?.messageType).toBe("MEDIA");
     const forged = { ...current, snapshot: { ...current.snapshot,
       messages: [{ ...current.snapshot.messages[0]!, messageType: "TEXT" as const }] } };
@@ -131,7 +131,7 @@ describe("portable history backup envelope", () => {
       [null, "backup: not an object"],
       [{}, "backup: unsupported format"],
       [{ format: "other" }, "backup: unsupported format"],
-      [{ format: "findback.chat.backup", version: 4 }, "backup: unsupported version"],
+      [{ format: "findback.chat.backup", version: 5 }, "backup: unsupported version"],
       [{ format: "findback.chat.backup", version: 0 }, "backup: unsupported version"],
     ] as const) {
       await expect(decodeBackup(raw)).rejects.toMatchObject({ code });

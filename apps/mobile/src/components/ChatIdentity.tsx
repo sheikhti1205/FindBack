@@ -14,23 +14,23 @@ import { UserIdentityTrigger } from "./UserIdentityTrigger";
  * route can render the production header without pulling in the messaging
  * runtime.
  */
-export function ChatIdentity({ peerId, name, status, muted = false }: {
-  peerId?: string; name?: string; status: string; muted?: boolean;
+export function ChatIdentity({ peerId, name, username = name, avatarUrl, status, muted = false }: {
+  peerId?: string; name?: string; username?: string; avatarUrl?: string | null; status: string; muted?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const label = name ? `@${name}` : "Conversation";
+  const label = name || username || "Conversation";
   useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
   const identity = (
     <span className="fb-chat-identity">
-      <UserAvatar username={name} size={44} />
+      <UserAvatar username={label} avatarUrl={avatarUrl} size={44} />
       <span className="fb-chat-identity-copy"><span className="fb-chat-identity-name">{label}</span></span>
     </span>
   );
   return (
     <>
       <div className="fb-chat-heading">
-        <h1 ref={heading} tabIndex={-1}>{name && peerId
-          ? <UserIdentityTrigger person={{ id: peerId, username: name }} trigger={identity} />
+        <h1 ref={heading} tabIndex={-1}>{username && peerId
+          ? <UserIdentityTrigger person={{ id: peerId, username, displayName: name, avatarUrl }} trigger={identity} />
           : identity}
         </h1>
         <p className="fb-chat-secondary">

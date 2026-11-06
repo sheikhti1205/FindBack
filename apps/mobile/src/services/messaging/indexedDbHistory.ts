@@ -13,6 +13,7 @@ import {
 } from "./conversationIndex";
 import { copyStateEnvelope, statePeer, type MessageStateChange, type StateChangeEnvelope, type StateCursor } from "./stateChanges";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
+import { assertReadFact } from "./readFacts";
 import { copyConversationHead, copyConversationProgress, copyConversationUnavailable, validateCheckpointCommit, type ConversationHead, type ConversationProgress, type ConversationUnavailable } from "./conversationHead";
 import { erasureMatches, exportPortable, mergePortable, type PortableConversation, type PortableErasure,
   type PortableMessage, type PortableView } from "./indexedDbBackup";
@@ -347,11 +348,35 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
         const messages = request.result as StoredHumanMessage[];
         const highest = messages.reduce((maximum, message) => Math.max(maximum, message.server?.sequence ?? 0), 0);
         if (through > highest) throw new Error("Cannot read beyond local history");
+        for (const message of messages) {
+          if (message.recipientId === scope.accountId && message.server && message.server.sequence <= through && !message.readLocally) {
+            tx.objectStore("messages").put({ ...message, readLocally: true });
+          }
+        }
         const first = messages[0];
         if (first) updateConversation(tx, guard, id, conversationPeer(scope, first),
           (state) => ({ ...state, readThrough: Math.max(state.readThrough, through) }));
         result(undefined);
       });
+    });
+  }
+
+  async function saveMessageReadFact(conversationId: string, messageIds: string[], fact: "readByPeer" | "receiptObserved"): Promise<void> {
+    assertOpen(); uuid(conversationId); messageIds.forEach(uuid);
+    if (fact !== "readByPeer" && fact !== "receiptObserved") throw new Error("Invalid message read fact");
+    return transaction("readwrite", (tx, result, guard) => {
+      const store = tx.objectStore("messages");
+      for (const id of messageIds) {
+        const request = store.get(id);
+        request.onsuccess = guard(() => {
+          visibleMessages(tx, guard, request.result ? [request.result as StoredHumanMessage] : [], messages => {
+            const message = messages[0] ?? null;
+            assertReadFact(scope, conversationId, message, fact);
+            if (!message[fact]) store.put({ ...message, [fact]: true });
+          });
+        });
+      }
+      result(undefined);
     });
   }
 
@@ -719,7 +744,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
     });
   }
   function exportSnapshot(): Promise<HistorySnapshot> {
-    return snapshotTransaction("readonly", exportPortable);
+    return snapshotTransaction("readonly", view => exportPortable(view, scope.accountId));
   }
   function importSnapshot(incoming: HistorySnapshot): Promise<ImportReport> {
     // Captured/validated by the public wrapper before structuredClone can invoke getters.
@@ -1127,7 +1152,7 @@ export async function openWebMessagingHistory(identity: MessagingScope, options:
 
   return { enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage), listMessages: serial(listMessages),
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
-    markConversationRead: serial(markConversationRead), getStateCursor: serial(getStateCursor),
+    markConversationRead: serial(markConversationRead), saveMessageReadFact: serial(saveMessageReadFact), getStateCursor: serial(getStateCursor),
     getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),
     recordConversationUnavailable: serial(recordConversationUnavailable), listConversationUnavailable: serial(listConversationUnavailable),
     applyStateChange: serial(applyStateChange), listOutbox: serial(listOutbox), claimNextOutgoing: serial(claimNextOutgoing),

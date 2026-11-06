@@ -16,6 +16,7 @@ const backup = vi.hoisted(() => ({
 }));
 
 vi.mock("../auth", () => ({ useAuth: () => ({ ...state.auth }) }));
+vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => ({ threadSync: null, restoration: null }) }));
 vi.mock("../services/messaging/runtime", () => ({
   setMessagingAccount: runtime.setMessagingAccount,
   clearMessagingRuntime: runtime.clearMessagingRuntime,

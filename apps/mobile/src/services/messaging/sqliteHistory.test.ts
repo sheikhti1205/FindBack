@@ -274,6 +274,21 @@ describe("schema and durability", () => {
     await history.close();
   });
 
+  it("upgrades legacy history through the native bridge without disabling foreign keys", async () => {
+    seedLegacyV4();
+    const driver = driverFor(database);
+    const nativePolicyDriver = { ...driver, exec: async (sql: string) => {
+      if (/pragma\s+foreign_keys\s*=\s*(?:off|0)/i.test(sql)) throw new Error("Native bridge refuses unsafe pragma");
+      await driver.exec(sql);
+    } };
+    const history = await openSqliteMessagingHistory(nativePolicyDriver, { accountId: A, deviceId: DEVICE });
+    expect(await history.getMessage(MESSAGE)).toMatchObject({ body: "Hello there" });
+    expect((await history.listOutbox()).map(row => row.messageId)).toEqual([MESSAGE]);
+    expect(database.prepare("pragma foreign_keys").get()).toEqual({ foreign_keys: 1 });
+    expect(database.prepare("pragma foreign_key_check").all()).toEqual([]);
+    await history.close();
+  });
+
   it("refuses to drop the original table when the v5 copy is not exact", async () => {
     seedLegacyV4();
     // Simulate a lossy copy: remove a row after it was copied, before the

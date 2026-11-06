@@ -37,7 +37,14 @@ export interface HumanMessage {
   location?: StaticLocation;
 }
 
-export interface StoredHumanMessage extends HumanMessage {
+/** Monotonic historical knowledge, never live permission or receipt context. */
+export interface MessageReadFacts {
+  readByPeer?: boolean;
+  readLocally?: boolean;
+  receiptObserved?: boolean;
+}
+
+export interface StoredHumanMessage extends HumanMessage, MessageReadFacts {
   server?: { eventId: string; sequence: number };
   /** Present when the author unsent this message; `body` is then empty. */
   unsentAt?: number;
@@ -161,7 +168,7 @@ export interface SnapshotConversation {
   updatedAt: number;
 }
 
-export interface SnapshotMessage {
+export interface SnapshotMessage extends MessageReadFacts {
   id: string;
   conversationId: string;
   authorId: string;
@@ -200,6 +207,8 @@ export interface ImportReport {
 
 /** Canonical account/device-local history on SQLite or IndexedDB. */
 export interface MessagingHistory {
+  /** Accepted messages only; checks participant direction and conversation. */
+  saveMessageReadFact(conversationId: string, messageIds: string[], fact: "readByPeer" | "receiptObserved"): Promise<void>;
   /** `expectedEpoch` is the cached relationship boundary the caller observed;
    * the server refuses a new send that no longer matches it. */
   enqueueOutgoing(message: HumanMessage, expectedEpoch?: string): Promise<void>;

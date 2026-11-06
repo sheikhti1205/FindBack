@@ -39,6 +39,16 @@ it("treats the avatar and name as one identity trigger without a dropdown chevro
   expect(avatar).toBeTruthy();
   expect(avatar!.style.width).toBe("44px");
   expect(avatar!.style.height).toBe("44px");
-  expect(button.textContent).toContain("@peer_name");
+  expect(button.textContent).toContain("peer_name");
+  expect(button.textContent).not.toContain("@");
   expect(document.querySelector(".lucide-chevron-down")).toBeNull();
+});
+
+it("shows the real name while retaining the username for profile navigation", () => {
+  render(<MemoryRouter><ChatIdentity peerId="peer" name="Sam Rivera" username="sam_r" status="Connected" /></MemoryRouter>);
+  const button = screen.getByRole("button", { name: "About Sam Rivera" });
+  expect(button.textContent).toContain("Sam Rivera");
+  expect(button.textContent).not.toContain("@sam_r");
+  fireEvent.click(button);
+  expect(screen.getByRole("link", { name: "View profile" }).getAttribute("href")).toBe("/u/sam_r");
 });

@@ -121,7 +121,7 @@ export function summarizeConversations(
     row.lastMessage = structuredClone(message);
     row.lastSequence = Math.max(row.lastSequence, message.server?.sequence ?? 0);
     if (pending.has(message.id)) row.pendingCount++;
-    if (message.authorId !== scope.accountId && message.unsentAt === undefined
+    if (message.authorId !== scope.accountId && !message.readLocally && message.unsentAt === undefined
       && (message.server?.sequence ?? 0) > (read.get(row.conversationId) ?? 0)) row.unreadCount++;
   }
   return [...rows.values()].sort((a, b) => b.updatedAt - a.updatedAt

@@ -3,6 +3,7 @@ import { BackupError } from "./backup";
 import { conversationPeer, type LocalConversationState } from "./conversationIndex";
 import type { HistorySnapshot, MessagingScope, SnapshotConversation, StoredHumanMessage } from "./history";
 import { compatibleMessageType, sameMessagePayload } from "./validation";
+import { mergeReadFacts } from "./readFacts";
 
 export interface PortableMessage extends StoredHumanMessage {
   snapshotCreatedAt?: number;
@@ -43,7 +44,8 @@ export function erasureMatches(state: PortableErasure, message: Pick<StoredHuman
     && (state.messageSequence === undefined || sequence === undefined || state.messageSequence === sequence);
 }
 
-export function exportPortable(view: PortableView): HistorySnapshot {
+export function exportPortable(view: PortableView, accountId?: string): HistorySnapshot {
+  const readThrough = new Map(view.conversations.map(state => [state.conversationId, state.readThrough]));
   const conversations = new Map(view.conversations.map((state) => [state.conversationId, {
     id: state.conversationId, lastSequence: state.snapshot?.lastSequence ?? 0,
     createdAt: state.snapshot?.createdAt ?? 0, updatedAt: Math.max(state.updatedAt, state.snapshot?.updatedAt ?? 0),
@@ -64,7 +66,8 @@ export function exportPortable(view: PortableView): HistorySnapshot {
       contextReportId: suppressed ? null : row.contextReportId ?? null,
       location: suppressed ? null : row.location ? { ...row.location } : null,
       messageType: row.messageType ?? null, serverEventId: server.eventId, serverSequence: server.sequence,
-      unsentAt, createdAt: row.snapshotCreatedAt ?? 0 };
+      ...mergeReadFacts(row, row.recipientId === accountId && server.sequence <= (readThrough.get(row.conversationId) ?? 0)
+        ? { readLocally: true } : undefined), unsentAt, createdAt: row.snapshotCreatedAt ?? 0 };
   }).sort((a, b) => a.conversationId.localeCompare(b.conversationId) || a.serverSequence - b.serverSequence || a.id.localeCompare(b.id));
   return {
     conversations: [...conversations.values()].sort((a, b) => a.id.localeCompare(b.id)), messages,
@@ -144,7 +147,7 @@ export function mergePortable(view: PortableView, incoming: HistorySnapshot, sco
       || (prior.unsentAt !== undefined && row.unsentAt !== null && prior.unsentAt !== row.unsentAt))) conflict();
     const knownTime = prior?.snapshotCreatedAt ?? 0, time = row.createdAt ?? 0;
     const unsentAt = prior?.unsentAt ?? row.unsentAt ?? tombstone?.occurredAt;
-    messages.set(row.id, { ...prior, id: row.id, conversationId: row.conversationId, authorId: row.authorId, recipientId: row.recipientId,
+    messages.set(row.id, { ...prior, ...mergeReadFacts(prior, row), id: row.id, conversationId: row.conversationId, authorId: row.authorId, recipientId: row.recipientId,
       body: row.body ?? "", server: { eventId: row.serverEventId, sequence: row.serverSequence },
       ...(row.contextReportId ? { contextReportId: row.contextReportId } : {}),
       ...(row.location ? { location: { ...row.location } } : {}),

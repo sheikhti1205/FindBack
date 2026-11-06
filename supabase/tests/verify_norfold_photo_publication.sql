@@ -96,6 +96,30 @@ do $$ declare rows jsonb; begin
  rows:=public.findback_fetch_chat_media_delivery(auth.uid()::text,current_setting('photo.device'));
  if jsonb_array_length(rows)<>1 or rows#>>'{0,attachmentId}'<>'00000000-0000-4000-9933-000000000201' then raise exception 'committed attachment missing'; end if;
 end $$;
+-- ACK is a void protocol, not an integer result. Exercise the real admitted
+-- wrapper; a signature-only or revoked-device test misses a failed return cast.
+select public.findback_ack_chat_media_delivery(auth.uid()::text,current_setting('photo.device'),'00000000-0000-4000-9933-000000000201');
+select public.findback_ack_chat_media_delivery(auth.uid()::text,current_setting('photo.device'),'00000000-0000-4000-9933-000000000201');
+do $$ begin
+ if jsonb_array_length(public.findback_fetch_chat_media_delivery(auth.uid()::text,current_setting('photo.device')))<>0 then
+  raise exception 'ACKed attachment rediscovered'; end if;
+ if pg_typeof(public.findback_ack_chat_media_delivery(auth.uid()::text,current_setting('photo.device'),'00000000-0000-4000-9933-000000000201'))<>'void'::regtype then
+  raise exception 'Media ACK protocol changed'; end if;
+end $$;
+reset role;
+do $$ begin
+ if (select count(*) from public.chat_media_delivery_receipts where attachment_id='00000000-0000-4000-9933-000000000201')<>1 then
+  raise exception 'ACK retry duplicated/lost receipt'; end if;
+end $$;
+set local role authenticated;
+select set_config('photo.device','00000000-0000-4000-9933-000000000022',true);
+select pg_temp.photo_exchange('SYNC');
+do $$ begin
+ if jsonb_array_length(public.findback_fetch_chat_media_delivery(auth.uid()::text,current_setting('photo.device')))<>1 then
+  raise exception 'One device ACK consumed another device delivery'; end if;
+end $$;
+select set_config('photo.device','00000000-0000-4000-9933-000000000021',true);
+select pg_temp.photo_exchange('SYNC');
 -- Even legacy queued parents are filtered when the actual attachment expires.
 reset role;
 update public.chat_media_attachments set expires_at=clock_timestamp()-interval '1 second' where id='00000000-0000-4000-9933-000000000201';

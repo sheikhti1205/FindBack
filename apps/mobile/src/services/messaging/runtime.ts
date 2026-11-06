@@ -18,11 +18,19 @@ export interface MessagingThreadSync {
   conversationId: string;
   mode: "checking" | "ready" | "soft" | "blocking" | "error";
   missing: number | null;
+  /** Why a blocking gate blocks. `gap` means this device is behind by more than
+   * the soft allowance and the reconciliation is restoring the missing
+   * messages; it is not a failure. */
+  reason?: "unknown" | "authority" | "integrity" | "state" | "gap";
   /** UI must finish this post-reconciliation durable read before interaction. */
   appliedRevision?: number;
 }
 
 export interface MessagingRuntimeSnapshot {
+  /** Durable storage is readable even while enrollment/network startup waits. */
+  localReady?: boolean;
+  /** Whole-app restore hold. Separate leases prevent one job releasing another. */
+  restoration?: { source: "backup" | "history"; missing: number } | null;
   accountId: string | null;
   status: "closed" | "opening" | "ready" | "offline" | "error";
   conversations: ConversationSummary[];
@@ -37,11 +45,19 @@ export interface MessagingRuntimeSnapshot {
 }
 
 export const EMPTY_MESSAGING_SNAPSHOT: MessagingRuntimeSnapshot = Object.freeze({
-  accountId: null, status: "closed", conversations: [], currentProjections: null, threadSync: null, error: null, revision: 0,
+  accountId: null, status: "closed", conversations: [], currentProjections: null, threadSync: null, restoration: null, error: null, revision: 0,
 });
 
 type Session = ReturnType<typeof createSupabaseMessagingSession>;
+export interface MessagingThreadState {
+  messages: StoredHumanMessage[]; outbox: OutboxEntry[]; media: MediaAttachment[];
+}
 interface Owner {
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  retryAttempts: number;
+  historyRevision: number;
+  threadCache: Map<string, { revision: number; value?: MessagingThreadState; pending?: Promise<MessagingThreadState> }>;
+  restorations: Map<symbol, { source: "backup" | "history"; missing: number }>;
   handle: PlatformMessagingHandle;
   session: Session;
   generation: number;
@@ -139,16 +155,41 @@ export async function exportMessagingSnapshot(accountId: string): Promise<Histor
 export async function importMessagingSnapshot(accountId: string,
   snapshot: HistorySnapshot): Promise<ImportReport> {
   const owner = ownerFor(accountId);
-  const report = await owner.handle.history.importSnapshot(normaliseSnapshot(snapshot));
+  const captured = normaliseSnapshot(snapshot);
+  const local = new Set((await owner.handle.history.exportSnapshot()).messages.map(message => message.id));
   assertOwner(owner);
-  await reload(owner);
-  return report;
+  const missing = captured.messages.filter(message => message.body !== null && !local.has(message.id)).length;
+  const finish = beginRestoration(owner, "backup", missing);
+  try {
+    const report = await owner.handle.history.importSnapshot(captured);
+    assertOwner(owner);
+    await reload(owner);
+    return report;
+  } finally { finish(); }
+}
+
+function beginRestoration(owner: Owner, source: "backup" | "history", missing: number): () => void {
+  if (missing <= 10) return () => {};
+  const token = Symbol(source);
+  owner.restorations.set(token, { source, missing });
+  const update = () => {
+    if (current === owner && owner.generation === generation) {
+      publish({ ...snapshot, restoration: owner.restorations.values().next().value ?? null });
+    }
+  };
+  update();
+  return () => { owner.restorations.delete(token); update(); };
 }
 
 async function reload(owner: Owner) {
+  const revision = ++owner.historyRevision;
   const conversations = await owner.handle.history.listConversations();
   assertOwner(owner);
-  publish({ ...snapshot, conversations, revision: snapshot.revision + 1 });
+  // Refresh previously opened threads before publishing the revision, avoiding
+  // blank/stale frames on navigation. The cache never holds live authority.
+  await Promise.all([...owner.threadCache.keys()].map(id => readMessagingThreadState(owner.handle.scope.accountId, id)));
+  assertOwner(owner);
+  if (revision === owner.historyRevision) publish({ ...snapshot, localReady: true, conversations, revision: snapshot.revision + 1 });
 }
 
 function invalidateAuthority(owner: Owner) {
@@ -165,7 +206,10 @@ async function reconcileActiveThread(owner: Owner) {
     && owner.authorityVersion === authorityVersion;
   try {
     await owner.session.reconcileConversation(thread.conversationId, gate => {
-      if (live() && gate.mode !== "ready") publish({ ...snapshot, threadSync: { conversationId: thread.conversationId, mode: gate.mode, missing: gate.missing } });
+      if (live() && gate.mode !== "ready") publish({ ...snapshot, threadSync: {
+        conversationId: thread.conversationId, mode: gate.mode, missing: gate.missing,
+        ...(gate.mode === "blocking" ? { reason: gate.reason } : {}),
+      } });
     });
     if (!live()) return;
     await reload(owner);
@@ -202,6 +246,8 @@ function closePlatformHandle(handle: PlatformMessagingHandle): Promise<void> {
 }
 
 function closeOwner(owner: Owner): Promise<void> {
+  if (owner.retryTimer !== null) clearTimeout(owner.retryTimer);
+  owner.retryTimer = null;
   owner.detach();
   // Session abort and history invalidation are synchronous. Platform close owns
   // releasing the one-account lease after the same durable teardown settles.
@@ -241,7 +287,18 @@ function attachResume(owner: Owner): () => void {
   };
 }
 
+function retryRefresh(owner: Owner) {
+  if (owner.retryTimer !== null || current !== owner || owner.generation !== generation) return;
+  const delay = Math.min(30_000, 3_000 * 2 ** Math.min(owner.retryAttempts++, 4));
+  owner.retryTimer = setTimeout(() => {
+    owner.retryTimer = null;
+    if (current === owner && owner.generation === generation && document.visibilityState === "visible") void requestRefresh(owner, "full");
+  }, delay);
+}
+
 function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
+  if (owner.retryTimer !== null) clearTimeout(owner.retryTimer);
+  owner.retryTimer = null;
   // Full is the only mode that may drop live receipt authority; it refetches it.
   if (mode === "full") invalidateAuthority(owner);
   if (owner.refreshing) {
@@ -253,6 +310,10 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
   }
   const run = mode === "full" || !owner.started ? "full" : "fast";
   const work = async () => {
+    let finishRestore: (() => void) | undefined;
+    const onRestore = (missing: number) => {
+      if (missing > 10 && !finishRestore) finishRestore = beginRestoration(owner, "history", missing);
+    };
     const authorityVersion = owner.authorityVersion;
     try {
       assertOwner(owner);
@@ -278,9 +339,9 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
         // one batch as complete history. Limit work per wake.
         for (let page = 0; page < 10; page++) {
           assertOwner(owner);
-          if (await owner.session.sync() < 100) break;
+          if (await owner.session.sync(onRestore) < 100) break;
         }
-      } else if (await owner.session.sync() > 0) {
+      } else if (await owner.session.sync(onRestore) > 0) {
         // The fast path drains the newest authorized page (persist + ACK). A
         // full page means more is waiting: ask for one bounded follow-up pass
         // rather than looping here and holding the hint open.
@@ -311,6 +372,8 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
       publish({ ...snapshot, status: "ready", error: mediaFailed ? "Some photos could not sync. Try again."
         : sendFailed ? "Some messages could not send. Try again." : null,
         currentProjections: projectionsNow });
+      if (mediaFailed || sendFailed || snapshot.threadSync?.mode === "error") retryRefresh(owner);
+      else owner.retryAttempts = 0;
     } catch {
       if (current !== owner || owner.generation !== generation) return;
       // Local data remains primary and usable even if the server is unreachable.
@@ -318,7 +381,8 @@ function requestRefresh(owner: Owner, mode: RefreshMode): Promise<void> {
       if (current === owner) publish({ ...snapshot, status: "offline", currentProjections: null,
         threadSync: owner.activeThread ? { ...owner.activeThread, mode: "error", missing: null } : null,
         error: "Chat could not sync. Try again." });
-    }
+      retryRefresh(owner);
+    } finally { finishRestore?.(); }
   };
   // Observe the existing promise, without adding an async settlement tick:
   // callers may request the next pass as soon as the ready/offline state emits.
@@ -353,7 +417,7 @@ export function setMessagingAccount(accountId: string | null, sessionId?: string
   // Attach rejection handling immediately; lifecycle work may still be queued.
   const settledClose = closing.then(() => ({ ok: true as const }), () => ({ ok: false as const }));
   publish(next === null ? EMPTY_MESSAGING_SNAPSHOT : {
-    accountId: next, status: "opening", conversations: [], currentProjections: null, threadSync: null, error: null, revision: 0,
+    accountId: next, status: "opening", conversations: [], currentProjections: null, threadSync: null, restoration: null, error: null, revision: 0,
   });
   const start = async () => {
     const closed = await settledClose;
@@ -367,7 +431,7 @@ export function setMessagingAccount(accountId: string | null, sessionId?: string
       const owner: Owner = { handle, session: createSupabaseMessagingSession(handle.scope, handle.history,
         { sessionId: nextSession, platform: handle.platform }),
         generation: ticket, refreshing: null, pendingRefresh: null, started: false,
-        authorityVersion: 0, activeThread: null, detach: () => undefined };
+        authorityVersion: 0, activeThread: null, restorations: new Map(), historyRevision: 0, threadCache: new Map(), retryTimer: null, retryAttempts: 0, detach: () => undefined };
       current = owner;
       owner.detach = attachResume(owner);
       await reload(owner); // Publish local rows before attempting network work.
@@ -455,16 +519,39 @@ export async function readMessagingThread(accountId: string, conversationId: str
   return rows;
 }
 
-export async function readMessagingThreadState(accountId: string, conversationId: string): Promise<{
-  messages: StoredHumanMessage[]; outbox: OutboxEntry[]; media: MediaAttachment[];
-}> {
+export function getCachedMessagingThreadState(accountId: string, conversationId: string): MessagingThreadState | null {
+  const owner = current;
+  if (!owner || desiredAccount !== accountId || owner.handle.scope.accountId !== accountId || owner.generation !== generation) return null;
+  const entry = owner.threadCache.get(conversationId);
+  return entry?.revision === owner.historyRevision ? entry.value ?? null : null;
+}
+
+export async function readMessagingThreadState(accountId: string, conversationId: string): Promise<MessagingThreadState> {
   const owner = ownerFor(accountId);
-  const messages = await owner.handle.history.listMessages(uuid(conversationId));
-  const ids = new Set(messages.map((message) => message.id));
-  const outbox = (await owner.handle.history.listOutbox()).filter((entry) => ids.has(entry.messageId));
-  const media = (await owner.handle.history.listMedia(conversationId)).filter((entry) => ids.has(entry.messageId));
-  assertOwner(owner);
-  return { messages, outbox, media };
+  const id = uuid(conversationId), prior = owner.threadCache.get(id);
+  if (prior?.revision === owner.historyRevision) {
+    if (prior.value) return prior.value;
+    if (prior.pending) return prior.pending;
+  }
+  const entry: { revision: number; value?: MessagingThreadState; pending?: Promise<MessagingThreadState> } = { revision: owner.historyRevision };
+  owner.threadCache.delete(id); owner.threadCache.set(id, entry);
+  // Bound memory; evicted threads remain durable in IndexedDB/SQLite.
+  while (owner.threadCache.size > 5) owner.threadCache.delete(owner.threadCache.keys().next().value!);
+  const pending = (async () => {
+    const [messages, pending, attachments] = await Promise.all([
+      owner.handle.history.listMessages(id), owner.handle.history.listOutbox(), owner.handle.history.listMedia(id),
+    ]);
+    assertOwner(owner);
+    const ids = new Set(messages.map(message => message.id));
+    const value = { messages, outbox: pending.filter(row => ids.has(row.messageId)), media: attachments.filter(row => ids.has(row.messageId)) };
+    // A newer persistence revision supersedes an in-flight older read.
+    if (entry.revision !== owner.historyRevision) return readMessagingThreadState(accountId, id);
+    entry.value = value;
+    return value;
+  })();
+  entry.pending = pending;
+  try { return await pending; }
+  finally { if (entry.pending === pending) entry.pending = undefined; }
 }
 
 /** Prepared immutable derivative bytes only; picker/normalization stays in the
@@ -593,6 +680,11 @@ export async function fetchMessagingReceiptView(accountId: string, conversationI
   const value = await owner.session.receiptView(conversationId, messageIds, signal);
   assertOwner(owner);
   if (signal.aborted || snapshot.currentProjections !== projections || snapshot.status !== "ready") throw new Error("Receipt context changed");
+  if (value.readIds.length) {
+    await owner.handle.history.saveMessageReadFact(conversationId, value.readIds, "readByPeer");
+    assertOwner(owner);
+    await reload(owner);
+  }
   return value;
 }
 
@@ -601,6 +693,18 @@ export async function observeMessagingReceipt(accountId: string, conversationId:
   const value = await owner.session.observeReceipt(conversationId, context, messageId, signal);
   assertOwner(owner);
   if (signal.aborted || snapshot.currentProjections !== projections || snapshot.status !== "ready") throw new Error("Receipt context changed");
+  if (value) {
+    const messages = await owner.handle.history.listMessages(conversationId);
+    const boundary = messages.find(message => message.id === messageId)?.server?.sequence;
+    if (boundary !== undefined) {
+      // The accepted observation is a watermark. Older known inbound messages
+      // need not be re-observed on every scroll or refresh.
+      await owner.handle.history.saveMessageReadFact(conversationId, messages.filter(message => message.recipientId === accountId
+        && message.unsentAt === undefined && message.server && message.server.sequence <= boundary).map(message => message.id), "receiptObserved");
+      assertOwner(owner);
+      await reload(owner);
+    }
+  }
   return value;
 }
 

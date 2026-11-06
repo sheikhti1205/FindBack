@@ -116,6 +116,20 @@ const download = async (store: MemoryStore, overrides: DownloadOverrides = {}) =
 const chunkNames = (store: MemoryStore) => store.names().filter((name) => !name.includes(".manifest."));
 
 describe("an encrypted Drive backup", () => {
+  it("unions historical read facts even when the newest device has a stale unread copy", async () => {
+    const store = memoryStore(), earlier = snapshotOf([{ chat: CHAT, count: 2, base: 0x1000 }]);
+    earlier.messages[0]!.readLocally = true; earlier.messages[0]!.receiptObserved = true;
+    earlier.messages[1]!.authorId = A; earlier.messages[1]!.recipientId = PEER; earlier.messages[1]!.readByPeer = true;
+    const later = structuredClone(earlier);
+    for (const message of later.messages) {
+      delete message.readLocally; delete message.receiptObserved; delete message.readByPeer;
+    }
+    await upload(store, earlier, { now: 1_760_000_000_000 });
+    await upload(store, later, { scope: { ...scope, deviceId: OTHER_DEVICE }, now: 1_760_000_000_001 });
+    const restored = await download(store);
+    expect(restored.snapshot.messages[0]).toMatchObject({ readLocally: true, receiptObserved: true });
+    expect(restored.snapshot.messages[1]).toMatchObject({ readByPeer: true });
+  });
   it("writes a sealed manifest and content-addressed chunks, then restores the history", async () => {
     const store = memoryStore();
     const snapshot = snapshotOf([{ chat: CHAT, count: 3, base: 0x1000 }], {

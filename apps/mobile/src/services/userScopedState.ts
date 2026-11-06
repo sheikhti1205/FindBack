@@ -5,6 +5,7 @@ import { resetLocalAiForAccount } from "./ai/applicationAi";
 import { clearDraft } from "./reportDraft";
 import { clearMessagingRuntime } from "./messaging/runtime";
 import { clearDriveBackup } from "./messaging/backupRuntime";
+import { clearAccountIdentityCache } from "./accountLabels";
 
 /**
  * Drops all user-scoped local data: the in-memory report draft, stashed
@@ -18,6 +19,7 @@ import { clearDriveBackup } from "./messaging/backupRuntime";
  * logout never wipes verified model files.
  */
 export function clearUserScopedLocalState(): void {
+  clearAccountIdentityCache();
   clearDriveBackup();
   clearMessagingRuntime();
   clearDraft();

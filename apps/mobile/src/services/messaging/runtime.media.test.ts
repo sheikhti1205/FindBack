@@ -249,6 +249,85 @@ describe("Auth session lifetime within the same account",()=>{
 });
 
 describe("active conversation canonical catch-up", () => {
+  it("deduplicates durable thread reads and reopens from a synchronous account-fenced cache", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const history = boundary.handles.at(-1)!.history;
+    await history.persistInbound({ accountId: A, deviceId: DEVICE, mailboxId: id(900), event: {
+      kind: "TEXT", eventId: id(901), sequence: 1,
+      message: { id: id(902), conversationId: CONV, authorId: B, recipientId: A, body: "cached body" },
+    } });
+    const reads = vi.spyOn(history, "listMessages");
+    const [first, second] = await Promise.all([runtime.readMessagingThreadState(A, CONV), runtime.readMessagingThreadState(A, CONV)]);
+    expect(first).toBe(second); expect(reads).toHaveBeenCalledTimes(1);
+    expect(runtime.getCachedMessagingThreadState(A, CONV)).toBe(first);
+    await runtime.readMessagingThreadState(A, CONV); expect(reads).toHaveBeenCalledTimes(1);
+    await history.applyStateChange({ accountId: A, deviceId: DEVICE, change: { kind: "DELETE_FOR_ME",
+      eventId: id(903), sequence: 1, conversationId: CONV, occurredAt: 10,
+      messageId: id(902), messageSequence: 1, authorId: B, recipientId: A } });
+    await runtime.refreshMessaging(A);
+    expect(runtime.getCachedMessagingThreadState(A, CONV)?.messages.some(m => m.id === id(902))).toBe(false);
+    runtime.clearMessagingRuntime();
+    expect(runtime.getCachedMessagingThreadState(A, CONV)).toBeNull();
+    expect(runtime.getCachedMessagingThreadState(B, CONV)).toBeNull();
+  });
+  it("exposes durable local history before enrollment finishes, without live authority", async () => {
+    enrollmentGate = deferred(); runtime.setMessagingAccount(A);
+    await vi.waitFor(() => expect(enrollmentCalls).toContain("commit"));
+    expect(runtime.getMessagingRuntimeSnapshot()).toMatchObject({ localReady: true, currentProjections: null });
+    await expect(runtime.readMessagingThreadState(A, CONV)).resolves.toMatchObject({ messages: [] });
+    enrollmentGate.resolve();
+    await waitForState(s => s.status === "ready");
+  });
+  it("does not let one overlapping backup import release another import's restore hold", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const history = boundary.handles.at(-1)!.history, original = history.importSnapshot;
+    const firstEntered = deferred(), secondEntered = deferred(), firstRelease = deferred(), secondRelease = deferred();
+    let calls = 0;
+    vi.spyOn(history, "importSnapshot").mockImplementation(async snapshot => {
+      const first = calls++ === 0;
+      (first ? firstEntered : secondEntered).resolve();
+      await (first ? firstRelease : secondRelease).promise;
+      return original(snapshot);
+    });
+    const snapshot = { conversations: [{ id: CONV, lastSequence: 11, createdAt: 0, updatedAt: 0 }],
+      messages: Array.from({ length: 11 }, (_, i) => ({ id: id(900 + i), conversationId: CONV, authorId: B, recipientId: A,
+        messageType: "TEXT" as const, body: "restored", serverEventId: id(900 + i), serverSequence: i + 1, unsentAt: null, createdAt: 0 })),
+      tombstones: [], deletedForMe: [], clears: [] };
+    const first = runtime.importMessagingSnapshot(A, snapshot); await firstEntered.promise;
+    const second = runtime.importMessagingSnapshot(A, snapshot); await secondEntered.promise;
+    firstRelease.resolve(); await first;
+    expect(runtime.getMessagingRuntimeSnapshot().restoration).toMatchObject({ source: "backup", missing: 11 });
+    secondRelease.resolve(); await second;
+    expect(runtime.getMessagingRuntimeSnapshot().restoration).toBeNull();
+  });
+  it("holds a backup import with more than ten missing messages until its durable commit and releases on failure", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    const handle = boundary.handles.at(-1)!, entered = deferred(), release = deferred();
+    const original = handle.history.importSnapshot;
+    vi.spyOn(handle.history, "importSnapshot").mockImplementation(async snapshot => {
+      entered.resolve(); await release.promise; return original(snapshot);
+    });
+    const snapshot = { conversations: [{ id: CONV, lastSequence: 11, createdAt: 0, updatedAt: 0 }],
+      messages: Array.from({ length: 11 }, (_, i) => ({ id: id(800 + i), conversationId: CONV, authorId: B, recipientId: A,
+        messageType: "TEXT" as const, body: "restored", serverEventId: id(800 + i), serverSequence: i + 1, unsentAt: null, createdAt: 0 })),
+      tombstones: [], deletedForMe: [], clears: [] };
+    const importing = runtime.importMessagingSnapshot(A, snapshot); await entered.promise;
+    expect(runtime.getMessagingRuntimeSnapshot().restoration).toMatchObject({ source: "backup", missing: 11 });
+    release.resolve(); await importing;
+    expect(runtime.getMessagingRuntimeSnapshot().restoration).toBeNull();
+    expect((await handle.history.listMessages(CONV))).toHaveLength(11);
+    vi.spyOn(handle.history, "importSnapshot").mockRejectedValue(new Error("storage failed"));
+    await expect(runtime.importMessagingSnapshot(A, snapshot)).rejects.toThrow("storage failed");
+    expect(runtime.getMessagingRuntimeSnapshot().restoration).toBeNull();
+  });
+  it("announces a large initial history replay before writing its first page", async () => {
+    runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
+    headPosition = 11; rangeGate = deferred();
+    const detach = runtime.watchMessagingThread(A, CONV);
+    await waitForState(s => s.threadSync?.mode === "blocking");
+    expect(runtime.getMessagingRuntimeSnapshot().threadSync).toMatchObject({ missing: 11, reason: "unknown" });
+    rangeGate.resolve(); await waitForState(s => s.threadSync?.mode === "ready"); detach();
+  });
   it.each([[10, "soft"], [11, "blocking"]] as const)("checks an open thread then gates %i unseen events on reconnect as %s", async (gap, mode) => {
     runtime.setMessagingAccount(A); await waitForState(s => s.status === "ready");
     const detach = runtime.watchMessagingThread(A, CONV);
@@ -510,6 +589,19 @@ describe("production messaging media owner", () => {
     expect(await runtime.readMessagingMedia(A, id(201))).toEqual(fixture.bytes);
     expect(requestLog.indexOf("ACK")).toBeLessThan(requestLog.indexOf(`POST:${id(201)}`));
     expect(requestLog).toContain(`media-ack:${id(201)}`); expect(requestLog).not.toContain(`GET:${id(201)}`);
+  });
+
+  it("quietly retries a failed pass without another focus, click or network event", async () => {
+    runtime.setMessagingAccount(A); await waitForState(state => state.status === "ready");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      online = false; await runtime.refreshMessaging(A);
+      expect(runtime.getMessagingRuntimeSnapshot().status).toBe("offline");
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      online = true; await vi.advanceTimersByTimeAsync(3_000);
+      await waitForState(state => state.status === "ready");
+      expect(runtime.getMessagingRuntimeSnapshot().error).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
 
   it("preserves local media on ordinary logout and same-account reopen", async () => {

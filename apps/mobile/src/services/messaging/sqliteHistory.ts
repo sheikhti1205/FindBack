@@ -15,6 +15,7 @@ import type {
   MessagingHistory, MessagingScope, OutboxEntry, OutgoingAttempt, PersistenceReceipt, StoredHumanMessage,
 } from "./history";
 import { MediaParentUnavailableError } from "./history";
+import { assertReadFact, readFactsFromMask, readFactsMask } from "./readFacts";
 import { BackupError, normaliseSnapshot, validateSnapshot } from "./backup";
 import {
   MESSAGES_V5_BODY_CHECK,
@@ -68,6 +69,7 @@ export interface SqliteHistoryOptions {
 }
 
 interface MessageRow {
+  readFacts: number;
   id: string;
   conversationId: string;
   authorId: string;
@@ -121,6 +123,28 @@ interface MediaRow {
 
 const LEASE_MS = 60_000;
 
+/** Called only inside a schema-rebuild transaction. Keep FK enforcement ON:
+ * Android rightly refuses OFF. DROP cascades into these two child tables, so
+ * snapshot their exact rows transactionally, then restore and prove both sets
+ * after the parent swap. A failed copy/swap/check rolls back everything. */
+async function preserveMessageDependents(driver: SqliteDriver): Promise<() => Promise<void>> {
+  const tables = await driver.all<{ name: string }>(
+    "select name from sqlite_master where type = 'table' and name in ('outbox','media_attachments')");
+  for (const { name } of tables) {
+    if (name !== "outbox" && name !== "media_attachments") throw new Error("Unexpected messaging dependency");
+    await driver.exec(`create temporary table messaging_rebuild_${name} as select * from ${name}`);
+  }
+  return async () => {
+    for (const { name } of tables) {
+      await driver.run(`insert into ${name} select * from messaging_rebuild_${name}`);
+      const missing = await driver.all<{ n: number }>(`select count(*) as n from (select * from messaging_rebuild_${name} except select * from ${name})`);
+      const extra = await driver.all<{ n: number }>(`select count(*) as n from (select * from ${name} except select * from messaging_rebuild_${name})`);
+      if (missing[0]?.n !== 0 || extra[0]?.n !== 0) throw new Error("Messaging rebuild did not preserve dependent rows");
+      await driver.exec(`drop table messaging_rebuild_${name}`);
+    }
+  };
+}
+
 /**
  * Every schema this build can migrate forward from. A version outside this list
  * is a file written by a newer build, and it is refused before any mutation.
@@ -137,6 +161,7 @@ function defaultToken(): string {
 
 function toStored(row: MessageRow): StoredHumanMessage {
   const stored: StoredHumanMessage = {
+    ...readFactsFromMask(row.readFacts),
     id: row.id,
     conversationId: row.conversationId,
     authorId: row.authorId,
@@ -268,10 +293,8 @@ export async function openSqliteMessagingHistory(
   // v4 -> v5: `messages.body` must admit the empty string so an image-only
   // message has somewhere to live. A CHECK constraint cannot be altered in
   // place, so this is SQLite's documented table rebuild: new table, exact copy,
-  // prove the copy, drop, rename, recreate the indexes. Foreign keys are turned
-  // off for the drop (other tables reference `messages`) and integrity is proven
-  // with `foreign_key_check` before the commit, which is why the pragma is
-  // restored in `finally` rather than trusted to survive an abort.
+  // prove the copy, preserve dependent rows, drop, rename, restore dependents,
+  // recreate indexes and prove foreign-key integrity before commit.
   const messagesTable = (await driver.all<{ sql: string }>(S.messagesTableSql))[0];
   // Fail-safe direction: rebuild unless the table already carries the v5 CHECK.
   // Matching the OLD text positively would skip the migration on any future
@@ -279,12 +302,9 @@ export async function openSqliteMessagingHistory(
   // `''`. Rebuilding an already-correct table is harmless — the copy is proven
   // exact and nothing is dropped until it is.
   if (messagesTable && !messagesTable.sql.includes(MESSAGES_V5_BODY_CHECK)) {
-    await driver.exec("pragma foreign_keys = off");
-    const disabled = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
-    if (disabled !== 0) throw new Error("Messaging storage could not disable foreign keys for the v5 rebuild");
-    try {
       await driver.exec("begin immediate");
       try {
+        const restoreDependents = await preserveMessageDependents(driver);
         await driver.exec(S.createMessagesV5);
         await driver.run(S.copyMessagesV5);
         // Exact set comparison in both directions: a count alone would accept a
@@ -296,6 +316,7 @@ export async function openSqliteMessagingHistory(
         }
         await driver.exec(S.dropMessages);
         await driver.exec(S.renameMessagesV5);
+        await restoreDependents();
         await driver.exec(S.recreateMessagesEventIndex);
         await driver.exec(S.recreateMessagesConversationIndex);
         if ((await driver.all(S.foreignKeyCheck)).length > 0) {
@@ -306,9 +327,6 @@ export async function openSqliteMessagingHistory(
         try { await driver.exec("rollback"); } catch { /* commit may already have failed */ }
         throw error;
       }
-    } finally {
-      await driver.exec("pragma foreign_keys = on");
-    }
     const restored = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
     if (restored !== 1) throw new Error("Messaging storage requires foreign_keys = ON");
   }
@@ -381,19 +399,15 @@ export async function openSqliteMessagingHistory(
 
   // v9: `LOCATION` cannot be added to an existing CHECK, so the same proven
   // rebuild as v5 runs when the current table does not already admit it. It runs
-  // after the binding transaction because SQLite ignores a `foreign_keys` pragma
-  // inside one, and it therefore also observes the v7 classification column that
-  // transaction guarantees. The safe direction is to rebuild on absence: running
+  // after the binding transaction so it observes the v7 classification column
+  // that transaction guarantees. The safe direction is to rebuild on absence: running
   // it again on a correct table is harmless, because the copy is proven exact
   // before anything is dropped.
   const messagesTableV9 = (await driver.all<{ sql: string }>(S.messagesTableSql))[0];
   if (messagesTableV9 && !messagesTableV9.sql.includes(MESSAGES_V9_TYPE_CHECK)) {
-    await driver.exec("pragma foreign_keys = off");
-    const disabledV9 = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
-    if (disabledV9 !== 0) throw new Error("Messaging storage could not disable foreign keys for the v9 rebuild");
-    try {
       await driver.exec("begin immediate");
       try {
+        const restoreDependents = await preserveMessageDependents(driver);
         await driver.exec(S.createMessagesV9);
         await driver.run(S.copyMessagesV9);
         const missing = (await driver.all<{ n: number }>(S.missingMessagesV9))[0]?.n;
@@ -403,6 +417,7 @@ export async function openSqliteMessagingHistory(
         }
         await driver.exec(S.dropMessages);
         await driver.exec(S.renameMessagesV9);
+        await restoreDependents();
         await driver.exec(S.recreateMessagesEventIndex);
         await driver.exec(S.recreateMessagesConversationIndex);
         if ((await driver.all(S.foreignKeyCheck)).length > 0) {
@@ -414,9 +429,6 @@ export async function openSqliteMessagingHistory(
         try { await driver.exec("rollback"); } catch { /* commit may already have failed */ }
         throw error;
       }
-    } finally {
-      await driver.exec("pragma foreign_keys = on");
-    }
     const restoredV9 = (await driver.all<{ foreign_keys: number }>(D.foreignKeys))[0]?.foreign_keys;
     if (restoredV9 !== 1) throw new Error("Messaging storage requires foreign_keys = ON");
   }
@@ -687,6 +699,32 @@ export async function openSqliteMessagingHistory(
       const pair = (await driver.all<{ authorId: string; recipientId: string }>(S.getConversationParticipants, [id]))[0];
       if (pair) await ensureConversationState(id, conversationPeer(scope, pair));
       await driver.run(S.markConversationRead, [through, id]);
+      for (const row of await driver.all<MessageRow>(S.listMessages, [id])) {
+        if (row.recipientId === scope.accountId && row.sequence !== null && row.sequence <= through) {
+          await mergeMessageReadFacts(row.id, row.readFacts | 2);
+        }
+      }
+    });
+  }
+
+  async function mergeMessageReadFacts(id: string, mask: number): Promise<void> {
+    if (!mask) return;
+    const key = `read_facts:${id}`;
+    const prior = (await driver.all<{ value: string }>(S.getMeta, [key]))[0];
+    const merged = Number(prior?.value ?? 0) | mask;
+    if (merged !== Number(prior?.value ?? 0)) await driver.run(S.setMeta, [key, String(merged)]);
+  }
+
+  async function saveMessageReadFact(conversationId: string, messageIds: string[], fact: "readByPeer" | "receiptObserved"): Promise<void> {
+    await assertOpen(); uuid(conversationId); messageIds.forEach(uuid);
+    if (fact !== "readByPeer" && fact !== "receiptObserved") throw new Error("Invalid message read fact");
+    await transaction(async () => {
+      for (const id of messageIds) {
+        const row = (await driver.all<MessageRow>(S.getVisibleMessage, [id]))[0];
+        const message = row ? toStored(row) : null;
+        assertReadFact(scope, conversationId, message, fact);
+        await mergeMessageReadFacts(id, readFactsMask({ [fact]: true }));
+      }
     });
   }
 
@@ -1081,8 +1119,8 @@ export async function openSqliteMessagingHistory(
 
   /**
    * Portable history: accepted messages only. A pending send is device-local
-   * work, and mailbox receipts and read state are per-device, so none of them
-   * may travel in a backup.
+   * work, and mailbox receipts/live receipt authority must never travel in a
+   * backup. Monotonic historical read facts do travel with accepted messages.
    */
   async function exportSnapshot(): Promise<HistorySnapshot> {
     await assertOpen();
@@ -1110,7 +1148,7 @@ export async function openSqliteMessagingHistory(
           ? { lat: row.locationLat, lng: row.locationLng, accuracy: row.locationAccuracy } : null,
         // The query filters on both, so these are never null here.
         serverEventId: row.eventId as string, serverSequence: row.sequence as number,
-        unsentAt: row.unsentAt, createdAt: row.createdAt,
+        ...readFactsFromMask(row.readFacts), unsentAt: row.unsentAt, createdAt: row.createdAt,
       })),
       tombstones: tombstones.map((row) => ({
         messageId: row.messageId, conversationId: row.conversationId,
@@ -1284,6 +1322,7 @@ export async function openSqliteMessagingHistory(
             message.location?.accuracy ?? null,
           ]);
         }
+        await mergeMessageReadFacts(message.id, readFactsMask(message));
         report.messages += 1;
       }
 
@@ -1648,7 +1687,7 @@ export async function openSqliteMessagingHistory(
     enqueueOutgoing: serial(enqueueOutgoing), getMessage: serial(getMessage),
     listMessages: serial(listMessages), listOutbox: serial(listOutbox),
     listConversations: serial(listConversations), cacheConversation: serial(cacheConversation),
-    markConversationRead: serial(markConversationRead),
+    markConversationRead: serial(markConversationRead), saveMessageReadFact: serial(saveMessageReadFact),
     getStateCursor: serial(getStateCursor), applyStateChange: serial(applyStateChange),
     getConversationProgress: serial(getConversationProgress), saveConversationProgress: serial(saveConversationProgress),
     getConversationCheckpoint: serial(getConversationCheckpoint), commitConversationCheckpoint: serial(commitConversationCheckpoint),

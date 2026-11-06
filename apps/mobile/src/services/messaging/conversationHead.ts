@@ -83,7 +83,8 @@ export function assessConversationHead(checkpoint: ConversationHead | null, inpu
   let head: ConversationHead, applied: ConversationHead;
   try {
     head = copyConversationHead(input);
-    if (checkpoint === null) return { mode: "blocking", missing: null, reason: "unknown" };
+    // This is a replay-work count, NOT a count of recoverable message bodies.
+    if (checkpoint === null) return { mode: "blocking", missing: head.position, reason: "unknown" };
     applied = copyConversationHead(checkpoint);
   } catch { return { mode: "blocking", missing: null, reason: "integrity" }; }
   if (head.accountId !== applied.accountId || head.conversationId !== applied.conversationId

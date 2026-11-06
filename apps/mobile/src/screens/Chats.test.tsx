@@ -6,7 +6,11 @@ import type { MessagingRuntimeSnapshot } from "../services/messaging/runtime";
 const state = vi.hoisted(() => ({ chat: null as unknown as MessagingRuntimeSnapshot }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: "viewer" } }) }));
 vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => state.chat }));
-vi.mock("../services/accountLabels", () => ({ fetchAccountLabels: async () => new Map([["peer", "river"], ["requester", "robin"], ["archived", "rowan"]]) }));
+vi.mock("../services/accountLabels", () => ({ readCachedAccountIdentities: () => new Map(), fetchAccountIdentities: async () => new Map([
+  ["peer", { id: "peer", username: "river", displayName: "River Jones" }],
+  ["requester", { id: "requester", username: "robin", displayName: "Robin Lane" }],
+  ["archived", { id: "archived", username: "rowan", displayName: "Rowan Lee" }],
+]) }));
 vi.mock("../services/people", async original => ({ ...await original<typeof import("../services/people")>(), searchPeople: async () => ({ items: [], nextCursor: null }) }));
 vi.mock("../services/posts", () => ({ fetchPost: async () => ({ id:"report", title:"Blue wallet", type:"FOUND" }) }));
 import { Connections, LegacyChatsRedirect } from "./Messaging";
@@ -27,7 +31,7 @@ beforeEach(() => {
 afterEach(cleanup);
 it("uses canonical thread links and retains the actual list/search owner across navigation", async () => {
   render(app());
-  const link=await screen.findByRole("link",{name:/@river/});expect(link.getAttribute("href")).toBe("/chats/chat");
+  const link=await screen.findByRole("link",{name:/River Jones/});expect(link.getAttribute("href")).toBe("/chats/chat");
   const search=screen.getByRole("searchbox",{name:"Search people or chats"});
   fireEvent.change(search,{target:{value:"river"}});fireEvent.click(link);
   await waitFor(()=>expect(screen.getByTestId("location").textContent).toBe("/chats/chat"));
@@ -36,11 +40,11 @@ it("uses canonical thread links and retains the actual list/search owner across 
   expect(screen.getAllByTestId("route-transition")).toHaveLength(1);
 });
 it("counts visible incoming requests and separates archived/unread filters", async () => {
-  render(app());await screen.findByRole("link",{name:/@river/});
+  render(app());await screen.findByRole("link",{name:/River Jones/});
   fireEvent.click(screen.getByRole("button",{name:"Requests, 1"}));
-  expect(screen.getByRole("link",{name:/@robin/})).toBeTruthy();expect(screen.queryByRole("link",{name:/@river/})).toBeNull();
+  expect(screen.getByRole("link",{name:/Robin Lane/})).toBeTruthy();expect(screen.queryByRole("link",{name:/River Jones/})).toBeNull();
   fireEvent.click(screen.getByRole("button",{name:"Filter chats"}));fireEvent.click(await screen.findByRole("menuitem",{name:"Archived"}));
-  expect(screen.getByRole("link",{name:/@rowan/})).toBeTruthy();expect(screen.queryByRole("link",{name:/@robin/})).toBeNull();
+  expect(screen.getByRole("link",{name:/Rowan Lee/})).toBeTruthy();expect(screen.queryByRole("link",{name:/Robin Lane/})).toBeNull();
 });
 it.each(["/connections", "/connections/chat"])("replaces legacy %s with the canonical destination and preserves query/hash", async path => {
   function Probe(){const location=useLocation();return <p data-testid="redirect">{location.pathname+location.search+location.hash}</p>;}
@@ -56,6 +60,6 @@ it("shows readable report context and a truthful local update time on a request 
   row.lastMessage={id:"message",conversationId:"request",authorId:"requester",recipientId:"viewer",body:"Is it yours?",messageType:"TEXT",contextReportId:"report"};
   render(app());fireEvent.click(screen.getByRole("button",{name:"Requests, 1"}));
   expect(await screen.findByText(/Blue wallet/)).toBeTruthy();
-  const link=screen.getByRole("link",{name:/@robin/});expect(link.querySelector("a")).toBeNull();
+  const link=screen.getByRole("link",{name:/Robin Lane/});expect(link.querySelector("a")).toBeNull();
   expect(link.querySelector("time")?.getAttribute("datetime")).toBe("2026-10-30T10:00:00.000Z");
 });

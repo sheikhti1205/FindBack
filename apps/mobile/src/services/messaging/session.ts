@@ -129,12 +129,17 @@ export function createMessagingSession(identity: MessagingScope, history: Messag
     stateTail = next.catch(() => undefined);
     return next;
   };
-  const sync = async () => {
+  const sync = async (onRestore?: (missing: number) => void) => {
     await syncState();
     const response = await call("SYNC");
     if (!Array.isArray(response) || response.length > 100) throw new Error("Invalid messaging batch");
     // Reject a malformed batch before applying any of its entries.
     const envelopes = response.map((entry) => mailbox(entry, scope));
+    if (onRestore && envelopes.length > 10) {
+      const existing = new Set((await history.exportSnapshot()).messages.map(message => message.id));
+      assertOpen();
+      onRestore(new Set(envelopes.filter(envelope => !existing.has(envelope.event.message.id)).map(envelope => envelope.event.message.id)).size);
+    }
     for (const envelope of envelopes) {
       assertOpen();
       await history.persistInboundAndAck(envelope, async (receipt) => {

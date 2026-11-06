@@ -2,7 +2,8 @@
  * Portable private-chat history backup (R3 §7–§10).
  *
  * A backup is a **snapshot of accepted history**, not a database image: no
- * mailbox receipts, no outbox and no per-device read state. Restoring one must
+ * mailbox receipts, no outbox and no live receipt authority. Historical read
+ * knowledge travels with accepted messages. Restoring one must
  * never create send work, fabricate a server acknowledgement, or bring back a
  * body the user suppressed.
  *
@@ -33,11 +34,12 @@ export type {
 
 export const BACKUP_FORMAT = "findback.chat.backup";
 /**
+ * v4 adds optional monotonic historical read facts, not live authorization.
  * v3 adds the bounded message payload: a live report reference and one static
  * coordinate set. Both are optional own keys on a v3 message record, so a v2
  * file still decodes and a v3 file never smuggles them into an older shape.
  */
-export const BACKUP_VERSION = 3;
+export const BACKUP_VERSION = 4;
 
 export interface HistoryBackup {
   format: typeof BACKUP_FORMAT;
@@ -126,6 +128,7 @@ const MESSAGE_KEYS = ["id", "conversationId", "authorId", "recipientId", "body",
   "serverEventId", "serverSequence", "unsentAt", "createdAt"];
 const MESSAGE_V2_KEYS = [...MESSAGE_KEYS, "messageType"];
 const MESSAGE_V3_KEYS = [...MESSAGE_V2_KEYS, "contextReportId", "location"];
+const READ_FACT_KEYS = ["readByPeer", "readLocally", "receiptObserved"] as const;
 const TOMBSTONE_KEYS = ["messageId", "conversationId", "recipientId", "unsentAt", "unsentBy"];
 const DELETION_KEYS = ["messageId", "conversationId", "deletedAt"];
 const CLEAR_KEYS = ["conversationId", "throughSequence", "clearedAt"];
@@ -276,11 +279,13 @@ function readSnapshot(value: unknown, version?: number): HistorySnapshot {
       messages: messages.map((row) => {
         // A v1 digest must describe the original nine fields exactly. Never add
         // defaults before verifying it, nor let v1 smuggle a later field.
-        const payload = version === 3 || (version === undefined && object(row)
+        const payload = version === 3 || version === 4 || (version === undefined && object(row)
           && Object.getOwnPropertyDescriptor(row, "contextReportId") !== undefined);
         const classified = payload || version === 2 || (version === undefined && object(row)
           && Object.getOwnPropertyDescriptor(row, "messageType") !== undefined);
-        const r = record(row, payload ? MESSAGE_V3_KEYS : classified ? MESSAGE_V2_KEYS : MESSAGE_KEYS);
+        const facts = (version === undefined || version === 4) && object(row)
+          ? READ_FACT_KEYS.filter(key => Object.getOwnPropertyDescriptor(row, key) !== undefined) : [];
+        const r = record(row, [...(payload ? MESSAGE_V3_KEYS : classified ? MESSAGE_V2_KEYS : MESSAGE_KEYS), ...facts]);
         // v2 introduced classification, not static location. Suppression does
         // not make a later classification valid in an older sealed envelope.
         if (version === 2 && r.messageType === "LOCATION") throw new BackupError("backup: invalid snapshot");
@@ -290,6 +295,7 @@ function readSnapshot(value: unknown, version?: number): HistorySnapshot {
           authorId: r.authorId as string,
           recipientId: r.recipientId as string,
           body: r.body as string | null,
+          ...Object.fromEntries(facts.map(key => [key, r[key]])),
           ...(classified ? { messageType: r.messageType as SnapshotMessage["messageType"] } : {}),
           ...(payload ? {
             contextReportId: r.contextReportId as string | null,
@@ -364,6 +370,9 @@ function checkSnapshot(value: unknown, accountId: string): asserts value is Hist
   if (!messages.every((row: unknown) => object(row) && isUuid(row.id) && isUuid(row.conversationId)
     && isUuid(row.authorId) && isUuid(row.recipientId) && row.authorId !== row.recipientId
     && (row.authorId === accountId || row.recipientId === accountId)
+    && READ_FACT_KEYS.every(key => row[key] === undefined || typeof row[key] === "boolean")
+    && (!row.readByPeer || row.authorId === accountId)
+    && (!(row.readLocally || row.receiptObserved) || row.recipientId === accountId)
     && validBody(row.body)
     && (row.messageType === undefined || row.messageType === null
       || row.messageType === "TEXT" || row.messageType === "MEDIA" || row.messageType === "LOCATION")

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useAuth } from "../auth";
 import { clearDriveBackup, startDriveBackup } from "../services/messaging/backupRuntime";
 import { clearMessagingRuntime, setMessagingAccount } from "../services/messaging/runtime";
+import { MessagingRestoration } from "./MessagingRestoration";
 
 /**
  * One runtime lifetime for Chat and its optional Drive backup.
@@ -32,5 +33,5 @@ export function MessagingLifecycle() {
     return startDriveBackup();
   }, [accountId, authSessionId]);
 
-  return null;
+  return <MessagingRestoration />;
 }
