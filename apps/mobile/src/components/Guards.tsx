@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "../auth";
 import { fetchMyRole } from "../services/roles";
 import { Splash } from "../screens/Splash";
@@ -23,6 +24,16 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (!user && needsProfile) return <Navigate to="/complete-profile" replace />;
   if (!user) return <Navigate to="/auth" replace />;
   return <>{children}</>;
+}
+
+/**
+ * Android-only surfaces (on-device model downloads and inference). The web
+ * build has no such capability, so a typed URL returns to Settings instead of
+ * showing an unavailable phone-only tool. The destination catalogue hides the
+ * same rows by platform, so this guard and the catalogue agree.
+ */
+export function NativeOnly({ children }: { children: ReactNode }) {
+  return Capacitor.isNativePlatform() ? <>{children}</> : <Navigate to="/settings" replace />;
 }
 
 /**

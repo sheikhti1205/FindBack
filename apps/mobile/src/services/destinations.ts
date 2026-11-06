@@ -171,7 +171,9 @@ export const DESTINATIONS: readonly Destination[] = [
     keywords: ["local", "intelligence", "on", "device", "offline", "phone", "search", "helper", "needle", "downloaded", "models", "smart"],
     category: "tools",
     auth: "signed-in",
-    platforms: ["web", "android"],
+    // On-device downloads and inference exist only in the Android build. The
+    // web build must not advertise a tool it cannot run.
+    platforms: ["android"],
     helpTopicId: "local-search",
   },
   {
@@ -182,7 +184,7 @@ export const DESTINATIONS: readonly Destination[] = [
     keywords: ["downloaded", "models", "installed", "download", "storage", "verify", "repair", "remove", "local"],
     category: "tools",
     auth: "signed-in",
-    platforms: ["web", "android"],
+    platforms: ["android"],
   },
   {
     id: "ai",

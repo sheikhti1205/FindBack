@@ -29,6 +29,18 @@ describe("the navigation catalogue", () => {
     }
   });
 
+  it("keeps on-device tools out of the web catalogue", () => {
+    // Owner feedback 2026-11-06: the web build has no downloads or on-device
+    // inference, so neither row may be advertised or resolved there. The
+    // Android build is untouched.
+    const web = settingsDestinations(WEB).map((destination) => destination.id);
+    expect(web).not.toContain("local-intelligence");
+    for (const id of ["local-intelligence", "downloaded-models"]) {
+      expect(resolveDestination(id, WEB)).toEqual({ kind: "unavailable", reason: "platform" });
+      expect(resolveDestination(id, { ...WEB, platform: "android" }).kind).toBe("available");
+    }
+  });
+
   it("places every Settings row on a real destination and every placed id in the catalogue", () => {
     for (const { id } of SETTINGS_PLACEMENT) {
       expect(destinationFor(id), id).not.toBeNull();

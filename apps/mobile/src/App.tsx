@@ -4,7 +4,7 @@ import { useEffect, type ReactNode } from "react";
 import { AuthProvider } from "./auth";
 import { ThemeProvider } from "./theme";
 import { motionConfigValueFor, useAppearance } from "./appearance";
-import { GuestOnly, OnboardingRoute, RequireAdmin, RequireAuth } from "./components/Guards";
+import { GuestOnly, NativeOnly, OnboardingRoute, RequireAdmin, RequireAuth } from "./components/Guards";
 import { Shell } from "./components/Shell";
 import { BackButtonHandler } from "./components/BackButtonHandler";
 import { AccountDeletionFeedback } from "./components/AccountDeletionFeedback";
@@ -238,8 +238,8 @@ function AppRouteTree() {
               <Route path="/about" element={<About />} />
               <Route path="/help" element={<Help />} />
               <Route path="/ai-connection" element={<AiConnection />} />
-                <Route path="/ai-models" element={<Navigate to="/settings/local-intelligence" replace />} />
-               <Route path="/offline-ai" element={<Navigate to="/settings/local-intelligence" replace />} />
+                <Route path="/ai-models" element={<NativeOnly><Navigate to="/settings/local-intelligence" replace /></NativeOnly>} />
+               <Route path="/offline-ai" element={<NativeOnly><Navigate to="/settings/local-intelligence" replace /></NativeOnly>} />
               <Route path="/settings" element={<Settings />}>
               {/* Eligibility and the claim itself are server-controlled. An
                   existing admin role must not be required to reach setup. */}
@@ -268,9 +268,9 @@ function AppRouteTree() {
               <Route path="/settings/ai/connections" element={<AiConnection />} />
               <Route path="/settings/ai/chat-models" element={<CloudModels />} />
               <Route path="/settings/ai/privacy" element={<AiPrivacy />} />
-               <Route path="/settings/ai/models" element={<Navigate to="/settings/local-intelligence" replace />} />
-              <Route path="/settings/local-intelligence" element={<LocalIntelligence />} />
-              <Route path="/settings/local-intelligence/downloads" element={<DownloadedModels />} />
+               <Route path="/settings/ai/models" element={<NativeOnly><Navigate to="/settings/local-intelligence" replace /></NativeOnly>} />
+              <Route path="/settings/local-intelligence" element={<NativeOnly><LocalIntelligence /></NativeOnly>} />
+              <Route path="/settings/local-intelligence/downloads" element={<NativeOnly><DownloadedModels /></NativeOnly>} />
               <Route path="/settings/help" element={<HelpGuide />} />
               {/* Staff console. The Settings row is role-gated and these routes
                   are guarded too, so a typed URL never reaches the console. */}

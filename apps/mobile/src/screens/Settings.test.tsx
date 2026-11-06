@@ -181,9 +181,12 @@ describe("Settings home", () => {
     expect(screen.getByRole("link", { name: /Updates & version history/ })).toBeTruthy();
   });
 
-  it("separates local tools, optional AI Chat and notification preferences", () => {
+  it("separates optional AI Chat from notification preferences on web", () => {
     renderSettings();
-    expect(screen.getByRole("link", { name: "Local tools" }).getAttribute("href")).toBe("/settings/local-intelligence");
+    // Owner feedback 2026-11-06: on-device tools are Android-only, so the web
+    // Settings list must not advertise them at all.
+    expect(screen.queryByRole("link", { name: "Local tools" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Downloaded models" })).toBeNull();
     expect(screen.getByRole("link", { name: "Optional AI Chat" }).getAttribute("href")).toBe("/settings/ai");
     expect(screen.getByRole("link", { name: "Notification preferences" }).getAttribute("href")).toBe("/settings/notifications");
   });
@@ -247,11 +250,12 @@ describe("Settings home", () => {
     expect(header.textContent).toMatch(/view profile/i);
   });
 
-  it("offers the local surfaces from the Intelligence group", () => {
+  it("offers only the cloud AI row in the web Intelligence group", () => {
     renderSettings();
     const group = screen.getByRole("region", { name: "Intelligence" });
-    expect(within(group).getByRole("link", { name: /Local tools/ })).toBeTruthy();
     expect(within(group).getByRole("link", { name: /Optional AI Chat/ })).toBeTruthy();
+    // Android downloads and on-device inference do not exist in this build.
+    expect(within(group).queryByRole("link", { name: /Local tools/ })).toBeNull();
   });
 
   it("keeps Diagnostics behind a second, closed troubleshooting disclosure", () => {
@@ -273,7 +277,6 @@ describe("Settings home", () => {
       "/settings/notifications",
       "/settings/accessibility",
       "/settings/ai",
-      "/settings/local-intelligence",
       "/settings/privacy",
       "/settings/media",
       "/settings/diagnostics",
@@ -291,11 +294,11 @@ describe("Settings home", () => {
     expect(aiRow.getAttribute("href")).toBe("/settings/ai");
   });
 
-  it("routes Local intelligence to the consumer local surfaces, not the technical catalogue", () => {
+  it("keeps the phone-only local tools out of web search", () => {
     renderSettings();
-    const row = screen.getByRole("link", { name: /Local tools/ });
-    expect(row.getAttribute("href")).toBe("/settings/local-intelligence");
-    expect(row.textContent).toMatch(/Smart Search and matching tools/i);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search settings" }), { target: { value: "local tools" } });
+    expect(screen.queryByRole("link", { name: /Local tools/ })).toBeNull();
+    expect(screen.getByRole("status").textContent).toMatch(/No settings found/);
   });
 
   it("offers the CF-010 feed layout row, showing what it resolves to on this screen", () => {

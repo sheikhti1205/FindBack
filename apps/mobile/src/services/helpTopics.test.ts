@@ -12,7 +12,10 @@ describe("offline help articles", () => {
       expect(topic.summary.length, topic.id).toBeGreaterThan(0);
       if (topic.destinationId) {
         expect(destinationFor(topic.destinationId), topic.id).not.toBeNull();
-        expect(resolveDestination(topic.destinationId, WEB), topic.id).toEqual(expect.objectContaining({ kind: "available" }));
+        // A topic follows its destination's platform: `local-search` describes
+        // on-device tools, which only the Android build has.
+        const caller = topic.platforms.includes("web") ? WEB : { ...WEB, platform: "android" as const };
+        expect(resolveDestination(topic.destinationId, caller), topic.id).toEqual(expect.objectContaining({ kind: "available" }));
       }
     }
   });

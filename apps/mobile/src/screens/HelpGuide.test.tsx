@@ -58,7 +58,9 @@ describe("HelpGuide", () => {
   it("explains the everyday jobs offline, including their limits", () => {
     renderGuide();
     expect(screen.getAllByText(/best-effort/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/ordinary text search/i)).toBeTruthy();
+    // The on-device search article is Android-only, so the web guide does not
+    // offer it (owner feedback 2026-11-06).
+    expect(screen.queryByRole("link", { name: /Local tools and Smart Search/ })).toBeNull();
     expect(screen.getAllByText(/safety records remain/i).length).toBeGreaterThan(0);
   });
 

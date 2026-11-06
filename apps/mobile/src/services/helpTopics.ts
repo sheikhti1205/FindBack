@@ -156,7 +156,9 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     keywords: ["local", "smart search", "models", "downloaded", "offline", "helper", "needle"],
     group: "Privacy",
     destinationId: "local-intelligence",
-    platforms: ["web", "android"],
+    // On-device tools exist only in the Android build; the web guide must not
+    // offer an article about downloads it cannot run.
+    platforms: ["android"],
     body: [
       "Local tools run on this device. Downloading a model file, installing it and loading it are separate steps, and only a search that actually ran can improve your filters.",
       "When the helper is unavailable, ordinary text search and your own filters keep working. Nothing is sent to a cloud provider as a substitute.",
@@ -172,7 +174,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     platforms: ["web", "android"],
     body: [
       "Optional AI Chat sends the messages you write, and only those, to the provider you connected with your own key.",
-      "Local Smart Search does not use that provider. If you have not connected one, no AI request leaves the app.",
+      "Your provider is only used for AI Chat. Search, reports and filters keep working without a key.",
     ],
   },
   {
