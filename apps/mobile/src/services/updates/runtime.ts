@@ -25,7 +25,7 @@ import type { Installation } from "./types";
  *
  * Owner order 2026-11-06: every push to main publishes an installable APK and
  * the catalogue that offers it. The same-origin read-only endpoint proxies
- * that rolling release so browser CORS and site-deployment timing cannot strand
+ * numbered releases so browser CORS and site-deployment timing cannot strand
  * updates. The bundled copy preserves offline history only.
  */
 export const UPDATE_CATALOGUE_URL =

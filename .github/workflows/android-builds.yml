@@ -1,23 +1,9 @@
-# Norfold — the always-current Android build.
-#
-# Owner order 2026-11-06: every push to main must produce an installable APK and
-# offer it in-app on launch. This is deliberately NOT the signed release path
-# (release.yml stays tag-only and owner-gated): this workflow builds the same
-# signed release APKs, verifies every variant, and publishes them plus a fresh
-# catalogue to ONE rolling pre-release tag.
-#
-#   catalogue: https://findbackapp.social/updates/catalogue.v1.json
-#   artifacts: https://github.com/sheikhti1205/Norfold/releases/download/android-latest/Norfold-<sha12>-<abi>.apk
-#
-# The app reads that catalogue at launch (services/updates/runtime.ts), verifies
-# sha256 + package + signing channel, and lets Android's installer enforce the
-# signing identity. versionCode is 100000 + commit count, so every commit is
-# strictly newer than the build before it.
-#
-# Version policy unchanged: versionName stays what apps/mobile/package.json
-# declares; nothing here bumps a version or creates a normal release.
+# Signed Android publication after successful main CI. Release tags are exactly
+# v<app version>, never a rolling alias. Numbered tags and assets are immutable:
+# a changed source commit requires a new app version, not replacement binaries.
+# The public metadata bridge discovers numbered releases for in-app updates.
 
-name: Android latest
+name: Android builds
 
 on:
   workflow_run:
@@ -31,7 +17,7 @@ permissions:
 # One publisher at a time, never cancelled mid-upload: a half-replaced release
 # would leave a catalogue pointing at missing bytes.
 concurrency:
-  group: android-latest
+  group: android-publish
   cancel-in-progress: false
   # Keep successful pushes waiting rather than replacing the previous pending
   # build. GitHub permits up to 100 pending runs in this queue.
@@ -43,7 +29,7 @@ env:
   VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
   VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
   VITE_SENTRY_ENVIRONMENT: production
-  VITE_SENTRY_DIST: android-latest
+  VITE_SENTRY_DIST: android
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}
   SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
   GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
@@ -91,9 +77,26 @@ jobs:
         run: |
           node scripts/check-release-config.mjs
           SHA=$(git rev-parse HEAD)
+          export BUILD_SHA="$SHA"
           echo "BUILD_SHA=$SHA" >> "$GITHUB_ENV"
           VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          node scripts/check-version-sync.mjs
+          TAG="v${VERSION}"
+          if gh release view "$TAG" --json isDraft,targetCommitish > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            node -e 'const r=require(process.argv[1]); if(r.isDraft && r.targetCommitish!==process.env.BUILD_SHA) process.exit(1)' "$RUNNER_TEMP/existing-release.json" || {
+              echo '::error::A draft for this version belongs to another source commit.'; exit 1;
+            }
+          fi
+          if git rev-parse --verify -q "${TAG}^{commit}" >/dev/null; then
+            [ "$(git rev-parse "${TAG}^{commit}")" = "$SHA" ] || {
+              echo "::error::${TAG} already belongs to another commit. Advance the app version; numbered releases are immutable."
+              exit 1
+            }
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
           echo "VITE_SENTRY_RELEASE=findback-mobile@${VERSION}+${SHA:0:12}" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Fetch pinned USE asset
         run: node scripts/fetch-use-model.mjs
       - name: Build mobile web dist (Capacitor webDir)
@@ -173,19 +176,18 @@ jobs:
           SUBJECT="$(git log -1 --pretty=%s)"
           RECENT="$(git log -3 --pretty=%s | paste -sd ';' - | cut -c1-280)"
           PRIOR=()
-          if gh release view android-latest >/dev/null 2>&1; then
-            if gh release view android-latest --json assets --jq '.assets[].name' | grep -qx catalogue.v1.json; then
-              gh release download android-latest --pattern catalogue.v1.json --output "$RUNNER_TEMP/prior-catalogue.json"
-              PRIOR=(--previous "$RUNNER_TEMP/prior-catalogue.json")
-            fi
+          PREVIOUS=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=20" --jq 'map(select(.draft == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")) and any(.assets[]; .name == "catalogue.v1.json"))) | .[0].tag_name // empty')
+          if [ -n "$PREVIOUS" ]; then
+            gh release download "$PREVIOUS" --pattern catalogue.v1.json --output "$RUNNER_TEMP/prior-catalogue.json"
+            PRIOR=(--previous "$RUNNER_TEMP/prior-catalogue.json")
           fi
           node scripts/write-android-catalogue.mjs \
             "${PRIOR[@]}" \
             --facts "$RUNNER_TEMP/apk-facts.json" \
             --apk-dir release-stage \
             --repo "${GITHUB_REPOSITORY}" \
-            --tag android-latest \
-            --release-id "android-${SHA12}" \
+            --tag "$RELEASE_TAG" \
+            --release-id "$RELEASE_TAG" \
             --version-name "$VERSION" \
             --version-code "$VCODE" \
             --git-sha "${BUILD_SHA}" \
@@ -197,27 +199,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Publish the rolling pre-release
+      - name: Publish the numbered release
         # APKs first, catalogue last: a reader must never see a catalogue entry
-        # whose bytes are not uploaded yet. Retain immutable older APKs: an
-        # already-started download must not lose its target on the next publish.
+        # whose bytes are not uploaded yet. Never replace a numbered release.
         run: |
           set -euo pipefail
-          if gh release view android-latest >/dev/null 2>&1; then
-            if [ -f "$RUNNER_TEMP/prior-catalogue.json" ]; then
-            if node -e 'const fs=require("fs"); const old=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const next=JSON.parse(fs.readFileSync("release-stage/catalogue.v1.json","utf8")); process.exit(Math.max(...old.releases.map(r=>r.versionCode)) >= next.releases[0].versionCode ? 0 : 1)' "$RUNNER_TEMP/prior-catalogue.json"; then
-              echo "A same or newer build is already published; keeping its immutable bytes."
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false ]; then
+              echo "${RELEASE_TAG} is already published; preserving its immutable assets."
               exit 0
             fi
-            fi
           else
-            gh release create android-latest --prerelease \
-              --target "$BUILD_SHA" \
-              --title "Android latest build" \
-              --notes "Rolling beta build published by CI on every push to main. The in-app updater reads catalogue.v1.json from this release."
+            TYPE=()
+            case "$RELEASE_TAG" in *-*) TYPE=(--prerelease) ;; esac
+            gh release create "$RELEASE_TAG" --draft "${TYPE[@]}" --target "$BUILD_SHA" \
+              --title "Norfold $RELEASE_TAG" --notes "Signed Android build. Changes are included in the in-app update history."
           fi
-          gh release upload android-latest release-stage/Norfold-*.apk --clobber
-          gh release upload android-latest release-stage/catalogue.v1.json --clobber
-          gh release view android-latest --json assets --jq '.assets[] | "published \(.name) \(.size) bytes"'
+          # Replacement is permitted only inside this unpublished draft, so a
+          # failed upload can resume. Published versioned bytes never change.
+          gh release upload "$RELEASE_TAG" release-stage/Norfold-*.apk --clobber
+          gh release upload "$RELEASE_TAG" release-stage/catalogue.v1.json --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[] | "published \(.name) \(.size) bytes"'
         env:
           GH_TOKEN: ${{ github.token }}

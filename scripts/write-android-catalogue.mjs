@@ -9,14 +9,14 @@
  *
  * The catalogue is what the app reads at launch:
  *   https://github.com/<owner>/<repo>/releases/download/<tag>/catalogue.v1.json
- * and every artifact URL points at a file in that same rolling release, so the
+ * and every artifact URL points at a file in that same numbered release, so the
  * download always matches the catalogue that offered it.
  *
  * Usage:
  *   node scripts/write-android-catalogue.mjs \
  *     --facts apk-facts.json --apk-dir release-stage \
- *     --repo sheikhti1205/Norfold --tag android-latest \
- *     --release-id v0.14.0-beta.1+abc123def456 \
+ *     --repo sheikhti1205/Norfold --tag v0.14.0-beta.1 \
+ *     --release-id v0.14.0-beta.1 \
  *     --version-name 0.14.0-beta.1 --version-code 100123 \
  *     --git-sha <40 hex> --published-at 2026-11-06T10:00:00Z \
  *     --summary "What changed in this build." --out catalogue.v1.json
@@ -147,6 +147,7 @@ export function buildCatalogue(options) {
   if (Number.isNaN(Date.parse(options.publishedAt))) fail("--published-at is not a timestamp");
   if (options.summary.trim() === "") fail("--summary is empty");
   if (/\s/.test(options.tag)) fail("--tag must not contain whitespace");
+  if (options.tag !== `v${options.versionName}`) fail('--tag must equal v<APK version>');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repo)) fail("--repo must be owner/name");
   if (!/^[A-Za-z0-9_.-]+$/.test(options.signingChannel)) fail("--signing-channel must be a plain label");
 

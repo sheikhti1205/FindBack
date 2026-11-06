@@ -23,6 +23,10 @@ on:
         description: "Push pending supabase/migrations (db push)"
         type: boolean
         default: false
+      deploy_device_list:
+        description: "Deploy ONLY the accepted Devices LIST migration, with live readback"
+        type: boolean
+        default: false
       deploy_push_dispatch:
         description: "Deploy the push-dispatch Edge Function"
         type: boolean
@@ -85,10 +89,24 @@ jobs:
         with:
           version: latest
       - name: Push pending migrations
-        if: inputs.push_migrations
+        if: inputs.push_migrations && !inputs.deploy_device_list
         run: |
           supabase link --project-ref "$PROJECT_REF"
           supabase db push
+      - uses: actions/setup-node@v5
+        if: inputs.deploy_device_list
+        with:
+          node-version: 24
+      - name: Deploy only the accepted Devices LIST repair
+        if: inputs.deploy_device_list
+        run: |
+          set -euo pipefail
+          [ '${{ inputs.push_migrations }}' = 'false' ] || { echo 'Do not combine narrow and general migration deployment'; exit 1; }
+          supabase link --project-ref "$PROJECT_REF"
+          supabase db push --dry-run 2>&1 | tee "$RUNNER_TEMP/device-migration-plan.txt"
+          node scripts/device-list-deployment.mjs --plan "$RUNNER_TEMP/device-migration-plan.txt"
+          supabase db push --yes
+          node scripts/device-list-deployment.mjs --verify
       - name: Enable and verify leaked-password protection
         if: inputs.enable_leaked_password_protection
         run: node scripts/enable-leaked-password-protection.mjs

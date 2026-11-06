@@ -40,8 +40,8 @@ function options(overrides = {}) {
     apkDir: dir,
     files,
     repo: "sheikhti1205/Norfold",
-    tag: "android-latest",
-    releaseId: "v0.14.0-beta.1+abc123def456",
+    tag: "v0.14.0-beta.1",
+    releaseId: "v0.14.0-beta.1",
     versionName: "0.14.0-beta.1",
     versionCode: 100123,
     gitSha: SHA,
@@ -60,7 +60,7 @@ test("describes every single-ABI APK with the bytes it really staged", () => {
   assert.equal(release.versionCode, 100123);
   assert.deepEqual(release.artifacts.map((artifact) => artifact.abis), [["arm64-v8a"], ["armeabi-v7a"]]);
   for (const artifact of release.artifacts) {
-    assert.match(artifact.url, /^https:\/\/github\.com\/sheikhti1205\/Norfold\/releases\/download\/android-latest\//);
+    assert.match(artifact.url, /^https:\/\/github\.com\/sheikhti1205\/Norfold\/releases\/download\/v0\.14\.0-beta\.1\//);
     assert.match(artifact.sha256, /^[0-9a-f]{64}$/);
     assert.ok(artifact.bytes > 0);
     assert.equal(artifact.signingChannel, "beta");
@@ -114,6 +114,10 @@ test("refuses mixed builds inside one facts file", () => {
 
 test("refuses a tag that would break the download path", () => {
   assert.throws(() => buildCatalogue(options({ tag: "android latest" })), /--tag must not contain whitespace/);
+});
+test('requires the release tag to equal the actual APK version',()=>{
+  assert.throws(()=>buildCatalogue(options({tag:'android-latest'})),/tag must equal/);
+  assert.throws(()=>buildCatalogue(options({tag:'v0.14.0-beta.2'})),/tag must equal/);
 });
 
 test("successive publications retain changelogs and bundled history without inventing old download verification", () => {
