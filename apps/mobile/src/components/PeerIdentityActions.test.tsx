@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ConversationProjection } from "../services/messaging/conversationIndex";
 
 const state = vi.hoisted(() => ({
   account: "viewer", status: "ready", projections: {} as Record<string, ConversationProjection> | null,
-  create: vi.fn(), send: vi.fn(),
+  create: vi.fn(), send: vi.fn(), refresh: vi.fn(),
 }));
 vi.mock("../auth", () => ({ useAuth: () => ({ user: { id: state.account } }) }));
 vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => ({
@@ -14,6 +14,7 @@ vi.mock("../services/messaging/useMessaging", () => ({ useMessaging: () => ({
 }) }));
 vi.mock("../services/messaging/runtime", () => ({
   requestMessagingConversation: (...args: unknown[]) => state.create(...args),
+  refreshMessaging: (...args: unknown[]) => state.refresh(...args),
   sendMessagingText: (...args: unknown[]) => state.send(...args),
 }));
 import { PeerIdentityActions } from "./PeerIdentityActions";
@@ -133,10 +134,20 @@ it.each([
   expect(state.create).not.toHaveBeenCalled(); expect(state.send).not.toHaveBeenCalled();
 });
 
-it("does not turn cached or missing authority into a relationship assertion", () => {
+it("does not turn cached or missing authority into a relationship assertion", async () => {
   state.status = "offline"; state.projections = null;
-  mount(); expect(screen.getByRole("button", { name: "Connect" })).toHaveProperty("disabled", true);
+  mount();
+  // No relationship is asserted from cached or missing authority.
   expect(screen.queryByText("Connected")).toBeNull();
+  // The action stays usable: opening it says why, instead of a disabled control
+  // with no explanation (owner feedback 2026-11-06).
+  const connect = screen.getByRole("button", { name: "Connect" });
+  expect(connect).toHaveProperty("disabled", false);
+  fireEvent.click(connect);
+  const dialog = await screen.findByRole("dialog", { name: "Connect with River Lee" });
+  expect(dialog.textContent).toContain("offline");
+  expect(within(dialog).getByRole("button", { name: "Try again" })).toBeTruthy();
+  expect(state.create).not.toHaveBeenCalled();
 });
 
 it("shows no contact action for self or a locally blocked peer", () => {
