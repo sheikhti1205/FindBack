@@ -167,7 +167,7 @@ describe("the Drive store", () => {
     const refused = new DriveRestStore(tokens().source, {
       fetch: responder(() => json({ error: { errors: [{ reason: "insufficientPermissions" }] } }, 403)).fetch,
     });
-    await expect(refused.list()).rejects.toMatchObject({ kind: "invalid" });
+    await expect(refused.list()).rejects.toMatchObject({ kind: "unauthorized", httpStatus: 403, providerReason: "scope" });
 
     const broken = new DriveRestStore(tokens().source, {
       fetch: responder(() => new Response("", { status: 503 })).fetch,
@@ -182,6 +182,16 @@ describe("the Drive store", () => {
     const badToken = new DriveRestStore({ token: async () => "nope nope nope" },
       { fetch: responder(() => json({ files: [] })).fetch });
     await expect(badToken.list()).rejects.toMatchObject({ kind: "unauthorized" });
+  });
+
+  it("retains only safe status and known provider reasons for disabled Drive APIs", async () => {
+    const store = new DriveRestStore(tokens().source, {
+      fetch: responder(() => json({ error: { message: "PRIVATE_PROVIDER_SENTINEL",
+        details: [{ reason: "SERVICE_DISABLED" }] } }, 403)).fetch,
+    });
+    const error = await store.list().catch(error => error);
+    expect(error).toMatchObject({ kind: "invalid", httpStatus: 403, providerReason: "api-disabled" });
+    expect(JSON.stringify(error)).not.toContain("PRIVATE_PROVIDER_SENTINEL");
   });
 
   it("treats an already-deleted object as removed", async () => {

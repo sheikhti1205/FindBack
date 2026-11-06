@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Unplug } from "lucide-react";
 import { Button } from "../components/Button";
 import { announce } from "../components/LiveRegion";
 import { PreferenceSwitchRow, SettingsGroup, SettingsPage, StatusPill } from "../components/settings";
@@ -29,7 +30,9 @@ function requireOutcome(result: BackupOperationResult, kind: "committed" | "rest
         ? "This device can't use the backup key. Sign in again; if this device was removed, add it again."
       : result.reason === "storage" ? "Backup didn't finish. Check available storage, then try again."
       : result.reason === "throttled" ? "Google Drive asked us to wait. Try again later."
-        : "Backup didn't finish. Check your connection, then try again.");
+      : result.reason === "provider" ? "Google Drive rejected the backup request. Try again; if it keeps happening, contact support."
+      : result.reason === "offline" ? "Backup didn't finish. Check your connection, then try again."
+        : "Backup didn't finish. Please try again.");
   throw new BackupActionError("This action didn't finish. Try again.");
 }
 
@@ -78,9 +81,10 @@ function statusCopy(status: BackupStatus): { title: string; description: string;
           ? { title: "Google Drive backup", label: "Waiting on Google Drive", tone: "warning",
             description: "Google Drive asked us to slow down. We'll try again automatically." }
            : { title: "Google Drive backup", label: "Needs attention", tone: "warning",
-             description: status.lastError === "integrity" ? "Your existing backup couldn't be opened safely. It has not been replaced."
-               : status.lastError === "storage" ? "Check available storage, then retry the backup."
-                 : "The last backup didn't finish. We'll retry while Norfold is open." };
+              description: status.lastError === "integrity" ? "Your existing backup couldn't be opened safely. It has not been replaced."
+                : status.lastError === "storage" ? "Check available storage, then retry the backup."
+                  : status.lastError === "provider" ? "Google Drive rejected the last backup request."
+                  : "The last backup didn't finish. We'll retry while Norfold is open." };
     case "waiting":
       return { title: "Google Drive backup", label: "On", tone: "success",
         description: "Changes are backed up while Norfold is open. Keep it open until the backup finishes." };
@@ -199,7 +203,7 @@ export function BackupSettings() {
     >
       <SettingsGroup
         title="Google Drive"
-        description="Backups are encrypted on this device before they reach Drive, so Google can't read them. The key stays with your Norfold account and is re-issued to your signed-in devices so a reinstall can restore."
+        description="Save an encrypted copy of your chats privately in your Google Drive."
       >
         <div className="flex flex-col gap-2 px-3 py-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -212,21 +216,20 @@ export function BackupSettings() {
           {status.lastUploadAt !== undefined && status.kind !== "up-to-date" ? (
             <p className="text-sm text-on-surface-variant">Last backed up {describeBackupTime(status.lastUploadAt)}.</p>
           ) : null}
-        </div>
-
         {notice ? (
-          <p role="status" data-testid="backup-notice" className="px-3 pb-3 text-sm text-on-surface-variant">
+          <p role="status" data-testid="backup-notice" className="text-sm text-on-surface-variant">
             {notice}
           </p>
         ) : null}
         {error ? (
-          <p role="alert" data-testid="backup-error" className="px-3 pb-3 text-sm text-error">
+          <p role="alert" data-testid="backup-error" className="text-sm text-error">
             {error}
           </p>
         ) : null}
+        </div>
 
         {available && needsConnect ? (
-          <div className="flex flex-wrap items-center gap-2 px-3 pb-4">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-3">
             <Button loading={busy === "connect"} disabled={running || busy !== null} onClick={() => void connect()}>
               {status.kind === "needs-connection" || status.kind === "attention" ? "Reconnect Google Drive" : "Connect Google Drive"}
             </Button>
@@ -241,15 +244,17 @@ export function BackupSettings() {
         ) : null}
 
         {available && actionable ? (
-          <div className="flex flex-wrap items-center gap-2 px-3 pb-4">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-3">
             {canTransfer ? (
               <Button variant="outline" loading={busy === "upload"} disabled={running || busy !== null}
                 onClick={() => void upload()}>
                 Back up now
               </Button>
             ) : null}
-            <Button variant="text" disabled={busy !== null} onClick={() => { setConfirm("disconnect"); setError(null); }}>
-              Disconnect Google Drive…
+            <Button variant="text" aria-label="Disconnect Google Drive…" title="Disconnect Google Drive"
+              className="w-12 shrink-0" style={{ paddingInline: 0 }}
+              disabled={busy !== null} onClick={() => { setConfirm("disconnect"); setError(null); }}>
+              <Unplug size={18} aria-hidden="true" />
             </Button>
           </div>
         ) : null}
@@ -306,6 +311,16 @@ export function BackupSettings() {
             </Button>
           </div>
         </SettingsGroup>
+      ) : null}
+      {status.diagnostic ? (
+        <details className="fb-advanced-disclosure">
+          <summary>Backup diagnostics</summary>
+          <div>
+            <p>Last attempted step: {status.diagnostic.stage} / {status.diagnostic.cause}</p>
+            {status.diagnostic.httpStatus !== undefined ? <p>HTTP {status.diagnostic.httpStatus}</p> : null}
+            {status.diagnostic.providerReason ? <p>Google Drive: {status.diagnostic.providerReason}</p> : null}
+          </div>
+        </details>
       ) : null}
     </SettingsPage>
   );

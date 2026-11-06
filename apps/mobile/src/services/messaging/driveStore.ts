@@ -13,9 +13,11 @@
 import type { BackupDriveFile, BackupDriveStore } from "./backupDrive";
 
 export type DriveFailure = "unauthorized" | "throttled" | "unavailable" | "invalid";
+export type DriveProviderReason = "api-disabled" | "scope" | "quota" | "forbidden";
 
 export class DriveStoreError extends Error {
-  constructor(public kind: DriveFailure, public retryAfterMs = 0) {
+  constructor(public kind: DriveFailure, public retryAfterMs = 0,
+    public httpStatus?: number, public providerReason?: DriveProviderReason) {
     super(`drive: ${kind}`);
     this.name = "DriveStoreError";
   }
@@ -73,20 +75,27 @@ function retryAfter(response: Response): number {
 }
 
 async function failure(response: Response): Promise<DriveStoreError> {
-  if (response.status === 401) return new DriveStoreError("unauthorized");
-  if (response.status === 429) return new DriveStoreError("throttled", retryAfter(response));
+  if (response.status === 401) return new DriveStoreError("unauthorized", 0, response.status);
+  if (response.status === 429) return new DriveStoreError("throttled", retryAfter(response), response.status, "quota");
   if (response.status === 403) {
     // Google reports quota errors as 403 with a reason; rate limits are the
     // retryable ones, an outright scope refusal is not.
     const body = await response.text().catch(() => "");
-    if (/rateLimitExceeded|userRateLimitExceeded|quotaExceeded|dailyLimitExceeded/.test(body)) {
-      return new DriveStoreError("throttled", retryAfter(response));
+    // Copy only known enum labels, never Google's message, URLs or identifiers.
+    const reasons = [...body.matchAll(/"reason"\s*:\s*"([^"\r\n]{1,100})"/g)].map(match => match[1] ?? "");
+    if (reasons.some(reason => reason === "accessNotConfigured" || reason === "SERVICE_DISABLED")) {
+      return new DriveStoreError("invalid", 0, response.status, "api-disabled");
     }
-    return new DriveStoreError("invalid");
+    if (reasons.some(reason => ["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"].includes(reason))) {
+      return new DriveStoreError("throttled", retryAfter(response), response.status, "quota");
+    }
+    if (reasons.some(reason => reason === "insufficientPermissions" || reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT")) {
+      return new DriveStoreError("unauthorized", 0, response.status, "scope");
+    }
+    return new DriveStoreError("invalid", 0, response.status, "forbidden");
   }
-  if (response.status >= 500) return new DriveStoreError("unavailable");
-  if (response.status === 404) return new DriveStoreError("invalid");
-  return new DriveStoreError("invalid");
+  if (response.status >= 500) return new DriveStoreError("unavailable", 0, response.status);
+  return new DriveStoreError("invalid", 0, response.status);
 }
 
 function multipart(metadata: Record<string, unknown>, bytes: ArrayBuffer): {

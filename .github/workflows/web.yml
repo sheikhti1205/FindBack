@@ -16,6 +16,8 @@ jobs:
       VITE_PUBLIC_SHARE_ORIGIN: ${{ vars.VITE_PUBLIC_SHARE_ORIGIN }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      # Public Web/server OAuth audience, also used by Android's Google bridge.
+      VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
       VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
       VITE_SENTRY_ENVIRONMENT: production-web
       VITE_SENTRY_DIST: web-production
@@ -36,7 +38,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Fail-closed public client configuration
-        run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs
+        run: node scripts/check-mobile-build-config.mjs --preflight && node scripts/check-sentry-config.mjs && node scripts/check-drive-web-config.mjs --preflight
       # SYNC-4/5: deterministic Sentry release, same shape as ci.yml/release.yml.
       # Canonical owner of the SHAPE is
       # apps/mobile/src/services/monitoring/release.ts
@@ -103,7 +105,7 @@ jobs:
           fi
           echo "sourcemap strip verified: no .map files, no sourceMappingURL references in dist"
       - name: Verify baked configuration and App Links association
-        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets && node scripts/check-drive-web-config.mjs --assets apps/mobile/dist/assets && node scripts/check-klipy-config.mjs --assets apps/mobile/dist/assets && node scripts/check-web-association.mjs apps/mobile/dist
         env:
           ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
       # The deploy step runs ONLY after the sourcemap upload + strip steps above

@@ -17,7 +17,7 @@ import { importBackupKey, BackupCryptoError } from "./backupCrypto";
 import { ApiError } from "../session";
 import { DriveAuthError } from "./driveAuth";
 import type { BackupKeyMaterial } from "./backupKey";
-import { DriveRestStore, DriveStoreError } from "./driveStore";
+import { DriveRestStore, DriveStoreError, type DriveProviderReason } from "./driveStore";
 import type { DriveAccess, DriveAuthUnavailable } from "./driveAuth";
 import { isUuid } from "./validation";
 
@@ -47,7 +47,7 @@ export interface BackupState {
   nextAttemptAt: number | null;
   failures: number;
   generation: string | null;
-  lastError: "auth" | "account" | "throttled" | "offline" | "integrity" | "snapshot" | "storage" | "other" | null;
+  lastError: "auth" | "account" | "throttled" | "offline" | "provider" | "integrity" | "snapshot" | "storage" | "other" | null;
 }
 
 export const EMPTY_BACKUP_STATE: BackupState = Object.freeze({
@@ -86,7 +86,7 @@ export function parseBackupState(raw: unknown): BackupState {
     failures,
     generation: typeof value.generation === "string" ? value.generation : null,
     lastError: error === "auth" || error === "account" || error === "throttled" || error === "offline"
-      || error === "other" || error === "integrity" || error === "snapshot" || error === "storage"
+      || error === "other" || error === "provider" || error === "integrity" || error === "snapshot" || error === "storage"
       ? error : null,
   };
 }
@@ -113,6 +113,8 @@ type BackupReadiness =
   | { kind: "up-to-date"; lastUploadAt: number }
   | { kind: "attention"; lastError: NonNullable<BackupState["lastError"]> };
 export type BackupStatus = BackupReadiness & {
+  /** Fixed stage/cause labels only. No errors, account/file ids, keys or tokens. */
+  diagnostic?: BackupDiagnostic;
   lastUploadAt?: number;
   /** The durable opt-in. The surface must never infer this from an error kind. */
   enabled: boolean;
@@ -143,7 +145,15 @@ export type BackupOperationResult =
   | { kind: "restored"; messages: number; manifest: BackupManifest }
   | { kind: "skipped"; reason: "off" | "not-ready" | "superseded" }
   | { kind: "needs-connection" }
-  | { kind: "failed"; reason: "offline" | "throttled" | "integrity" | "snapshot" | "storage" | "account" | "other" };
+  | { kind: "failed"; reason: "offline" | "provider" | "throttled" | "integrity" | "snapshot" | "storage" | "account" | "other" };
+
+export interface BackupDiagnostic {
+  httpStatus?: number;
+  providerReason?: DriveProviderReason;
+  stage: "authorization" | "policy" | "account-key" | "encryption" | "drive-list" | "drive-read"
+    | "drive-write" | "drive-delete" | "history-read" | "history-merge";
+  cause: "unauthorized" | "throttled" | "unavailable" | "invalid" | "server" | "integrity" | "storage" | "auth" | "other";
+}
 
 export interface BackupDeps {
   auth: BackupAuthPort;
@@ -177,6 +187,7 @@ function productionStore(auth: BackupAuthPort, signal: AbortSignal): BackupDrive
 
 type Operation = {
   kind: "connect" | "upload" | "restore";
+  stage: BackupDiagnostic["stage"];
   lease: BackupLease;
   controller: AbortController;
   promise: Promise<BackupOperationResult>;
@@ -186,6 +197,7 @@ class BackupPolicyUnavailable extends Error {}
 
 export class DriveBackup {
   private readonly states = new Map<string, BackupState>();
+  private readonly diagnostics = new Map<string, BackupDiagnostic>();
   private readonly uploadVeto = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private operation: Operation | null = null;
@@ -264,6 +276,8 @@ export class DriveBackup {
     const lease = this.capture();
     const state = lease ? this.state(lease.accountId) : null;
     return { ...readiness, enabled: state?.enabled ?? false,
+      ...(lease && state?.lastError && this.diagnostics.has(lease.accountId)
+        ? { diagnostic: { ...this.diagnostics.get(lease.accountId)! } } : {}),
       ...(lease && this.uploadVeto.has(lease.accountId) ? { optOutPending: true as const } : {}),
       ...(state?.lastUploadAt == null ? {} : { lastUploadAt: state.lastUploadAt }) };
   }
@@ -392,7 +406,7 @@ export class DriveBackup {
     if (kind === "upload" && (!this.state(lease.accountId).enabled || this.uploadVeto.has(lease.accountId))) {
       return Promise.resolve({ kind: "skipped", reason: "off" });
     }
-    const op: Operation = { kind, lease, controller: new AbortController(), promise: Promise.resolve({ kind: "skipped", reason: "not-ready" }) };
+    const op: Operation = { kind, lease, stage: "authorization", controller: new AbortController(), promise: Promise.resolve({ kind: "skipped", reason: "not-ready" }) };
     this.operation = op;
     op.promise = Promise.resolve().then(() => this.execute(op)).finally(() => {
       if (this.operation === op) this.operation = null;
@@ -405,6 +419,7 @@ export class DriveBackup {
   private async execute(op: Operation): Promise<BackupOperationResult> {
     try {
       this.assertCurrent(op);
+      this.diagnostics.delete(op.lease.accountId);
       if (op.kind === "connect") {
         const consent = this.deps.auth.current() ? Promise.resolve()
           : this.deps.auth.authorize(op.controller.signal);
@@ -426,7 +441,9 @@ export class DriveBackup {
       if (!access) throw new DriveStoreError("unauthorized");
       // Do not reach Drive with a dirty revision which cannot be persisted.
       // A successful retry can clear the storage warning, never the revisions.
+      op.stage = "policy";
       if (!this.persist(op.lease.accountId, { lastError: null })) throw new BackupPolicyUnavailable();
+      op.stage = "account-key";
       const material = await this.deps.key(op.lease);
       this.assertCurrent(op);
       if (material.accountId !== op.lease.accountId) throw new BackupDriveError("backup: account mismatch");
@@ -437,12 +454,14 @@ export class DriveBackup {
       if (knownGeneration !== null && knownGeneration !== material.generation) {
         throw new BackupDriveError("backup: key generation changed");
       }
+      op.stage = "encryption";
       const key = await importBackupKey(material.generation, material.keyHex);
       this.assertCurrent(op);
       const store = this.fencedStore(op);
       if (op.kind === "restore") {
         const restored = await downloadBackup({ store, key, scope: op.lease });
         this.assertCurrent(op);
+        op.stage = "history-merge";
         await this.deps.importSnapshot(op.lease, restored.snapshot);
         this.assertCurrent(op);
         const state = this.state(op.lease.accountId);
@@ -461,11 +480,13 @@ export class DriveBackup {
         if (files.some(file => isBackupName(file.name, op.lease.accountId) && file.name.includes(".manifest."))) {
           const restored = await downloadBackup({ store, key, scope: op.lease });
           this.assertCurrent(op);
+          op.stage = "history-merge";
           await this.deps.importSnapshot(op.lease, restored.snapshot);
           this.assertCurrent(op);
         }
       }
       const snapshotRevision = this.state(op.lease.accountId).dirtyRevision;
+      op.stage = "history-read";
       const snapshot = await this.deps.snapshot(op.lease);
       this.assertCurrent(op);
       await uploadBackup({ store, key, scope: op.lease, snapshot, now: this.now() });
@@ -478,6 +499,14 @@ export class DriveBackup {
       return { kind: "committed", lastUploadAt: this.now(), snapshotRevision };
     } catch (error) {
       if (!this.current(op) || error instanceof SupersededBackup) return { kind: "skipped", reason: "superseded" };
+      this.diagnostics.set(op.lease.accountId, { stage: op.stage,
+        ...(error instanceof DriveStoreError && error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+        ...(error instanceof DriveStoreError && error.providerReason !== undefined ? { providerReason: error.providerReason } : {}),
+        cause: error instanceof DriveStoreError ? error.kind
+          : error instanceof ApiError ? "server"
+          : error instanceof BackupCryptoError || error instanceof BackupDriveError ? "integrity"
+          : error instanceof BackupPolicyUnavailable ? "storage"
+          : error instanceof DriveAuthError ? "auth" : "other" });
       return this.recordFailure(op.lease.accountId, error);
     }
   }
@@ -494,10 +523,10 @@ export class DriveBackup {
     };
     const store = this.store(auth, op.controller.signal);
     return {
-      list: async () => { this.assertCurrent(op); const result = await store.list(); this.assertCurrent(op); return result; },
-      read: async id => { this.assertCurrent(op); const result = await store.read(id); this.assertCurrent(op); return result; },
-      write: async file => { this.assertCurrent(op); const result = await store.write(file); this.assertCurrent(op); return result; },
-      remove: async id => { this.assertCurrent(op); await store.remove(id); this.assertCurrent(op); },
+      list: async () => { this.assertCurrent(op); op.stage = "drive-list"; const result = await store.list(); this.assertCurrent(op); return result; },
+      read: async id => { this.assertCurrent(op); op.stage = "drive-read"; const result = await store.read(id); this.assertCurrent(op); return result; },
+      write: async file => { this.assertCurrent(op); op.stage = "drive-write"; const result = await store.write(file); this.assertCurrent(op); return result; },
+      remove: async id => { this.assertCurrent(op); op.stage = "drive-delete"; await store.remove(id); this.assertCurrent(op); },
     };
   }
 
@@ -507,7 +536,7 @@ export class DriveBackup {
     if (error instanceof DriveStoreError) {
       retryAfter = error.kind === "throttled" ? error.retryAfterMs : 0;
       lastError = error.kind === "throttled" ? "throttled"
-        : error.kind === "unauthorized" ? "auth" : "offline";
+        : error.kind === "unauthorized" ? "auth" : error.kind === "invalid" ? "provider" : "offline";
     } else if (error instanceof BackupCryptoError) {
       lastError = "integrity";
     } else if (error instanceof BackupDriveError) {

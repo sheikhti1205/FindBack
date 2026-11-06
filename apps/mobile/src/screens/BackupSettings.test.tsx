@@ -54,6 +54,33 @@ function renderScreen() {
 }
 
 describe("the backup settings surface", () => {
+  it("names a Drive rejection without blaming the connection", async () => {
+    mocks.backup.status.mockReturnValue(WAITING);
+    mocks.backup.uploadNow.mockResolvedValue({ kind: "failed", reason: "provider" });
+    renderScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
+    expect((await screen.findByTestId("backup-error")).textContent).toContain("Google Drive rejected");
+    expect(screen.queryByText(/Check your connection/)).toBeNull();
+  });
+
+  it("keeps fixed-label failure details behind a closed diagnostics disclosure", () => {
+    mocks.backup.status.mockReturnValue({ kind: "attention", lastError: "provider", enabled: true,
+      diagnostic: { stage: "drive-list", cause: "invalid" } });
+    renderScreen();
+    const disclosure = screen.getByText("Backup diagnostics").closest("details")!;
+    expect(disclosure).toBeTruthy();
+    expect(disclosure.open).toBe(false);
+    expect(disclosure.textContent).toContain("drive-list / invalid");
+  });
+
+  it("keeps disconnect available as a compact named icon action", () => {
+    mocks.backup.status.mockReturnValue(WAITING);
+    renderScreen();
+    const disconnect = screen.getByRole("button", { name: "Disconnect Google Drive…" });
+    expect(disconnect.querySelector("svg")).toBeTruthy();
+    expect(disconnect.textContent).not.toContain("Disconnect Google Drive");
+  });
+
   it.each(["account", "session"])("drops late restore notices and HEAD work after %s changes", async change => {
     mocks.backup.status.mockReturnValue(UP_TO_DATE);
     let resolve!: (value: unknown) => void;

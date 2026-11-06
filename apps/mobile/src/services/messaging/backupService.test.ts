@@ -97,6 +97,39 @@ function fakeAuth(options: { available?: boolean; reason?: "native" | "unconfigu
   return state;
 }
 
+describe("safe backup failure diagnosis", () => {
+  it("does not mislabel a rejected Drive contract as an offline connection", async () => {
+    const store = memoryStore();
+    store.list = async () => { throw new DriveStoreError("invalid", 0, 403, "api-disabled"); };
+    const h = harness({ store });
+    await expect(h.backup.connect()).resolves.toEqual({ kind: "failed", reason: "provider" });
+    expect(h.backup.status()).toMatchObject({
+      diagnostic: { stage: "drive-list", cause: "invalid", httpStatus: 403, providerReason: "api-disabled" },
+    });
+  });
+
+  it("identifies server-key failure without exposing the RPC message or arguments", async () => {
+    const h = harness({ key: () => { throw new ApiError("PRIVATE_DIAGNOSTIC_SENTINEL", 500); } });
+    await expect(h.backup.connect()).resolves.toEqual({ kind: "failed", reason: "other" });
+    expect(h.backup.status()).toMatchObject({ diagnostic: { stage: "account-key", cause: "server" } });
+    expect(JSON.stringify(h.backup.status())).not.toContain("PRIVATE_DIAGNOSTIC_SENTINEL");
+    expect(JSON.stringify(h.backup.status())).not.toContain(KEY_HEX);
+  });
+
+  it("clears the prior failure diagnosis after a successful pass", async () => {
+    let fail = true;
+    const h = harness({ key: () => {
+      if (fail) throw new ApiError("synthetic", 500);
+      return { accountId: A, generation: GEN, keyHex: KEY_HEX, createdAt: NOW };
+    } });
+    await h.backup.connect();
+    expect(h.backup.status()).toHaveProperty("diagnostic");
+    fail = false;
+    expect((await h.backup.uploadNow()).kind).toBe("committed");
+    expect(h.backup.status()).not.toHaveProperty("diagnostic");
+  });
+});
+
 interface Harness {
   backup: DriveBackup;
   auth: ReturnType<typeof fakeAuth>;

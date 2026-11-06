@@ -8,7 +8,8 @@
 .fb-chat-details-person { display:flex; flex-direction:column; align-items:center; gap:.45rem; padding:1.25rem 0; text-align:center; overflow-wrap:anywhere; }
 .fb-chat-details-person strong { font-size:1rem; }
 .fb-chat-details :is(button,a):focus-visible { outline:2px solid var(--fb-focus); outline-offset:2px; }
-.fb-chat-header { display:flex; align-items:center; gap:.5rem; flex:none; padding:.4rem .6rem; padding-top:max(.4rem, env(safe-area-inset-top)); }
+/* Shell owns viewport insets; Chat only adds the compact header's own padding. */
+.fb-chat-header { display:flex; align-items:center; gap:.5rem; flex:none; padding:.4rem .6rem; }
 .fb-chat-header h1 { font-size:1.05rem; font-weight:650; min-width:0; margin:0; }
 .fb-chat-list-title { flex:1; padding-inline:.35rem; }
 .fb-chat-search { display:flex; align-items:center; gap:.5rem; margin:.5rem .75rem; padding:0 .65rem; border:1px solid var(--fb-outline-variant); border-radius:.6rem; }
