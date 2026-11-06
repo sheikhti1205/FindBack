@@ -103,9 +103,9 @@ jobs:
           set -euo pipefail
           [ '${{ inputs.push_migrations }}' = 'false' ] || { echo 'Do not combine narrow and general migration deployment'; exit 1; }
           supabase link --project-ref "$PROJECT_REF"
-          supabase db push --dry-run 2>&1 | tee "$RUNNER_TEMP/device-migration-plan.txt"
+          supabase db push --remote --skip-vault --dry-run 2>&1 | tee "$RUNNER_TEMP/device-migration-plan.txt"
           node scripts/device-list-deployment.mjs --plan "$RUNNER_TEMP/device-migration-plan.txt"
-          supabase db push --yes
+          supabase db push --remote --skip-vault --yes
           node scripts/device-list-deployment.mjs --verify
       - name: Enable and verify leaked-password protection
         if: inputs.enable_leaked_password_protection
