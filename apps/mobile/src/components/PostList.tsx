@@ -87,6 +87,9 @@ export function PostList({
           : density === "editorial"
             ? "editorial"
             : "classic";
+  // Owner rows are one card each, so a desktop viewport gets real columns
+  // instead of one phone-width strip down the middle. Every arm below stays a
+  // plain literal so `masonryListPaddingRem` can still read this chain.
   const listClass =
     density === "compact"
       ? "flex flex-col gap-2 px-3"
@@ -94,7 +97,8 @@ export function PostList({
         ? "flex flex-col gap-3 px-4"
         : density === "editorial"
           ? "flex flex-col gap-4 px-4"
-          : "flex flex-col gap-3 px-4";
+          : density === "owner-feed" ? "grid gap-3 px-4 md:gap-4" : "flex flex-col gap-3 px-4";
+  const ownerColumns = isOwnerFeed ? Math.max(1, masonryColumns) : 1;
 
   // Wave A: short opacity-only swaps between feed states. The skeleton
   // exits as content enters (and likewise for error/empty), so loading →
@@ -238,7 +242,8 @@ export function PostList({
           exit="exit"
           transition={stateTransition}
         >
-          <div className={listClass}>
+          <div className={listClass}
+            style={ownerColumns > 1 ? { gridTemplateColumns: `repeat(${ownerColumns}, minmax(0, 1fr))` } : undefined}>
             {error && (
               <div className="flex items-center justify-between gap-2 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
                 <span>{error}</span>

@@ -328,6 +328,9 @@ export function SocialFixtures() {
             hasMore={false}
             onLoadMore={noopLoadMore}
             density="owner-feed"
+            // Desktop owner grid (≥1200px in MyPosts). The small-width frame
+            // below is the one-column phone case.
+            masonryColumns={3}
           />
         </FixtureFrame>
         <FixtureFrame section="my-reports" variant="loading">

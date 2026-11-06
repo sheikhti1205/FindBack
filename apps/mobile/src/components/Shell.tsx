@@ -44,7 +44,7 @@ const HIDE_NAV = ["/help", "/posts/", "/ai-connection", "/connections/", "/chats
  * joins this set when it has actually been laid out for wide viewports — no
  * screen ever gets a wide layout nobody designed.
  */
-const WIDE_CANVAS = ["/", "/search", "/chats", "/connections"];
+const WIDE_CANVAS = ["/", "/search", "/chats", "/connections", "/my"];
 
 /** The document never scrolls: routes own the bounded viewport scroller. */
 export function Shell() {

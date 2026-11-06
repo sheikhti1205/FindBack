@@ -21,6 +21,7 @@ import { useReportDeletionFailure } from "../components/ReportDeletionFeedback";
 import { RecoverySheet } from "../components/RecoverySheet";
 import { MatchActivity } from "../components/MatchActivity";
 import { ConfirmDialog } from "../components/AdaptiveTaskSurface";
+import { useViewportWidth } from "../components/responsive";
 
 const MY_CACHE_BASE = "my:reports";
 
@@ -75,6 +76,11 @@ function ownerStatusLabel(status: PostStatus, type: PostType): string {
 
 export function MyPosts() {
   const { user } = useAuth();
+  const viewportWidth = useViewportWidth();
+  // Owner rows are wide cards, so they need more room per column than the
+  // photo masonry does. Compact keeps one column; a desktop viewport gets real
+  // columns instead of one phone-width strip down the middle.
+  const ownerColumns = viewportWidth >= 1200 ? 3 : viewportWidth >= 768 ? 2 : 1;
   const reportDeletionFailure = useReportDeletionFailure();
   const { tapCount } = useTabTap();
   const navigate = useNavigate();
@@ -551,8 +557,8 @@ export function MyPosts() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 py-5">
-      <header className="flex items-center gap-2 px-4">
+    <div className="mx-auto flex h-full w-full max-w-[100rem] flex-col gap-4 py-5 lg:py-8">
+      <header className="flex items-center gap-2 px-4 lg:px-8">
         <BackButton fallbackTo="/profile" label="Back to profile" />
         <div>
           <h1 className="text-xl font-semibold tracking-tight">My reports</h1>
@@ -563,7 +569,7 @@ export function MyPosts() {
       </header>
 
       {actionError && (
-        <p role="alert" className="mx-4 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
+        <p role="alert" className="mx-4 lg:mx-8 rounded-m3-sm border border-error px-3 py-2 text-sm text-error">
           {actionError}
         </p>
       )}
@@ -573,7 +579,7 @@ export function MyPosts() {
           role="group"
           aria-label="Copy link"
           data-testid="my-posts-copy-manual"
-          className="mx-4 flex flex-col gap-1 rounded-m3-sm bg-surface-container-low p-3"
+          className="mx-4 lg:mx-8 flex flex-col gap-1 rounded-m3-sm bg-surface-container-low p-3"
         >
           <label htmlFor="my-reports-copy-link" className="text-xs text-on-surface-variant">
             Report link
@@ -604,7 +610,7 @@ export function MyPosts() {
         </div>
       )}
 
-      <div className="fb-scroll-fade mx-4">
+      <div className="fb-scroll-fade mx-4 lg:mx-8">
         <div
           role="radiogroup"
           aria-label="Filter by status"
@@ -659,6 +665,7 @@ export function MyPosts() {
             emptyTitle="You have no reports yet"
             emptySubtitle="Tap Report to post a lost or found item."
             density="owner-feed"
+            masonryColumns={ownerColumns}
           />
         </PullToRefresh>
       </OwnerReportActionsProvider>
@@ -701,7 +708,7 @@ export function MyPosts() {
         <div
           role="status"
           data-testid="my-posts-delete-undo"
-          className="sticky bottom-3 mx-4 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+          className="sticky bottom-3 mx-4 lg:mx-8 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
         >
           <span className="flex-1">Delete scheduled — Undo for a few seconds</span>
           <button
@@ -718,7 +725,7 @@ export function MyPosts() {
         <div
           role="status"
           data-testid="my-posts-status-undo"
-          className="sticky bottom-3 mx-4 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
+          className="sticky bottom-3 mx-4 lg:mx-8 flex items-center gap-3 rounded-m3-md bg-on-surface px-4 py-3 text-sm text-surface"
         >
           <span className="flex-1">
             Status changed to {ownerStatusLabel(statusUndo.next, statusUndo.type)} — Undo for a few seconds
@@ -734,7 +741,7 @@ export function MyPosts() {
       )}
 
       {notice && !pendingDelete && (
-        <p role="status" data-testid="my-posts-notice" className="mx-4 text-sm text-on-surface-variant">
+        <p role="status" data-testid="my-posts-notice" className="mx-4 lg:mx-8 text-sm text-on-surface-variant">
           {notice}
         </p>
       )}
