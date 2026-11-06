@@ -1,8 +1,8 @@
 import {
-  useCallback, useEffect, useLayoutEffect, useRef, useState,
+  useCallback, useLayoutEffect, useRef, useState,
   type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from "react";
-import { MEDIUM_MAX_PX, useContentWidth, useViewportWidth } from "./responsive";
+import { MEDIUM_MAX_PX, useContentWidth, useViewportWidth, useRootFontPx } from "./responsive";
 import {
   clampPaneWidth, paneStep, readPanePreference, writePanePreference,
   type PaneBounds, type PanePreference,
@@ -23,13 +23,6 @@ const DIVIDER_WIDTH = 7;
 export const DETAIL_PANE_MIN_PX = 320;
 /** The fixed two-column layout's list ceiling, in rem (the CSS column). */
 const FIXED_LIST_MAX_REM = 22;
-
-/** Root font size in px; 16 when the environment does not report one. */
-function rootFontPx(): number {
-  if (typeof getComputedStyle !== "function") return 16;
-  const size = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
-  return Number.isFinite(size) && size > 0 ? size : 16;
-}
 
 /** Retains pane state/drafts while compact layouts expose only one pane.
  * Data, routing and selection remain with the feature owner.
@@ -61,23 +54,7 @@ export function SplitView({ selected, list, detail, pane }: {
   // The list column scales with the reader's text: a user who enlarges text
   // while this screen is open must move this decision too, so re-probe the
   // root font on mutation instead of freezing the mount-time value.
-  const [rootFont, setRootFont] = useState(rootFontPx);
-  useEffect(() => {
-    const sync = () => {
-      const next = rootFontPx();
-      setRootFont((current) => (current === next ? current : next));
-    };
-    sync();
-    const observer = typeof MutationObserver === "function"
-      ? new MutationObserver(sync)
-      : null;
-    observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
-    window.addEventListener("resize", sync);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", sync);
-    };
-  }, []);
+  const rootFont = useRootFontPx();
   const listReserved = pane
     ? Math.max(pane.maxWidth, pane.collapsedWidth)
     : FIXED_LIST_MAX_REM * rootFont;

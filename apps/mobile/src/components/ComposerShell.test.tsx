@@ -46,3 +46,20 @@ it("coarse input keeps Enter as newline while the Send button stays available", 
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(send).toHaveBeenCalledTimes(1);
 });
+
+it("keeps the focused editor through pointer Send without cancelling click or keyboard activation", () => {
+  const { send, input } = renderComposer({ enterSends: false });
+  input.focus();
+  const button = screen.getByRole("button", { name: "Send" });
+  // The native mouse-down default transfers focus before submit; cancelling it
+  // keeps the Android IME attached. Pointer-down itself must not cancel clicks.
+  expect(fireEvent.pointerDown(button, { pointerType: "touch" })).toBe(true);
+  expect(fireEvent.mouseDown(button, { button: 0 })).toBe(false);
+  expect(document.activeElement).toBe(input);
+  fireEvent.click(button);
+  expect(send).toHaveBeenCalledTimes(1);
+  button.focus();
+  expect(fireEvent.mouseDown(button, { button: 0 })).toBe(true);
+  fireEvent.submit(input.closest("form")!);
+  expect(send).toHaveBeenCalledTimes(2);
+});

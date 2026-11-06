@@ -61,7 +61,14 @@ export function ComposerShell({ value, onChange, onSend, inputLabel, placeholder
         }} />
       {inputOverlay}
       </div>
-      <button type="submit" aria-label={sendLabel} data-testid={sendTestId} disabled={!available} className="fb-icon-control fb-composer-send">
+      <button type="submit" aria-label={sendLabel} data-testid={sendTestId} disabled={!available} className="fb-icon-control fb-composer-send"
+        onMouseDown={(event) => {
+          // Android dispatches compatibility mouse events for a tap. Keep the
+          // editor's existing focus before submit; refocusing after an awaited
+          // admission is too late to keep the IME open. Keyboard users still
+          // focus/activate the real button normally.
+          if (event.button === 0 && document.activeElement === input.current) event.preventDefault();
+        }}>
         <SendHorizonal size={20} aria-hidden="true" />
       </button>
     </div>

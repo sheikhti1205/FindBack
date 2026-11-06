@@ -309,8 +309,11 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
     renew: async (signal) => {
       // A silent renewal is only worth trying for a grant the user already
       // made: on the web it would otherwise inject the GIS script for someone
-      // who declined, and on Android it would open a consent sheet.
-      if (disconnected || (!loaded && !read())) return null;
+      // who declined. Native silent renewal never opens a consent sheet.
+      // Android's remembered account/grant belongs to Play services, not the
+      // short-lived WebView token. A cold process must be allowed to ask it
+      // silently; the plugin refuses rather than opening UI if consent is lost.
+      if (disconnected || (!native && !loaded && !read())) return null;
       try {
         return await request(true, generation, signal);
       } catch {
@@ -327,9 +330,9 @@ export function createDriveAuth(options: DriveAuthOptions = {}): DriveAuthorizat
       const durable = clearPersisted();
       // Native revocation is best-effort, and even a synchronous bridge throw
       // cannot interrupt the canonical account teardown. Never log its payload.
-      if (native && transport && last) {
+      if (native && transport) {
         const failed = () => { reportLogToMonitoring("warn", "Drive grant revocation unverified"); };
-        try { void Promise.resolve(transport.revoke({ token: last.token })).catch(failed); }
+        try { void Promise.resolve(transport.revoke({ token: last?.token ?? "" })).catch(failed); }
         catch { failed(); }
       }
       return { durable };

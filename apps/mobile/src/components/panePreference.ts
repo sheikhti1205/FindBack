@@ -29,6 +29,15 @@ export const CHAT_PANE: PaneBounds = {
   collapsedWidth: 64,
 };
 
+/** Independent local habit for the optional right-hand conversation details. */
+export const CHAT_DETAILS_PANE: PaneBounds = {
+  storageKey: "norfold.chat.details.v1",
+  defaultWidth: 280,
+  minWidth: 280,
+  maxWidth: 320,
+  collapsedWidth: 0,
+};
+
 export const DEFAULT_PANE: PanePreference = { width: CHAT_PANE.defaultWidth, collapsed: false };
 
 /** Clamp a dragged/typed width into the pane's allowed range. */

@@ -247,6 +247,25 @@ export function useViewportWidth(): number {
   return width;
 }
 
+/** Live root text size for pane viability, shared by the responsive layouts. */
+export function useRootFontPx(): number {
+  const read = () => {
+    if (typeof getComputedStyle !== "function") return 16;
+    const size = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    return Number.isFinite(size) && size > 0 ? size : 16;
+  };
+  const [size, setSize] = useState(read);
+  useEffect(() => {
+    const sync = () => setSize(read());
+    sync();
+    const observer = typeof MutationObserver === "function" ? new MutationObserver(sync) : null;
+    observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "class"] });
+    window.addEventListener("resize", sync);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", sync); };
+  }, []);
+  return size;
+}
+
 /**
  * Live width of the box an element actually got, in CSS pixels.
  *

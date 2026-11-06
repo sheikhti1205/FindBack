@@ -158,6 +158,59 @@ function deferred<T = void>() {
 }
 
 describe("operation ownership", () => {
+  it("restores older Drive history before committing a reconnect with an incomplete local copy", async () => {
+    const run = harness({ snapshot: snapshotOf(25) });
+    await run.backup.connect();
+    let local = snapshotOf(3);
+    let restoredCount = 0;
+    run.deps.snapshot = async () => local;
+    run.deps.importSnapshot = async (_lease, restored) => { restoredCount = restored.messages.length; local = restored; };
+    run.auth.drop();
+    const outcome = await run.backup.connect();
+    expect(outcome.kind).toBe("committed");
+    expect(restoredCount).toBe(25);
+    expect(local.messages).toHaveLength(25);
+    const recovered = await downloadBackup({ store: run.store, key: await importBackupKey(GEN, KEY_HEX),
+      scope: { accountId: A, deviceId: DEVICE } });
+    expect(recovered.snapshot.messages).toHaveLength(25);
+  });
+
+  it("reuses a valid connection when enabling backup instead of requesting Google again", async () => {
+    const run = harness();
+    await run.backup.connect();
+    expect(run.auth.authorize).not.toHaveBeenCalled();
+    run.backup.disable();
+    await run.backup.connect();
+    expect(run.auth.authorize).not.toHaveBeenCalled();
+  });
+
+  it("tries renewal before telling an enabled cold-start backup to reconnect", async () => {
+    const run = harness(); await run.backup.connect();
+    run.auth.drop();
+    expect(run.backup.status().kind).toBe("waiting");
+    run.advance(BACKUP_MAX_DELAY_MS); run.backup.markDirty();
+    expect((await run.backup.tick()).kind).toBe("needs-connection");
+    expect(run.auth.renew).toHaveBeenCalledTimes(1);
+    expect(run.backup.status().kind).toBe("needs-connection");
+  });
+
+  it("silently renews and restores on a fresh runtime before uploading", async () => {
+    const run = harness({ snapshot: snapshotOf(25) });
+    await run.backup.connect();
+    const access = run.auth.current();
+    let local = snapshotOf(3);
+    run.deps.snapshot = async () => local;
+    run.deps.importSnapshot = async (_lease, restored) => { local = restored; };
+    run.auth.drop();
+    run.auth.renew.mockImplementation(async () => { run.auth.current = () => access; return access; });
+    const reopened = new DriveBackup(run.deps);
+    run.advance(BACKUP_MAX_DELAY_MS);
+    expect((await reopened.tick()).kind).toBe("committed");
+    expect(local.messages).toHaveLength(25);
+    expect(run.auth.renew).toHaveBeenCalledTimes(1);
+    expect(run.auth.authorize).not.toHaveBeenCalled();
+  });
+
   it("preserves the committed backup and asks for repair when the key generation changes", async () => {
     const run = harness(); await run.backup.connect();
     const manifest = (await run.store.list()).find(file => file.name.includes("manifest"))!;
@@ -419,9 +472,9 @@ describe("operation ownership", () => {
     expect(run.store.names()).toEqual([]);
   });
 
-  it("requires current authorization even after a historical successful upload", async () => {
+  it("waits for renewal rather than claiming a historical successful upload is currently connected", async () => {
     const run = harness(); await run.backup.connect(); run.auth.drop();
-    expect(run.backup.status().kind).toBe("needs-connection");
+    expect(run.backup.status().kind).toBe("waiting");
   });
 
   it("does not inherit another account's opt-in policy", async () => {
@@ -465,7 +518,7 @@ describe("when backup may run", () => {
   it("connects, uploads the first pass, and then reports up to date", async () => {
     const { backup, auth, store, storage, deps } = harness();
     await expect(backup.connect()).resolves.toMatchObject({ kind: "committed" });
-    expect(auth.authorize).toHaveBeenCalledTimes(1);
+    expect(auth.authorize).not.toHaveBeenCalled();
     expect(store.names().length).toBe(2);
     expect(parseBackupState(storage.raw()).enabled).toBe(true);
     expect(parseBackupState(storage.raw()).dirtyRevision).toBe(parseBackupState(storage.raw()).uploadedRevision);

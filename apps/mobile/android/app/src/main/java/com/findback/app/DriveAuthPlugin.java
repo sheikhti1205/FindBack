@@ -64,7 +64,9 @@ import java.util.List;
  * prompt resolves {@code consent-required} instead of opening UI in the
  * background.
  */
-@CapacitorPlugin(name = "DriveAuth")
+// Both flows use legacy Activity result codes (including Google's PendingIntent).
+// Capacitor drops their results unless this routing table declares them.
+@CapacitorPlugin(name = "DriveAuth", requestCodes = { 0x4452, 0x4453 })
 public final class DriveAuthPlugin extends Plugin {
 
     private static final String TAG = "DriveAuth";
@@ -180,11 +182,13 @@ public final class DriveAuthPlugin extends Plugin {
             rejectPending("no-account", "Add a Google account and try again.");
             return;
         }
-        try {
-            activity.startActivityForResult(chooser, REQUEST_ACCOUNT);
-        } catch (Exception startError) {
-            rejectPending("unavailable", "Drive backup is not available right now.");
-        }
+        activity.runOnUiThread(() -> {
+            try {
+                activity.startActivityForResult(chooser, REQUEST_ACCOUNT);
+            } catch (Exception startError) {
+                rejectPending("unavailable", "Drive backup is not available right now.");
+            }
+        });
     }
 
     /**

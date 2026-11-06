@@ -11,7 +11,7 @@
 import type { HistorySnapshot } from "./history";
 import {
   downloadBackup, uploadBackup, BackupDriveError, type BackupDriveStore,
-  type BackupManifest,
+  type BackupManifest, isBackupName,
 } from "./backupDrive";
 import { importBackupKey, BackupCryptoError } from "./backupCrypto";
 import { ApiError } from "../session";
@@ -191,6 +191,7 @@ export class DriveBackup {
   private operation: Operation | null = null;
   private operationGeneration = 0;
   private disposed = false;
+  private recoveredLease: string | null = null;
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly storage: Pick<Storage, "getItem" | "setItem"> | null;
@@ -281,8 +282,11 @@ export class DriveBackup {
     if (!state.enabled) return { kind: "off" };
     if (this.uploadVeto.has(lease.accountId)) return { kind: "attention", lastError: "storage" };
     if (state.lastError === "storage") return { kind: "attention", lastError: "storage" };
-    if (!this.deps.auth.current()) return { kind: "needs-connection" };
+    // Expiry is not revoked consent. The scheduled pass first asks the native
+    // grant owner to renew; only a failed renewal earns a reconnect action.
+    if (state.lastError === "auth") return { kind: "needs-connection" };
     if (state.lastError) return { kind: "attention", lastError: state.lastError };
+    if (!this.deps.auth.current()) return { kind: "waiting", nextAttemptAt: state.nextAttemptAt ?? this.now() };
     if (state.lastUploadAt !== null && state.dirtyRevision === state.uploadedRevision) {
       return { kind: "up-to-date", lastUploadAt: state.lastUploadAt };
     }
@@ -402,7 +406,8 @@ export class DriveBackup {
     try {
       this.assertCurrent(op);
       if (op.kind === "connect") {
-        const consent = this.deps.auth.authorize(op.controller.signal);
+        const consent = this.deps.auth.current() ? Promise.resolve()
+          : this.deps.auth.authorize(op.controller.signal);
         // Explicit consent may select a different Drive connection. Adopt only
         // the synchronous generation of this admitted request, never a late
         // generation after disconnect/another connection has revoked it.
@@ -445,6 +450,21 @@ export class DriveBackup {
           generation: material.generation })) throw new BackupPolicyUnavailable();
         return { kind: "restored", manifest: restored.manifest, messages: restored.snapshot.messages.length };
       }
+      const recoveryLease = JSON.stringify([op.lease.accountId, op.lease.deviceId,
+        op.lease.sessionGeneration, op.lease.driveGeneration]);
+      // First pass after opening/reconnecting restores the union BEFORE upload.
+      // Mailbox ACK removes temporary server bodies; Drive may now be the only
+      // recoverable copy. Never replace it with a smaller fresh-install snapshot.
+      if (op.kind === "connect" || this.recoveredLease !== recoveryLease) {
+        const files = await store.list();
+        this.assertCurrent(op);
+        if (files.some(file => isBackupName(file.name, op.lease.accountId) && file.name.includes(".manifest."))) {
+          const restored = await downloadBackup({ store, key, scope: op.lease });
+          this.assertCurrent(op);
+          await this.deps.importSnapshot(op.lease, restored.snapshot);
+          this.assertCurrent(op);
+        }
+      }
       const snapshotRevision = this.state(op.lease.accountId).dirtyRevision;
       const snapshot = await this.deps.snapshot(op.lease);
       this.assertCurrent(op);
@@ -454,6 +474,7 @@ export class DriveBackup {
       if (!this.persist(op.lease.accountId, { uploadedRevision: snapshotRevision,
         lastUploadAt: this.now(), nextAttemptAt: next,
         failures: 0, lastError: null, generation: material.generation })) throw new BackupPolicyUnavailable();
+      this.recoveredLease = recoveryLease;
       return { kind: "committed", lastUploadAt: this.now(), snapshotRevision };
     } catch (error) {
       if (!this.current(op) || error instanceof SupersededBackup) return { kind: "skipped", reason: "superseded" };

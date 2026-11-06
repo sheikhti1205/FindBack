@@ -236,6 +236,20 @@ function nativeTransport(answer: (options: { silent: boolean }) => Promise<Nativ
 const granted = () => Promise.resolve({ accessToken: TOKEN, expiresAt: Date.now() + 3_600_000 });
 
 describe("connecting a Google account on Android", () => {
+  it("renews the OS-owned grant after a cold start with no WebView token", async () => {
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    await expect(auth.renew()).resolves.toMatchObject({ token: TOKEN });
+    expect(native.calls).toEqual([{ silent: true }]);
+  });
+
+  it("clears the remembered native account on disconnect even after token expiry", () => {
+    const native = nativeTransport(granted);
+    const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });
+    auth.forget();
+    expect(native.revoked).toEqual([""]);
+  });
+
   it("connects through the native grant and stores it like the web token", async () => {
     const native = nativeTransport(granted);
     const auth = createDriveAuth({ native: true, transport: native.transport, storage: storage() });

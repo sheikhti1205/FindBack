@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router";
-import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, Info, ListFilter, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
+import { Archive, ArrowLeft, BellOff, Ellipsis, Flag, Images, ListFilter, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings2, ShieldBan, Trash2, UserRound } from "lucide-react";
 import { Capacitor } from "@capacitor/core";
 import type { PostItem } from "@norfold/shared";
 import { copyStaticLocation, isUuid } from "../services/messaging/validation";
@@ -13,6 +13,7 @@ import { StatusChip } from "../components/StatusChip";
 import { formatEventDate, timeAgo } from "../utils/dates";
 import { SplitView, type SplitPaneState } from "../components/SplitView";
 import { CHAT_PANE } from "../components/panePreference";
+import { ChatDetailsLayout } from "../components/ChatDetailsLayout";
 import { ActionMenu } from "../components/ActionMenu";
 import { PeopleSearch } from "../components/PeopleSearch";
 import { PeerChatComposer } from "../components/PeerChatComposer";
@@ -731,7 +732,6 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
         admission.current = null;
       }
     } catch { if (alive.current) setError("Your message could not be saved. Your draft is still here."); }
-    finally { if (alive.current) composer.current?.focus(); }
   }
   const selectedMessage = messages.find((message) => message.id === selectedMessageId);
   const selectedNeedsReview = selectedMessage?.authorId === accountId && !selectedMessage.server
@@ -767,12 +767,35 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     .flatMap(message => { const attachment = media.find(item => item.messageId === message.id); return attachment ? [attachment] : []; }) : [];
   const confirming = sheet === "end" || sheet === "delete" || sheet === "unsend" || sheet === "clear";
   const confirmationTitle = sheet === "end" ? "End connection?" : sheet === "unsend" ? "Unsend message?" : sheet === "clear" ? "Clear chat for me?" : "Delete for me?";
-  return <section className="fb-chat-page" aria-label="Conversation">
+  const conversationInfo = <div className="fb-chat-sheet">
+    {person?.username && <Link className="fb-chat-info-row" to={`/u/${encodeURIComponent(person.username)}`}><UserRound size={20} aria-hidden="true" /><span>View profile</span></Link>}
+    <button type="button" className="fb-chat-info-row" onClick={() => setSheet("search")}><Search size={20} aria-hidden="true" /><span>Search chat</span></button>
+    <button type="button" className="fb-chat-info-row" onClick={() => setSheet("media")}><Images size={20} aria-hidden="true" /><span>Media</span></button>
+    <hr className="fb-chat-info-divider" />
+    {typeof view?.ownMuted === "boolean" ? <PreferenceSwitchRow className="fb-chat-mute" title="Mute notifications" icon={BellOff}
+      checked={view.ownMuted} disabled={busy || chat.status !== "ready" || typeof current?.ownMuted !== "boolean"}
+      onChange={muted => void setMuted(muted)} /> : <p className="fb-chat-secondary">Sync to change chat notifications.</p>}
+    <RetrySync accountId={accountId} labelled />
+    <Link className="fb-chat-info-row" to="/settings/privacy/messages"><Settings2 size={20} aria-hidden="true" /><span>Message settings</span></Link>
+    <hr className="fb-chat-info-divider" />
+    <button type="button" className="fb-chat-info-row" disabled={busy || !current} onClick={() => void relationship(view?.ownHidden ? "unhide" : "hide")}><Archive size={20} aria-hidden="true" /><span>{view?.ownHidden ? "Move to inbox" : view?.mode === "CONNECTED" ? "Archive" : "Hide request"}</span></button>
+    {view?.mode === "CONNECTED" && <button type="button" className="fb-chat-info-row" disabled={busy || !current} onClick={() => setSheet("end")}><LogOut size={20} aria-hidden="true" /><span>End connection</span></button>}
+    <button type="button" className="fb-chat-info-row" disabled={busy || !current || highest === 0 || outbox.length > 0} onClick={() => setSheet("clear")}><Trash2 size={20} aria-hidden="true" /><span>Clear chat for me</span></button>
+    {outbox.length > 0 && <p className="fb-chat-secondary">Wait for messages still sending before clearing this chat.</p>}
+    <hr className="fb-chat-info-divider" />
+    {row && <div className="fb-chat-info-block"><ShieldBan size={20} aria-hidden="true" /><BlockControl userId={row.peerId} name={name || "this account"} blocked={current?.ownBlocked}
+      onChanged={() => { void refreshMessaging(accountId).catch(() => undefined); }} /></div>}
+    {row && <button type="button" className="fb-chat-info-row" onClick={() => { setSheet(null); setReportTarget("account"); }}><Flag size={20} aria-hidden="true" /><span>Report account</span></button>}
+  </div>;
+  return <ChatDetailsLayout details={conversationInfo} onCompactOpen={() => setSheet("actions")}
+    identity={<><UserAvatar username={name || person?.username} avatarUrl={person?.avatarUrl} size={72} />
+      <strong dir="auto">{name || "Conversation"}</strong><span className="fb-chat-secondary">{!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"}</span></>}>
+    {detailsToggle => <section className="fb-chat-page" aria-label="Conversation">
     <header className="fb-chat-header">
       <Link to="/chats" className="fb-chat-icon" aria-label="Back to chats"><ArrowLeft size={22} aria-hidden="true" /></Link>
       <ChatIdentity peerId={row?.peerId} name={name} username={person?.username} avatarUrl={person?.avatarUrl} muted={view?.ownMuted === true}
         status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
-      <button type="button" className="fb-chat-icon" aria-label="Conversation options" onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
+      {detailsToggle}
     </header>
     {/* Owner feedback 2026-11-06: a failed refresh is a status, not a lock.
         The transcript keeps its saved messages and the composer keeps working;
@@ -902,31 +925,13 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
         {selectedMessage?.authorId !== accountId && selectedMessage?.unsentAt === undefined &&
           <button type="button" disabled={busy || !current || !selectedMessage || !row}
             onClick={() => { setSheet(null); setReportTarget("message"); }}>Report message</button>}
-      </div> : <div className="fb-chat-sheet">
-        {person?.username && <Link className="fb-chat-info-row" to={`/u/${encodeURIComponent(person.username)}`}><UserRound size={20} aria-hidden="true" /><span>View profile</span></Link>}
-        <button type="button" className="fb-chat-info-row" onClick={() => setSheet("search")}><Search size={20} aria-hidden="true" /><span>Search chat</span></button>
-        <button type="button" className="fb-chat-info-row" onClick={() => setSheet("media")}><Images size={20} aria-hidden="true" /><span>Media</span></button>
-        <hr className="fb-chat-info-divider" />
-        {typeof view?.ownMuted === "boolean" ? <PreferenceSwitchRow className="fb-chat-mute" title="Mute notifications" icon={BellOff}
-          checked={view.ownMuted} disabled={busy || chat.status !== "ready" || typeof current?.ownMuted !== "boolean"}
-          onChange={muted => void setMuted(muted)} /> : <p className="fb-chat-secondary">Sync to change chat notifications.</p>}
-        <RetrySync accountId={accountId} labelled />
-        <Link className="fb-chat-info-row" to="/settings/privacy/messages"><Settings2 size={20} aria-hidden="true" /><span>Message settings</span></Link>
-        <hr className="fb-chat-info-divider" />
-        <button type="button" className="fb-chat-info-row" disabled={busy || !current} onClick={() => void relationship(view?.ownHidden ? "unhide" : "hide")}><Archive size={20} aria-hidden="true" /><span>{view?.ownHidden ? "Move to inbox" : view?.mode === "CONNECTED" ? "Archive" : "Hide request"}</span></button>
-        {view?.mode === "CONNECTED" && <button type="button" className="fb-chat-info-row" disabled={busy || !current} onClick={() => setSheet("end")}><LogOut size={20} aria-hidden="true" /><span>End connection</span></button>}
-        <button type="button" className="fb-chat-info-row" disabled={busy || !current || highest === 0 || outbox.length > 0} onClick={() => setSheet("clear")}><Trash2 size={20} aria-hidden="true" /><span>Clear chat for me</span></button>
-        {outbox.length > 0 && <p className="fb-chat-secondary">Wait for messages still sending before clearing this chat.</p>}
-        <hr className="fb-chat-info-divider" />
-        {row && <div className="fb-chat-info-block"><ShieldBan size={20} aria-hidden="true" /><BlockControl userId={row.peerId} name={name || "this account"} blocked={current?.ownBlocked}
-          onChanged={() => { void refreshMessaging(accountId).catch(() => undefined); }} /></div>}
-        {row && <button type="button" className="fb-chat-info-row" onClick={() => { setSheet(null); setReportTarget("account"); }}><Flag size={20} aria-hidden="true" /><span>Report account</span></button>}
-      </div>}
+      </div> : conversationInfo}
       {error && <p className="fb-chat-error" role="alert">{error}</p>}
     </AdaptiveTaskSurface>
     <ReportSheet open={reportTarget !== null} target={reportTarget === "account" && row ? { targetType: "USER", targetId: row.peerId }
       : reportTarget === "message" && selectedMessage && selectedMessage.unsentAt === undefined
         ? { targetType: "MESSAGE", targetId: selectedMessage.id, accountId, body: selectedMessage.body } : null}
       onClose={() => setReportTarget(null)} />
-  </section>;
+  </section>}
+  </ChatDetailsLayout>;
 }

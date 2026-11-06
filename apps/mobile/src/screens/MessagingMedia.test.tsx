@@ -38,6 +38,67 @@ beforeEach(() => { vi.stubGlobal("URL", Object.assign(class extends URL {}, { cr
   m.threadRead.mockReset().mockImplementation(async () => ({ messages: m.messages, outbox: m.outbox, media: m.media }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it("collapses desktop conversation details without replacing the transcript or draft", async () => {
+  localStorage.clear();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(960);
+  sentText();
+  await open();
+  const details = screen.getByRole("complementary", { name: "Conversation info" });
+  expect(within(details).getByRole("button", { name: "Search chat" })).toBeTruthy();
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Keep this draft" } });
+  const transcript = screen.getByRole("list", { name: "Messages" });
+  const toggle = screen.getByRole("button", { name: "Hide conversation details" });
+  toggle.focus(); fireEvent.click(toggle);
+  expect(screen.queryByRole("complementary", { name: "Conversation info" })).toBeNull();
+  expect(screen.getByRole("list", { name: "Messages" })).toBe(transcript);
+  expect(field).toHaveProperty("value", "Keep this draft");
+  expect(document.activeElement).toBe(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation details" }));
+  const opened = screen.getByRole("complementary", { name: "Conversation info" });
+  const search = within(opened).getByRole("button", { name: "Search chat" });
+  search.focus(); fireEvent.keyDown(search, { key: "Escape" });
+  expect(screen.queryByRole("complementary")).toBeNull();
+  expect(document.activeElement).toBe(toggle);
+  localStorage.clear();
+});
+
+it("remembers only the desktop details habit and reflows to compact options without losing focus or draft", async () => {
+  localStorage.clear();
+  let width = 960;
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
+  const first = await open();
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation details" }));
+  first.unmount();
+  await open();
+  expect(screen.queryByRole("complementary")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation details" }));
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Preserved through reflow" } });
+  within(screen.getByRole("complementary")).getByRole("button", { name: "Search chat" }).focus();
+  width = 320; fireEvent(window, new Event("resize"));
+  expect(screen.queryByRole("complementary")).toBeNull();
+  const options = screen.getByRole("button", { name: "Conversation options" });
+  expect(document.activeElement).toBe(options);
+  expect(field).toHaveProperty("value", "Preserved through reflow");
+  fireEvent.click(options);
+  expect(within(screen.getByRole("dialog", { name: "Conversation info" })).getByRole("button", { name: "Search chat" })).toBeTruthy();
+  localStorage.clear();
+});
+
+it("uses the compact details sheet when enlarged text makes a third pane unreadable", async () => {
+  localStorage.clear();
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(960);
+  await open();
+  expect(screen.getByRole("complementary")).toBeTruthy();
+  document.documentElement.style.fontSize = "32px";
+  try {
+    await waitFor(() => expect(screen.queryByRole("complementary")).toBeNull());
+    expect(screen.getByRole("button", { name: "Conversation options" })).toBeTruthy();
+  } finally { document.documentElement.style.fontSize = ""; localStorage.clear(); }
+});
+
 async function open() {
   const rendered = render(thread());
   await waitFor(() => expect(screen.queryByText("Opening messages…")).toBeNull());
