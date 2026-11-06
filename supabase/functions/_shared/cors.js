@@ -23,6 +23,13 @@ const ALLOW_HEADERS = [
   "x-supabase-client-platform-version",
   "x-supabase-client-runtime",
   "x-supabase-client-runtime-version",
+  // Sentry browser tracing propagates to the backend host, and W3C
+  // tracecontext may arrive alongside it. Omitting these is not cosmetic:
+  // Chromium fails the preflight and the browser never sends the request.
+  "baggage",
+  "sentry-trace",
+  "traceparent",
+  "tracestate",
 ].join(", ");
 
 export const CHAT_CORS = Object.freeze({

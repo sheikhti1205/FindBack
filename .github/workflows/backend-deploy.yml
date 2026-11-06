@@ -51,6 +51,10 @@ on:
         description: "Deploy the chat-media gateway Edge Function"
         type: boolean
         default: false
+      deploy_device_enroll:
+        description: "Deploy the device-enroll verification Edge Function"
+        type: boolean
+        default: false
       deploy_cleanup_chat_media:
         description: "Deploy the cleanup-chat-media sweeper Edge Function"
         type: boolean
@@ -167,6 +171,25 @@ jobs:
           # service-owned delivery path. Deploy only after the chat media
           # authorization migrations are live.
           supabase functions deploy chat-media --no-verify-jwt --yes
+      - name: Deploy device-enroll
+        if: inputs.deploy_device_enroll
+        run: |
+          set -euo pipefail
+          supabase link --project-ref "$PROJECT_REF"
+          # The function verifies the caller's user JWT itself; a gateway check
+          # would answer before it and drop the browser CORS contract.
+          supabase functions deploy device-enroll --no-verify-jwt --yes
+          # Live proof: a browser preflight that carries the Sentry tracing pair
+          # (the header set that used to block every enrollment POST) must pass.
+          ALLOW=$(curl -sS -o /dev/null -D - -X OPTIONS \
+            "https://${PROJECT_REF}.supabase.co/functions/v1/device-enroll" \
+            -H 'Origin: https://findbackapp.social' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: authorization,content-type,baggage,sentry-trace' \
+            | tr -d '\r' | awk -F': ' 'tolower($1)=="access-control-allow-headers"{print tolower($2)}')
+          echo "allow-headers: $ALLOW"
+          echo "$ALLOW" | grep -q 'baggage' || { echo 'live preflight rejects baggage'; exit 1; }
+          echo "$ALLOW" | grep -q 'sentry-trace' || { echo 'live preflight rejects sentry-trace'; exit 1; }
       - name: Deploy cleanup-chat-media
         if: inputs.deploy_cleanup_chat_media
         run: |

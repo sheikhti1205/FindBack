@@ -2,7 +2,7 @@
 // deno-lint-ignore no-import-prefix
 import { withSupabase, type SupabaseEnv } from "npm:@supabase/server@1.6.0";
 import { completeDeviceEnrollment } from "../_shared/deviceEnrollment.ts";
-import { corsJson, preflight } from "../_shared/cors.js";
+import { corsHeaders, corsJson, preflight } from "../_shared/cors.js";
 
 type Database = { public: { Tables: Record<string, never>; Views: Record<string, never>;
   Functions: {
@@ -56,6 +56,13 @@ export function createDeviceEnrollmentEndpoint(env?: Partial<SupabaseEnv>) {
         return corsJson({ device: result }, 200);
       } catch { return corsJson({ error: "Device proof unavailable" }, 403); }
     });
-    return handler(new Request(request.url, { method: "POST", headers: request.headers, body: text, signal: request.signal }));
+    const response = await handler(new Request(request.url, { method: "POST", headers: request.headers, body: text, signal: request.signal }));
+    // The auth wrapper rejects before our callback, so those responses carry no
+    // browser contract. Without it Chromium reports an opaque network failure
+    // instead of the real 401, which is what hid this class of bug in Chat.
+    if (response.headers.has("access-control-allow-origin")) return response;
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(corsHeaders())) headers.set(name, value);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   };
 }

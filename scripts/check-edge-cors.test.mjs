@@ -19,6 +19,12 @@ const CLIENT_HEADERS = [
   "x-message-id",
 ];
 
+// The production browser bundle initializes Sentry tracing with the Supabase
+// host as a propagation target, so every chat fetch also carries the tracing
+// pair. A preflight that omits them is a hard browser failure, not a warning:
+// Chromium drops the POST and Chat reports that it could not sync.
+const TRACING_HEADERS = ["baggage", "sentry-trace", "traceparent", "tracestate"];
+
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = resolve(dir, entry);
@@ -47,6 +53,25 @@ test("preflight answers OPTIONS with a cached, explicit contract", async () => {
   for (const method of ["GET", "POST", "OPTIONS"]) assert.ok(methods.includes(method), `missing method ${method}`);
   assert.ok(Number(response.headers.get("access-control-max-age")) > 0, "preflight must be cacheable to cut chat latency");
   assert.equal(response.headers.get("cache-control"), "no-store");
+});
+
+test("preflight allows the tracing headers the production browser bundle emits", async () => {
+  for (const path of ["chat-media", "chat-wake", "device-enroll"]) {
+    const response = cors.preflight(new Request(`https://example.test/functions/v1/${path}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://findbackapp.social",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": [...CLIENT_HEADERS, ...TRACING_HEADERS].join(","),
+      },
+    }));
+    assert.equal(response?.status, 204, `${path} must answer the preflight`);
+    const allowed = (response.headers.get("access-control-allow-headers") ?? "")
+      .split(",").map((value) => value.trim().toLowerCase());
+    for (const header of TRACING_HEADERS) {
+      assert.ok(allowed.includes(header), `${path} preflight must allow ${header}`);
+    }
+  }
 });
 
 test("preflight leaves ordinary requests alone", () => {

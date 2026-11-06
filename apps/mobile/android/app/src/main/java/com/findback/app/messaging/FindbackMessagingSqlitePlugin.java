@@ -85,8 +85,9 @@ public class FindbackMessagingSqlitePlugin extends Plugin {
             "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 
     /**
-     * The adapter needs exactly these pragmas. Anything else is refused so a
-     * command cannot weaken durability or read foreign configuration.
+     * The adapter needs these durability settings and read-only schema probes.
+     * Schema inspection is restricted to the adapter's three migration tables;
+     * no other pragma may weaken durability or read foreign configuration.
      */
     private static final Pattern ALLOWED_PRAGMA = Pattern.compile(
             "^pragma\\s+(?:"
@@ -95,6 +96,8 @@ public class FindbackMessagingSqlitePlugin extends Plugin {
                     + "|foreign_keys\\s*=\\s*(?:on|1)"
                     + "|busy_timeout\\s*=\\s*\\d{1,9}"
                     + "|journal_mode|synchronous|foreign_keys"
+                    + "|table_info\\s*\\(\\s*(?:messages|tombstones|outbox)\\s*\\)"
+                    + "|foreign_key_check"
                     + ")$");
 
     /** Refused because they touch files or extensions outside this database. */

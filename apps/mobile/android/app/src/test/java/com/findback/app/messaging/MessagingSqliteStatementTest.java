@@ -167,6 +167,17 @@ public class MessagingSqliteStatementTest {
         rejects("pragma \"synchronous\" = off");
     }
 
+    @Test public void acceptsReadOnlySchemaProbesUsedByTheHistoryAdapter() throws Exception {
+        for (String sql : new String[] {"pragma table_info(tombstones)",
+                "pragma table_info(messages)", "pragma table_info(outbox)", "pragma foreign_key_check"}) {
+            assertEquals(sql, validate(sql));
+        }
+        rejects("pragma table_info(other)");
+        rejects("pragma table_info(messages) = off");
+        rejects("pragma foreign_key_check = off");
+        rejects("pragma main.table_info(messages)");
+    }
+
     @Test public void forbidsOtherFilesAndMultipleStatements() {
         rejects("attach database ? as other");
         rejects("detach database other");
