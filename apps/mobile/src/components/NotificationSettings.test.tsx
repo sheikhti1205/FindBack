@@ -58,6 +58,24 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+it('explains the desktop dependency and prevents misleading enablement while the master is off',async()=>{
+  class BrowserNotification {static permission='granted';static requestPermission=vi.fn();}
+  vi.stubGlobal('Notification',BrowserNotification);
+  try {
+    fetchMock.mockResolvedValue({...allOn(),pushEnabled:false});
+    saveMock.mockResolvedValue();
+    render(<NotificationSettings/>);
+    const desktop=await screen.findByRole('switch',{name:'Desktop alerts'});
+    expect((desktop as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Paused. Turn on Push notifications below to receive desktop alerts.')).toBeTruthy();
+    fireEvent.click(desktop);
+    expect(BrowserNotification.requestPermission).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('switch',{name:'Push notifications'}));
+    await waitFor(()=>expect((desktop as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText('Paused. Turn on Push notifications below to receive desktop alerts.')).toBeNull();
+  } finally {vi.unstubAllGlobals();}
+});
+
 describe("NotificationSettings", () => {
   it.each(["start", "stop", "openSettings"] as const)("invalidates an issued %s action and its late rejection at account switch", async (action) => {
     const pending = deferred<unknown>();

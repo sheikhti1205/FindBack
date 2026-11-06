@@ -93,6 +93,16 @@ function build(
 }
 
 describe("update controller — passive by default", () => {
+  it("can propose Android launch updates by default without overriding an explicit opt-out", async () => {
+    const storage=memoryStorage();
+    const buildAndroid=()=>createUpdateController({source:source({status:"ok",catalogue:catalogue(release()),checkedAt:1000}),installation:async()=>installation(),storage,defaultPopupEnabled:true});
+    const first=buildAndroid();
+    await first.refreshInstalled();await first.check(true);
+    expect(first.getSnapshot().pending?.id).toBe("v0.15.0-beta.1");
+    first.setPopupEnabled(false);
+    const second=buildAndroid();await second.refreshInstalled();await second.check(true);
+    expect(second.getSnapshot().pending).toBeNull();
+  });
   it("keeps the same snapshot identity until the store changes", () => {
     const { controller } = build();
     const initial = controller.getSnapshot();
@@ -103,6 +113,13 @@ describe("update controller — passive by default", () => {
     const changed = controller.getSnapshot();
     expect(changed).not.toBe(initial);
     expect(controller.getSnapshot()).toBe(changed);
+  });
+  it("forwards a forced check to the catalogue source", async () => {
+    const { controller, catalogueSource } = build();
+    await controller.check(true);
+    expect(catalogueSource.check).toHaveBeenCalledWith(true);
+    await controller.check();
+    expect(catalogueSource.check).toHaveBeenLastCalledWith(false);
   });
   it("never prompts unless the reader opted in", async () => {
     const { controller } = build();

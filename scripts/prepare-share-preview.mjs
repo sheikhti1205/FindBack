@@ -12,8 +12,10 @@ export async function prepareSharePreview(out,env=process.env){
  const config={url:env.VITE_SUPABASE_URL?.trim(),key:env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim(),origin:env.VITE_PUBLIC_SHARE_ORIGIN?.trim(),
   css:`:root{${roles('light')}}@media (prefers-color-scheme: dark){:root{${roles('dark')}}}`};
  if(!validConfig(config))throw new Error('Share renderer requires valid non-empty public configuration');
- await mkdir(resolve(out,'share'),{recursive:true});
- for(const file of ['host.json','package.json','handler.cjs','share/function.json','share/index.cjs'])await cp(resolve(root,'apps/share-preview',file),resolve(out,file));
+  await mkdir(resolve(out,'share'),{recursive:true});
+  await mkdir(resolve(out,'android-updates'),{recursive:true});
+  for(const file of ['host.json','package.json','handler.cjs','share/function.json','share/index.cjs'])await cp(resolve(root,'apps/share-preview',file),resolve(out,file));
+  for(const file of ['function.json','index.cjs'])await cp(resolve(root,'apps/share-preview/android-updates',file),resolve(out,'android-updates',file));
  await writeFile(resolve(out,'public-config.json'),JSON.stringify(config));
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){

@@ -51,21 +51,41 @@ it("leases active thread catch-up without restarting it on snapshot refresh and 
   expect(m.watch).toHaveBeenCalledTimes(1);
   rendered.unmount(); expect(detach).toHaveBeenCalledTimes(1);
 });
-it("keeps cached messages and a draft while a large gap locks interaction, then restores the same composer", async () => {
+it("saves a new message without waiting for a failed thread refresh", async () => {
+  sentText(); const rendered = await open();
+  m.chat.threadSync = { conversationId: "chat", mode: "error", missing: null };
+  m.chat.status = "offline"; m.chat.currentProjections = null as unknown as typeof m.chat.currentProjections;
+  rendered.rerender(thread());
+  const field = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(field, { target: { value: "Continue offline" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(m.text).toHaveBeenCalledWith("account", "chat", "peer", "Continue offline", undefined));
+  await waitFor(() => expect(field).toHaveProperty("value", ""));
+});
+
+it("keeps saved messages and the draft usable while a large gap fills in", async () => {
   sentText(); const rendered = await open();
   const field = screen.getByRole("textbox", { name: "Message" });
   fireEvent.change(field, { target: { value: "Keep this draft" } });
   m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 11 }; rendered.rerender(thread());
-  expect(screen.getByText("Updating this conversation…")).toBeTruthy();
-  expect(screen.getByText("Already read")).toBeTruthy(); expect(field).toHaveProperty("readOnly", true);
-  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", true);
-  expect(screen.getByRole("button", { name: "Conversation options" })).toHaveProperty("disabled", true);
+  // Owner feedback 2026-11-06: a gap is a status, never a lock. The reader keeps
+  // the saved transcript, the draft and the ability to continue.
+  expect(screen.getByText("Showing your saved messages.")).toBeTruthy();
+  expect(screen.getByText("Already read")).toBeTruthy();
+  expect(field).toHaveProperty("readOnly", false);
+  expect(screen.getByRole("button", { name: "Send message" })).toHaveProperty("disabled", false);
+  expect(screen.getByRole("button", { name: "Conversation options" })).toHaveProperty("disabled", false);
   expect(screen.getByRole("link", { name: "Back to chats" })).toBeTruthy();
-  fireEvent.keyDown(field, { key: "Enter" }); expect(m.text).not.toHaveBeenCalled();
+  expect(document.querySelector(".fb-chat-messages")?.hasAttribute("inert")).toBe(false);
+  // Enter is a newline by design; continuing means an enabled send control.
+  fireEvent.change(field, { target: { value: "Keep this draft and more" } });
+  expect(field).toHaveProperty("value", "Keep this draft and more");
+  fireEvent.change(field, { target: { value: "Keep this draft" } });
+  expect(m.text).not.toHaveBeenCalled();
   m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0 }; rendered.rerender(thread());
   expect(screen.getByRole("textbox", { name: "Message" })).toBe(field);
   expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Keep this draft");
-  expect(screen.queryByText("Updating this conversation…")).toBeNull();
+  expect(screen.queryByText("Showing your saved messages.")).toBeNull();
 });
 it("silently leaves a small harmless gap usable and offers a safe retry only after catch-up fails", async () => {
   m.chat.threadSync = { conversationId: "chat", mode: "soft", missing: 10 };
@@ -73,23 +93,24 @@ it("silently leaves a small harmless gap usable and offers a safe retry only aft
   expect(field).toHaveProperty("readOnly", false); expect(screen.queryByText("Updating this conversation…")).toBeNull();
   fireEvent.change(field, { target: { value: "Still here" } });
   m.chat.threadSync = { conversationId: "chat", mode: "error", missing: null }; rendered.rerender(thread());
-  expect(screen.getByText("Couldn’t update this conversation.")).toBeTruthy();
-  expect(field).toHaveProperty("readOnly", true); expect(field).toHaveProperty("value", "Still here");
+  expect(screen.getByText("Showing your saved messages.")).toBeTruthy();
+  expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Still here");
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(m.refresh).toHaveBeenCalledWith("account");
 });
-it("does not unlock an older rendered body before the reconciled local transcript has loaded", async () => {
+it("keeps the rendered transcript visible while the reconciled copy is read", async () => {
   sentText(); const rendered = await open();
   m.chat.threadSync = { conversationId: "chat", mode: "blocking", missing: 1 }; rendered.rerender(thread());
   let finish!: (value: { messages: unknown[]; outbox: unknown[]; media: unknown[] }) => void;
   m.threadRead.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   m.chat.revision = 2; m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0, appliedRevision: 2 };
   rendered.rerender(thread());
-  expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("readOnly", true);
-  expect(document.querySelector(".fb-chat-messages")?.hasAttribute("inert")).toBe(true);
+  // The already-rendered body stays readable instead of blanking behind a lock.
+  expect(screen.getByText("Already read")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("readOnly", false);
+  expect(document.querySelector(".fb-chat-messages")?.hasAttribute("inert")).toBe(false);
   await act(async () => { finish({ messages: [], outbox: [], media: [] }); });
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Message" })).toHaveProperty("readOnly", false));
-  expect(screen.queryByText("Already read")).toBeNull();
+  await waitFor(() => expect(screen.queryByText("Already read")).toBeNull());
 });
 it("offers retry when a reconciled transcript cannot be read instead of remaining stuck updating", async () => {
   sentText(); const rendered = await open();
@@ -99,13 +120,13 @@ it("offers retry when a reconciled transcript cannot be read instead of remainin
   m.chat.revision = 2; m.chat.threadSync = { conversationId: "chat", mode: "ready", missing: 0, appliedRevision: 2 };
   rendered.rerender(thread());
   await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy());
-  expect(field).toHaveProperty("readOnly", true); expect(field).toHaveProperty("value", "Preserve my draft");
+  // A failed local read is recoverable without taking the draft or the history.
+  expect(field).toHaveProperty("readOnly", false); expect(field).toHaveProperty("value", "Preserve my draft");
   expect(screen.getByText("Already read")).toBeTruthy();
   m.threadRead.mockResolvedValue({ messages: [], outbox: [], media: [] });
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   expect(m.refresh).toHaveBeenCalledWith("account");
-  await waitFor(() => expect(field).toHaveProperty("readOnly", false));
-  expect(screen.queryByText("Already read")).toBeNull();
+  await waitFor(() => expect(screen.queryByText("Already read")).toBeNull());
 });
 
 it("keeps the composer usable and preserves newer typing while a text is still being admitted", async () => {
@@ -557,7 +578,7 @@ it("keeps a refused explicit retry failed and explains the failure without dupli
   await open();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Could not retry. Try syncing again.")).toBeTruthy();
-  expect(screen.getByText("Failed —")).toBeTruthy();
+  expect(screen.getByText("Message saved")).toBeTruthy();
   expect(screen.getByText("Caption")).toBeTruthy();
   expect(m.retry).toHaveBeenCalledTimes(1);
   expect(m.send).not.toHaveBeenCalled();

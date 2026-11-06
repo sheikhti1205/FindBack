@@ -354,6 +354,33 @@ describe("bounded catalogue source", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("fetches on a forced check even inside the minimum interval", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(catalogue(release())));
+    const source = createCatalogueSource({
+      url: CATALOGUE_URL,
+      fetchImpl,
+      cache: memoryCache({ checkedAt: 900, catalogue: catalogue(release()) }),
+      now: () => 1_000,
+      minIntervalMs: 60_000,
+    });
+    const forced = await source.check(true);
+    expect(forced.status).toBe("ok");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the failure backoff even when the check is forced", async () => {
+    const fetchImpl = vi.fn(async () => { throw new TypeError("network down"); });
+    const source = createCatalogueSource({
+      url: CATALOGUE_URL,
+      fetchImpl,
+      now: () => 1_000,
+      backoffBaseMs: 30_000,
+    });
+    expect((await source.check(true)).status).toBe("error");
+    expect(await source.check(true)).toMatchObject({ status: "error", code: "backoff" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a corrupted cache instead of trusting it", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(catalogue(release())));
     const source = createCatalogueSource({

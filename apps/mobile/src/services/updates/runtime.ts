@@ -21,8 +21,12 @@ import bundledCatalogue from "../../../public/updates/catalogue.v1.json";
 import type { Installation } from "./types";
 
 /**
- * Public metadata, deployed from this checkout. The bundled copy preserves
- * history offline but never counts as a successful remote check.
+ * Public metadata for the newest Android build.
+ *
+ * Owner order 2026-11-06: every push to main publishes an installable APK and
+ * the catalogue that offers it. The same-origin read-only endpoint proxies
+ * that rolling release so browser CORS and site-deployment timing cannot strand
+ * updates. The bundled copy preserves offline history only.
  */
 export const UPDATE_CATALOGUE_URL =
   "https://findbackapp.social/updates/catalogue.v1.json";
@@ -85,6 +89,7 @@ export function updateController(): UpdateController {
     }),
     installation: readInstalledIdentity,
     initialIdle: false,
+    defaultPopupEnabled: Capacitor.isNativePlatform(),
   });
   return singleton;
 }
@@ -109,9 +114,13 @@ function getUpdateSnapshot(): UpdateSnapshot {
   return updateController().getSnapshot();
 }
 
-/** Run a check and keep the observable state in sync. */
-export async function checkForUpdates(): Promise<UpdateSnapshot> {
-  return updateController().check();
+/**
+ * Run a check and keep the observable state in sync. The launch check passes
+ * `true` so a build published since the last background check is offered
+ * immediately instead of after the interval.
+ */
+export async function checkForUpdates(force = false): Promise<UpdateSnapshot> {
+  return updateController().check(force);
 }
 
 export async function refreshInstalledUpdates(): Promise<UpdateSnapshot> {

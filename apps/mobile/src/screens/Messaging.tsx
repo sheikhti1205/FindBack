@@ -366,8 +366,17 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
     if (runtimeOpen) return watchMessagingThread(accountId, conversationId);
   }, [runtimeOpen, accountId, conversationId]);
   const threadSync = chat.threadSync?.conversationId === conversationId ? chat.threadSync : null;
-  const threadBlocked = threadReadFailed || !threadSync || (threadSync.mode !== "ready" && threadSync.mode !== "soft")
-    || (threadSync.appliedRevision !== undefined && renderedRevision < threadSync.appliedRevision);
+  const threadReconciled = !!threadSync && (threadSync.mode === "ready" || threadSync.mode === "soft")
+    && (threadSync.appliedRevision === undefined || renderedRevision >= threadSync.appliedRevision);
+  // Owner feedback 2026-11-06: a failed refresh must never stop the reader.
+  // `threadLive` gates server authority (mark-read, receipts, media upload);
+  // the screen itself stays readable and writable from durable local state.
+  const threadLive = threadReconciled && !threadReadFailed;
+  const threadOffline = threadReadFailed || !threadSync || threadSync.mode === "error" || threadSync.mode === "blocking";
+  const threadSyncing = !threadOffline && !threadLive;
+  // Kept for the server-side effects below, which must not act on authority the
+  // client does not currently hold.
+  const threadBlocked = !threadLive;
   const row = chat.conversations.find((entry) => entry.conversationId === conversationId);
   const current = chat.currentProjections?.[conversationId];
   const view = current ?? row?.cachedProjection;
@@ -375,6 +384,11 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const labels = useLabels(row ? [row.peerId] : []);
   const name = row ? labels.get(row.peerId) : undefined;
   const [messages, setMessages] = useState<StoredHumanMessage[]>([]);
+  // Owner feedback 2026-11-06: a failed sync retries on its own, quietly, with
+  // backoff. The counter survives the "checking" phase so a dead server is not
+  // hammered every few seconds; success resets it below.
+  const syncFailureCount = useRef(0);
+  useEffect(() => { if (threadLive) syncFailureCount.current = 0; }, [threadLive]);
   const [outbox, setOutbox] = useState<OutboxEntry[]>([]);
   const [media, setMedia] = useState<MediaAttachment[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -416,15 +430,28 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sheet, setSheet] = useState<"actions" | "search" | "media" | "location" | "end" | "message" | "delete" | "unsend" | "clear" | "review" | null>(null);
-  useLayoutEffect(() => {
-    if (threadBlocked) { setSheet(null); setViewer(null); }
-  }, [threadBlocked]);
   useLayoutEffect(() => { if (!locationAllowed) setSheet(previous => previous === "location" ? null : previous); }, [locationAllowed]);
   const [messageQuery, setMessageQuery] = useState("");
   const [jumpTo, setJumpTo] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [reportTarget, setReportTarget] = useState<"account" | "message" | null>(null);
   const [visible, setVisible] = useState(() => document.visibilityState === "visible");
+  useEffect(() => {
+    if (!threadOffline || !runtimeOpen || !visible) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => {
+        syncFailureCount.current++;
+        setThreadReadRetry(value => value + 1);
+        void refreshMessaging(accountId).catch(() => undefined).finally(() => {
+          if (!cancelled) schedule();
+        });
+      }, Math.min(30_000, 3_000 * 2 ** Math.min(syncFailureCount.current, 4)));
+    };
+    schedule();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [threadOffline, runtimeOpen, accountId, visible]);
   // Projection object identity changes on harmless refresh. Receipt knowledge is
   // monotonic only within this semantic authority AND the server receipt context.
   const receiptAuthority = current ? JSON.stringify([accountId, conversationId, current.peerId,
@@ -696,7 +723,7 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
    * authority/destructive actions take `busy`.
    */
   async function send() {
-    if (threadBlocked || !row || (!photo && !draft.trim())) return;
+    if (!runtimeOpen || !row || (!photo && !draft.trim())) return;
     if (photo && (!photo.prepared || view?.mode !== "CONNECTED" || view.ownBlocked)) return;
     const body = draft, sendingPhoto = photo, sendingRevision = draftRevision.current;
     setError(null);
@@ -758,19 +785,22 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
       <Link to="/chats" className="fb-chat-icon" aria-label="Back to chats"><ArrowLeft size={22} aria-hidden="true" /></Link>
       <ChatIdentity peerId={row?.peerId} name={name} muted={view?.ownMuted === true}
         status={!current ? "Saved chat" : current.mode === "CONNECTED" ? "Connected" : "Message request"} />
-      <button type="button" className="fb-chat-icon" aria-label="Conversation options" disabled={threadBlocked} onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
+      <button type="button" className="fb-chat-icon" aria-label="Conversation options" onClick={() => setSheet("actions")}><Info size={21} aria-hidden="true" /></button>
     </header>
-    {threadBlocked && <div className="fb-chat-catchup">
+    {/* Owner feedback 2026-11-06: a failed refresh is a status, not a lock.
+        The transcript keeps its saved messages and the composer keeps working;
+        the runtime retries on its own and this row is the only signal. */}
+    {(threadOffline || threadSyncing) && <div className="fb-chat-catchup">
       <RefreshCw size={18} aria-hidden="true" />
-      <div role="status"><strong>{threadReadFailed || threadSync?.mode === "error" ? "Couldn’t update this conversation." : "Updating this conversation…"}</strong>
-        <p>{threadReadFailed || threadSync?.mode === "error" ? "Your saved messages and draft are still here. Try again before continuing."
-          : "We’re getting the latest changes before you continue."}</p></div>
-      {(threadReadFailed || threadSync?.mode === "error") && <button type="button" onClick={() => {
+      <div role="status"><strong>{threadOffline ? "Showing your saved messages." : "Updating this conversation…"}</strong>
+        <p>{threadOffline ? "The latest changes couldn’t load. You can keep reading and writing; sending resumes automatically."
+          : "Getting the latest changes in the background."}</p></div>
+      {threadOffline && <button type="button" onClick={() => {
         setThreadReadRetry(value => value + 1); void refreshMessaging(accountId).catch(() => undefined);
       }}>Try again</button>}
     </div>}
-    <div className="fb-chat-messages" ref={scroll} inert={threadBlocked || undefined}>
-      <p className="fb-chat-sync" role="status">{chat.error ?? (chat.status === "offline" ? "You’re offline. Messages will send when you reconnect." : "")}</p>
+    <div className="fb-chat-messages" ref={scroll}>
+      <p className="fb-chat-sync" role="status">{chat.status === "offline" ? "Messages are saved here and will send when you reconnect." : ""}</p>
       {!loaded && <p role="status" className="fb-chat-secondary">Opening messages…</p>}
       {loaded && messages.length === 0 && <p className="fb-chat-empty">{view?.request === "INCOMING" ? "A new message request."
         : "Say hello and explain why you’d like to connect."}</p>}
@@ -796,9 +826,9 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
             {message.contextReportId && <ChatReportContext reportId={message.contextReportId} safetyKey={view?.ownBlocked ? "blocked" : "clear"} />}
             {message.location && <ChatLocation location={message.location} />}
             {message.body ? <p dir="auto">{message.body}</p> : !attachment && message.messageType !== "LOCATION" && <p>{message.messageType === "MEDIA" ? "Photo loading…" : "Message unavailable"}</p>}
-            {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Failed — " : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
+            {own && <span className="fb-chat-message-status">{pending?.status === "NEEDS_REVIEW" ? "Needs review — " : message.messageType === "MEDIA" && !attachment ? "Photo pending" : attachment && !["READY", "EVICTED"].includes(attachment.state) ? (attachment.state === "FAILED" ? "Photo saved" : "Sending…") : message.server ? (visible && chat.status === "ready" && current?.mode === "CONNECTED" && !current.ownBlocked
               && message.unsentAt === undefined && receipt?.authority === receiptAuthority && receipt.readIds.has(message.id) ? "Read"
-              : receipt?.readIds.has(message.id) && (!visible || chat.status !== "ready" || !current) ? "" : "Sent") : pending?.status === "FAILED" ? "Failed — " : "Sending…"}
+              : receipt?.readIds.has(message.id) && (!visible || chat.status !== "ready" || !current) ? "" : "Sent") : pending?.status === "FAILED" ? "Message saved" : "Sending…"}
               {(attachment?.state === "FAILED" || (!message.server && pending?.status === "FAILED")) && pending?.status !== "NEEDS_REVIEW" && <button type="button" onClick={() => {
               // A refused send keeps its original boundary; re-flushing it can only
               // fail again. The message-level retry rebinds that boundary because a
@@ -842,7 +872,8 @@ function ThreadSession({ accountId, conversationId }: { accountId: string; conve
           if (source && Capacitor.getPlatform() !== "android") void preparePhoto(source);
         }} />}
       <PeerChatComposer value={draft} onChange={value => { draftRevision.current++; setDraft(value); }} onSend={() => void send()} inputRef={composer}
-         busy={false} locked={threadBlocked || !!admission.current} canSend={!threadBlocked && (photo ? photoAllowed && !!photo.prepared : !!draft.trim())}
+         busy={false} locked={!runtimeOpen || !!admission.current}
+         canSend={runtimeOpen && (photo ? photoAllowed && !!photo.prepared : !!draft.trim())}
         photoAllowed={view?.mode === "CONNECTED"} onPhoto={() => void choosePhoto()}
         locationAllowed={locationAllowed} onLocation={() => setSheet("location")} />
     </>}

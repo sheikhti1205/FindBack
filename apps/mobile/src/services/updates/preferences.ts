@@ -56,8 +56,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Only an explicit `true` enables popups; everything else is the default. */
-export function loadUpdatePreferences(storage?: UpdateStorage): UpdatePreferences {
+export function loadUpdatePreferences(storage?: UpdateStorage, defaultEnabled = false): UpdatePreferences {
   const raw = readJson(storageOrNull(storage), UPDATE_PREFS_STORAGE_KEY);
+  if (raw === null) {
+    // Only an absent preference uses the Android launch default. Corrupted or
+    // unreadable saved preferences must not silently override an opt-out.
+    try {
+      return { popupEnabled: storageOrNull(storage)?.getItem(UPDATE_PREFS_STORAGE_KEY) === null && defaultEnabled };
+    } catch { return DEFAULT_UPDATE_PREFERENCES; }
+  }
   if (!isRecord(raw)) return DEFAULT_UPDATE_PREFERENCES;
   return { popupEnabled: raw.popupEnabled === true };
 }

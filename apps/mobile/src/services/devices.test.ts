@@ -79,13 +79,19 @@ describe("the account's signed-in devices", () => {
     expect(Object.keys(device!).sort()).toEqual(["current", "deviceId", "lastSeenAt", "name", "platform"]);
   });
 
-  it("tells a removed installation why its list is refused instead of offering a retry", async () => {
+  it("never claims this installation was removed when the list is refused", async () => {
     clientMock.rpc.mockResolvedValue({ data: null, error: { code: "42501", message: "revoked" } });
     const error = await listDevices().catch((err: unknown) => err as ApiError);
     expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).status).toBe(403);
-    expect((error as ApiError).message)
-      .toBe("This device was removed from your account. Sign in again to use Chat.");
+    expect((error as ApiError).message).toBe("Devices could not load. Try again.");
+    expect((error as ApiError).message).not.toMatch(/removed|sign in again/i);
+  });
+
+  it("asks for a fresh sign-in only when the account itself is unavailable", async () => {
+    clientMock.rpc.mockResolvedValue({ data: null, error: { code: "28000", message: "no account" } });
+    const error = await listDevices().catch((err: unknown) => err as ApiError);
+    expect((error as ApiError).status).toBe(401);
+    expect((error as ApiError).message).toBe("Sign in again to see your devices.");
   });
 
   it("maps server refusals to human device errors", async () => {

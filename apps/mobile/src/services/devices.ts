@@ -73,11 +73,11 @@ function parseDevice(input: unknown): SignedInDevice | null {
 export async function listDevices(): Promise<SignedInDevice[]> {
   const { data, error } = await getSupabase().rpc("findback_devices", { p_action: "LIST", p_args: {} });
   if (error) {
-    // 42501 here is not "retry": this installation's Chat session is gone
-    // (removed from the account, or its sign-in ended), so it must be told the
-    // reason instead of being offered a retry that can never succeed.
-    throw deviceError(error.code === "42501"
-      ? "This device was removed from your account. Sign in again to use Chat."
+    // Listing is account authority: this must work even when the current
+    // installation is not enrolled for Chat, so a refusal is ordinary server
+    // trouble — never "you were removed, sign in again".
+    throw deviceError(error.code === "28000"
+      ? "Sign in again to see your devices."
       : "Devices could not load. Try again.", error.code);
   }
   if (!Array.isArray(data) || data.length > MAX_DEVICES) throw unavailable();

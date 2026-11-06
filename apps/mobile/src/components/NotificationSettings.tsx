@@ -12,6 +12,14 @@ import { pushController } from "../services/pushRuntime";
 import type { PushPermissionState } from "../services/pushNotifications";
 import { friendlyError } from "../utils/friendlyErrors";
 import { announce } from "./LiveRegion";
+import {
+  desktopNotificationPermission,
+  desktopNotificationsEnabled,
+  desktopNotificationsSupported,
+  requestDesktopNotifications,
+  setDesktopNotificationsEnabled,
+  type DesktopNotificationPermission,
+} from "../services/desktopNotifications";
 
 interface ToggleDef {
   key: keyof NotificationPreferences;
@@ -62,6 +70,7 @@ interface SettingsLifetime { active: boolean }
 
 /** Account-keyed UI lifetime only; auth/session ownership stays in useAuth. */
 function AccountNotificationSettings() {
+  const { user } = useAuth();
   const lifetime = useRef<SettingsLifetime>({ active: false });
   useLayoutEffect(() => {
     const owner = { active: true };
@@ -79,6 +88,15 @@ function AccountNotificationSettings() {
    * unknown — the screen must not claim either state.
    */
   const [deviceRegistered, setDeviceRegistered] = useState<boolean | null>(null);
+  /**
+   * Desktop (browser) notifications are a separate capability from phone push:
+   * the tab can raise an OS alert, but there is no server push behind it.
+   */
+  const desktopSupported = desktopNotificationsSupported();
+  const [desktopPermission, setDesktopPermission] = useState<DesktopNotificationPermission>(
+    () => desktopNotificationPermission(),
+  );
+  const [desktopOn, setDesktopOn] = useState(false);
 
   useEffect(() => {
     const owner = lifetime.current;
@@ -102,6 +120,57 @@ function AccountNotificationSettings() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const owner = lifetime.current;
+    if (!owner.active || !desktopSupported || !user) return;
+    setDesktopOn(desktopNotificationsEnabled(user.id));
+    setDesktopPermission(desktopNotificationPermission());
+    // The browser can revoke the permission while the tab is in the background.
+    const sync = () => {
+      if (!owner.active) return;
+      setDesktopPermission(desktopNotificationPermission());
+      setDesktopOn(desktopNotificationsEnabled(user.id));
+    };
+    const onVisibility = () => { if (document.visibilityState === "visible") sync(); };
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [desktopSupported, user]);
+
+  const enableDesktopNotifications = useCallback(async () => {
+    const owner = lifetime.current;
+    if (!owner.active || !user || !prefs?.pushEnabled) return;
+    setBusy(true);
+    try {
+      const state = await requestDesktopNotifications();
+      if (!owner.active) return;
+      setDesktopPermission(state);
+      if (state === "granted") {
+        setDesktopNotificationsEnabled(user.id, true);
+        setDesktopOn(desktopNotificationsEnabled(user.id));
+        announce("Desktop notifications are on for this browser.");
+      } else if (state === "denied") {
+        setDesktopOn(false);
+        announce("This browser is blocking notifications.");
+      } else {
+        setDesktopOn(false);
+      }
+    } finally {
+      if (owner.active) setBusy(false);
+    }
+  }, [user, prefs?.pushEnabled]);
+
+  const disableDesktopNotifications = useCallback(() => {
+    const owner = lifetime.current;
+    if (!owner.active || !user) return;
+    setDesktopNotificationsEnabled(user.id, false);
+    setDesktopOn(false);
+    announce("Desktop notifications are off for this browser.");
+  }, [user]);
 
   const enableDeviceNotifications = useCallback(async () => {
     const owner = lifetime.current;
@@ -281,9 +350,21 @@ function AccountNotificationSettings() {
           )}
         </section>
       ) : null}
+      {desktopSupported ? (
+        <SettingsGroup title="This browser" description="Desktop alerts work while Norfold is open in a background tab.">
+          <PreferenceSwitchRow title="Desktop alerts" icon={BellRing} iconTone="notifications"
+            description={desktopPermission === "denied"
+              ? "Blocked by your browser. Allow notifications in this site's settings."
+              : pushOff ? "Paused. Turn on Push notifications below to receive desktop alerts."
+              : "Show a system alert for new activity."}
+            checked={desktopPermission === "granted" && desktopOn}
+            disabled={busy || pushOff || desktopPermission === "denied"}
+            onChange={enabled => { if (enabled) void enableDesktopNotifications(); else disableDesktopNotifications(); }} />
+        </SettingsGroup>
+      ) : null}
       <SettingsGroup
         title="Push notifications"
-        description="Master switch. Turning it off pauses every category below."
+        description="Master switch. Turning it off pauses desktop alerts and every category below."
       >
         {renderToggle(MASTER_TOGGLE, false)}
       </SettingsGroup>

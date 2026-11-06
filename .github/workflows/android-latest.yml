@@ -1,0 +1,222 @@
+# Norfold — the always-current Android build.
+#
+# Owner order 2026-11-06: every push to main must produce an installable APK and
+# offer it in-app on launch. This is deliberately NOT the signed release path
+# (release.yml stays tag-only and owner-gated): this workflow builds the same
+# signed release APKs, verifies every variant, and publishes them plus a fresh
+# catalogue to ONE rolling pre-release tag.
+#
+#   catalogue: https://findbackapp.social/updates/catalogue.v1.json
+#   artifacts: https://github.com/sheikhti1205/Norfold/releases/download/android-latest/Norfold-<sha12>-<abi>.apk
+#
+# The app reads that catalogue at launch (services/updates/runtime.ts), verifies
+# sha256 + package + signing channel, and lets Android's installer enforce the
+# signing identity. versionCode is 100000 + commit count, so every commit is
+# strictly newer than the build before it.
+#
+# Version policy unchanged: versionName stays what apps/mobile/package.json
+# declares; nothing here bumps a version or creates a normal release.
+
+name: Android latest
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+# One publisher at a time, never cancelled mid-upload: a half-replaced release
+# would leave a catalogue pointing at missing bytes.
+concurrency:
+  group: android-latest
+  cancel-in-progress: false
+  # Keep successful pushes waiting rather than replacing the previous pending
+  # build. GitHub permits up to 100 pending runs in this queue.
+  queue: max
+
+env:
+  VITE_PUBLIC_SHARE_ORIGIN: ${{ vars.VITE_PUBLIC_SHARE_ORIGIN }}
+  VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+  VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+  VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+  VITE_SENTRY_ENVIRONMENT: production
+  VITE_SENTRY_DIST: android-latest
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
+jobs:
+  apk:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    name: Signed APKs + catalogue
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Refuse to build without the server URL and publishable key
+        # Hard rule: an APK that cannot reach the server is a build failure, not
+        # a warning. Publishable key only — never a service/secret key.
+        run: |
+          set -euo pipefail
+          [ -n "${VITE_SUPABASE_URL:-}" ] || { echo "VITE_SUPABASE_URL is empty"; exit 1; }
+          case "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" in
+            "") echo "VITE_SUPABASE_PUBLISHABLE_KEY is empty"; exit 1 ;;
+            sb_secret_*|*service_role*) echo "a secret key must never be baked into a client build"; exit 1 ;;
+          esac
+          echo "server URL and publishable key present"
+
+      - run: npm ci
+      - name: Build shared package
+        run: npm run build -w @norfold/shared
+      - name: Restore Firebase Android client configuration
+        run: node scripts/materialize-google-services.mjs --export-google-client
+        env:
+          GOOGLE_SERVICES_JSON_B64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+      - name: Strict installable config and build identity
+        run: |
+          node scripts/check-release-config.mjs
+          SHA=$(git rev-parse HEAD)
+          echo "BUILD_SHA=$SHA" >> "$GITHUB_ENV"
+          VERSION=$(node -p "require('./apps/mobile/package.json').version")
+          echo "VITE_SENTRY_RELEASE=findback-mobile@${VERSION}+${SHA:0:12}" >> "$GITHUB_ENV"
+      - name: Fetch pinned USE asset
+        run: node scripts/fetch-use-model.mjs
+      - name: Build mobile web dist (Capacitor webDir)
+        run: npm run build -w @norfold/mobile
+        env:
+          CI: true
+          SENTRY_UPLOAD_SOURCEMAPS: "true"
+      - name: Assert client config in the bundle
+        run: node scripts/check-mobile-build-config.mjs --assets apps/mobile/dist/assets
+      - name: Upload matching symbols and remove maps before packaging
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$SENTRY_AUTH_TOKEN" ] && [ -n "$SENTRY_ORG" ] && [ -n "$SENTRY_PROJECT" ]
+          npx -y @sentry/cli@3.8.0 sourcemaps upload --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" --release "$VITE_SENTRY_RELEASE" --dist "$VITE_SENTRY_DIST" apps/mobile/dist
+          find apps/mobile/dist -name '*.map' -delete
+      - name: Capacitor sync
+        run: npm run cap:sync -w @norfold/mobile
+      - name: Install pinned NDK + CMake (findback_probe native lib)
+        run: |
+          set +o pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;29.0.13113456" "cmake;3.31.6"
+
+      - name: Restore release keystore
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
+      - name: Signed assembleRelease (per-ABI APKs)
+        run: cd apps/mobile/android && ./gradlew --max-workers=2 :app:assembleRelease
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/findback-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - name: Remove keystore material
+        if: always()
+        run: rm -f "${{ runner.temp }}/findback-release.jks"
+
+      - name: Verify EVERY APK variant (signature pin, identity, ABI, config)
+        run: |
+          export EXPECTED_VERSION_NAME="$(node -p "require('./apps/mobile/package.json').version")"
+          export EXPECTED_VERSION_CODE="$((100000 + $(git rev-list --count HEAD)))"
+          bash scripts/verify-release-apks.sh \
+            --apk-dir apps/mobile/android/app/build/outputs/apk/release \
+            --facts-out "$RUNNER_TEMP/apk-facts.json"
+        env:
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+          EXPECTED_APP_ID: com.findback.app
+
+      - name: Stage APKs under their published names
+        run: |
+          set -euo pipefail
+          SHA12="${BUILD_SHA:0:12}"
+          echo "SHA12=$SHA12" >> "$GITHUB_ENV"
+          rm -rf release-stage && mkdir -p release-stage
+          for APK in apps/mobile/android/app/build/outputs/apk/release/*.apk; do
+            BASE="$(basename "$APK")"
+            case "$BASE" in
+              app-arm64-v8a-release.apk)   ABI="arm64-v8a" ;;
+              app-armeabi-v7a-release.apk) ABI="armeabi-v7a" ;;
+              app-x86_64-release.apk)      ABI="x86_64" ;;
+              app-universal-release.apk)  ABI="universal" ;;
+              *) echo "unexpected release APK: $BASE"; exit 1 ;;
+            esac
+            cp "$APK" "release-stage/Norfold-${SHA12}-${ABI}.apk"
+          done
+          ls -l release-stage/
+
+      - name: Write the update catalogue for exactly these bytes
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./apps/mobile/package.json').version")"
+          VCODE=$((100000 + $(git rev-list --count HEAD)))
+          SUBJECT="$(git log -1 --pretty=%s)"
+          RECENT="$(git log -3 --pretty=%s | paste -sd ';' - | cut -c1-280)"
+          PRIOR=()
+          if gh release view android-latest >/dev/null 2>&1; then
+            if gh release view android-latest --json assets --jq '.assets[].name' | grep -qx catalogue.v1.json; then
+              gh release download android-latest --pattern catalogue.v1.json --output "$RUNNER_TEMP/prior-catalogue.json"
+              PRIOR=(--previous "$RUNNER_TEMP/prior-catalogue.json")
+            fi
+          fi
+          node scripts/write-android-catalogue.mjs \
+            "${PRIOR[@]}" \
+            --facts "$RUNNER_TEMP/apk-facts.json" \
+            --apk-dir release-stage \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag android-latest \
+            --release-id "android-${SHA12}" \
+            --version-name "$VERSION" \
+            --version-code "$VCODE" \
+            --git-sha "${BUILD_SHA}" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --summary "${SUBJECT}. Recent changes: ${RECENT}" \
+            --signing-channel beta \
+            --out release-stage/catalogue.v1.json
+          node -e 'const c=require("./release-stage/catalogue.v1.json"); console.log(`catalogue: ${c.releases[0].id} versionCode ${c.releases[0].versionCode} artifacts ${c.releases[0].artifacts.length}`)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish the rolling pre-release
+        # APKs first, catalogue last: a reader must never see a catalogue entry
+        # whose bytes are not uploaded yet. Retain immutable older APKs: an
+        # already-started download must not lose its target on the next publish.
+        run: |
+          set -euo pipefail
+          if gh release view android-latest >/dev/null 2>&1; then
+            if [ -f "$RUNNER_TEMP/prior-catalogue.json" ]; then
+            if node -e 'const fs=require("fs"); const old=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const next=JSON.parse(fs.readFileSync("release-stage/catalogue.v1.json","utf8")); process.exit(Math.max(...old.releases.map(r=>r.versionCode)) >= next.releases[0].versionCode ? 0 : 1)' "$RUNNER_TEMP/prior-catalogue.json"; then
+              echo "A same or newer build is already published; keeping its immutable bytes."
+              exit 0
+            fi
+            fi
+          else
+            gh release create android-latest --prerelease \
+              --target "$BUILD_SHA" \
+              --title "Android latest build" \
+              --notes "Rolling beta build published by CI on every push to main. The in-app updater reads catalogue.v1.json from this release."
+          fi
+          gh release upload android-latest release-stage/Norfold-*.apk --clobber
+          gh release upload android-latest release-stage/catalogue.v1.json --clobber
+          gh release view android-latest --json assets --jq '.assets[] | "published \(.name) \(.size) bytes"'
+        env:
+          GH_TOKEN: ${{ github.token }}

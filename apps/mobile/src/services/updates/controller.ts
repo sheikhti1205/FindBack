@@ -57,7 +57,8 @@ export interface UpdateSnapshot {
 }
 
 export interface UpdateCataloguePort {
-  check(): Promise<CatalogueCheck>;
+  /** `force` bypasses the background rate limit; it never bypasses backoff. */
+  check(force?: boolean): Promise<CatalogueCheck>;
 }
 
 export interface UpdateControllerOptions {
@@ -71,12 +72,14 @@ export interface UpdateControllerOptions {
   readonly now?: () => number;
   /** Defaults to idle; the host reports busy Auth/editor/upload/modal states. */
   readonly initialIdle?: boolean;
+  /** Android proposes updates on launch unless the reader explicitly opts out. */
+  readonly defaultPopupEnabled?: boolean;
 }
 
 export interface UpdateController {
   getSnapshot(): UpdateSnapshot;
   subscribe(listener: (snapshot: UpdateSnapshot) => void): () => void;
-  check(): Promise<UpdateSnapshot>;
+  check(force?: boolean): Promise<UpdateSnapshot>;
   /** Re-read the installed identity (after a real install, never from a job). */
   refreshInstalled(): Promise<UpdateSnapshot>;
   setPopupEnabled(enabled: boolean): UpdateSnapshot;
@@ -99,7 +102,7 @@ export function createUpdateController(options: UpdateControllerOptions): Update
   const storage = options.storage;
   const listeners = new Set<(snapshot: UpdateSnapshot) => void>();
 
-  let popupEnabled = loadUpdatePreferences(storage).popupEnabled;
+  let popupEnabled = loadUpdatePreferences(storage, options.defaultPopupEnabled).popupEnabled;
   let dismissed = loadDismissedReleases(storage);
   let seen = loadSeenReleases(storage);
   let installed: Installation | null = null;
@@ -152,14 +155,14 @@ export function createUpdateController(options: UpdateControllerOptions): Update
       };
     },
 
-    check() {
+    check(force = false) {
       if (inFlight !== null) return inFlight;
       checking = true;
       emit();
       inFlight = (async () => {
         let result: CatalogueCheck;
         try {
-          result = await options.source.check();
+          result = await options.source.check(force);
         } catch {
           // The port is documented not to throw; if it does, that is still a
           // failed check, never a silent "up to date".

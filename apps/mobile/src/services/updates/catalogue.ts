@@ -402,11 +402,16 @@ export function createCatalogueSource(options: CatalogueSourceOptions) {
     }
   }
 
-  async function check(): Promise<CatalogueCheck> {
+  /**
+   * `force` skips the "recently checked" rate limit. App launch uses it: an
+   * install must be told about a build published minutes ago instead of waiting
+   * out the background interval. Backoff after a failure is still respected.
+   */
+  async function check(force = false): Promise<CatalogueCheck> {
     const previous = await cached() ?? (options.fallback ? { checkedAt: 0, catalogue: options.fallback } : null);
     const at = now();
 
-    if (previous !== null && previous.checkedAt > 0 && at - previous.checkedAt < minIntervalMs) {
+    if (!force && previous !== null && previous.checkedAt > 0 && at - previous.checkedAt < minIntervalMs) {
       return { status: "cached", catalogue: previous.catalogue, checkedAt: previous.checkedAt, reason: "rate-limited" };
     }
     if (at < retryAt) {

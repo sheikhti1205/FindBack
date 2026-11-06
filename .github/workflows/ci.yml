@@ -168,6 +168,8 @@ jobs:
         run: node --test supabase/tests/migration_parity.test.mjs
       - name: Run migration SQL syntax guard
         run: node --test supabase/tests/migration_sql_syntax.test.mjs
+      - name: Android catalogue and same-origin metadata proxy
+        run: node --test scripts/write-android-catalogue.test.mjs scripts/android-updates-proxy.test.mjs
       - name: Run report-edit contract and mutation guards
         run: node --test supabase/tests/post_update_clear_fields_parity.test.mjs supabase/tests/post_update_clear_fields_contract.test.mjs
       - name: Run match-candidate contract and mutation guards
@@ -255,6 +257,8 @@ jobs:
         # Same migrated disposable DB. Synthetic SQL actors are not real
         # Storage bytes, OAuth or deployed two-account acceptance evidence.
         run: node scripts/sql-behavior.mjs --probe supabase/tests/verify_norfold_photo_publication.sql --probe supabase/tests/verify_chat_r4.sql --probe supabase/tests/verify_m7p_chat_context_location.sql --probe supabase/tests/verify_m7p_chat_content_erasure_immutability.sql
+      - name: Unenrolled device list regression
+        run: node scripts/sql-behavior.mjs --probe supabase/tests/verify_device_list_unenrolled.sql
       - name: Two-connection role-lock regression (queued caller re-authorized)
         # Single-transaction probes cannot express a waiter whose permission is
         # revoked while it blocks. Two real sessions; a queued grant must be
