@@ -27,9 +27,9 @@ async function open(deviceId = scope.deviceId) {
   const history = await openWebMessagingHistory({ ...scope, deviceId }, { indexedDB: factory });
   handles.push(history); return history;
 }
-async function receive(history: MessagingHistory, n = 1) {
+async function receive(history: MessagingHistory, n = 1, deviceId = scope.deviceId) {
   const row = saved(n);
-  await history.persistInbound({ ...scope, mailboxId: id(300 + n), event: { kind: "TEXT",
+  await history.persistInbound({ ...scope, deviceId, mailboxId: id(300 + n), event: { kind: "TEXT",
     eventId: row.serverEventId, sequence: n, message: { id: row.id, conversationId: CHAT,
       authorId: B, recipientId: A, body: row.body!, messageType: "TEXT" } } });
 }
@@ -45,17 +45,22 @@ describe("portable IndexedDB history, not live delivery authority", () => {
     await source.enqueueOutgoing({ id: id(150), conversationId: CHAT, authorId: A, recipientId: B, body: "offline", messageType: "TEXT" });
     await source.markConversationRead(CHAT, 1);
     const backup = await createBackup(source, scope, 100);
-    expect(backup.snapshot.messages).toEqual([saved()]);
+    expect(backup.snapshot.messages).toEqual([{ ...saved(), readLocally: true }]);
     const target = await open(id(12));
     await restoreBackup(target, { ...scope, deviceId: id(12) }, encodeBackup(backup));
     expect(await target.listOutbox()).toEqual([]);
     expect(await target.getStateCursor()).toBeNull();
     expect(await target.getMessage(id(150))).toBeNull();
-    expect(await target.getMessage(saved().id)).toMatchObject({ body: "text 1", server: { eventId: id(201), sequence: 1 } });
-    expect((await target.listConversations())[0]).toMatchObject({ peerId: B, unreadCount: 1, cachedProjection: null });
+    expect(await target.getMessage(saved().id)).toMatchObject({ body: "text 1", readLocally: true, server: { eventId: id(201), sequence: 1 } });
+    expect((await target.listConversations())[0]).toMatchObject({ peerId: B, unreadCount: 0, cachedProjection: null });
     await target.close();
     const reopened = await open(id(12));
-    expect((await reopened.exportSnapshot()).messages).toEqual([saved()]);
+    expect((await reopened.exportSnapshot()).messages).toEqual([{ ...saved(), readLocally: true }]);
+    // The restored fact applies only to the saved message, not a read-through
+    // cursor that could silently mark a later arrival read.
+    await receive(reopened, 2, id(12));
+    expect((await reopened.listConversations())[0]).toMatchObject({ unreadCount: 1, cachedProjection: null });
+    expect((await reopened.exportSnapshot()).messages[1]).not.toHaveProperty("readLocally", true);
   });
 
   it("retains snapshot-only conversation metadata without inventing a participant or projection", async () => {
